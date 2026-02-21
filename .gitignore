@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ML Models (downloaded at build/start time)
+ai-api/models/
+!ai-api/models/manifest.json
+
+# C++ build artifacts
+*.o
+*.obj
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Docker
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Node
+node_modules/
