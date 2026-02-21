@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+.venv
+venv
+.env
+.git
+.gitignore
+models/
+!models/manifest.json
+tests/
+*.md
+.mypy_cache
+.pytest_cache
+.ruff_cache
+htmlcov
