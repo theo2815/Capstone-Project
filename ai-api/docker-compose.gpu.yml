@@ -1,0 +1,30 @@
+# GPU override for production. Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+services:
+  ai-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - USE_GPU=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - USE_GPU=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
