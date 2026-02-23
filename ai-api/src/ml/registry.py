@@ -20,6 +20,7 @@ class ModelRegistry:
 
         loaders = {
             "blur": self._load_blur,
+            "blur_classifier": self._load_blur_classifier,
             "face": self._load_face,
             "bib_detector": self._load_bib_detector,
             "bib_ocr": self._load_bib_ocr,
@@ -49,7 +50,7 @@ class ModelRegistry:
     def all_loaded(self) -> bool:
         """Check if all required models are loaded.
 
-        bib_detector is optional (requires custom-trained YOLO model).
+        bib_detector and blur_classifier are optional (require trained models).
         """
         required = {"blur", "face", "bib_ocr"}
         return all(self.is_loaded(name) for name in required)
@@ -85,3 +86,11 @@ class ModelRegistry:
         from src.ml.bibs.recognizer import BibRecognizer
 
         return BibRecognizer(use_gpu=settings.USE_GPU)
+
+    def _load_blur_classifier(self, settings: Any) -> Any:
+        from src.ml.blur.classifier import BlurClassifier
+
+        return BlurClassifier(
+            model_path=f"{settings.MODEL_DIR}/blur_classifier/blur_classifier.onnx",
+            class_names_path=f"{settings.MODEL_DIR}/blur_classifier/class_names.json",
+        )

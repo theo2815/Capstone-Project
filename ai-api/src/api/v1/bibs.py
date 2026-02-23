@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import base64
 import time
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi.responses import JSONResponse
 
 from src.middleware.auth import verify_api_key
 from src.schemas.bibs import BibCandidate, BibDetection, BibRecognitionResponse
 from src.schemas.common import APIResponse
+from src.schemas.jobs import JobCreateResponse
 from src.utils.image_utils import get_image_dimensions, validate_and_decode
 
 router = APIRouter(prefix="/bibs", tags=["Bib Number Recognition"])
@@ -93,4 +96,75 @@ async def recognize_bibs(
         success=True,
         request_id=getattr(request.state, "request_id", ""),
         data=data.model_dump(),
+    )
+
+
+@router.post("/recognize/batch", status_code=202)
+async def recognize_bibs_batch(
+    request: Request,
+    files: list[UploadFile] = File(..., description="Image files (JPEG, PNG, WebP)"),
+    key_meta: dict = Depends(verify_api_key),
+):
+    """Submit a batch of images for async bib number recognition.
+
+    Returns a job ID immediately. Poll GET /api/v1/jobs/{job_id} for results.
+    """
+    settings = request.app.state.settings
+
+    if len(files) == 0:
+        return JSONResponse(
+            status_code=400,
+            content=APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={"code": "EMPTY_BATCH", "message": "No files provided"},
+            ).model_dump(mode="json"),
+        )
+
+    if len(files) > settings.MAX_BATCH_SIZE:
+        return JSONResponse(
+            status_code=400,
+            content=APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={
+                    "code": "BATCH_TOO_LARGE",
+                    "message": f"Maximum {settings.MAX_BATCH_SIZE} files per batch",
+                },
+            ).model_dump(mode="json"),
+        )
+
+    # Read and base64 encode all files
+    image_data_list = []
+    for f in files:
+        raw = await f.read()
+        image_data_list.append(base64.b64encode(raw).decode("ascii"))
+
+    # Create job record
+    from src.db.repositories.job_repo import JobRepository
+    from src.db.session import get_session
+
+    async for session in get_session():
+        repo = JobRepository(session)
+        job = await repo.create(job_type="bib_recognize_batch", total_items=len(files))
+        job_id = str(job.id)
+
+    # Queue Celery task
+    from src.workers.tasks.bib_tasks import bib_recognize_batch
+
+    bib_recognize_batch.delay(job_id, image_data_list)
+
+    data = JobCreateResponse(
+        job_id=job_id,
+        status="pending",
+        total_items=len(files),
+        poll_url=f"/api/v1/jobs/{job_id}",
+    )
+    return JSONResponse(
+        status_code=202,
+        content=APIResponse(
+            success=True,
+            request_id=getattr(request.state, "request_id", ""),
+            data=data.model_dump(mode="json"),
+        ).model_dump(mode="json"),
     )

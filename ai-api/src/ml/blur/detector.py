@@ -3,6 +3,14 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+try:
+    from _eventai_cpp import laplacian_variance as _cpp_laplacian_var
+    from _eventai_cpp import fft_hf_ratio as _cpp_hf_ratio
+
+    _HAS_CPP = True
+except ImportError:
+    _HAS_CPP = False
+
 
 class BlurDetector:
     """Detect image blur using Laplacian variance and FFT spectral analysis."""
@@ -21,20 +29,24 @@ class BlurDetector:
         """
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-        # Laplacian variance: low variance = blurry
-        laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        if _HAS_CPP:
+            laplacian_var = float(_cpp_laplacian_var(gray))
+            hf_ratio = float(_cpp_hf_ratio(gray))
+        else:
+            # Laplacian variance: low variance = blurry
+            laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
-        # FFT-based: ratio of high-frequency energy to total energy
-        f_transform = np.fft.fft2(gray)
-        f_shift = np.fft.fftshift(f_transform)
-        magnitude = np.abs(f_shift)
-        h, w = gray.shape
-        cy, cx = h // 2, w // 2
-        r = min(h, w) // 8
-        mask = np.ones_like(magnitude)
-        mask[cy - r : cy + r, cx - r : cx + r] = 0
-        total = np.sum(magnitude)
-        hf_ratio = float(np.sum(magnitude * mask) / total) if total > 0 else 0.0
+            # FFT-based: ratio of high-frequency energy to total energy
+            f_transform = np.fft.fft2(gray)
+            f_shift = np.fft.fftshift(f_transform)
+            magnitude = np.abs(f_shift)
+            h, w = gray.shape
+            cy, cx = h // 2, w // 2
+            r = min(h, w) // 8
+            mask = np.ones_like(magnitude)
+            mask[cy - r : cy + r, cx - r : cx + r] = 0
+            total = np.sum(magnitude)
+            hf_ratio = float(np.sum(magnitude * mask) / total) if total > 0 else 0.0
 
         is_blurry = laplacian_var < self.laplacian_threshold
         if is_blurry:
