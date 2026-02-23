@@ -26,11 +26,29 @@ env/
 # ML Models (downloaded at build/start time)
 models/
 !models/manifest.json
+*.pt
+*.onnx
+
+# Training data & runs (too large for git)
+Training-Images/
+runs/
 
 # C++ build artifacts
 src/cpp/build/
+build/cpp/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CMakeLists.txt
 *.o
 *.obj
+
+# Claude Code temp files
+tmpclaude-*
+
+# Misc generated files
+nul
 
 # OS files
 .DS_Store
