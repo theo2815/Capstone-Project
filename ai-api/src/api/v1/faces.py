@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import time
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi.responses import JSONResponse
 
 from src.middleware.auth import verify_api_key
 from src.schemas.common import APIResponse
@@ -18,6 +20,7 @@ from src.schemas.faces import (
     FaceSearchResult,
     PersonResponse,
 )
+from src.schemas.jobs import JobCreateResponse
 from src.utils.image_utils import get_image_dimensions, validate_and_decode
 
 router = APIRouter(prefix="/faces", tags=["Face Recognition"])
@@ -325,3 +328,79 @@ async def delete_person(
             request_id=getattr(request.state, "request_id", ""),
             data={"deleted": True, "person_id": str(person_id)},
         )
+
+
+@router.post("/search/batch", status_code=202)
+async def search_faces_batch(
+    request: Request,
+    files: list[UploadFile] = File(..., description="Image files (JPEG, PNG, WebP)"),
+    operation: str = Query(default="search", pattern="^(detect|search)$"),
+    key_meta: dict = Depends(verify_api_key),
+):
+    """Submit a batch of images for async face processing.
+
+    Supported operations:
+    - **detect**: Detect faces and return bounding boxes.
+    - **search**: Detect faces and search the database for matches.
+
+    Returns a job ID immediately. Poll GET /api/v1/jobs/{job_id} for results.
+    """
+    settings = request.app.state.settings
+
+    if len(files) == 0:
+        return JSONResponse(
+            status_code=400,
+            content=APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={"code": "EMPTY_BATCH", "message": "No files provided"},
+            ).model_dump(mode="json"),
+        )
+
+    if len(files) > settings.MAX_BATCH_SIZE:
+        return JSONResponse(
+            status_code=400,
+            content=APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={
+                    "code": "BATCH_TOO_LARGE",
+                    "message": f"Maximum {settings.MAX_BATCH_SIZE} files per batch",
+                },
+            ).model_dump(mode="json"),
+        )
+
+    # Read and base64 encode all files
+    image_data_list = []
+    for f in files:
+        raw = await f.read()
+        image_data_list.append(base64.b64encode(raw).decode("ascii"))
+
+    # Create job record
+    from src.db.repositories.job_repo import JobRepository
+    from src.db.session import get_session
+
+    async for session in get_session():
+        repo = JobRepository(session)
+        job = await repo.create(job_type=f"face_{operation}_batch", total_items=len(files))
+        job_id = str(job.id)
+
+    # Queue Celery task
+    from src.workers.tasks.face_tasks import face_process_batch
+
+    face_process_batch.delay(job_id, image_data_list, operation)
+
+    data = JobCreateResponse(
+        job_id=job_id,
+        status="pending",
+        total_items=len(files),
+        poll_url=f"/api/v1/jobs/{job_id}",
+    )
+    return JSONResponse(
+        status_code=202,
+        content=APIResponse(
+            success=True,
+            request_id=getattr(request.state, "request_id", ""),
+            data=data.model_dump(mode="json"),
+        ).model_dump(mode="json"),
+    )

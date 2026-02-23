@@ -24,12 +24,31 @@ env/
 *.swo
 
 # ML Models (downloaded at build/start time)
+models/
 ai-api/models/
 !ai-api/models/manifest.json
+*.pt
+*.onnx
+
+# Training data & runs (too large for git)
+ai-api/Training-Images/
+ai-api/runs/
 
 # C++ build artifacts
+ai-api/src/cpp/build/
+ai-api/build/
+ai-api/CMakeLists.txt
 *.o
 *.obj
+
+# Claude Code temp files
+tmpclaude-*
+ai-api/tmpclaude-*
+
+# Misc generated files
+nul
+ai-api/nul
+Prompt.txt
 
 # OS files
 .DS_Store

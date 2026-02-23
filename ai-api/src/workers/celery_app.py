@@ -24,3 +24,6 @@ celery_app.conf.update(
 
 # Auto-discover tasks
 celery_app.autodiscover_tasks(["src.workers.tasks"])
+
+# Register worker startup signals (model loading, sync DB init)
+import src.workers.model_loader  # noqa: F401, E402
