@@ -4,9 +4,103 @@
 
 **Blur detection is not yet fully trained.**
 
-We are currently training only the `defocused_object_portrait` blur type, and this training is still incomplete. More real-world images of defocused objects in portrait shots need to be collected before this class reaches production-ready accuracy.
+We are currently gathering more images for `defocused_object_portrait` (Phase 1 paused). In the meantime, we are proceeding with Phase 2 (`defocused_blurred`) training first.
 
-Once `defocused_object_portrait` training is completed, we will proceed to train the remaining blur types in order.
+---
+
+## Blur Detection Logic (Strict Rules)
+
+These rules define what is VALID (sharp) vs INVALID (blur) and must be enforced during both training (labeling) and inference.
+
+### What is SHARP / VALID
+
+| Scenario | Classification | Reason |
+|----------|---------------|--------|
+| All pixels sharp, no blur anywhere | **SHARP (valid)** | Fully sharp image |
+| Subject sharp + background blurred (bokeh/DOF) | **SHARP (valid)** | Intentional depth-of-field; background blur is not an error |
+| Panning shot: subject sharp, background streaked | **SHARP (valid)** | Standard event photography technique |
+
+**Background blur alone must never be treated as an error.** Portrait and event photos with a sharp subject and blurred background are the standard in marathon/event photography and must always be classified as SHARP.
+
+### What is BLUR / INVALID
+
+| Blur Type | Condition | Classification |
+|-----------|-----------|---------------|
+| `defocused_object_portrait` | Main subject is out of focus, but there is a clear sharp region elsewhere (background, foreground) — the camera focused on the wrong plane | **BLUR (invalid)** |
+| `defocused_blurred` | The image is **predominantly** out of focus — the overall frame is soft, even if minor sharp edges exist in isolated spots (e.g. feet touching the ground, high-contrast edges). No clear "in-focus region" exists. | **BLUR (invalid)** |
+| `motion_blurred` | Blur caused by camera shake or subject movement — streaks, ghosting | **BLUR (invalid)** |
+
+**Key distinction between `defocused_object_portrait` and `defocused_blurred`:**
+- **`defocused_object_portrait`**: There is an obvious wrong focus plane — the subject is soft but the background is clearly sharp
+- **`defocused_blurred`**: The whole frame is predominantly soft — no clear "this part is in focus" region, even if some edges happen to retain mild sharpness due to depth-of-field gradients
+
+### Detection Constraints for `defocused_blurred`
+
+`defocused_blurred` must be detected **only** when:
+
+1. There is **no clearly sharp primary subject** in the image
+2. **Subject-level details** (faces, bib numbers, key identifiers) **are not in focus**
+3. The image is **globally unusable** as a sharp event photo
+
+Portrait photos remain valid **only** when the primary subject itself is clearly sharp (sharp face/torso), regardless of background blur.
+
+**An image must still be classified as `defocused_blurred` even if it contains localized sharp edges, such as:**
+
+- Road markings
+- Clothing edges or seams
+- High-contrast outlines
+- Feet touching the ground
+- Minor foreground or background details
+- Noise or compression artifacts that may appear sharp
+
+**The presence of partial sharp edges must not override defocused blur detection.** These incidental elements do not constitute a "clearly sharp primary subject."
+
+**Core principle:** When Defocused Blur mode is selected, the system must be strict and prioritize **subject-level clarity** (face, torso, bib number) over pixel-level or edge-level sharpness. If the primary subject is not in focus, the image is defocused — period.
+
+**What makes a portrait VALID (not defocused_blurred):**
+- The primary subject (runner's face, torso, bib) is clearly sharp and in focus
+- Background blur is irrelevant — only subject sharpness matters
+- This applies regardless of how much of the frame is covered by bokeh
+
+### Technical Approach
+
+**Current (Phase 1-3): Single-classifier approach**
+
+YOLOv8n-cls classifies the whole image into 4 categories. The CNN learns spatial patterns implicitly from training data — it can distinguish "sharp subject region + soft background" (= `sharp`) from "uniform softness across the frame" (= `defocused_blurred`) based on learned features. This works when:
+
+- The `sharp` training set contains diverse portrait photos with varying bokeh levels (current: 468 real marathon photos)
+- The `defocused_blurred` training set contains frames where the whole scene is soft (current: 350 images)
+- Edge cases (heavy bokeh where 90% of frame is soft but subject is sharp) are well-represented in training data
+
+**If accuracy falls short: Two-stage validation (future enhancement)**
+
+If the single classifier cannot achieve zero false positives on valid portrait photos, a two-stage approach would be added:
+
+| Stage | What it does | Purpose |
+|-------|-------------|---------|
+| Stage 1 | Detect primary subject (person/runner via object detection) | Find the region that matters |
+| Stage 2 | Evaluate sharpness specifically on subject region vs full frame | Confirm blur is on the subject, not just background |
+
+This provides explicit subject-level sharpness validation. It would only be implemented if per-class evaluation reveals portrait misclassification that training data improvements alone cannot resolve.
+
+### Detection Behavior
+
+- When the user selects a blur detection mode, detection is **mandatory (100%)** with no tolerance or optional threshold
+- If any of the above blur types are detected, the image **must always** be flagged as BLUR / INVALID
+- **Zero false positives** for valid portrait photos (sharp subject + blurred background)
+- **100% detection accuracy** for selected blur types
+
+### Labeling Rules for Training Data
+
+| Image Content | Correct Label | Common Mistake to Avoid |
+|--------------|---------------|------------------------|
+| Runner sharp, background bokeh | `sharp` | Do NOT label as defocused — the subject is sharp |
+| Runner sharp, background motion-streaked (panning) | `sharp` | Do NOT label as motion_blurred — the subject is sharp |
+| Runner out of focus, background sharp | `defocused_object_portrait` | This is a focus error, not intentional bokeh |
+| Mostly soft/defocused, but some minor sharp edges (e.g. feet, ground contact) | `defocused_blurred` | Do NOT label as sharp — the overall frame is predominantly out of focus |
+| Everything soft, nothing sharp | `defocused_blurred` | Full-frame defocus |
+| Runner has ghosting/streaks from movement | `motion_blurred` | Camera shake or subject motion |
+| Noisy but sharp (low light / high ISO) | `sharp` | Noise is not blur |
 
 ---
 
@@ -14,11 +108,11 @@ Once `defocused_object_portrait` training is completed, we will proceed to train
 
 | Phase | Blur Type | Status | Notes |
 |-------|-----------|--------|-------|
-| **Phase 1** | `defocused_object_portrait` | **In Progress** | Expanded from 23 to ~150 images; needs more real-world samples |
-| **Phase 2** | `defocused_blurred` | Pending | Train after Phase 1 is complete |
-| **Phase 3** | `motion_blurred` | Pending | Train after Phase 2 is complete |
+| **Phase 1** | `defocused_object_portrait` | **Paused** | Gathering more real-world images; ~150 current, needs more |
+| **Phase 2** | `defocused_blurred` | **Up Next** | 350 images available; proceeding while Phase 1 collects data |
+| **Phase 3** | `motion_blurred` | Pending | 352 images available; train after Phase 2 |
 
-Each phase follows the same workflow: collect images, prepare dataset, train, export, verify.
+Phase 1 is paused for image collection. Training continues with Phase 2 (`defocused_blurred`) in the meantime.
 
 ---
 
@@ -26,15 +120,15 @@ Each phase follows the same workflow: collect images, prepare dataset, train, ex
 
 The blur detection AI must detect **only** the following three blur types:
 
-1. **`defocused_object_portrait`** — Subject blurry, background sharp (back-focus / front-focus error)
-2. **`defocused_blurred`** — Entire image uniformly out of focus
-3. **`motion_blurred`** — Directional motion blur from camera or subject movement
+1. **`defocused_object_portrait`** — Main subject is out of focus; background may be sharp or mixed
+2. **`defocused_blurred`** — Image is predominantly out of focus; the overall frame is soft even if minor sharp edges exist in isolated spots
+3. **`motion_blurred`** — Blur caused by camera shake or subject movement
 
 **No other blur types should be detected or classified.** The `sharp` class exists solely as a training baseline so the model can distinguish "no blur detected" from the blur categories.
 
 ### Accuracy Requirement
 
-The goal is **maximum accuracy (target: 100%)** for detecting these three blur types, especially on real-world running event images.
+The goal is **maximum accuracy (target: 100%)** for detecting these three blur types, especially on real-world running event images. Zero false positives for valid portrait photos.
 
 ---
 
@@ -51,8 +145,8 @@ The API exposes **user-selectable blur type detection**: the caller chooses whic
 | # | Class | Description | Visual Cues | API-Selectable |
 |---|-------|-------------|-------------|----------------|
 | 1 | `sharp` | Subject in focus, background may have natural bokeh | Clear edges on subject, readable bib numbers, sharp facial features | No (training baseline only) |
-| 2 | `defocused_object_portrait` | Subject blurry, background sharp (back-focus / front-focus error) | Background elements are sharper than the runner; camera focused on wrong plane | **Yes** |
-| 3 | `defocused_blurred` | Entire image uniformly out of focus | Everything is soft — no sharp edges anywhere; evenly blurred across the frame | **Yes** |
+| 2 | `defocused_object_portrait` | Main subject out of focus, background may be sharp or mixed | Background elements are sharper than the runner; camera focused on wrong plane | **Yes** |
+| 3 | `defocused_blurred` | Image predominantly out of focus | Overall frame is soft; no clear in-focus region, though minor sharp edges may exist in isolated spots (e.g. feet, ground contact, high-contrast edges) | **Yes** |
 | 4 | `motion_blurred` | Directional motion blur from camera or subject movement | Light trails, directional streaks, ghosting on moving limbs | **Yes** |
 
 Only the 3 blur types are selectable via the API. The `sharp` class exists solely as a training baseline so the model can distinguish "no blur detected" from the blur categories.
@@ -86,14 +180,14 @@ When `blur_type` is omitted, the endpoint returns the full classification with a
 
 ### Dataset Clarification
 
-The `sharp` images have been recently added for comparison. The folder `Portrait Photos Running event and bib numbers/` contains **real-world marathon and running event photos**, including visible bib numbers. These represent **actual production data** — the kind of images the model will encounter in real use.
+The `sharp` images have been recently added for comparison. The folder `Portrait Photos Running event and bib numbers/` contains **real-world marathon and running event photos**, including visible bib numbers. These represent **actual production data** — the kind of images the model will encounter in real use. Many of these photos feature intentional background bokeh with a sharp subject — this is the correct, valid output of event photography.
 
 ### Original Images
 
 | Class | Directory | Count | Status |
 |-------|-----------|-------|--------|
-| `sharp` | `Portrait Photos Running event and bib numbers/` | 468 | Real-world production images |
-| `defocused_object_portrait` | `Defocused object in portrait/` | ~150 | **Needs more images** (expanded from 23) |
+| `sharp` | `Portrait Photos Running event and bib numbers/` | 468 | Real-world production images (includes bokeh portraits) |
+| `defocused_object_portrait` | `Defocused object in portrait/` | ~150 | **Needs more images** (expanded from 23, collection ongoing) |
 | `defocused_blurred` | `defocused_blurred/` | 350 | Good coverage |
 | `motion_blurred` | `motion_blurred/` | 352 | Good coverage |
 | **Total** | | **~1,320** | |
@@ -127,11 +221,12 @@ The `sharp` images have been recently added for comparison. The folder `Portrait
 - **Training stopped:** Epoch 55/100 (early stopping, patience=20, best at epoch 35)
 - **Key improvement:** `defocused_object_portrait` now has ~150 real images (was 23), class naming fixed
 
-### Round 3: More Data Collection (CURRENT — In Progress)
+### Round 3: Per-Phase Training (CURRENT)
 
-- **Focus:** Gathering more real-world `defocused_object_portrait` images to push accuracy toward 100%
-- **Goal:** Maximize accuracy on all three blur types before moving to production
-- **Status:** Paused for image collection
+- **Phase 1 (`defocused_object_portrait`):** Paused — gathering more real-world images
+- **Phase 2 (`defocused_blurred`):** Up next — evaluate per-class accuracy, improve if needed
+- **Phase 3 (`motion_blurred`):** Pending
+- **Goal:** 100% detection accuracy per blur type, zero false positives on valid portraits
 
 ### Hyperparameters
 
@@ -176,19 +271,20 @@ The `sharp` images have been recently added for comparison. The folder `Portrait
 
 | Edge Case | Description | Resolution |
 |-----------|-------------|------------|
-| Panning shots | Background blurred, subject sharp | Label as `sharp` |
-| Bokeh portraits | Intentional shallow DOF | Label as `sharp` |
+| Panning shots | Background blurred, subject sharp | Label as `sharp` — subject is sharp |
+| Bokeh portraits | Intentional shallow DOF, subject sharp | Label as `sharp` — background blur is not an error |
 | Mild motion + defocus | Both blur types present | Label by dominant type |
-| Low light / high ISO | Noise can look like blur | Add noisy-but-sharp to `sharp` |
+| Low light / high ISO | Noise can look like blur | Label as `sharp` — noise is not blur |
 
 ---
 
 ## Training Priority
 
+- **Zero false positives** — valid portrait photos (sharp subject + blurred background) must never be flagged as blur
+- **100% detection accuracy** — when blur is present on the subject, it must always be detected
 - **Maximum accuracy (target: 100%)** — especially on real-world running event images
-- **High precision, low false positives** — the model should not falsely flag sharp images as blurry
 - **Clear separation between blur types** — no overlapping labels between categories
-- **Accuracy-first** — the model should give definitive Detected/Not Detected answers without needing user-configurable thresholds
+- **Mandatory detection** — when user selects a blur type, detection is enforced with no optional threshold
 
 ---
 
@@ -225,7 +321,7 @@ The `sharp` images have been recently added for comparison. The folder `Portrait
 
 ```
 ai-api/Training-Images/
-  Portrait Photos Running event and bib numbers/   <- sharp (real-world production data)
+  Portrait Photos Running event and bib numbers/   <- sharp (real-world production data, includes bokeh portraits)
   Defocused object in portrait/                     <- defocused_object_portrait
   defocused_blurred/                                <- defocused_blurred
   motion_blurred/                                   <- motion_blurred
