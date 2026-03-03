@@ -4,6 +4,28 @@
 
 This is a modular AI API built with FastAPI (Python 3.11+) for computer vision tasks: **Blur Detection**, **Face Recognition**, and **Bib Number OCR**. Optional C++ acceleration via pybind11.
 
+## Current Status
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| Phase 1 | Foundation (FastAPI, DB, auth, middleware) | **Complete** |
+| Phase 2 | Blur Detection (Laplacian-based) | **Complete** |
+| Phase 3 | Face Recognition (InsightFace + pgvector) | **Complete** |
+| Phase 4 | Bib Number Recognition (PaddleOCR) | **Complete** |
+| Phase 5 | Async Batch Processing (Celery + Redis) | **Complete** |
+| Phase 6 | C++ Acceleration (pybind11) | **Complete** |
+| Phase 7 | Production Hardening | Pending |
+
+**Blur classifier training** is in progress — see `docs/phase-plan-for-blur-detection-training.md` for full details. Round 2 achieved 98.63% accuracy. Per-phase training (Round 3) is underway.
+
+## Key Documents
+
+| Document | Purpose |
+|----------|---------|
+| `docs/CLAUDE.md` | This file — entry point for AI agents and new team members |
+| `docs/phase-plan.md` | Full implementation phase plan with completed tasks and test results |
+| `docs/phase-plan-for-blur-detection-training.md` | Blur classifier training plan, dataset details, blur detection logic rules, and accuracy targets |
+
 ## Architecture
 
 **4-layer separation. Never skip layers.**
@@ -152,3 +174,85 @@ Do not add new dependencies without justification. Prefer existing libraries ove
 - Never import across layers incorrectly (e.g., `api/` importing from `db/` directly).
 - Never use synchronous database calls. Always use async SQLAlchemy.
 - Never hardcode thresholds, URLs, or secrets. Use `src/config.py`.
+
+## ML Features
+
+### Blur Detection
+
+Two systems coexist:
+
+1. **Laplacian-based detector** (`src/ml/blur/detector.py`): Simple threshold-based blur detection using Laplacian variance. Always available.
+2. **YOLOv8n-cls classifier** (`src/ml/blur/classifier.py`): 4-class CNN classifier (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Requires trained ONNX model at `models/blur_classifier/blur_classifier.onnx`. Optional — loads only if model file exists.
+
+API endpoints:
+- `POST /api/v1/blur/detect` — Laplacian-based (always available)
+- `POST /api/v1/blur/classify` — CNN classifier (optional `blur_type` param for targeted detection)
+- `POST /api/v1/blur/detect/batch` — Batch Laplacian detection via Celery
+- `POST /api/v1/blur/classify/batch` — Batch classification via Celery
+
+### Face Recognition
+
+Pipeline: InsightFace (RetinaFace detection + ArcFace embedding) → pgvector cosine similarity search.
+
+- `POST /api/v1/faces/detect` — Detect faces, return count and bounding boxes
+- `POST /api/v1/faces/enroll` — Detect face, store embedding in DB with person name
+- `POST /api/v1/faces/search` — Detect face, search DB for matches (cosine similarity)
+- `POST /api/v1/faces/compare` — Compare two face images directly
+- `DELETE /api/v1/faces/persons/{id}` — Remove person and their embeddings
+- `POST /api/v1/faces/search/batch` — Batch face operations via Celery
+
+### Bib Number Recognition
+
+Pipeline: PaddleOCR (PP-OCRv5) on full image. Future: YOLO bib detection → crop → OCR.
+
+- `POST /api/v1/bibs/recognize` — Detect and read bib numbers
+- `POST /api/v1/bibs/recognize/batch` — Batch recognition via Celery
+
+## Async Batch Processing
+
+All batch endpoints use the same pattern:
+
+1. Accept multiple files via multipart upload (max 100)
+2. Create a job record in the DB
+3. Base64-encode files and queue a Celery task
+4. Return HTTP 202 with `job_id` and `poll_url`
+5. Poll `GET /api/v1/jobs/{job_id}` for status and results
+6. Webhook dispatch on completion/failure
+
+Key files:
+- `src/workers/celery_app.py` — Celery configuration (Redis broker/backend)
+- `src/workers/model_loader.py` — Loads ML models once per worker process via `worker_process_init` signal
+- `src/workers/helpers.py` — Shared task utils (base64 decode, job progress, webhook dispatch)
+- `src/workers/tasks/` — Task implementations (blur, bib, face)
+- `src/db/sync_session.py` — Sync SQLAlchemy sessions for Celery (can't use asyncpg in workers)
+- `src/db/repositories/sync_*.py` — Sync repositories for Celery tasks
+
+## Blur Classifier Training Pipeline
+
+Training the YOLOv8n-cls blur classifier follows this workflow:
+
+```bash
+# 1. Prepare dataset (augment + split into train/val)
+python scripts/prepare_blur_dataset.py
+
+# 2. Train the model (early stopping handles convergence)
+python scripts/train_blur_classifier.py
+
+# 3. Export to ONNX for production inference
+python scripts/export_blur_classifier.py
+
+# 4. Run tests
+pytest tests/test_blur_classifier.py -v
+```
+
+Training images live in `Training-Images/` (gitignored). Model artifacts live in `models/blur_classifier/` (gitignored except `manifest.json`). See `docs/phase-plan-for-blur-detection-training.md` for the full training plan, dataset details, blur detection logic rules, and accuracy targets.
+
+## Infrastructure Requirements
+
+| Service | Purpose | Required for |
+|---------|---------|-------------|
+| PostgreSQL 16 + pgvector | DB for jobs, webhooks, face embeddings | All features |
+| Redis | Celery broker/backend, rate limiting | Batch processing, rate limiting |
+| Celery worker | Async task execution | Batch endpoints only |
+
+Start with: `docker compose up db redis -d`
