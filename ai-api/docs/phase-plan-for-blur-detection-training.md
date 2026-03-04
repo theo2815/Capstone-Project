@@ -2,9 +2,9 @@
 
 ## Current Training Status
 
-**Blur detection is not yet fully trained.**
+**Blur detection is not yet fully trained. All image collection is complete — ready for Round 3 training.**
 
-We are currently gathering more images for `defocused_object_portrait` (Phase 1 paused). In the meantime, we are proceeding with Phase 2 (`defocused_blurred`) training first.
+All 4 classes now have 1,000+ images. Total dataset: 5,500 images (5 source folders → 4 classes). Next step: run the 3-step training pipeline (prepare → train → export).
 
 ---
 
@@ -68,8 +68,8 @@ Portrait photos remain valid **only** when the primary subject itself is clearly
 
 YOLOv8n-cls classifies the whole image into 4 categories. The CNN learns spatial patterns implicitly from training data — it can distinguish "sharp subject region + soft background" (= `sharp`) from "uniform softness across the frame" (= `defocused_blurred`) based on learned features. This works when:
 
-- The `sharp` training set contains diverse portrait photos with varying bokeh levels (current: 468 real marathon photos)
-- The `defocused_blurred` training set contains frames where the whole scene is soft (current: 350 images)
+- The `sharp` training set contains diverse portrait photos with varying bokeh levels (current: 1,825 images from two source folders)
+- The `defocused_blurred` training set contains frames where the whole scene is soft (current: 1,480 images)
 - Edge cases (heavy bokeh where 90% of frame is soft but subject is sharp) are well-represented in training data
 
 **If accuracy falls short: Two-stage validation (future enhancement)**
@@ -108,11 +108,11 @@ This provides explicit subject-level sharpness validation. It would only be impl
 
 | Phase | Blur Type | Status | Notes |
 |-------|-----------|--------|-------|
-| **Phase 1** | `defocused_object_portrait` | **Paused** | Gathering more real-world images; ~150 current, needs more |
-| **Phase 2** | `defocused_blurred` | **Up Next** | 350 images available; proceeding while Phase 1 collects data |
-| **Phase 3** | `motion_blurred` | Pending | 352 images available; train after Phase 2 |
+| **Phase 1** | `defocused_object_portrait` | **Image collection complete** | 1,142 real-world images |
+| **Phase 2** | `defocused_blurred` | **Image collection complete** | 1,480 images gathered (was 369) |
+| **Phase 3** | `motion_blurred` | **Image collection complete** | 1,053 images gathered (was 352) |
 
-Phase 1 is paused for image collection. Training continues with Phase 2 (`defocused_blurred`) in the meantime.
+All image collection is complete. Ready for Round 3 training.
 
 ---
 
@@ -180,27 +180,29 @@ When `blur_type` is omitted, the endpoint returns the full classification with a
 
 ### Dataset Clarification
 
-The `sharp` images have been recently added for comparison. The folder `Portrait Photos Running event and bib numbers/` contains **real-world marathon and running event photos**, including visible bib numbers. These represent **actual production data** — the kind of images the model will encounter in real use. Many of these photos feature intentional background bokeh with a sharp subject — this is the correct, valid output of event photography.
+The `sharp` class is sourced from two directories: `Sharp Object in portrait/` (1,475 sharp portrait photos with intentional bokeh/DOF) and `Sharp_images/` (350 general sharp images). Together these represent **real-world production data** — the kind of images the model will encounter in real use. Many feature intentional background bokeh with a sharp subject — this is the correct, valid output of event photography. Both folders are merged into the single `sharp` class during dataset preparation.
 
 ### Original Images
 
 | Class | Directory | Count | Status |
 |-------|-----------|-------|--------|
-| `sharp` | `Portrait Photos Running event and bib numbers/` | 468 | Real-world production images (includes bokeh portraits) |
-| `defocused_object_portrait` | `Defocused object in portrait/` | ~150 | **Needs more images** (expanded from 23, collection ongoing) |
-| `defocused_blurred` | `defocused_blurred/` | 350 | Good coverage |
-| `motion_blurred` | `motion_blurred/` | 352 | Good coverage |
-| **Total** | | **~1,320** | |
+| `sharp` | `Sharp Object in portrait/` + `Sharp_images/` | 1,825 (1,475 + 350) | **Ready** |
+| `defocused_object_portrait` | `Defocused object in portrait/` | 1,142 | **Ready** |
+| `defocused_blurred` | `defocused_blurred/` | 1,480 | **Ready** |
+| `motion_blurred` | `motion_blurred/` | 1,053 | **Ready** |
+| **Total** | | **5,500** | |
 
-### After Augmentation (prepared dataset)
+### Prepared Dataset (estimated, 80/20 train/val split)
 
-| Class | Train | Val | Total | Method |
-|-------|-------|-----|-------|--------|
-| `sharp` | ~375 | ~93 | ~468 | Original (no augmentation needed) |
-| `defocused_object_portrait` | ~240 | ~60 | ~300 | ~150 originals + augmented to 300 |
-| `defocused_blurred` | ~280 | ~70 | ~350 | Original (no augmentation needed) |
-| `motion_blurred` | ~282 | ~70 | ~352 | Original (no augmentation needed) |
-| **Total** | **~1,177** | **~293** | **~1,470** | |
+No augmentation is needed — all classes exceed 1,000 images.
+
+| Class | Estimated Train | Estimated Val | Estimated Total | Method |
+|-------|----------------|--------------|----------------|--------|
+| `sharp` | ~1,460 | ~365 | ~1,825 | Original (no augmentation needed) |
+| `defocused_object_portrait` | ~914 | ~228 | ~1,142 | Original (no augmentation needed) |
+| `defocused_blurred` | ~1,184 | ~296 | ~1,480 | Original (no augmentation needed) |
+| `motion_blurred` | ~842 | ~211 | ~1,053 | Original (no augmentation needed) |
+| **Total** | **~4,400** | **~1,100** | **~5,500** | |
 
 ---
 
@@ -221,11 +223,14 @@ The `sharp` images have been recently added for comparison. The folder `Portrait
 - **Training stopped:** Epoch 55/100 (early stopping, patience=20, best at epoch 35)
 - **Key improvement:** `defocused_object_portrait` now has ~150 real images (was 23), class naming fixed
 
-### Round 3: Per-Phase Training (CURRENT)
+### Round 3: Full Balanced Dataset Training (READY)
 
-- **Phase 1 (`defocused_object_portrait`):** Paused — gathering more real-world images
-- **Phase 2 (`defocused_blurred`):** Up next — evaluate per-class accuracy, improve if needed
-- **Phase 3 (`motion_blurred`):** Pending
+- **Dataset:** 5,500 images across 4 classes — all collection complete
+- **Sharp class:** 1,825 images (1,475 portrait + 350 general) from two source folders
+- **Phase 1 (`defocused_object_portrait`):** 1,142 real-world images
+- **Phase 2 (`defocused_blurred`):** 1,480 images (was 369)
+- **Phase 3 (`motion_blurred`):** 1,053 images (was 352)
+- **Blocker:** None — ready to train
 - **Goal:** 100% detection accuracy per blur type, zero false positives on valid portraits
 
 ### Hyperparameters
@@ -321,7 +326,8 @@ The `sharp` images have been recently added for comparison. The folder `Portrait
 
 ```
 ai-api/Training-Images/
-  Portrait Photos Running event and bib numbers/   <- sharp (real-world production data, includes bokeh portraits)
+  Sharp Object in portrait/                         <- sharp (portrait photos with bokeh, sharp subject)
+  Sharp_images/                                     <- sharp (general sharp images)
   Defocused object in portrait/                     <- defocused_object_portrait
   defocused_blurred/                                <- defocused_blurred
   motion_blurred/                                   <- motion_blurred
@@ -329,6 +335,8 @@ ai-api/Training-Images/
     train/{class}/
     val/{class}/
 ```
+
+Note: `Sharp Object in portrait/` and `Sharp_images/` are merged into the single `sharp` class during dataset preparation.
 
 ---
 

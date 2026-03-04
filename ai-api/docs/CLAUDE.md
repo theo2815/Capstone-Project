@@ -16,7 +16,7 @@ This is a modular AI API built with FastAPI (Python 3.11+) for computer vision t
 | Phase 6 | C++ Acceleration (pybind11) | **Complete** |
 | Phase 7 | Production Hardening | Pending |
 
-**Blur classifier training** is in progress — see `docs/phase-plan-for-blur-detection-training.md` for full details. Round 2 achieved 98.63% accuracy. Per-phase training (Round 3) is underway.
+**Blur classifier training** is in progress — see `docs/phase-plan-for-blur-detection-training.md` for full details. Round 2 achieved 98.63% accuracy. Round 3 (full balanced dataset, 5,500 images) is **ready to train** — all image collection complete.
 
 ## Key Documents
 
