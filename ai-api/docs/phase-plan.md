@@ -1,6 +1,6 @@
 # Implementation Phases
 
-## Current Status: Phase 6 Complete
+## Current Status: Phase 6 Complete | Phase 6.5 Pending
 
 ---
 
@@ -293,6 +293,81 @@ except ImportError:
 
 ---
 
+## Phase 6.5: API Abuse Prevention & Usage Control [PENDING]
+
+Goal: Protect the API from abuse, control per-key usage, and prevent resource exhaustion — all within the existing monolith.
+
+**Current state:** API key auth and file/batch size limits work. The token bucket rate limiter (`src/middleware/rate_limit.py`) is fully implemented but **never wired into any endpoint**. No usage tracking, no quotas, no task timeouts exist.
+
+### 6.5.1 Activate Rate Limiter (High Priority)
+
+The Redis token bucket is already built with 3 tiers. It just needs to be connected.
+
+- [ ] Wire `check_rate_limit()` into the endpoint dependency chain (all routes)
+- [ ] Verify 429 responses with `Retry-After` header for each tier:
+  - `free`: 60 requests/min
+  - `pro`: 300 requests/min
+  - `internal`: 1000 requests/min
+- [ ] Add rate limit headers to all responses (`X-RateLimit-Remaining`, `X-RateLimit-Limit`, `X-RateLimit-Reset`)
+- [ ] Write integration tests for rate limiting (token exhaustion, tier switching, Redis failure fallback)
+
+### 6.5.2 Celery Task Timeouts & Worker Protection (High Priority)
+
+Batch tasks can currently run forever with no memory or time limits.
+
+- [ ] Set `task_time_limit=3600` (hard kill after 1 hour) in `celery_app.py`
+- [ ] Set `task_soft_time_limit=3300` (graceful shutdown warning at 55 min)
+- [ ] Set `worker_max_tasks_per_child=50` (restart worker every 50 tasks to prevent memory leaks)
+- [ ] Handle `SoftTimeLimitExceeded` in each task to save partial results before hard kill
+
+### 6.5.3 Per-Key Concurrent Job Limits (High Priority)
+
+Prevents a single key from flooding the Celery queue.
+
+- [ ] Before accepting a new batch job, query active job count for the requesting API key
+- [ ] Enforce max concurrent jobs per tier:
+  - `free`: 2 concurrent batch jobs
+  - `pro`: 10 concurrent batch jobs
+  - `internal`: 50 concurrent batch jobs
+- [ ] Return 429 with clear error when limit reached
+- [ ] Write tests for concurrent job enforcement
+
+### 6.5.4 Usage Audit Logging (Medium Priority)
+
+Track all API usage for visibility, billing, and abuse detection.
+
+- [ ] Create `api_usage_log` table (api_key_id, endpoint, request_id, timestamp, processing_time_ms, status_code, operation_type)
+- [ ] Create Alembic migration for the new table
+- [ ] Log every request via middleware (async write, non-blocking)
+- [ ] Add admin endpoint: `GET /api/v1/admin/usage?key_id=...&from=...&to=...`
+
+### 6.5.5 Monthly Quota Enforcement (Medium Priority)
+
+Hard limits on total requests per billing period.
+
+- [ ] Add `monthly_request_limit` and `monthly_requests_used` fields to `APIKey` model
+- [ ] Create Alembic migration for the new fields
+- [ ] Check quota in rate limit middleware; return 403 when exhausted
+- [ ] Add quota reset logic (cron or Celery beat task on 1st of each month)
+- [ ] Return `X-Quota-Remaining` and `X-Quota-Limit` headers
+
+### 6.5.6 Endpoint Cost Weighting (Low Priority)
+
+Different operations consume different server resources. Account for this in rate limiting and quotas.
+
+- [ ] Define cost weights per endpoint:
+  - `blur/detect`: 1 credit
+  - `blur/classify`: 2 credits
+  - `faces/detect`: 1 credit
+  - `faces/search`: 5 credits (vector DB query)
+  - `faces/enroll`: 3 credits
+  - `bibs/recognize`: 3 credits
+  - Batch endpoints: weight × number of images
+- [ ] Deduct weighted credits from rate bucket and monthly quota
+- [ ] Document credit costs in API docs
+
+---
+
 ## Phase 7: Production Hardening [PENDING]
 
 Goal: Make it production-ready.
@@ -312,3 +387,12 @@ Goal: Make it production-ready.
 - [ ] Set up SSL/TLS termination guide
 - [ ] Add database backup strategy documentation
 - [ ] Create runbook for common operations
+
+### 7.8 Microservice Readiness
+
+Prepare the monolith for a future split into separate APIs per feature (blur, face, bib) without doing the split now. The current architecture already has zero cross-feature imports — these tasks make the eventual split trivial.
+
+- [ ] Separate Celery queues per feature (`blur_queue`, `face_queue`, `bib_queue`) — enables independent worker scaling
+- [ ] Feature-flag model loading (`ENABLED_FEATURES` env var) — skip loading unused models to reduce startup time and memory
+- [ ] API gateway setup (Traefik or Nginx) — centralize auth, rate limiting, and CORS outside the app
+- [ ] Document microservice split procedure in `docs/` — step-by-step guide for when scale demands it

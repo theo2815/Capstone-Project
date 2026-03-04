@@ -1,8 +1,10 @@
 """Prepare the blur classification dataset in ImageFolder format for YOLOv8-cls.
 
 Reads raw images from Training-Images/ subdirectories, applies augmentation
-to balance the `defocused_object_portrait` class (~150 images → ~300 via augmentation),
-and creates an 80/20 train/val split.
+to balance under-represented classes, and creates an 80/20 train/val split.
+
+The `sharp` class is sourced from two directories (Sharp Object in portrait/
+and Sharp_images/) which are merged during preparation.
 
 Usage:
     python scripts/prepare_blur_dataset.py
@@ -21,9 +23,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TRAINING_DIR = PROJECT_ROOT / "Training-Images"
 DATASET_DIR = TRAINING_DIR / "dataset"
 
-# Mapping: class_name -> source directory name
-CLASS_DIRS = {
-    "sharp": "Portrait Photos Running event and bib numbers",
+# Mapping: class_name -> source directory name(s)
+# Classes with multiple source directories use a list.
+CLASS_DIRS: dict[str, str | list[str]] = {
+    "sharp": ["Sharp Object in portrait", "Sharp_images"],
     "defocused_object_portrait": "Defocused object in portrait",
     "defocused_blurred": "defocused_blurred",
     "motion_blurred": "motion_blurred",
@@ -93,6 +96,22 @@ def augment_image(img: np.ndarray, rng: random.Random) -> np.ndarray:
     return result
 
 
+def _unique_name(img_path: Path, seen: set[str]) -> str:
+    """Return a unique filename, appending a suffix on collision."""
+    name = img_path.name
+    if name not in seen:
+        seen.add(name)
+        return name
+    stem, suffix = img_path.stem, img_path.suffix
+    i = 1
+    while True:
+        candidate = f"{stem}_{i}{suffix}"
+        if candidate not in seen:
+            seen.add(candidate)
+            return candidate
+        i += 1
+
+
 def prepare_dataset() -> None:
     """Build the ImageFolder dataset with augmentation and train/val split."""
     rng = random.Random(RANDOM_SEED)
@@ -112,13 +131,23 @@ def prepare_dataset() -> None:
 
     total_stats: dict[str, dict[str, int]] = {}
 
-    for cls_name, dir_name in CLASS_DIRS.items():
-        src_dir = TRAINING_DIR / dir_name
-        images = list_images(src_dir)
+    for cls_name, dir_names in CLASS_DIRS.items():
+        # Support single string or list of directories per class
+        if isinstance(dir_names, str):
+            dir_names = [dir_names]
+
+        images: list[Path] = []
+        for dir_name in dir_names:
+            src_dir = TRAINING_DIR / dir_name
+            found = list_images(src_dir)
+            if not found:
+                print(f"  WARNING: No images found in {src_dir}")
+            images.extend(found)
+
         n_originals = len(images)
 
         if n_originals == 0:
-            print(f"  WARNING: No images found in {src_dir}")
+            print(f"  WARNING: No images found for class '{cls_name}'")
             continue
 
         # Shuffle deterministically
@@ -130,22 +159,26 @@ def prepare_dataset() -> None:
         val_images = shuffled[:n_val]
         train_images = shuffled[n_val:]
 
+        source_dirs = ", ".join(dir_names)
         print(f"\n{cls_name}:")
-        print(f"  Source: {src_dir}")
+        print(f"  Source: {source_dirs}")
         print(f"  Original images: {n_originals}")
         print(f"  Train: {len(train_images)}, Val: {n_val}")
 
         # Copy validation images (no augmentation)
         val_count = 0
+        seen_names: set[str] = set()
         for img_path in val_images:
-            dest = DATASET_DIR / "val" / cls_name / img_path.name
+            name = _unique_name(img_path, seen_names)
+            dest = DATASET_DIR / "val" / cls_name / name
             shutil.copy2(img_path, dest)
             val_count += 1
 
         # Copy train images
         train_count = 0
         for img_path in train_images:
-            dest = DATASET_DIR / "train" / cls_name / img_path.name
+            name = _unique_name(img_path, seen_names)
+            dest = DATASET_DIR / "train" / cls_name / name
             shutil.copy2(img_path, dest)
             train_count += 1
 
