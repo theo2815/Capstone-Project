@@ -16,7 +16,7 @@ This is a modular AI API built with FastAPI (Python 3.11+) for computer vision t
 | Phase 6 | C++ Acceleration (pybind11) | **Complete** |
 | Phase 7 | Production Hardening | Pending |
 
-**Blur classifier training** is in progress — see `docs/phase-plan-for-blur-detection-training.md` for full details. Round 2 achieved 98.63% accuracy. Round 3 (full balanced dataset, 5,500 images) is **ready to train** — all image collection complete.
+**Blur classifier training** is complete — see `docs/phase-plan-for-blur-detection-training.md` for full details. Round 3 achieved **98.68% accuracy** (56 epochs, early stopping). Sharp class: 100% (zero false positives). ONNX model exported to `models/blur_classifier/blur_classifier.onnx`. See `docs/phase-plan-face-bibnumber-training.md` for Phase 6 (Face Recognition) and Phase 7 (Bib Number) training plans.
 
 ## Key Documents
 
@@ -25,6 +25,7 @@ This is a modular AI API built with FastAPI (Python 3.11+) for computer vision t
 | `docs/CLAUDE.md` | This file — entry point for AI agents and new team members |
 | `docs/phase-plan.md` | Full implementation phase plan with completed tasks and test results |
 | `docs/phase-plan-for-blur-detection-training.md` | Blur classifier training plan, dataset details, blur detection logic rules, and accuracy targets |
+| `docs/phase-plan-face-bibnumber-training.md` | Face recognition (Phase 6) and bib number (Phase 7) training plan — combined detection pipeline |
 
 ## Architecture
 
