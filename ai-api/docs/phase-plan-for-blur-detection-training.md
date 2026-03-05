@@ -111,8 +111,10 @@ This provides explicit subject-level sharpness validation. It would only be impl
 | **Phase 1** | `defocused_object_portrait` | **Image collection complete** | 1,142 real-world images |
 | **Phase 2** | `defocused_blurred` | **Image collection complete** | 1,480 images gathered (was 369) |
 | **Phase 3** | `motion_blurred` | **Image collection complete** | 1,053 images gathered (was 352) |
+| **Phase 4** | Hyperparameter Tuning | **Pending** | Only if blur accuracy plateaus |
+| **Phase 5** | Edge Case Hardening | **Pending** | Production polish for blur classifier |
 
-All image collection is complete. Ready for Round 3 training.
+Phases 1-3 image collection complete. Round 3 blur training in progress. See [phase-plan-face-bibnumber-training.md](phase-plan-face-bibnumber-training.md) for Phase 6 (Face Recognition) and Phase 7 (Bib Number) training plans.
 
 ---
 
