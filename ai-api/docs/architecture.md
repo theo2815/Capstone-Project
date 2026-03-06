@@ -64,10 +64,11 @@ ML models are large (100MB-500MB each) and take seconds to load. Loading them on
 ```
 Server starts
     │
-    ├── Load BlurDetector into memory
-    ├── Load FaceEmbedder (RetinaFace + ArcFace) into memory
-    ├── Load BibDetector (YOLOv8) into memory
-    ├── Load BibRecognizer (PaddleOCR) into memory
+    ├── Load BlurDetector into memory                          (required)
+    ├── Load BlurClassifier (YOLOv8n-cls ONNX) into memory    (optional — needs trained model)
+    ├── Load FaceEmbedder (RetinaFace + ArcFace) into memory   (required)
+    ├── Load BibDetector (YOLOv8) into memory                  (optional — needs trained model)
+    ├── Load BibRecognizer (PaddleOCR) into memory             (required)
     │
     ▼
 Server ready to accept requests (models stay in memory)

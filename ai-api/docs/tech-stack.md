@@ -139,7 +139,8 @@ Every library, framework, and tool used in EventAI, with explanations of why eac
 
 ### prometheus-client + prometheus-fastapi-instrumentator
 - **What it is**: Metrics collection for monitoring
-- **Why chosen**: Exposes `/metrics` endpoint with request counts, latency histograms, and custom metrics (inference time, image sizes). Standard format consumed by Prometheus + Grafana dashboards.
+- **Why chosen**: Provides request counts, latency histograms, and custom metrics (inference time, image sizes). Standard format consumed by Prometheus + Grafana dashboards.
+- **Current status**: Metric definitions exist in `src/utils/metrics.py`, but the `/metrics` scrape endpoint is **not yet mounted**. Activation is planned for Phase 7 (Production Hardening).
 
 ---
 

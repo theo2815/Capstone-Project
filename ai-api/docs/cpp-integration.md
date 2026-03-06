@@ -26,21 +26,21 @@ pybind11 is a C++ library that creates Python modules from C++ code. It has firs
 ### File Structure
 
 ```
-src/cpp/
-├── CMakeLists.txt          # Build instructions
-├── include/                # Header files (.h)
-│   ├── blur_ops.h
-│   ├── distance_ops.h
-│   └── preprocess_ops.h
-├── src/                    # Implementation files (.cpp)
-│   ├── blur_ops.cpp        # Batch Laplacian kernel
-│   ├── distance_ops.cpp    # Batch cosine similarity + top-K
-│   ├── preprocess_ops.cpp  # Fused image preprocessing
-│   └── bindings.cpp        # pybind11 module definition (glue)
-└── tests/
-    ├── test_blur_ops.cpp
-    └── test_distance_ops.cpp
+ai-api/
+├── CMakeLists.txt              # Build instructions (C++17, pybind11, AVX2)
+├── build_cpp.py                # Build script (auto-detects MSVC on Windows)
+│
+└── src/cpp/                    # All C++ source files (flat layout)
+    ├── bindings.cpp            # pybind11 module definition (glue)
+    ├── blur_ops.h              # Blur detection headers
+    ├── blur_ops.cpp            # Batch Laplacian variance + FFT HF ratio
+    ├── face_ops.h              # Face matching headers
+    ├── face_ops.cpp            # Batch cosine similarity + top-K (AVX2)
+    ├── preprocess_ops.h        # Image preprocessing headers
+    └── preprocess_ops.cpp      # Fused bgr_to_gray + resize_gray (bilinear)
 ```
+
+C++ tests are Python-based: `tests/test_cpp_extension.py` (31 tests verifying numerical parity with the NumPy fallbacks).
 
 ### Example: Batch Cosine Similarity
 
