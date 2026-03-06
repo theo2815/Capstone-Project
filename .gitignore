@@ -30,8 +30,9 @@ ai-api/models/
 *.pt
 *.onnx
 
-# Training data & runs (too large for git)
-ai-api/Training-Images/
+# Training data & runs (too large for git without LFS)
+ai-api/Training-Images/*
+!ai-api/Training-Images/face_bib_detection/
 ai-api/runs/
 
 # C++ build artifacts

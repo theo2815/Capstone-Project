@@ -29,8 +29,9 @@ models/
 *.pt
 *.onnx
 
-# Training data & runs (too large for git)
-Training-Images/
+# Training data & runs (too large for git without LFS)
+Training-Images/*
+!Training-Images/face_bib_detection/
 runs/
 
 # C++ build artifacts

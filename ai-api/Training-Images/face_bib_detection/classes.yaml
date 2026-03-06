@@ -1,0 +1,12 @@
+# Face + Bib Detection Dataset
+# Classes for YOLOv8 object detection training
+
+path: .
+train: images/train
+val: images/val
+
+names:
+  0: face
+  1: bib
+
+nc: 2
