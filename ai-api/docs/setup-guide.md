@@ -78,6 +78,8 @@ Open your browser to: http://localhost:8000/docs
 
 This shows the Swagger UI with all endpoints. You can test them interactively.
 
+> **Note:** Swagger UI is only available when `DEBUG=true` (the default in `.env.example`). If `DEBUG=false`, `/docs` returns 404.
+
 Or via curl:
 ```bash
 # Health check (no auth needed)
@@ -130,6 +132,7 @@ This starts 4 containers: ai-api, celery-worker, PostgreSQL, Redis.
 | `make migration msg="add new table"` | Create a new migration |
 | `make docker-up` | Start all Docker services |
 | `make docker-down` | Stop all Docker services |
+| `make docker-gpu` | Start Docker services with GPU support |
 | `make celery` | Start Celery worker locally |
 | `make install` | Install dev dependencies |
 | `make clean` | Remove cached files |
@@ -151,7 +154,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `BLUR_THRESHOLD` | `100.0` | Default Laplacian variance threshold |
 | `FACE_SIMILARITY_THRESHOLD` | `0.4` | Minimum cosine similarity for face match |
 | `MAX_FILE_SIZE` | `10485760` | Maximum upload size in bytes (10MB) |
-| `ALLOWED_ORIGINS` | `["http://localhost:3000"]` | CORS allowed origins |
+| `ALLOWED_ORIGINS` | `["http://localhost:3000","http://localhost:5173"]` | CORS allowed origins |
 | `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
 
 ---

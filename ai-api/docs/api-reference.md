@@ -108,6 +108,106 @@ curl -X POST http://localhost:8000/api/v1/blur/detect \
 - `hf_ratio`: Ratio of high-frequency content (0-1). Lower = blurrier.
 - `confidence`: How confident the detection is (0-1).
 
+### POST /api/v1/blur/classify
+
+Classify an image into blur categories using a CNN model (YOLOv8n-cls). Requires the trained ONNX model to be loaded at startup.
+
+**Two modes:**
+- **Full classification** (default): Returns the predicted class and probabilities for all 4 categories.
+- **Targeted detection**: When `blur_type` is provided, returns a binary Detected/Not Detected response for that specific blur type.
+
+**Request:**
+- Content-Type: `multipart/form-data`
+- `file` (required): Image file (JPEG, PNG, or WebP)
+- `blur_type` (optional, query param): Specific blur type to detect. Options: `defocused_object_portrait`, `defocused_blurred`, `motion_blurred`
+
+**Example (curl) — full classification:**
+```bash
+curl -X POST http://localhost:8000/api/v1/blur/classify \
+  -H "X-API-Key: sk_dev_eventai_test_key_12345" \
+  -F "file=@photo.jpg"
+```
+
+**Response (200) — full classification:**
+```json
+{
+  "success": true,
+  "request_id": "abc-123",
+  "data": {
+    "predicted_class": "sharp",
+    "confidence": 0.96,
+    "probabilities": {
+      "sharp": 0.96,
+      "defocused_object_portrait": 0.02,
+      "defocused_blurred": 0.01,
+      "motion_blurred": 0.01
+    },
+    "image_dimensions": [1920, 1080],
+    "processing_time_ms": 45.12
+  }
+}
+```
+
+**Example (curl) — targeted detection:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/blur/classify?blur_type=defocused_object_portrait" \
+  -H "X-API-Key: sk_dev_eventai_test_key_12345" \
+  -F "file=@photo.jpg"
+```
+
+**Response (200) — targeted detection:**
+```json
+{
+  "success": true,
+  "request_id": "abc-123",
+  "data": {
+    "blur_type": "defocused_object_portrait",
+    "detected": true,
+    "confidence": 0.94,
+    "blur_type_probability": 0.94,
+    "image_dimensions": [1920, 1080],
+    "processing_time_ms": 42.8
+  }
+}
+```
+
+**How to interpret results:**
+- **Full classification mode** (`blur_type` omitted):
+  - `predicted_class`: The top predicted category (sharp, defocused_object_portrait, defocused_blurred, motion_blurred)
+  - `confidence`: Model confidence for the top prediction (0-1)
+  - `probabilities`: Probability distribution across all 4 classes
+- **Targeted detection mode** (`blur_type` provided):
+  - `detected`: true/false — whether the selected blur type is the top prediction
+  - `confidence`: Model confidence for the top prediction
+  - `blur_type_probability`: Probability the model assigned to the selected blur type
+
+**Error (503):** Returns `MODEL_UNAVAILABLE` if the blur classifier ONNX model is not loaded.
+
+### POST /api/v1/blur/classify/batch
+
+Submit a batch of images for async blur classification via Celery.
+
+**Request:**
+- Content-Type: `multipart/form-data`
+- `files` (required): Multiple image files
+- `blur_type` (optional, query param): Specific blur type to detect per image
+
+**Response (202):**
+```json
+{
+  "success": true,
+  "request_id": "abc-123",
+  "data": {
+    "job_id": "550e8400-...",
+    "status": "pending",
+    "total_items": 10,
+    "poll_url": "/api/v1/jobs/550e8400-..."
+  }
+}
+```
+
+Poll `GET /api/v1/jobs/{job_id}` for results.
+
 ---
 
 ## Face Recognition
@@ -406,6 +506,8 @@ If you provided a secret, the request includes an `X-EventAI-Signature` header w
 | Pro | 300 | Upgraded keys |
 | Internal | 1000 | Backend-to-backend communication |
 
-Rate limit headers on every response:
+**Note:** The rate limiter code exists (`src/middleware/rate_limit.py`) but is **not yet wired into endpoints** (pending Phase 6.5). Once activated, rate-limited (429) responses will include these headers:
+- `X-RateLimit-Limit`: Maximum requests allowed in the window
 - `X-RateLimit-Remaining`: Requests remaining in current window
 - `X-RateLimit-Reset`: Unix timestamp when the limit resets
+- `Retry-After`: Seconds until the next request is allowed

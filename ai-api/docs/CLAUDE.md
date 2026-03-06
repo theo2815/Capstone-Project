@@ -14,6 +14,7 @@ This is a modular AI API built with FastAPI (Python 3.11+) for computer vision t
 | Phase 4 | Bib Number Recognition (PaddleOCR) | **Complete** |
 | Phase 5 | Async Batch Processing (Celery + Redis) | **Complete** |
 | Phase 6 | C++ Acceleration (pybind11) | **Complete** |
+| Phase 6.5 | API Abuse Prevention & Usage Control | Pending |
 | Phase 7 | Production Hardening | Pending |
 
 **Blur classifier training** is complete — see `docs/phase-plan-for-blur-detection-training.md` for full details. Round 3 achieved **98.68% accuracy** (56 epochs, early stopping). Sharp class: 100% (zero false positives). ONNX model exported to `models/blur_classifier/blur_classifier.onnx`. See `docs/phase-plan-face-bibnumber-training.md` for Phase 6 (Face Recognition) and Phase 7 (Bib Number) training plans.
@@ -173,7 +174,7 @@ Do not add new dependencies without justification. Prefer existing libraries ove
 - Never log image data or embeddings. Log only request IDs, endpoints, and timings.
 - Never commit `.env` files or API keys.
 - Never import across layers incorrectly (e.g., `api/` importing from `db/` directly).
-- Never use synchronous database calls. Always use async SQLAlchemy.
+- Never use synchronous database calls in FastAPI request handlers. Always use async SQLAlchemy. (Exception: Celery workers **must** use sync sessions via `src/db/sync_session.py` because asyncpg cannot run inside Celery.)
 - Never hardcode thresholds, URLs, or secrets. Use `src/config.py`.
 
 ## ML Features

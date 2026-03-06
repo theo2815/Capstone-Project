@@ -82,9 +82,9 @@ Event Photo
 The API endpoints remain separate — the combined model detects both, but each endpoint only uses the detections it needs:
 
 ```
-POST /api/v1/face/search  -> uses face crops only, ignores bib detections
-POST /api/v1/bib/search   -> uses bib crops only, ignores face detections
-POST /api/v1/runner/identify -> uses both for complete runner identification
+POST /api/v1/faces/search     -> uses face crops only, ignores bib detections
+POST /api/v1/bibs/recognize   -> uses bib crops only, ignores face detections
+POST /api/v1/runner/identify  -> uses both for complete runner identification (planned — not yet implemented)
 ```
 
 ---

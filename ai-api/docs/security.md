@@ -45,6 +45,8 @@ This is configured but not enforced yet (Phase 7).
 
 ## Rate Limiting
 
+> **Status:** The token bucket rate limiter is fully implemented in `src/middleware/rate_limit.py` but is **not yet wired into any endpoint**. See `phase-plan.md` Phase 6.5 for the activation plan. The description below documents the intended behavior once activated.
+
 ### How it works
 
 Token bucket algorithm implemented in Redis using a Lua script (atomic operation):
@@ -67,18 +69,18 @@ Each API key has a bucket:
 
 ### Response Headers
 
-Every response includes rate limit information:
-```
-X-RateLimit-Limit: 60
-X-RateLimit-Remaining: 45
-X-RateLimit-Reset: 1708567200   (Unix timestamp)
-```
+Rate limit headers are included on **429 rejection responses** (not on every response). Adding headers to all responses is a pending task (Phase 6.5).
 
-When rate limited:
+On rate-limited responses:
 ```
 HTTP 429 Too Many Requests
+X-RateLimit-Limit: 60
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 1708567200   (Unix timestamp)
 Retry-After: 12   (seconds)
 ```
+
+> **Note:** The CORS config (`src/middleware/cors.py`) currently exposes `X-RateLimit-Remaining` and `X-RateLimit-Reset` but not `X-RateLimit-Limit`. This will need to be updated when rate limiting is activated.
 
 ### No Redis fallback
 
@@ -203,7 +205,7 @@ assert hmac.compare_digest(expected, received)
 ## Summary Checklist
 
 - [x] API key authentication (SHA-256 hashed, scoped)
-- [x] Rate limiting (token bucket via Redis)
+- [ ] Rate limiting (token bucket via Redis — implemented, not yet wired into endpoints)
 - [x] Input validation (file type, size, dimensions, magic bytes)
 - [x] EXIF stripping (privacy)
 - [x] No image storage (only embeddings and hashes)
