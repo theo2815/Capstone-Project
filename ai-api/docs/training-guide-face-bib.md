@@ -48,29 +48,13 @@ pip install ultralytics
 
 ### 3. Get the dataset
 
-The `Training-Images/` folder is **not tracked by git** (gitignored because it's 1.7GB). You need to obtain it separately.
+The dataset (1.7GB of training images + labels) is stored on **GitLab via Git LFS**. When you clone the repo in Step 1, Git LFS automatically downloads the training images.
 
-**Option A: Copy from shared drive / cloud storage**
-
-Ask the team lead for the `face_bib_detection/` dataset folder and place it at:
-
-```
-ai-api/Training-Images/face_bib_detection/
-```
-
-**Option B: Copy directly from the annotation machine**
-
-If you have access to the machine that ran the annotation, copy the entire folder:
-
-```bash
-# From the annotation machine, compress:
-cd ai-api
-tar -czf face_bib_dataset.tar.gz Training-Images/face_bib_detection/
-
-# On your training machine, extract into ai-api/:
-cd ai-api
-tar -xzf face_bib_dataset.tar.gz
-```
+> **Note:** Make sure you have [Git LFS](https://git-lfs.com/) installed before cloning. Install it with:
+> ```bash
+> git lfs install
+> ```
+> If you already cloned without LFS, run `git lfs pull` inside the repo to download the image files.
 
 ### 4. Verify the dataset structure
 
@@ -192,9 +176,11 @@ Quick test on a validation image:
 
 ```python
 from ultralytics import YOLO
+import glob
 
 model = YOLO("runs/detect/face_bib_det/weights/best.pt")
-results = model("Training-Images/face_bib_detection/images/val/IMG_0001.JPG")
+val_image = glob.glob("Training-Images/face_bib_detection/images/val/*.JPG")[0]
+results = model(val_image)
 results[0].show()   # opens a window with bounding boxes drawn
 print(results[0].boxes)  # prints detected boxes with class + confidence
 ```
