@@ -30,10 +30,10 @@ ai-api/models/
 *.pt
 *.onnx
 
-# Training data & runs (too large for git without LFS)
-ai-api/Training-Images/*
-!ai-api/Training-Images/face_bib_detection/
+# Training data & runs (large files — hosted on GitLab via LFS)
+ai-api/Training-Images/
 ai-api/runs/
+.gitattributes
 
 # C++ build artifacts
 ai-api/src/cpp/build/
