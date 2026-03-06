@@ -25,8 +25,8 @@ This guide covers how to set up and train the combined **face + bib number detec
 ### 1. Clone the repository
 
 ```bash
-git clone <repo-url>
-cd Capstone-Project/ai-api
+git clone https://gitlab.com/theocedricchan28/api-ai.git
+cd api-ai/ai-api
 ```
 
 ### 2. Install training dependencies
