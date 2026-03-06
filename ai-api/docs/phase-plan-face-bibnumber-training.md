@@ -4,12 +4,14 @@
 
 **Blur detection training (Phases 1-5) is complete** — 98.68% accuracy, ONNX exported. See [phase-plan-for-blur-detection-training.md](phase-plan-for-blur-detection-training.md).
 
-**Phase 6 (Face Recognition) and Phase 7 (Bib Number) — Combined detection model is in progress.**
+**Phase 6 (Face Recognition) and Phase 7 (Bib Number) — Auto-annotation complete, ready for training.**
 
 - 1,638 training images collected and placed in dataset folder
 - Auto-annotation script written and verified (InsightFace + PaddleOCR)
+- Auto-annotation completed on all 1,638 images (3,316 faces + 1,863 bibs = 5,179 total annotations)
+- Dataset split into 1,315 train / 323 val (80/20)
 - Training script ready
-- **Next step:** Run full auto-annotation, then train the combined detector
+- **Next step:** Train the combined YOLOv8n detector
 
 ---
 
@@ -28,7 +30,7 @@
 | 2 | Write auto-annotation script | **Done** | `scripts/auto_annotate_face_bib.py` — InsightFace (faces) + PaddleOCR (bibs) |
 | 3 | Optimize annotation speed | **Done** | Resize to 800px before OCR: ~9s/image (down from ~8min) |
 | 4 | Preview and verify annotations | **Done** | 5-image preview: 100% face detection, 80% bib detection, no false positives |
-| 5 | Run full auto-annotation (1,638 images) | **Not Started** | ~4 hours estimated, will split 80/20 train/val automatically |
+| 5 | Run full auto-annotation (1,638 images) | **Done** | 1,638 images processed, 5,179 annotations (3,316 faces + 1,863 bibs), split 1,315 train / 323 val |
 | 6 | Train combined YOLOv8n detector | **Not Started** | `scripts/train_face_bib_detector.py` ready |
 | 7 | Export to ONNX | **Not Started** | Export script to be written after training |
 | 8 | Train/fine-tune face embedding model | **Not Started** | Requires face crops from trained detector |
@@ -141,6 +143,26 @@ OCR_MAX_DIM = 800
 | Time per image | ~9s |
 | Estimated full run (1,638 images) | ~4 hours |
 
+### Full Run Results (1,638 images)
+
+| Metric | Value |
+|--------|-------|
+| Images processed | 1,638 |
+| Skipped (unreadable) | 0 |
+| Total faces detected | 3,316 |
+| Total bibs detected | 1,863 |
+| Total annotations | 5,179 |
+| Images with faces | 1,617 (98.7%) |
+| Images with bibs | 1,372 (83.8%) |
+| Images with BOTH face + bib | 1,370 (83.6%) |
+| Images with face only | 247 (15.1%) |
+| Images with bib only | 2 (0.1%) |
+| Images with neither | 19 (1.2%) |
+| Avg time per image | ~9.7s |
+| Total time | ~266 min |
+| Train split | 1,315 images |
+| Val split | 323 images |
+
 ### Usage
 
 ```bash
@@ -177,8 +199,8 @@ model.train(
 
 ### Dataset Split
 
-- **Train:** 80% of annotated images
-- **Val:** 20% of annotated images
+- **Train:** 1,315 images (80%)
+- **Val:** 323 images (20%)
 - Only images with at least one annotation are included in the split
 - Split is deterministic (seed=42)
 
@@ -217,7 +239,7 @@ Identify runners in event photos by detecting faces and matching them against re
 
 | Data Type | Description | Status |
 |-----------|-------------|--------|
-| Event photos with face bounding boxes | YOLO-format annotations marking face regions (shared annotation with bib) | **In Progress** — 1,638 images collected, auto-annotation script ready |
+| Event photos with face bounding boxes | YOLO-format annotations marking face regions (shared annotation with bib) | **Done** — 1,638 images annotated, 3,316 faces detected (98.7% of images) |
 | Face identity labels | Group cropped faces by runner identity for embedding training | **Not Started** |
 | Reference photos | Clean front-facing photos for matching baseline | **Not Started** |
 
@@ -225,7 +247,7 @@ Identify runners in event photos by detecting faces and matching them against re
 
 ```
 1. Collect event photos (same images used for both face and bib annotation)     [DONE]
-2. Auto-annotate face bounding boxes using InsightFace (RetinaFace)             [READY]
+2. Auto-annotate face bounding boxes using InsightFace (RetinaFace)             [DONE]
 3. Train combined face+bib detection model (YOLOv8n, 2 classes)                 [READY]
 4. Crop detected faces from training images
 5. Train/fine-tune face embedding model on cropped faces with identity labels
@@ -273,7 +295,7 @@ Automatically read race bib numbers from event photos. This enables instant phot
 
 | Data Type | Description | Status |
 |-----------|-------------|--------|
-| Event photos with bib bounding boxes | YOLO-format annotations marking bib regions (shared annotation with face) | **In Progress** — 1,638 images collected, auto-annotation script ready |
+| Event photos with bib bounding boxes | YOLO-format annotations marking bib regions (shared annotation with face) | **Done** — 1,638 images annotated, 1,863 bibs detected (83.8% of images) |
 | Bib number ground truth | Correct text/number for each annotated bib | **Not Started** |
 | Varied bib designs | Samples from different race events and bib styles | **Not Started** |
 
@@ -281,7 +303,7 @@ Automatically read race bib numbers from event photos. This enables instant phot
 
 ```
 1. Collect event photos (same images used for both face and bib annotation)     [DONE]
-2. Auto-annotate bib bounding boxes using PaddleOCR text detection              [READY]
+2. Auto-annotate bib bounding boxes using PaddleOCR text detection              [DONE]
 3. Train combined face+bib detection model (YOLOv8n, 2 classes)                 [READY]
 4. Crop detected bibs from training images
 5. Label cropped bibs with ground truth numbers
@@ -359,11 +381,11 @@ Auto-annotation using pre-trained models (no manual labeling needed):
 ai-api/Training-Images/
   face_bib_detection/
     images/
-      train/                           <- 1,638 training images (collected)
-      val/                             <- validation images (created during annotation split)
+      train/                           <- 1,315 training images
+      val/                             <- 323 validation images
     labels/
-      train/                           <- YOLO annotation .txt files (generated by auto-annotation)
-      val/                             <- YOLO annotation .txt files (generated by auto-annotation)
+      train/                           <- 1,315 YOLO annotation .txt files
+      val/                             <- 323 YOLO annotation .txt files
     classes.yaml                       <- class definitions (face=0, bib=1)
     annotation_preview/                <- visual verification samples (generated with --visualize)
   face_embeddings/                     <- cropped faces grouped by identity (future)
