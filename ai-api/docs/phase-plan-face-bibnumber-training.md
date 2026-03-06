@@ -2,7 +2,14 @@
 
 ## Current Training Status
 
-**Phase 6 (Face Recognition) and Phase 7 (Bib Number) have not started yet.** Blur detection training (Phases 1-5) is in progress — see [phase-plan-for-blur-detection-training.md](phase-plan-for-blur-detection-training.md).
+**Blur detection training (Phases 1-5) is complete** — 98.68% accuracy, ONNX exported. See [phase-plan-for-blur-detection-training.md](phase-plan-for-blur-detection-training.md).
+
+**Phase 6 (Face Recognition) and Phase 7 (Bib Number) — Combined detection model is in progress.**
+
+- 1,638 training images collected and placed in dataset folder
+- Auto-annotation script written and verified (InsightFace + PaddleOCR)
+- Training script ready
+- **Next step:** Run full auto-annotation, then train the combined detector
 
 ---
 
@@ -10,8 +17,22 @@
 
 | Phase | Task | Status | Notes |
 |-------|------|--------|-------|
-| **Phase 6** | Face Recognition | **Not Started** | Combined face+bib detection → face embedding → matching |
-| **Phase 7** | Bib Number Reading | **Not Started** | Combined face+bib detection → bib OCR → number extraction |
+| **Phase 6** | Face Recognition | **In Progress** | Combined face+bib detection → face embedding → matching |
+| **Phase 7** | Bib Number Reading | **In Progress** | Combined face+bib detection → bib OCR → number extraction |
+
+### Sub-Task Progress
+
+| # | Task | Status | Details |
+|---|------|--------|---------|
+| 1 | Collect training images | **Done** | 1,638 event photos in `images/train/` |
+| 2 | Write auto-annotation script | **Done** | `scripts/auto_annotate_face_bib.py` — InsightFace (faces) + PaddleOCR (bibs) |
+| 3 | Optimize annotation speed | **Done** | Resize to 800px before OCR: ~9s/image (down from ~8min) |
+| 4 | Preview and verify annotations | **Done** | 5-image preview: 100% face detection, 80% bib detection, no false positives |
+| 5 | Run full auto-annotation (1,638 images) | **Not Started** | ~4 hours estimated, will split 80/20 train/val automatically |
+| 6 | Train combined YOLOv8n detector | **Not Started** | `scripts/train_face_bib_detector.py` ready |
+| 7 | Export to ONNX | **Not Started** | Export script to be written after training |
+| 8 | Train/fine-tune face embedding model | **Not Started** | Requires face crops from trained detector |
+| 9 | Train/fine-tune bib OCR model | **Not Started** | Requires bib crops from trained detector |
 
 ---
 
@@ -23,25 +44,25 @@ Face detection and bib detection share the **same training images** (event photo
 
 ```
 Event Photo
-    │
-    ▼
-┌─────────────────────────────────┐
-│  Model 1: Combined Detector     │
-│  YOLOv8n (2 classes: face, bib) │
-│  One inference pass             │
-└──────────┬──────────┬───────────┘
-           │          │
+    |
+    v
++-------------------------------+
+|  Model 1: Combined Detector   |
+|  YOLOv8n (2 classes: face,bib)|
+|  One inference pass            |
++----------+----------+---------+
+           |          |
      Face crops    Bib crops
-           │          │
-           ▼          ▼
-┌──────────────┐  ┌──────────────┐
-│ Model 2:     │  │ Model 3:     │
-│ Face Embedder│  │ Bib OCR      │
-│ (feature     │  │ (digit       │
-│  vectors)    │  │  reader)     │
-└──────┬───────┘  └──────┬───────┘
-       │                 │
-       ▼                 ▼
+           |          |
+           v          v
++--------------+  +--------------+
+| Model 2:     |  | Model 3:     |
+| Face Embedder|  | Bib OCR      |
+| (feature     |  | (digit       |
+|  vectors)    |  |  reader)     |
++------+-------+  +------+-------+
+       |                 |
+       v                 v
   Runner identity   Bib number "1234"
 ```
 
@@ -59,9 +80,113 @@ Event Photo
 The API endpoints remain separate — the combined model detects both, but each endpoint only uses the detections it needs:
 
 ```
-POST /api/v1/face/search  → uses face crops only, ignores bib detections
-POST /api/v1/bib/search   → uses bib crops only, ignores face detections
-POST /api/v1/runner/identify → uses both for complete runner identification
+POST /api/v1/face/search  -> uses face crops only, ignores bib detections
+POST /api/v1/bib/search   -> uses bib crops only, ignores face detections
+POST /api/v1/runner/identify -> uses both for complete runner identification
+```
+
+---
+
+## Auto-Annotation Pipeline
+
+Since manually annotating 1,638 images is impractical, an auto-annotation script was built using pre-trained models already in the project:
+
+### How It Works
+
+```
+For each image:
+  1. InsightFace (RetinaFace buffalo_l) detects faces -> [x1, y1, x2, y2, confidence]
+  2. PaddleOCR detects text regions -> filter for 2+ digit text (bib numbers)
+  3. Expand bib text boxes by 60% to approximate full bib card area
+  4. Merge overlapping bib boxes (IoU > 0.3)
+  5. Convert all boxes to YOLO format -> write .txt label file
+After all images:
+  6. Split 80/20 into train/val (images + labels)
+```
+
+### Speed Optimizations
+
+| Optimization | Before | After |
+|-------------|--------|-------|
+| Resize to 800px before PaddleOCR | ~8 min/image | ~7s/image |
+| Disable text orientation detection | Extra processing | Skipped |
+| BIB_MIN_DIGITS=2 (filter false positives) | "2XU" sock text detected | Eliminated |
+| **Total per image** | **~8 min** | **~9s (53x faster)** |
+
+### Key Parameters
+
+```python
+# Face detection
+FACE_CONFIDENCE_THRESHOLD = 0.5
+
+# Bib detection
+BIB_MIN_DIGITS = 2           # Require at least 2 digits to count as bib
+BIB_BOX_EXPAND_RATIO = 0.6   # Expand text box to approximate full bib card
+BIB_MIN_AREA_RATIO = 0.003   # Min bib area as fraction of image
+BIB_MAX_AREA_RATIO = 0.15    # Max bib area as fraction of image
+BIB_MERGE_IOU_THRESHOLD = 0.3
+
+# OCR resize for speed
+OCR_MAX_DIM = 800
+```
+
+### Preview Results (5 images)
+
+| Metric | Value |
+|--------|-------|
+| Images processed | 5 |
+| Faces detected | 5 (100%) |
+| Bibs detected | 4 (80%) |
+| False positives | 0 |
+| Time per image | ~9s |
+| Estimated full run (1,638 images) | ~4 hours |
+
+### Usage
+
+```bash
+# Preview first N images (no train/val split)
+python scripts/auto_annotate_face_bib.py --preview 5
+
+# Save annotated preview images for visual verification
+python scripts/auto_annotate_face_bib.py --visualize 10
+
+# Run full annotation on all images + split train/val
+python scripts/auto_annotate_face_bib.py
+```
+
+---
+
+## Training Configuration
+
+### Combined Detector (YOLOv8n)
+
+```python
+model = YOLO("yolov8n.pt")  # pretrained COCO weights
+model.train(
+    data="classes.yaml",
+    epochs=100,
+    imgsz=640,
+    batch=8,
+    patience=20,           # early stopping
+    # Augmentation
+    hsv_h=0.015, hsv_s=0.4, hsv_v=0.3,
+    degrees=10.0, translate=0.1, scale=0.3,
+    fliplr=0.5, mosaic=1.0, mixup=0.1,
+)
+```
+
+### Dataset Split
+
+- **Train:** 80% of annotated images
+- **Val:** 20% of annotated images
+- Only images with at least one annotation are included in the split
+- Split is deterministic (seed=42)
+
+### Usage
+
+```bash
+# Train the combined face+bib detector
+python scripts/train_face_bib_detector.py
 ```
 
 ---
@@ -92,16 +217,16 @@ Identify runners in event photos by detecting faces and matching them against re
 
 | Data Type | Description | Status |
 |-----------|-------------|--------|
-| Event photos with face bounding boxes | YOLO-format annotations marking face regions (shared annotation with bib) | **Not Started** |
+| Event photos with face bounding boxes | YOLO-format annotations marking face regions (shared annotation with bib) | **In Progress** — 1,638 images collected, auto-annotation script ready |
 | Face identity labels | Group cropped faces by runner identity for embedding training | **Not Started** |
 | Reference photos | Clean front-facing photos for matching baseline | **Not Started** |
 
 ### Training Pipeline
 
 ```
-1. Collect event photos (same images used for both face and bib annotation)
-2. Annotate face bounding boxes (YOLO format) alongside bib annotations
-3. Train combined face+bib detection model (YOLOv8n, 2 classes)
+1. Collect event photos (same images used for both face and bib annotation)     [DONE]
+2. Auto-annotate face bounding boxes using InsightFace (RetinaFace)             [READY]
+3. Train combined face+bib detection model (YOLOv8n, 2 classes)                 [READY]
 4. Crop detected faces from training images
 5. Train/fine-tune face embedding model on cropped faces with identity labels
 6. Build matching pipeline (cosine similarity, set threshold)
@@ -112,7 +237,7 @@ Identify runners in event photos by detecting faces and matching them against re
 
 - `POST /api/v1/face/search` — detect faces in an image and match against reference database
 - `POST /api/v1/face/search/batch` — batch processing for multiple images
-- Integrates with the existing EventAI API architecture (`api/` → `services/` → `ml/`)
+- Integrates with the existing EventAI API architecture (`api/` -> `services/` -> `ml/`)
 
 ### Accuracy Targets
 
@@ -148,20 +273,20 @@ Automatically read race bib numbers from event photos. This enables instant phot
 
 | Data Type | Description | Status |
 |-----------|-------------|--------|
-| Event photos with bib bounding boxes | YOLO-format annotations marking bib regions (shared annotation with face) | **Not Started** |
+| Event photos with bib bounding boxes | YOLO-format annotations marking bib regions (shared annotation with face) | **In Progress** — 1,638 images collected, auto-annotation script ready |
 | Bib number ground truth | Correct text/number for each annotated bib | **Not Started** |
 | Varied bib designs | Samples from different race events and bib styles | **Not Started** |
 
 ### Training Pipeline
 
 ```
-1. Collect event photos (same images used for both face and bib annotation)
-2. Annotate bib bounding boxes (YOLO format) alongside face annotations
-3. Train combined face+bib detection model (YOLOv8n, 2 classes)
+1. Collect event photos (same images used for both face and bib annotation)     [DONE]
+2. Auto-annotate bib bounding boxes using PaddleOCR text detection              [READY]
+3. Train combined face+bib detection model (YOLOv8n, 2 classes)                 [READY]
 4. Crop detected bibs from training images
 5. Label cropped bibs with ground truth numbers
 6. Train/fine-tune OCR model on cropped bibs
-7. Build end-to-end pipeline (detect bib → crop → OCR → output number)
+7. Build end-to-end pipeline (detect bib -> crop -> OCR -> output number)
 8. Export both models to ONNX for production inference
 ```
 
@@ -169,7 +294,7 @@ Automatically read race bib numbers from event photos. This enables instant phot
 
 - `POST /api/v1/bib/search` — detect and read bib numbers from an image
 - `POST /api/v1/bib/search/batch` — batch processing for multiple images
-- Integrates with the existing EventAI API architecture (`api/` → `services/` → `ml/`)
+- Integrates with the existing EventAI API architecture (`api/` -> `services/` -> `ml/`)
 
 ### Accuracy Targets
 
@@ -180,7 +305,7 @@ Automatically read race bib numbers from event photos. This enables instant phot
 
 ---
 
-## Annotation Workflow
+## Annotation Format
 
 Since both phases share the same training images, annotation is done **once per image** with two label classes:
 
@@ -194,33 +319,62 @@ Since both phases share the same training images, annotation is done **once per 
 # 0: face
 # 1: bib
 
-# Example annotation for one image:
-0 0.45 0.25 0.08 0.10    # face bounding box
-1 0.50 0.55 0.12 0.15    # bib bounding box
+# Example annotation (IMG_0001.txt):
+0 0.587522 0.402113 0.074585 0.058900    # face 1
+0 0.365422 0.317864 0.094773 0.073658    # face 2
+0 0.925610 0.406801 0.064587 0.056858    # face 3
+1 0.337500 0.531250 0.231000 0.110000    # bib
 ```
 
-### Annotation Tools
+### Annotation Method
 
-Any YOLO-compatible annotation tool works:
-- **CVAT** (free, web-based)
-- **Roboflow** (free tier available, auto-export to YOLO format)
-- **LabelImg** (free, desktop)
-- **Label Studio** (free, self-hosted)
+Auto-annotation using pre-trained models (no manual labeling needed):
+
+| Detector | Model | What It Finds |
+|----------|-------|---------------|
+| InsightFace (RetinaFace) | `buffalo_l` | Face bounding boxes |
+| PaddleOCR | PP-OCRv5 | Text regions containing 2+ digits (bib numbers) |
 
 ---
 
 ## File Reference
 
+### Scripts
+
+| File | Purpose | Status |
+|------|---------|--------|
+| `scripts/auto_annotate_face_bib.py` | Auto-annotate images using InsightFace + PaddleOCR | **Ready** |
+| `scripts/train_face_bib_detector.py` | Train YOLOv8n combined face+bib detector | **Ready** |
+| `scripts/export_face_bib_detector.py` | Export trained model to ONNX | **Not yet written** |
+
 ### Related Docs
 
 | File | Purpose |
 |------|---------|
-| [phase-plan-for-blur-detection-training.md](phase-plan-for-blur-detection-training.md) | Blur detection training plan (Phases 1-5) |
+| [phase-plan-for-blur-detection-training.md](phase-plan-for-blur-detection-training.md) | Blur detection training plan (Phases 1-5, complete) |
+
+### Dataset Location
+
+```
+ai-api/Training-Images/
+  face_bib_detection/
+    images/
+      train/                           <- 1,638 training images (collected)
+      val/                             <- validation images (created during annotation split)
+    labels/
+      train/                           <- YOLO annotation .txt files (generated by auto-annotation)
+      val/                             <- YOLO annotation .txt files (generated by auto-annotation)
+    classes.yaml                       <- class definitions (face=0, bib=1)
+    annotation_preview/                <- visual verification samples (generated with --visualize)
+  face_embeddings/                     <- cropped faces grouped by identity (future)
+  bib_ocr/                            <- cropped bibs with ground truth labels (future)
+```
 
 ### Artifacts (Future)
 
 | File | Purpose |
 |------|---------|
+| `runs/detect/face_bib_det/weights/best.pt` | Best trained model weights |
 | `models/face_bib_detector/face_bib_detector.onnx` | Combined face+bib detection ONNX model |
 | `models/face_bib_detector/class_names.json` | Class label mapping (`face`, `bib`) |
 | `models/face_embedder/face_embedder.onnx` | Face embedding ONNX model |
@@ -238,23 +392,17 @@ Any YOLO-compatible annotation tool works:
 | `src/api/v1/face.py` | Face search API endpoints |
 | `src/api/v1/bib.py` | Bib search API endpoints |
 
-### Dataset Location (Future)
+---
 
-```
-ai-api/Training-Images/
-  face_bib_detection/                  <- event photos for combined detection training
-    images/
-      train/                           <- training images
-      val/                             <- validation images
-    labels/
-      train/                           <- YOLO annotation .txt files
-      val/                             <- YOLO annotation .txt files
-    classes.yaml                       <- class definitions (face, bib)
-  face_embeddings/                     <- cropped faces grouped by identity
-    runner_001/
-    runner_002/
-    ...
-  bib_ocr/                            <- cropped bibs with ground truth labels
-    images/
-    labels.csv                         <- image_filename, bib_number
+## How to Run (Quick Reference)
+
+```bash
+# 1. Preview auto-annotation on 5 images (verify quality)
+python scripts/auto_annotate_face_bib.py --preview 5 --visualize 5
+
+# 2. Run full auto-annotation on all 1,638 images
+python scripts/auto_annotate_face_bib.py --visualize 20
+
+# 3. Train the combined face+bib detector
+python scripts/train_face_bib_detector.py
 ```
