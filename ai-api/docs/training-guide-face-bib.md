@@ -199,23 +199,32 @@ results[0].show()   # opens a window with bounding boxes drawn
 print(results[0].boxes)  # prints detected boxes with class + confidence
 ```
 
-### What to share back
+### What to send back after training
 
-Send these files back to the team:
+Send these files back to the team lead:
 
-1. **`runs/detect/face_bib_det/weights/best.pt`** — the trained model (required)
-2. **`runs/detect/face_bib_det/results.png`** — training curves (for review)
-3. **`runs/detect/face_bib_det/results.csv`** — training metrics (for review)
+**Required (must send):**
 
-### Next step after training
+| File | Why |
+|------|-----|
+| `runs/detect/face_bib_det/weights/best.pt` | The trained model — this is the main deliverable (~6-12MB) |
 
-The trained `best.pt` needs to be exported to ONNX format for production use:
+**Nice to have (for reviewing training quality):**
 
-```bash
-python scripts/export_face_bib_detector.py
-```
+| File | Why |
+|------|-----|
+| `runs/detect/face_bib_det/results.png` | Training loss/metric curves — shows if training converged |
+| `runs/detect/face_bib_det/results.csv` | Per-epoch numbers — detailed training history |
+| `runs/detect/face_bib_det/confusion_matrix.png` | Shows how well the model distinguishes face vs bib |
 
-> This export script will be written after training is verified.
+### What happens after you send `best.pt` back
+
+You don't need to do anything else. The team lead will:
+
+1. **Export `best.pt` to ONNX** — lightweight, runs on any machine (no GPU needed)
+2. **Place the ONNX model** in the production `models/` folder
+3. **Wire it into the API** — connect the model to the face search and bib search endpoints
+4. **Future:** come back to you for training the face embedding model and bib OCR model (separate phase, separate dataset)
 
 ---
 
