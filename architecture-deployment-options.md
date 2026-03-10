@@ -25,7 +25,7 @@ A platform for running event photographers to upload photos and for runners to f
 | **Desktop App** | — | Calls AI API directly |
 | **Database** | PostgreSQL 16 + pgvector | Same VPS (Docker) |
 | **Cache / Queue** | Redis | Same VPS (Docker) |
-| **Photo Storage** | Cloudflare R2 | Cloudflare (free tier — 10GB, zero egress) |
+| **Photo Storage** | Cloudflare R2 or DigitalOcean | Cloudflare (free tier — 10GB, zero egress) |
 | **Reverse Proxy** | Nginx | Same VPS |
 | **SSL** | Let's Encrypt | Free, auto-renew |
 
@@ -36,8 +36,8 @@ A platform for running event photographers to upload photos and for runners to f
 | Model | Status | Purpose |
 |-------|--------|---------|
 | Blur Detection (Laplacian + CNN) | Completed | Filter out blurry photos before storage |
-| Face Recognition (InsightFace) | Completed | Runners search photos by selfie |
-| Bib Number OCR (PaddleOCR) | Completed | Runners search photos by bib number |
+| Face Recognition (InsightFace) | Training paused | Runners search photos by selfie |
+| Bib Number OCR (PaddleOCR) | Training paused | Runners search photos by bib number |
 | Face + Bib Detector (YOLOv8) | Training paused | Improved detection accuracy |
 
 ---
@@ -59,8 +59,8 @@ A platform for running event photographers to upload photos and for runners to f
 |------|-------|------|
 | VPS | **Contabo Cloud VPS M — Singapore** (6 vCPU, 16GB RAM, 400GB SSD) | ~$13/mo |
 | Website | **Vercel** | Free |
-| Photo storage | **Cloudflare R2** | Free (up to 10GB, zero egress fees) |
-| Domain | Any registrar | ~$10/year |
+| Photo storage | **Cloudflare R2 or DigitalOcean** | Free (up to 10GB, zero egress fees) |
+| Domain | Any registrar or GoDaddy | ~$10/year |
 | SSL | Let's Encrypt | Free |
 | Play Store | Google Play Console | $25 one-time |
 | **Total recurring** | | **~$13/mo** |
