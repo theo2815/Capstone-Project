@@ -88,11 +88,6 @@ def augment_image(img: np.ndarray, rng: random.Random) -> np.ndarray:
         ).astype(np.float32)
         result = np.clip(result.astype(np.float32) + noise, 0, 255).astype(np.uint8)
 
-    # 6. Gaussian blur (20%) — slight, not heavy
-    if rng.random() < 0.2:
-        ksize = rng.choice([3, 5])
-        result = cv2.GaussianBlur(result, (ksize, ksize), 0)
-
     return result
 
 

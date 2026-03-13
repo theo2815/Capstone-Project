@@ -31,8 +31,8 @@
 | 3 | Optimize annotation speed | **Done** | Resize to 800px before OCR: ~9s/image (down from ~8min) |
 | 4 | Preview and verify annotations | **Done** | 5-image preview: 100% face detection, 80% bib detection, no false positives |
 | 5 | Run full auto-annotation (1,638 images) | **Done** | 1,638 images processed, 5,179 annotations (3,316 faces + 1,863 bibs), split 1,315 train / 323 val |
-| 6 | Train combined YOLOv8n detector | **Not Started** | `scripts/train_face_bib_detector.py` ready |
-| 7 | Export to ONNX | **Not Started** | Export script to be written after training |
+| 6 | Train combined YOLOv8n detector | **Not Started** | `scripts/train_face_bib_detector.py` ready, all pre-training fixes applied |
+| 7 | Export to ONNX | **Ready** | `scripts/export_face_bib_detector.py` written and validated |
 | 8 | Train/fine-tune face embedding model | **Not Started** | Requires face crops from trained detector |
 | 9 | Train/fine-tune bib OCR model | **Not Started** | Requires bib crops from trained detector |
 
@@ -122,7 +122,7 @@ After all images:
 FACE_CONFIDENCE_THRESHOLD = 0.5
 
 # Bib detection
-BIB_MIN_DIGITS = 2           # Require at least 2 digits to count as bib
+BIB_MIN_DIGITS = 2           # Require at least 2 digits to count as bib (matches BIB_MIN_CHARS config)
 BIB_BOX_EXPAND_RATIO = 0.6   # Expand text box to approximate full bib card
 BIB_MIN_AREA_RATIO = 0.003   # Min bib area as fraction of image
 BIB_MAX_AREA_RATIO = 0.15    # Max bib area as fraction of image
@@ -289,7 +289,7 @@ Automatically read race bib numbers from event photos. This enables instant phot
 - **Occlusion:** Bibs may be partially covered by arms, hydration belts, or other runners
 - **Angles and distance:** Bibs shot from various angles, distances, and with motion blur
 - **Multiple bibs per image:** Group shots may contain several visible bib numbers
-- **Number formats:** Pure digits, alphanumeric, or with prefixes (e.g., "A-1234", "F502")
+- **Number formats:** Pure digits, alphanumeric, or with prefixes (e.g., "A-1234", "F502"). The bib character filter supports alphanumeric characters, hyphens (`-`), and underscores (`_`).
 
 ### Dataset Requirements
 
@@ -367,7 +367,7 @@ Auto-annotation using pre-trained models (no manual labeling needed):
 |------|---------|--------|
 | `scripts/auto_annotate_face_bib.py` | Auto-annotate images using InsightFace + PaddleOCR | **Ready** |
 | `scripts/train_face_bib_detector.py` | Train YOLOv8n combined face+bib detector | **Ready** |
-| `scripts/export_face_bib_detector.py` | Export trained model to ONNX | **Not yet written** |
+| `scripts/export_face_bib_detector.py` | Export trained model to ONNX | **Ready** |
 
 ### Related Docs
 
@@ -427,4 +427,7 @@ python scripts/auto_annotate_face_bib.py --visualize 20
 
 # 3. Train the combined face+bib detector
 python scripts/train_face_bib_detector.py
+
+# 4. Export trained model to ONNX for production
+python scripts/export_face_bib_detector.py
 ```

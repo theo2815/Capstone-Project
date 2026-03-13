@@ -275,7 +275,9 @@ ai-api/
 │   ├── export_blur_classifier.py # Exports trained blur model to ONNX.
 │   ├── auto_annotate_face_bib.py # Auto-annotates images using InsightFace +
 │   │                           # PaddleOCR for face+bib detection training.
-│   └── train_face_bib_detector.py # Trains YOLOv8n combined face+bib detector.
+│   ├── train_face_bib_detector.py # Trains YOLOv8n combined face+bib detector.
+│   └── export_face_bib_detector.py # Exports trained face+bib model to ONNX
+│                               # at models/bib_detection/yolov8n_bib.onnx.
 │
 │
 └── docs/                       # === DOCUMENTATION (you are here) ===

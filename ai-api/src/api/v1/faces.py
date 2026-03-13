@@ -22,6 +22,9 @@ from src.schemas.faces import (
 )
 from src.schemas.jobs import JobCreateResponse
 from src.utils.image_utils import get_image_dimensions, validate_and_decode
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/faces", tags=["Face Recognition"])
 
@@ -120,15 +123,40 @@ async def enroll_face(
             person = await repo.create_person(name=person_name)
             pid = person.id
 
+        min_conf = settings.FACE_MIN_ENROLLMENT_CONFIDENCE
         stored = 0
+        skipped = 0
         for face in faces:
+            conf = face["bbox"]["confidence"]
+            if conf < min_conf:
+                skipped += 1
+                logger.warning(
+                    "Skipping low-confidence face during enrollment",
+                    confidence=conf,
+                    threshold=min_conf,
+                    person_id=str(pid),
+                )
+                continue
             await repo.store_embedding(
                 person_id=pid,
                 embedding=face["embedding"],
                 source_image_hash=image_hash,
-                quality_score=face["bbox"]["confidence"],
+                quality_score=conf,
             )
             stored += 1
+
+        if stored == 0:
+            return APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={
+                    "code": "LOW_QUALITY",
+                    "message": (
+                        f"All {len(faces)} detected face(s) were below the minimum "
+                        f"enrollment confidence of {min_conf}"
+                    ),
+                },
+            )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         data = FaceEnrollResponse(

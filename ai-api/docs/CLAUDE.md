@@ -183,8 +183,8 @@ Do not add new dependencies without justification. Prefer existing libraries ove
 
 Two systems coexist:
 
-1. **Laplacian-based detector** (`src/ml/blur/detector.py`): Simple threshold-based blur detection using Laplacian variance. Always available.
-2. **YOLOv8n-cls classifier** (`src/ml/blur/classifier.py`): 4-class CNN classifier (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Requires trained ONNX model at `models/blur_classifier/blur_classifier.onnx`. Optional — loads only if model file exists.
+1. **Laplacian-based detector** (`src/ml/blur/detector.py`): Fast coarse blur gate using Laplacian variance and FFT spectral analysis. Suitable for obvious blur; cannot distinguish blur types or detect spatially-varying blur. Always available.
+2. **YOLOv8n-cls classifier** (`src/ml/blur/classifier.py`): 4-class CNN classifier (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Supports GPU via `USE_GPU` config. Targeted detection enforces a minimum confidence floor (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). Requires trained ONNX model at `models/blur_classifier/blur_classifier.onnx`. Optional — loads only if model file exists.
 
 API endpoints:
 - `POST /api/v1/blur/detect` — Laplacian-based (always available)
@@ -197,7 +197,7 @@ API endpoints:
 Pipeline: InsightFace (RetinaFace detection + ArcFace embedding) → pgvector cosine similarity search.
 
 - `POST /api/v1/faces/detect` — Detect faces, return count and bounding boxes
-- `POST /api/v1/faces/enroll` — Detect face, store embedding in DB with person name
+- `POST /api/v1/faces/enroll` — Detect face, store embedding in DB with person name. Faces below `FACE_MIN_ENROLLMENT_CONFIDENCE` (default 0.7) are skipped; returns `LOW_QUALITY` error if all faces are below threshold.
 - `POST /api/v1/faces/search` — Detect face, search DB for matches (cosine similarity)
 - `POST /api/v1/faces/compare` — Compare two face images directly
 - `DELETE /api/v1/faces/persons/{id}` — Remove person and their embeddings
@@ -205,7 +205,7 @@ Pipeline: InsightFace (RetinaFace detection + ArcFace embedding) → pgvector co
 
 ### Bib Number Recognition
 
-Pipeline: PaddleOCR (PP-OCRv5) on full image. Future: YOLO bib detection → crop → OCR.
+Pipeline: PaddleOCR (PP-OCRv5) on full image. Future: YOLO bib detection → crop → OCR. Bib text is cleaned via regex `[A-Za-z0-9\-_]` to support alphanumeric bibs with hyphens and underscores. Minimum character count configurable via `BIB_MIN_CHARS` (default 2).
 
 - `POST /api/v1/bibs/recognize` — Detect and read bib numbers
 - `POST /api/v1/bibs/recognize/batch` — Batch recognition via Celery
@@ -248,6 +248,23 @@ pytest tests/test_blur_classifier.py -v
 ```
 
 Training images live in `Training-Images/` (gitignored). Model artifacts live in `models/blur_classifier/` (gitignored except `manifest.json`). See `docs/phase-plan-for-blur-detection-training.md` for the full training plan, dataset details, blur detection logic rules, and accuracy targets.
+
+## Face+Bib Detector Training Pipeline
+
+Training the combined YOLOv8n face+bib detector follows this workflow:
+
+```bash
+# 1. Auto-annotate images using InsightFace + PaddleOCR
+python scripts/auto_annotate_face_bib.py
+
+# 2. Train the combined face+bib detector
+python scripts/train_face_bib_detector.py
+
+# 3. Export to ONNX for production inference
+python scripts/export_face_bib_detector.py
+```
+
+Training images and annotations live in `Training-Images/face_bib_detection/`. See `docs/phase-plan-face-bibnumber-training.md` for the full training plan, dataset details, and accuracy targets.
 
 ## Infrastructure Requirements
 

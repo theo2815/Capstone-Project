@@ -63,6 +63,8 @@ def load_models_on_worker_start(**kwargs):
         _blur_classifier = BlurClassifier(
             model_path=f"{settings.MODEL_DIR}/blur_classifier/blur_classifier.onnx",
             class_names_path=f"{settings.MODEL_DIR}/blur_classifier/class_names.json",
+            use_gpu=settings.USE_GPU,
+            min_detection_confidence=settings.BLUR_DETECTION_MIN_CONFIDENCE,
         )
         if _blur_classifier.session is not None:
             logger.info("Worker: blur classifier loaded")
@@ -100,7 +102,7 @@ def load_models_on_worker_start(**kwargs):
     try:
         from src.ml.bibs.recognizer import BibRecognizer
 
-        _bib_recognizer = BibRecognizer(use_gpu=settings.USE_GPU)
+        _bib_recognizer = BibRecognizer(use_gpu=settings.USE_GPU, min_chars=settings.BIB_MIN_CHARS)
         logger.info("Worker: bib recognizer loaded")
     except Exception as e:
         logger.error("Worker: failed to load bib recognizer", error=str(e))

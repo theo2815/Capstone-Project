@@ -13,7 +13,17 @@ except ImportError:
 
 
 class BlurDetector:
-    """Detect image blur using Laplacian variance and FFT spectral analysis."""
+    """Fast coarse blur gate using Laplacian variance and FFT spectral analysis.
+
+    This detector provides a binary is-blurry/is-sharp signal based on global
+    frequency content. It works well for uniformly blurred images but cannot
+    distinguish blur *types* (portrait defocus vs motion blur) or detect
+    spatially varying blur (e.g., sharp torso with blurred limbs).
+
+    For fine-grained blur categorisation, use BlurClassifier (CNN) which
+    classifies into: sharp, defocused_object_portrait, defocused_blurred,
+    motion_blurred.
+    """
 
     def __init__(self, laplacian_threshold: float = 100.0) -> None:
         self.laplacian_threshold = laplacian_threshold

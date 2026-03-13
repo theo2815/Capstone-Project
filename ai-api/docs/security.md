@@ -102,6 +102,14 @@ Every uploaded image goes through multiple checks before any processing:
 | Dimensions | Min 32px, Max 4096px per side | Too small = useless. Too large = memory bomb. |
 | EXIF stripping | Decoded via OpenCV (ignores EXIF) | Privacy: EXIF may contain GPS coordinates, device info |
 
+### Face Enrollment Quality Gate
+
+Face enrollment enforces a minimum detection confidence (`FACE_MIN_ENROLLMENT_CONFIDENCE`, default 0.7). Faces detected with confidence below this threshold are skipped to prevent low-quality embeddings from degrading search accuracy. If all detected faces are below the threshold, enrollment returns `LOW_QUALITY` error.
+
+### Bib Number Validation
+
+Bib text is cleaned using a strict character filter (`[A-Za-z0-9\-_]`) that preserves only alphanumeric characters, hyphens, and underscores. Leading and trailing `-` or `_` are stripped. A minimum character count (`BIB_MIN_CHARS`, default 2) ensures noise is rejected.
+
 ### What happens on failure
 
 ```json

@@ -153,6 +153,9 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `USE_GPU` | `false` | Enable GPU inference |
 | `BLUR_THRESHOLD` | `100.0` | Default Laplacian variance threshold |
 | `FACE_SIMILARITY_THRESHOLD` | `0.4` | Minimum cosine similarity for face match |
+| `FACE_MIN_ENROLLMENT_CONFIDENCE` | `0.7` | Minimum face detection confidence for enrollment |
+| `BLUR_DETECTION_MIN_CONFIDENCE` | `0.5` | Minimum confidence for targeted blur type detection |
+| `BIB_MIN_CHARS` | `2` | Minimum digit count for valid bib number |
 | `MAX_FILE_SIZE` | `10485760` | Maximum upload size in bytes (10MB) |
 | `ALLOWED_ORIGINS` | `["http://localhost:3000","http://localhost:5173"]` | CORS allowed origins |
 | `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
