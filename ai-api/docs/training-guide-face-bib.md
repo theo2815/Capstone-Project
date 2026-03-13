@@ -207,8 +207,8 @@ Send these files back to the team lead:
 
 You don't need to do anything else. The team lead will:
 
-1. **Export `best.pt` to ONNX** — lightweight, runs on any machine (no GPU needed)
-2. **Place the ONNX model** in the production `models/` folder
+1. **Export `best.pt` to ONNX** — run `python scripts/export_face_bib_detector.py` (script is ready)
+2. **Place the ONNX model** in the production `models/bib_detection/` folder (export script handles this automatically)
 3. **Wire it into the API** — connect the model to the face search and bib search endpoints
 4. **Future:** come back to you for training the face embedding model and bib OCR model (separate phase, separate dataset)
 
@@ -286,6 +286,7 @@ This dataset was auto-annotated using InsightFace (RetinaFace) for faces and Pad
 | File | Purpose |
 |------|---------|
 | `scripts/train_face_bib_detector.py` | Training script (run this) |
+| `scripts/export_face_bib_detector.py` | ONNX export script (run after training) |
 | `scripts/auto_annotate_face_bib.py` | Auto-annotation script (already run, not needed unless re-annotating) |
 | `Training-Images/face_bib_detection/classes.yaml` | Dataset class definitions |
 | `docs/phase-plan-face-bibnumber-training.md` | Full training plan and architecture details |

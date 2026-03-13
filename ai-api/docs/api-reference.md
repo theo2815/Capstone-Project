@@ -247,6 +247,8 @@ Detect faces in an image. Returns bounding boxes and landmarks.
 
 Register a person's face in the database. Detects faces, extracts embeddings, and stores them.
 
+Faces below the minimum enrollment confidence (`FACE_MIN_ENROLLMENT_CONFIDENCE`, default 0.7) are skipped to prevent low-quality embeddings from degrading search accuracy.
+
 **Request:**
 - `file` (required): Image file containing the person's face
 - `person_name` (required, form field): Name of the person
@@ -270,6 +272,17 @@ curl -X POST http://localhost:8000/api/v1/faces/enroll \
     "faces_enrolled": 1,
     "embeddings_stored": 1,
     "processing_time_ms": 120.5
+  }
+}
+```
+
+**Error — Low Quality (200, success: false):**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "LOW_QUALITY",
+    "message": "All 1 detected face(s) were below the minimum enrollment confidence of 0.7"
   }
 }
 ```

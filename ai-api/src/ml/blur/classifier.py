@@ -18,15 +18,21 @@ class BlurClassifier:
     Falls back gracefully if the model file is not found.
     """
 
+    DEFAULT_MIN_DETECTION_CONFIDENCE = 0.5
+
     def __init__(
         self,
         model_path: str = "./models/blur_classifier/blur_classifier.onnx",
         class_names_path: str = "./models/blur_classifier/class_names.json",
         input_size: int = 224,
+        use_gpu: bool = False,
+        min_detection_confidence: float = DEFAULT_MIN_DETECTION_CONFIDENCE,
     ) -> None:
         self.model_path = model_path
         self.class_names_path = class_names_path
         self.input_size = input_size
+        self.use_gpu = use_gpu
+        self.min_detection_confidence = min_detection_confidence
         self.session = None
         self.class_names: list[str] = []
         self._load_model()
@@ -50,9 +56,14 @@ class BlurClassifier:
                 )
                 return
 
+            providers = (
+                ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                if self.use_gpu
+                else ["CPUExecutionProvider"]
+            )
             self.session = ort.InferenceSession(
                 self.model_path,
-                providers=["CPUExecutionProvider"],
+                providers=providers,
             )
 
             # Load class names from file (overrides defaults)
@@ -157,7 +168,10 @@ class BlurClassifier:
         confidence = result["confidence"]
         blur_type_probability = result["probabilities"].get(blur_type, 0.0)
 
-        detected = predicted_class == blur_type
+        detected = (
+            predicted_class == blur_type
+            and confidence >= self.min_detection_confidence
+        )
 
         return {
             "detected": detected,

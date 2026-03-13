@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import re
 import shutil
 import sys
 import time
@@ -27,6 +28,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+
+_BIB_CHAR_RE = re.compile(r"[A-Za-z0-9\-_]")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -170,11 +173,12 @@ def detect_bibs_paddleocr(ocr, image: np.ndarray) -> list[list[float]]:
     if not dt_polys:
         return []
 
-    # Find text boxes containing digits (likely bib numbers)
+    # Find text boxes containing bib-like text (digits, optionally with letters/hyphens)
     digit_boxes = []
     for poly, text, score in zip(dt_polys, rec_texts, rec_scores):
-        numeric_text = "".join(c for c in str(text) if c.isdigit())
-        if len(numeric_text) < BIB_MIN_DIGITS:
+        cleaned = "".join(_BIB_CHAR_RE.findall(str(text))).strip("-_")
+        digit_count = sum(c.isdigit() for c in cleaned)
+        if digit_count < BIB_MIN_DIGITS:
             continue
 
         poly = np.array(poly)
@@ -184,7 +188,7 @@ def detect_bibs_paddleocr(ocr, image: np.ndarray) -> list[list[float]]:
         x2 = float(poly[:, 0].max()) / scale
         y2 = float(poly[:, 1].max()) / scale
 
-        digit_boxes.append([x1, y1, x2, y2, float(score), numeric_text])
+        digit_boxes.append([x1, y1, x2, y2, float(score), cleaned])
 
     if not digit_boxes:
         return []

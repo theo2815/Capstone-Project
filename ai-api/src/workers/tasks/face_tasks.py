@@ -56,8 +56,11 @@ def face_process_batch(self, job_id: str, image_data_list: list[str], operation:
 
 def _search_single(image, embedder) -> dict:
     """Detect faces, extract embeddings, and search the database."""
+    from src.config import get_settings
     from src.db.repositories.sync_face_repo import SyncFaceRepository
     from src.db.sync_session import get_sync_session
+
+    settings = get_settings()
 
     faces = embedder.get_embeddings(image)
     if not faces:
@@ -69,7 +72,7 @@ def _search_single(image, embedder) -> dict:
         for face in faces:
             results = repo.search_similar(
                 query_embedding=face["embedding"],
-                threshold=0.4,
+                threshold=settings.FACE_SIMILARITY_THRESHOLD,
                 top_k=10,
             )
             for r in results:

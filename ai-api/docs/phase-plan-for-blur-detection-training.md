@@ -470,21 +470,24 @@ The complete AI system is production-ready **only** when all three modules meet 
 | Module | Accuracy Target | Current Status | Blocking Full Deployment? |
 |--------|----------------|----------------|--------------------------|
 | **Blur Detection** | 98%+ per blur type, 100% sharp accuracy | **98.68% — MET** | No |
-| **Face Search** | Reliable detection + accurate matching | **Not trained** | **Yes** |
-| **Bib Search** | Accurate detection + high OCR accuracy | **Not trained** | **Yes** |
+| **Face Search** | Reliable detection + accurate matching | **Auto-annotation done, pre-training fixes applied, ready to train** | **Yes** |
+| **Bib Search** | Accurate detection + high OCR accuracy | **Auto-annotation done, pre-training fixes applied, ready to train** | **Yes** |
 
 ### Path to Full Production
 
 ```
 Current state:
   [x] Blur Detection — trained, exported, ready for staging
-  [ ] Face Search — awaiting dataset collection and annotation
-  [ ] Bib Search — awaiting dataset collection and annotation
+  [x] Face+Bib — auto-annotation complete (3,316 faces + 1,863 bibs)
+  [x] Pre-training fixes — bib character filter, face confidence gate, export script
+  [ ] Face+Bib — combined detector training (next step)
+  [ ] Face Search — embedding fine-tuning (after detector training)
+  [ ] Bib Search — OCR fine-tuning (after detector training)
 
 Next milestones:
   1. Deploy blur detection to staging → production (can happen now)
-  2. Collect and annotate face+bib training images
-  3. Train combined face+bib detection model
+  2. Train combined face+bib detection model (scripts ready)
+  3. Export trained model to ONNX (export script ready)
   4. Train face embedding model
   5. Train bib OCR model
   6. Integration test all three modules together

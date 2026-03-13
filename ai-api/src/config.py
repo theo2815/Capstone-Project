@@ -31,10 +31,15 @@ class Settings(BaseSettings):
 
     # Blur Detection
     BLUR_THRESHOLD: float = 100.0
+    BLUR_DETECTION_MIN_CONFIDENCE: float = 0.5
 
     # Face Recognition
     FACE_SIMILARITY_THRESHOLD: float = 0.4
     FACE_DET_SIZE: int = 640
+    FACE_MIN_ENROLLMENT_CONFIDENCE: float = 0.7
+
+    # Bib Recognition
+    BIB_MIN_CHARS: int = 2
 
     # Auth
     API_KEY_HEADER: str = "X-API-Key"

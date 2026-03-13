@@ -130,7 +130,7 @@ Goal: Object detection + OCR pipeline.
 - [x] Verify OCR on synthetic number images (42 → 99.98%, 1234 → 98.07%)
 - [x] Write unit tests for BibRecognizer (12 tests)
 - [x] Write integration tests for POST /api/v1/bibs/recognize (12 tests)
-- [ ] Train custom YOLOv8n face+bib detector (dataset annotated — see [phase-plan-face-bibnumber-training.md](phase-plan-face-bibnumber-training.md))
+- [ ] Train custom YOLOv8n face+bib detector (dataset annotated, pre-training fixes applied, export script ready — see [phase-plan-face-bibnumber-training.md](phase-plan-face-bibnumber-training.md))
 
 **Test results:**
 - Number "1234" on image → `bib_number: "1234"`, confidence > 0.98 ✓

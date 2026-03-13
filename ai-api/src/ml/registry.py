@@ -85,7 +85,7 @@ class ModelRegistry:
     def _load_bib_ocr(self, settings: Any) -> Any:
         from src.ml.bibs.recognizer import BibRecognizer
 
-        return BibRecognizer(use_gpu=settings.USE_GPU)
+        return BibRecognizer(use_gpu=settings.USE_GPU, min_chars=settings.BIB_MIN_CHARS)
 
     def _load_blur_classifier(self, settings: Any) -> Any:
         from src.ml.blur.classifier import BlurClassifier
@@ -93,4 +93,6 @@ class ModelRegistry:
         return BlurClassifier(
             model_path=f"{settings.MODEL_DIR}/blur_classifier/blur_classifier.onnx",
             class_names_path=f"{settings.MODEL_DIR}/blur_classifier/class_names.json",
+            use_gpu=settings.USE_GPU,
+            min_detection_confidence=settings.BLUR_DETECTION_MIN_CONFIDENCE,
         )
