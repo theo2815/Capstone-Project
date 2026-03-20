@@ -14,7 +14,12 @@ from pathlib import Path
 from ultralytics import YOLO
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-BEST_PT = PROJECT_ROOT / "runs" / "detect" / "face_bib_det" / "weights" / "best.pt"
+# Ultralytics nests output under runs/detect/{project}/  -- the training script
+# uses project="runs/detect", name="face_bib_det", so the weights end up two
+# levels deep.  Check the nested path first, fall back to the flat one.
+_NESTED = PROJECT_ROOT / "runs" / "detect" / "detect" / "face_bib_det" / "weights" / "best.pt"
+_FLAT = PROJECT_ROOT / "runs" / "detect" / "face_bib_det" / "weights" / "best.pt"
+BEST_PT = _NESTED if _NESTED.exists() else _FLAT
 MODEL_DIR = PROJECT_ROOT / "models" / "bib_detection"
 ONNX_DEST = MODEL_DIR / "yolov8n_bib.onnx"
 

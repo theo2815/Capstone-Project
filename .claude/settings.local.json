@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import insightface; import paddleocr; print\\(''''deps ok''''\\)\")",
+      "Bash(python scripts/auto_annotate_face_bib.py --visualize 50)",
+      "Bash(taskkill /F /FI \"WINDOWTITLE eq *auto_annotate*\")",
+      "Bash(python -c \":*)",
+      "Bash(taskkill /F /PID 3248)",
+      "Bash(cmd /c \"taskkill /F /PID 3248\" 2>&1)",
+      "Bash(cmd /c \"taskkill /F /PID 3248 2>&1\")",
+      "Bash(python:*)",
+      "Bash(find 'C:/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project/ai-api/runs' -name results.csv -o -name results.png -o -name *.csv)",
+      "Bash(grep -v \"^Ultralytics\\\\|^WARNING\\\\|^Model\\\\|^val:\\\\|Fusing\\\\|Speed\\\\|Results\\\\|^$\\\\| 0 \")",
+      "Bash(grep -v \"^\\\\s*$\")"
+    ]
+  }
+}

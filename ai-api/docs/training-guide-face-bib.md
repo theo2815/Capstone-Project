@@ -14,7 +14,7 @@ This guide covers how to set up and train the combined **face + bib number detec
 
 ### Software
 
-- **Python 3.11 or 3.12** (required)
+- **Python 3.11 – 3.14** (required; team uses 3.14.2)
 - **Git** (to clone the repo)
 - **NVIDIA GPU drivers + CUDA 12.1** (if using GPU)
 
@@ -35,16 +35,17 @@ cd api-ai/ai-api
 
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-pip install ultralytics
+pip install ultralytics pillow-heif
 ```
 
 **CPU only (slower, not recommended for full training):**
 
 ```bash
-pip install ultralytics
+pip install ultralytics pillow-heif
 ```
 
 > `ultralytics` will pull in `torch`, `opencv-python`, `numpy`, and other required packages automatically.
+> `pillow-heif` is required because the training images are HEIF-encoded (from iPhone). Without it, all images will be skipped with `No module named 'pi_heif'`.
 
 ### 3. Get the dataset
 
@@ -215,6 +216,22 @@ You don't need to do anything else. The team lead will:
 ---
 
 ## Troubleshooting
+
+### "No module named 'pi_heif'" / all images skipped as corrupt
+
+The training images are HEIF-encoded (taken on iPhone). Install the HEIF decoder:
+
+```bash
+pip install pillow-heif
+```
+
+Then delete the label cache so it re-scans the images:
+
+```bash
+# Delete any .cache files
+del Training-Images\face_bib_detection\labels\train.cache
+del Training-Images\face_bib_detection\labels\val.cache
+```
 
 ### GPU out of memory
 
