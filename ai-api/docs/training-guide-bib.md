@@ -69,30 +69,19 @@ ai-api/Training-Images/bib_detection/
     val/                    <- YOLO-format .txt label files
 ```
 
-**Option A — Extract from the existing combined dataset:**
+**The dataset is already prepared.** The team manually annotated 1,713 real marathon images using Roboflow and exported in YOLO format. The dataset is already in place:
 
-The combined face+bib dataset already has 1,863 bib annotations. Extract bib-only labels:
+| Split | Images | Annotations | Avg bibs/image |
+|-------|--------|-------------|----------------|
+| Train | 1,370 (80%) | 1,971 | 1.44 |
+| Val | 343 (20%) | 490 | 1.43 |
+| **Total** | **1,713** | **2,461** | **1.44** |
 
-```bash
-python scripts/extract_bib_labels.py --preview   # check counts first
-python scripts/extract_bib_labels.py              # extract + split 80/20
-```
+All images are `.jpg`. All labels use class `0` (bib). Validated — no orphaned files, no empty labels, all coordinates in range.
 
-This copies images with bibs and remaps class `1` (bib in combined) to class `0` (bib in bib-only).
+**To add more images later:**
 
-**Option B — Manually annotate new bib images (RECOMMENDED):**
-
-The team has gathered real marathon images for training. These need to be manually annotated before training. See [Manual Annotation Guide](#manual-annotation-guide) below for full instructions.
-
-After annotation, place the exported YOLO-format files into the dataset folders:
-- Images → `Training-Images/bib_detection/images/train/` (and `val/`)
-- Labels → `Training-Images/bib_detection/labels/train/` (and `val/`)
-
-Split 80% train / 20% val. Most annotation tools can do this automatically on export.
-
-**Option C — Combine both:**
-
-Run Option A first, then add the manually annotated images to the same directories. More data = better.
+If you want to expand the dataset, annotate new images in Roboflow (single class: `bib`), export as YOLOv8 format, and copy the new files into the existing `images/` and `labels/` directories. Delete any `.cache` files in `labels/` after adding new data.
 
 ### 4. Verify dataset structure
 
@@ -137,27 +126,18 @@ Class `0` = bib (the only class).
 
 ## Manual Annotation Guide
 
-The team will manually annotate real marathon images to create the bib training dataset. Manual annotations are significantly more accurate than auto-generated labels.
+> **Status:** The initial dataset (1,713 images, 2,461 annotations) has been annotated using Roboflow and is ready for training. This section is a reference for adding more images in the future.
 
-### Recommended annotation tools
+### Annotation tool
 
-Pick one — all export to YOLO format:
+The team uses **Roboflow** (free tier) for annotation. To add more images:
 
-| Tool | Best for | Notes |
-|------|----------|-------|
-| **Roboflow** (free tier) | Easiest setup, team collaboration | Web-based, 10,000 images free, auto-export to YOLO format. Recommended for this project. |
-| **CVAT** | Self-hosted, large datasets | Open-source, web-based, more complex setup |
-| **LabelImg** | Offline, simple | Desktop app, lightweight, supports YOLO format natively |
-
-### Setup with Roboflow (recommended)
-
-1. Create a free account at roboflow.com
-2. Create a new project → Object Detection → name it `bib-detection`
-3. Set the single class: **`bib`**
-4. Upload all gathered marathon images
-5. Annotate (see labeling rules below)
-6. Generate a dataset version with 80/20 train/val split
-7. Export as **YOLOv8** format → download and extract into `Training-Images/bib_detection/`
+1. Log in to the team's Roboflow project (`bib-detection`)
+2. Upload new images
+3. Annotate using the labeling rules below
+4. Generate a new dataset version with 80/20 train/val split
+5. Export as **YOLOv8** format → copy new files into `Training-Images/bib_detection/`
+6. Delete `.cache` files in `labels/train/` and `labels/val/` before retraining
 
 ### Labeling rules
 
@@ -194,49 +174,16 @@ For best results, make sure your dataset includes a mix of:
 - [ ] **Group shots**: multiple runners with multiple bibs in one image
 - [ ] **Motion**: runners in motion (slight blur is fine — this is realistic)
 
-### After annotation — placing files
+### Current dataset size
 
-After exporting from your annotation tool in YOLO format, your files should look like:
+The current dataset of **1,713 images** (2,461 annotations) is in the recommended range:
 
-```
-exported_dataset/
-  train/
-    images/
-      img001.jpg
-      img002.jpg
-      ...
-    labels/
-      img001.txt
-      img002.txt
-      ...
-  val/
-    images/
-      ...
-    labels/
-      ...
-```
-
-Copy them into the training directory:
-
-```bash
-# Copy training images and labels
-cp exported_dataset/train/images/* Training-Images/bib_detection/images/train/
-cp exported_dataset/train/labels/* Training-Images/bib_detection/labels/train/
-
-# Copy validation images and labels
-cp exported_dataset/val/images/* Training-Images/bib_detection/images/val/
-cp exported_dataset/val/labels/* Training-Images/bib_detection/labels/val/
-```
-
-Then verify with Step 4 below.
-
-### Target dataset size
-
-- **Minimum**: 500 annotated images (expect ~0.75+ mAP50)
-- **Recommended**: 1,000–1,500 annotated images (expect ~0.90+ mAP50)
-- **For 99%+ accuracy**: 2,000+ diverse images with clean annotations
-
-Quality matters more than quantity — 800 clean hand-labeled images will outperform 3,000 noisy auto-labels.
+| Size | Expected mAP50 | Status |
+|------|----------------|--------|
+| 500 images | ~0.75+ | Exceeded |
+| 1,000–1,500 images | ~0.90+ | Exceeded |
+| **1,713 images** | **~0.90+** | **Current** |
+| 2,000+ images | ~0.95+ | Add more if needed after first training run |
 
 ---
 
@@ -392,6 +339,6 @@ Sometimes YOLO creates `runs/detect/detect/bib_det/` instead of `runs/detect/bib
 |------|---------|
 | `scripts/train_bib_detector.py` | Training script (run this) |
 | `scripts/export_bib_detector.py` | ONNX export script (run after training) |
-| `scripts/extract_bib_labels.py` | Extract bib-only labels from combined dataset |
+| `scripts/extract_bib_labels.py` | Extract bib-only labels from combined dataset (optional — dataset already prepared) |
 | `Training-Images/bib_detection/classes.yaml` | Dataset class definitions (single class: bib) |
 | `docs/training-guide-bib.md` | This guide |
