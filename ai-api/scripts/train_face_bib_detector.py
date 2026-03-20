@@ -9,6 +9,7 @@ Usage:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ultralytics import YOLO
@@ -16,6 +17,19 @@ from ultralytics import YOLO
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATASET_DIR = PROJECT_ROOT / "Training-Images" / "face_bib_detection"
 CLASSES_YAML = DATASET_DIR / "classes.yaml"
+
+
+def _ensure_absolute_path_in_yaml() -> None:
+    """Patch classes.yaml so ``path:`` is the absolute dataset directory.
+
+    Ultralytics resolves relative ``path:`` values from the *working directory*,
+    not from the YAML file location.  This silently fixes it if needed.
+    """
+    text = CLASSES_YAML.read_text(encoding="utf-8")
+    abs_path_line = f"path: {DATASET_DIR}"
+    if re.search(r"^path:\s*\.", text, re.MULTILINE):
+        text = re.sub(r"^path:\s*\.", abs_path_line, text, count=1, flags=re.MULTILINE)
+        CLASSES_YAML.write_text(text, encoding="utf-8")
 
 
 def train() -> None:
@@ -53,6 +67,9 @@ def train() -> None:
     if n_train_labels == 0:
         print("ERROR: No training labels found. Run auto_annotate_face_bib.py first.")
         return
+
+    # Ensure classes.yaml uses absolute path so it works from any working directory
+    _ensure_absolute_path_in_yaml()
 
     # Load pretrained YOLOv8n (COCO weights)
     model = YOLO("yolov8n.pt")

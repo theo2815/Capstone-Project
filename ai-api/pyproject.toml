@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "eventai-api"
 version = "1.0.0"
 description = "EventAI - Modular AI API for Blur Detection, Face Recognition, and Bib Number OCR"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11,<3.15"
 license = {text = "Proprietary"}
 
 dependencies = [
@@ -21,6 +21,7 @@ dependencies = [
     "opencv-python-headless>=4.10.0,<5",
     "numpy>=2.1.0,<3",
     "Pillow>=11.0.0,<12",
+    "pillow-heif>=0.18.0,<1",
 
     # ML models
     "insightface>=0.7.3,<0.8",

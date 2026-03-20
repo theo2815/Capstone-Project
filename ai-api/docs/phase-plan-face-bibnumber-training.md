@@ -42,6 +42,27 @@
 
 Face detection and bib detection share the **same training images** (event photos contain both faces and bibs on runners). Instead of training two separate detection models, a single combined YOLOv8n model detects both in one pass.
 
+### Decision: Combined vs. Bib-Only Detector
+
+**Primary path: combined detector (`train_face_bib_detector.py`).** This is the architecture we commit to.
+
+A separate bib-only script (`train_bib_detector.py`) also exists as a **fallback only**. Use it only if the combined detector achieves bib mAP50 < 0.75 after training. Both export to the same production path (`models/bib_detection/yolov8n_bib.onnx`); `BibDetector` works with either because it filters detections by class name `"bib"`. The bib-only export script requires `--force` to prevent accidental overwrite of the combined model.
+
+| Path | Script | Status |
+|------|--------|--------|
+| **Face detection** | `train_face_bib_detector.py` (combined model) | **Done** — face mAP50 = 0.993, production-ready |
+| **Bib detection** | `train_bib_detector.py` → `export_bib_detector.py --force` | **Next** — combined bib mAP50 was only 0.561, needs dedicated model |
+
+### Combined Training Results (March 2026)
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Face mAP50 | 0.993 | Excellent — no further training needed |
+| Bib mAP50 | 0.561 | Weak — dedicated bib-only model needed |
+| Overall mAP50 | 0.777 | Good overall, dragged down by bibs |
+
+See `docs/training-guide-bib.md` for the bib-only training guide.
+
 ### 3-Model Architecture
 
 ```
