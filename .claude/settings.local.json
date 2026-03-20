@@ -11,7 +11,9 @@
       "Bash(python:*)",
       "Bash(find 'C:/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project/ai-api/runs' -name results.csv -o -name results.png -o -name *.csv)",
       "Bash(grep -v \"^Ultralytics\\\\|^WARNING\\\\|^Model\\\\|^val:\\\\|Fusing\\\\|Speed\\\\|Results\\\\|^$\\\\| 0 \")",
-      "Bash(grep -v \"^\\\\s*$\")"
+      "Bash(grep -v \"^\\\\s*$\")",
+      "Bash(DATASET=\"C:/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project/ai-api/Training-Images/bib_detection\")",
+      "Read(//c/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project/**)"
     ]
   }
 }
