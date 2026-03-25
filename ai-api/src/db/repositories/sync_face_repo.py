@@ -15,11 +15,17 @@ class SyncFaceRepository:
         query_embedding: list[float],
         threshold: float = 0.4,
         top_k: int = 10,
+        api_key_id: str | None = None,
     ) -> list[dict]:
         """Search using proper vector literal binding and single-computation subquery."""
         query_vec = "[" + ",".join(str(f) for f in query_embedding) + "]"
+        tenant_filter = ""
+        params: dict = {"query": query_vec, "threshold": threshold, "top_k": top_k}
+        if api_key_id is not None:
+            tenant_filter = "AND p.api_key_id = :api_key_id"
+            params["api_key_id"] = api_key_id
         result = self.session.execute(
-            text("""
+            text(f"""
                 SELECT person_id, person_name, similarity
                 FROM (
                     SELECT
@@ -28,12 +34,13 @@ class SyncFaceRepository:
                         1 - (fe.embedding <=> :query::vector) AS similarity
                     FROM face_embeddings fe
                     JOIN persons p ON p.id = fe.person_id
+                    WHERE 1=1 {tenant_filter}
                 ) sub
                 WHERE similarity >= :threshold
                 ORDER BY similarity DESC
                 LIMIT :top_k
             """),
-            {"query": query_vec, "threshold": threshold, "top_k": top_k},
+            params,
         )
         return [
             {

@@ -28,7 +28,8 @@
       "Bash(.venv/Scripts/python -c \"import src; print\\(src.__file__\\)\")",
       "Bash(.venv/Scripts/alembic upgrade:*)",
       "Bash(.venv/Scripts/uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --reload --limit-max-request-size 52428800)",
-      "Bash(.venv/Scripts/uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --reload)"
+      "Bash(.venv/Scripts/uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --reload)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

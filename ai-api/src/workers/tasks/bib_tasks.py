@@ -29,7 +29,7 @@ def bib_recognize_batch(self, job_id: str, image_data_list: list[str]):
 
     bib_detector = get_bib_detector()
     total = len(image_data_list)
-    results: list[dict] = [{}] * total
+    results: list[dict] = [{} for _ in range(total)]
 
     # PERF-8: Pre-decode all images upfront
     images = []

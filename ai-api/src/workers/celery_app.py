@@ -36,8 +36,21 @@ celery_app.conf.update(
         "faces.*": {"queue": "face"},
         "bibs.*": {"queue": "bib"},
         "webhooks.*": {"queue": "default"},
+        "maintenance.*": {"queue": "default"},
     },
     task_default_queue="default",
+    # RS-3/RS-4: Periodic maintenance tasks (Celery beat schedule).
+    # Start beat with: celery -A src.workers.celery_app beat
+    beat_schedule={
+        "reap-stale-jobs": {
+            "task": "maintenance.reap_stale_jobs",
+            "schedule": 300.0,  # Every 5 minutes
+        },
+        "cleanup-old-jobs": {
+            "task": "maintenance.cleanup_old_jobs",
+            "schedule": 86400.0,  # Once per day
+        },
+    },
 )
 
 # Auto-discover tasks

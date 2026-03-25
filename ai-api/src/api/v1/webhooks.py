@@ -4,7 +4,7 @@ import ipaddress
 import uuid
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from src.middleware.auth import check_scope, verify_api_key
 from src.schemas.common import APIResponse
@@ -81,16 +81,23 @@ async def register_webhook(
 @router.get("", response_model=APIResponse)
 async def list_webhooks(
     request: Request,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
-    """List all registered webhooks for the current API key."""
+    """List registered webhooks for the current API key (paginated)."""
     check_scope("webhooks:read", key_meta)
     from src.db.repositories.webhook_repo import WebhookRepository
     from src.db.session import get_session_ctx
 
+    api_key_id = key_meta.get("key_id")
+
     async with get_session_ctx() as session:
         repo = WebhookRepository(session)
-        webhooks = await repo.list_all(api_key_id=key_meta.get("key_id"))
+        webhooks = await repo.list_all(
+            api_key_id=api_key_id, limit=limit, offset=offset
+        )
+        total = await repo.count_all(api_key_id=api_key_id)
 
         data = WebhookListResponse(
             webhooks=[
@@ -103,7 +110,7 @@ async def list_webhooks(
                 )
                 for wh in webhooks
             ],
-            total=len(webhooks),
+            total=total,
         )
         return APIResponse(
             success=True,

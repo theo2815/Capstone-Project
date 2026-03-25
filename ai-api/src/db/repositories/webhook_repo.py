@@ -37,12 +37,36 @@ class WebhookRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_all(self, api_key_id: str | None = None) -> list[WebhookSubscription]:
-        query = select(WebhookSubscription).where(WebhookSubscription.active.is_(True))
+    async def list_all(
+        self,
+        api_key_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[WebhookSubscription]:
+        query = (
+            select(WebhookSubscription)
+            .where(WebhookSubscription.active.is_(True))
+            .order_by(WebhookSubscription.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         if api_key_id:
             query = query.where(WebhookSubscription.api_key_id == api_key_id)
         result = await self.session.execute(query)
         return list(result.scalars().all())
+
+    async def count_all(self, api_key_id: str | None = None) -> int:
+        from sqlalchemy import func
+
+        query = (
+            select(func.count())
+            .select_from(WebhookSubscription)
+            .where(WebhookSubscription.active.is_(True))
+        )
+        if api_key_id:
+            query = query.where(WebhookSubscription.api_key_id == api_key_id)
+        result = await self.session.execute(query)
+        return result.scalar_one()
 
     async def list_by_event(self, event: str) -> list[WebhookSubscription]:
         from sqlalchemy import cast

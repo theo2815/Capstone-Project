@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10 MB
     MAX_BATCH_SIZE: int = 20  # Kept low to limit memory (base64 in Redis)
     MAX_ACTIVE_JOBS_PER_KEY: int = 10  # Backpressure: max pending+processing jobs per API key
+    JOB_RETENTION_DAYS: int = 7  # Auto-delete completed/failed jobs older than this
 
     # Image preprocessing — downscale large images before inference
     # Models resize internally to 640x640 so images beyond this are wasted memory
