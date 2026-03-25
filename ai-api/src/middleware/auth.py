@@ -89,10 +89,15 @@ async def invalidate_api_key_cache(redis, api_key: str) -> bool:
 
 
 async def _enforce_rate_limit(request: Request, key_meta: dict) -> None:
-    """Apply rate limiting after successful authentication."""
+    """Apply rate limiting after successful authentication.
+
+    Stores rate_info on request.state so the RateLimitHeadersMiddleware
+    can set X-RateLimit-* headers on the response (RS-5).
+    """
     from src.middleware.rate_limit import check_rate_limit
 
-    await check_rate_limit(request, key_meta)
+    rate_info = await check_rate_limit(request, key_meta)
+    request.state.rate_info = rate_info
 
 
 def check_scope(required_scope: str, key_meta: dict) -> None:

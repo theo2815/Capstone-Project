@@ -436,6 +436,6 @@ async def search_faces_batch(
 
     from src.workers.tasks.face_tasks import face_process_batch
 
-    face_process_batch.delay(job_id, image_data_list, operation)
+    face_process_batch.delay(job_id, image_data_list, operation, api_key_id=key_meta.get("key_id"))
 
     return batch_accepted_response(request, job_id, len(files))

@@ -106,8 +106,10 @@ def downscale_for_inference(image: np.ndarray) -> np.ndarray:
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
-def validate_batch_file(raw: bytes, filename: str, max_file_size: int) -> None:
-    """Validate a single file in a batch upload (size and content type).
+def validate_batch_file(
+    raw: bytes, filename: str, max_file_size: int, content_type: str | None = None
+) -> None:
+    """Validate a single file in a batch upload (size, content type, magic bytes).
 
     Raises:
         ImageValidationError: If the file fails validation.
@@ -115,6 +117,11 @@ def validate_batch_file(raw: bytes, filename: str, max_file_size: int) -> None:
     if len(raw) > max_file_size:
         raise ImageValidationError(
             f"File '{filename}' exceeds {max_file_size // (1024 * 1024)}MB limit"
+        )
+    if content_type and content_type not in ALLOWED_CONTENT_TYPES:
+        raise ImageValidationError(
+            f"File '{filename}' has unsupported type: {content_type}. "
+            f"Allowed: {', '.join(ALLOWED_CONTENT_TYPES)}"
         )
     try:
         img = Image.open(io.BytesIO(raw))

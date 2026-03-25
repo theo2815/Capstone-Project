@@ -130,8 +130,20 @@ def create_app() -> FastAPI:
                 )
             return response
 
+    # RS-5: Rate limit headers on all responses
+    class RateLimitHeadersMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            rate_info = getattr(request.state, "rate_info", None)
+            if rate_info and rate_info.get("remaining", -1) >= 0:
+                response.headers["X-RateLimit-Limit"] = str(rate_info["limit"])
+                response.headers["X-RateLimit-Remaining"] = str(rate_info["remaining"])
+                response.headers["X-RateLimit-Reset"] = str(rate_info["reset"])
+            return response
+
     # Middleware (order matters: last added = first executed)
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RateLimitHeadersMiddleware)
     app.add_middleware(TimeoutMiddleware)
     app.add_middleware(RequestIDMiddleware)
     setup_cors(app, settings.ALLOWED_ORIGINS)

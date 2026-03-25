@@ -28,7 +28,7 @@ def blur_detect_batch(self, job_id: str, image_data_list: list[str]):
         return
 
     total = len(image_data_list)
-    results: list[dict] = [{}] * total
+    results: list[dict] = [{} for _ in range(total)]
 
     # PERF-8: Pre-decode all images upfront (fail fast, better memory locality)
     images = []
@@ -81,7 +81,7 @@ def blur_classify_batch(
         return
 
     total = len(image_data_list)
-    results: list[dict] = [{}] * total
+    results: list[dict] = [{} for _ in range(total)]
 
     # PERF-8: Pre-decode all images upfront
     images = []

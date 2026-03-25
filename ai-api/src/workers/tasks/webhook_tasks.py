@@ -28,8 +28,10 @@ _BLOCKED_NETWORKS = [
 ]
 
 
-def _validate_webhook_url(url: str) -> None:
-    """Validate that a webhook URL doesn't target internal networks.
+def _validate_webhook_url(url: str) -> tuple[str, str]:
+    """Resolve DNS once and validate that the webhook URL doesn't target internal networks.
+
+    Returns (resolved_ip, hostname) to prevent DNS rebinding TOCTOU attacks.
 
     Raises:
         ValueError: If URL resolves to a blocked network.
@@ -41,7 +43,8 @@ def _validate_webhook_url(url: str) -> None:
 
     try:
         addr_info = socket.getaddrinfo(hostname, None)
-        ip = ipaddress.ip_address(addr_info[0][4][0])
+        resolved_ip = addr_info[0][4][0]
+        ip = ipaddress.ip_address(resolved_ip)
     except (socket.gaierror, ValueError, IndexError) as e:
         raise ValueError(f"Cannot resolve webhook hostname '{hostname}': {e}")
 
@@ -50,6 +53,8 @@ def _validate_webhook_url(url: str) -> None:
             raise ValueError(
                 f"Webhook URL targets blocked internal network ({network})"
             )
+
+    return resolved_ip, hostname
 
 
 @celery_app.task(
@@ -77,15 +82,16 @@ def deliver_webhook(
         secret: Optional HMAC secret for signature verification.
         timeout: Request timeout in seconds.
     """
-    # SSRF protection: validate URL before making request
+    # SSRF protection: resolve DNS once and validate before making request.
+    # The HTTP request uses the pre-resolved IP to prevent DNS rebinding attacks.
     try:
-        _validate_webhook_url(url)
+        resolved_ip, hostname = _validate_webhook_url(url)
     except ValueError as e:
         logger.error("Webhook blocked by SSRF protection", url=url, error=str(e))
         return
 
     body = json.dumps({"event": event, **payload})
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "Host": hostname}
 
     if secret:
         signature = hmac.new(
@@ -93,9 +99,12 @@ def deliver_webhook(
         ).hexdigest()
         headers["X-EventAI-Signature"] = f"sha256={signature}"
 
+    # Replace hostname with resolved IP to prevent DNS rebinding TOCTOU
+    target_url = url.replace(hostname, resolved_ip, 1)
+
     try:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.post(url, content=body, headers=headers)
+        with httpx.Client(timeout=timeout, verify=True) as client:
+            response = client.post(target_url, content=body, headers=headers)
             response.raise_for_status()
             logger.info("Webhook delivered", url=url, event=event, status=response.status_code)
     except httpx.HTTPError as e:

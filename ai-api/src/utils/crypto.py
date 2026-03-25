@@ -11,7 +11,12 @@ _fernet: Fernet | None = None
 
 
 def _get_fernet() -> Fernet | None:
-    """Return a Fernet instance using WEBHOOK_SECRET_KEY, or None if unconfigured."""
+    """Return a Fernet instance using WEBHOOK_SECRET_KEY, or None if unconfigured.
+
+    NOTE: The Fernet instance is cached on first call. Rotating
+    WEBHOOK_SECRET_KEY requires a full process restart — existing secrets
+    encrypted with the old key will fail to decrypt until re-encrypted.
+    """
     global _fernet
     if _fernet is not None:
         return _fernet

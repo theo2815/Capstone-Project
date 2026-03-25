@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,13 +68,19 @@ class JobRepository:
             await self.session.flush()
 
     async def count_active_by_key(self, api_key_id: str) -> int:
-        """Count pending + processing jobs for a given API key."""
+        """Count pending + processing jobs for a given API key.
+
+        Excludes stale jobs older than task_time_limit + buffer (3600s + 300s)
+        to prevent zombie jobs from permanently consuming backpressure slots.
+        """
+        cutoff = datetime.now(UTC) - timedelta(seconds=3600 + 300)
         result = await self.session.execute(
             select(func.count())
             .select_from(Job)
             .where(
                 Job.api_key_id == api_key_id,
                 Job.status.in_(["pending", "processing"]),
+                Job.created_at > cutoff,
             )
         )
         return result.scalar_one()
@@ -86,3 +92,43 @@ class JobRepository:
             job.error = error
             job.completed_at = datetime.now(UTC)
             await self.session.flush()
+
+    async def reap_stale_jobs(self, max_age_seconds: int = 3900) -> int:
+        """Mark stale pending/processing jobs as failed.
+
+        Returns the number of jobs reaped.
+        """
+        from sqlalchemy import update
+
+        cutoff = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
+        result = await self.session.execute(
+            update(Job)
+            .where(
+                Job.status.in_(["pending", "processing"]),
+                Job.created_at <= cutoff,
+            )
+            .values(
+                status="failed",
+                error="Worker timeout — job expired",
+                completed_at=datetime.now(UTC),
+            )
+        )
+        await self.session.flush()
+        return result.rowcount
+
+    async def cleanup_old_jobs(self, retention_days: int = 7) -> int:
+        """Delete completed/failed jobs older than the retention period.
+
+        Returns the number of jobs deleted.
+        """
+        from sqlalchemy import delete
+
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        result = await self.session.execute(
+            delete(Job).where(
+                Job.status.in_(["completed", "failed"]),
+                Job.created_at <= cutoff,
+            )
+        )
+        await self.session.flush()
+        return result.rowcount

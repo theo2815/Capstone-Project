@@ -53,7 +53,7 @@ async def validate_and_encode_batch(
     image_data_list = []
     for f in files:
         raw = await f.read()
-        validate_batch_file(raw, f.filename or "unknown", max_file_size)
+        validate_batch_file(raw, f.filename or "unknown", max_file_size, f.content_type)
         image_data_list.append(base64.b64encode(raw).decode("ascii"))
 
     return image_data_list
