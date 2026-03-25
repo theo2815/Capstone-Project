@@ -29,25 +29,33 @@ def face_process_batch(self, job_id: str, image_data_list: list[str], operation:
         return
 
     total = len(image_data_list)
-    results = []
+    results: list[dict] = [{}] * total
 
+    # PERF-8: Pre-decode all images upfront
+    images = []
     for i, b64_data in enumerate(image_data_list):
+        image = decode_base64_image(b64_data)
+        if image is None:
+            results[i] = {"index": i, "error": "Failed to decode image"}
+        images.append(image)
+
+    # Run inference on successfully decoded images
+    for i, image in enumerate(images):
+        if image is None:
+            update_job_progress(job_id, i + 1, total)
+            continue
         try:
-            image = decode_base64_image(b64_data)
-            if image is None:
-                results.append({"index": i, "error": "Failed to decode image"})
-            elif operation == "detect":
+            if operation == "detect":
                 faces = embedder.detect_faces(image)
-                results.append({"index": i, "faces_detected": len(faces), "faces": faces})
+                results[i] = {"index": i, "faces_detected": len(faces), "faces": faces}
             elif operation == "search":
                 result = _search_single(image, embedder)
-                results.append({"index": i, **result})
+                results[i] = {"index": i, **result}
             else:
-                results.append({"index": i, "error": f"Unknown operation: {operation}"})
+                results[i] = {"index": i, "error": f"Unknown operation: {operation}"}
         except Exception as e:
             logger.error("Face processing failed for image", index=i, error=str(e))
-            results.append({"index": i, "error": str(e)})
-
+            results[i] = {"index": i, "error": str(e)}
         update_job_progress(job_id, i + 1, total)
 
     complete_job(job_id, results)

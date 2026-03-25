@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
+from src.middleware.auth import verify_api_key
 from src.schemas.common import APIResponse, HealthResponse, ReadinessResponse
 
 router = APIRouter(prefix="/health", tags=["Health"])
@@ -9,18 +10,26 @@ router = APIRouter(prefix="/health", tags=["Health"])
 
 @router.get("", response_model=HealthResponse)
 async def liveness(request: Request) -> HealthResponse:
-    """Liveness probe. Returns 200 if the process is alive."""
+    """Liveness probe. Returns 200 if the process is alive.
+
+    Exposes only version — no environment details.
+    """
     settings = request.app.state.settings
     return HealthResponse(
         status="alive",
         version=settings.APP_VERSION,
-        environment=settings.ENVIRONMENT,
     )
 
 
 @router.get("/ready", response_model=APIResponse)
-async def readiness(request: Request) -> APIResponse:
-    """Readiness probe. Checks that models, DB, and Redis are available."""
+async def readiness(
+    request: Request,
+    key_meta: dict = Depends(verify_api_key),
+) -> APIResponse:
+    """Readiness probe. Checks that models, DB, and Redis are available.
+
+    Requires authentication to prevent exposing infrastructure status.
+    """
     registry = request.app.state.model_registry
     from src.db.session import check_db_health
 

@@ -2,19 +2,64 @@ from __future__ import annotations
 
 import hmac
 import hashlib
+import ipaddress
 import json
+import socket
+from urllib.parse import urlparse
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.workers.celery_app import celery_app
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# SSRF protection: block private/internal IP ranges
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
 
-@celery_app.task(bind=True, name="webhooks.deliver")
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=30))
+
+def _validate_webhook_url(url: str) -> None:
+    """Validate that a webhook URL doesn't target internal networks.
+
+    Raises:
+        ValueError: If URL resolves to a blocked network.
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Invalid webhook URL: no hostname")
+
+    try:
+        addr_info = socket.getaddrinfo(hostname, None)
+        ip = ipaddress.ip_address(addr_info[0][4][0])
+    except (socket.gaierror, ValueError, IndexError) as e:
+        raise ValueError(f"Cannot resolve webhook hostname '{hostname}': {e}")
+
+    for network in _BLOCKED_NETWORKS:
+        if ip in network:
+            raise ValueError(
+                f"Webhook URL targets blocked internal network ({network})"
+            )
+
+
+@celery_app.task(
+    bind=True,
+    name="webhooks.deliver",
+    autoretry_for=(httpx.HTTPError,),
+    retry_backoff=True,
+    retry_backoff_max=30,
+    max_retries=3,
+)
 def deliver_webhook(
     self,
     url: str,
@@ -32,6 +77,13 @@ def deliver_webhook(
         secret: Optional HMAC secret for signature verification.
         timeout: Request timeout in seconds.
     """
+    # SSRF protection: validate URL before making request
+    try:
+        _validate_webhook_url(url)
+    except ValueError as e:
+        logger.error("Webhook blocked by SSRF protection", url=url, error=str(e))
+        return
+
     body = json.dumps({"event": event, **payload})
     headers = {"Content-Type": "application/json"}
 

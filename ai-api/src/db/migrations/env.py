@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from logging.config import fileConfig
+from pathlib import Path
+
+# Ensure the project root (ai-api/) is on sys.path so `src` is importable
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from alembic import context
 from sqlalchemy import pool, text

@@ -13,7 +13,22 @@
       "Bash(grep -v \"^Ultralytics\\\\|^WARNING\\\\|^Model\\\\|^val:\\\\|Fusing\\\\|Speed\\\\|Results\\\\|^$\\\\| 0 \")",
       "Bash(grep -v \"^\\\\s*$\")",
       "Bash(DATASET=\"C:/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project/ai-api/Training-Images/bib_detection\")",
-      "Read(//c/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project/**)"
+      "Read(//c/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project/**)",
+      "Bash(source \"/c/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project/ai-api/.venv/Scripts/activate\")",
+      "Bash(find '/c/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project' -type f -name *.pt)",
+      "Bash(ls:*)",
+      "Bash(source .venv/Scripts/activate)",
+      "Bash(.venv/Scripts/python -c \"import cv2; print\\(cv2.__version__\\)\")",
+      "Bash(.venv/Scripts/python -c \"import pydantic_settings; print\\(pydantic_settings.__version__\\)\")",
+      "Bash(.venv/Scripts/python -c \":*)",
+      "Bash(.venv/Scripts/python -m pytest tests/unit/test_image_utils.py -v --tb=short)",
+      "Bash(.venv/Scripts/python -m pytest tests/unit/test_auth_middleware.py -v --tb=short)",
+      "Bash(.venv/Scripts/python -m pytest tests/unit/test_worker_tasks.py -v --tb=short)",
+      "Bash(.venv/Scripts/python -m pytest tests/unit/ -v --tb=short)",
+      "Bash(.venv/Scripts/python -c \"import src; print\\(src.__file__\\)\")",
+      "Bash(.venv/Scripts/alembic upgrade:*)",
+      "Bash(.venv/Scripts/uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --reload --limit-max-request-size 52428800)",
+      "Bash(.venv/Scripts/uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --reload)"
     ]
   }
 }

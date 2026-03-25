@@ -62,4 +62,9 @@ PYBIND11_MODULE(_eventai_cpp, m) {
     m.def("resize_gray", &eventai::resize_gray,
           py::arg("gray"), py::arg("new_h"), py::arg("new_w"),
           "Resize grayscale (H,W) uint8 image using bilinear interpolation.");
+
+    m.def("classify_preprocess", &eventai::classify_preprocess,
+          py::arg("bgr"), py::arg("target_size"),
+          "Fused classify preprocessing: center-crop + resize + BGR->RGB "
+          "normalize + HWC->CHW. Returns (1, 3, S, S) float32 tensor.");
 }

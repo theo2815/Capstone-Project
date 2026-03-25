@@ -13,9 +13,13 @@ class SyncWebhookRepository:
         self.session = session
 
     def list_by_event(self, event: str) -> list[WebhookSubscription]:
+        from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
+
         result = self.session.execute(
             select(WebhookSubscription).where(
                 WebhookSubscription.active.is_(True),
+                WebhookSubscription.events.op("@>")(cast([event], PG_JSONB)),
             )
         )
-        return [wh for wh in result.scalars().all() if event in wh.events]
+        return list(result.scalars().all())

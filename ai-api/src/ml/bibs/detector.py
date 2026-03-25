@@ -19,6 +19,14 @@ class BibDetector:
         self._load_model()
 
     def _load_model(self) -> None:
+        if not self.model_path.endswith(".onnx"):
+            logger.error(
+                "BibDetector only accepts .onnx models for security (no pickle)",
+                model_path=self.model_path,
+            )
+            self.model = None
+            return
+
         try:
             from ultralytics import YOLO
 

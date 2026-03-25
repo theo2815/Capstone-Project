@@ -16,13 +16,14 @@ async def verify_api_key(
     request: Request,
     api_key: str | None = Security(api_key_header),
 ) -> dict:
-    """Validate API key and return key metadata (scopes, rate tier).
+    """Validate API key, enforce rate limits, and return key metadata.
 
     In development mode (DEBUG=true), a missing key is allowed.
     """
     settings = request.app.state.settings
 
     if settings.DEBUG and not api_key:
+        logger.warning("Auth bypassed in DEBUG mode — do not use in production")
         return {"scopes": ["*"], "rate_tier": "internal", "key_id": "debug"}
 
     if not api_key:
@@ -37,15 +38,17 @@ async def verify_api_key(
         if cached:
             import json
 
-            return json.loads(cached)
+            key_meta = json.loads(cached)
+            await _enforce_rate_limit(request, key_meta)
+            return key_meta
 
     # Fallback: check database
     from sqlalchemy import select
 
     from src.db.models import APIKey
-    from src.db.session import get_session
+    from src.db.session import get_session_ctx
 
-    async for session in get_session():
+    async with get_session_ctx() as session:
         result = await session.execute(
             select(APIKey).where(APIKey.key_hash == key_hash, APIKey.active.is_(True))
         )
@@ -66,9 +69,30 @@ async def verify_api_key(
 
             await redis.set(f"apikey:{key_hash}", json.dumps(key_meta), ex=300)
 
+        await _enforce_rate_limit(request, key_meta)
         return key_meta
 
-    raise HTTPException(status_code=401, detail="Invalid API key")
+
+async def invalidate_api_key_cache(redis, api_key: str) -> bool:
+    """Invalidate the Redis cache entry for a revoked API key.
+
+    Call this when deactivating an API key to close the 5-minute cache window.
+    Returns True if a cached entry was deleted, False otherwise.
+    """
+    if redis is None:
+        return False
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    deleted = await redis.delete(f"apikey:{key_hash}")
+    if deleted:
+        logger.info("API key cache invalidated", key_hash_prefix=key_hash[:8])
+    return bool(deleted)
+
+
+async def _enforce_rate_limit(request: Request, key_meta: dict) -> None:
+    """Apply rate limiting after successful authentication."""
+    from src.middleware.rate_limit import check_rate_limit
+
+    await check_rate_limit(request, key_meta)
 
 
 def check_scope(required_scope: str, key_meta: dict) -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import base64
+import asyncio
 import hashlib
 import time
 import uuid
@@ -8,7 +8,12 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from src.middleware.auth import verify_api_key
+from src.api.v1.batch_utils import (
+    batch_accepted_response,
+    create_batch_job,
+    validate_and_encode_batch,
+)
+from src.middleware.auth import check_scope, verify_api_key
 from src.schemas.common import APIResponse
 from src.schemas.faces import (
     BoundingBox,
@@ -20,7 +25,6 @@ from src.schemas.faces import (
     FaceSearchResult,
     PersonResponse,
 )
-from src.schemas.jobs import JobCreateResponse
 from src.utils.image_utils import get_image_dimensions, validate_and_decode
 from src.utils.logging import get_logger
 
@@ -36,19 +40,23 @@ async def detect_faces(
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
     """Detect faces in an image and return bounding boxes + landmarks."""
+    check_scope("faces:read", key_meta)
     start = time.perf_counter()
     settings = request.app.state.settings
     _, image = await validate_and_decode(file, max_file_size=settings.MAX_FILE_SIZE)
 
     embedder = request.app.state.model_registry.get("face")
     if embedder is None:
-        return APIResponse(
-            success=False,
-            request_id=getattr(request.state, "request_id", ""),
-            error={"code": "MODEL_UNAVAILABLE", "message": "Face model not loaded"},
+        return JSONResponse(
+            status_code=503,
+            content=APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={"code": "MODEL_UNAVAILABLE", "message": "Face model not loaded"},
+            ).model_dump(mode="json"),
         )
 
-    faces = embedder.detect_faces(image)
+    faces = await asyncio.to_thread(embedder.detect_faces, image)
     elapsed_ms = (time.perf_counter() - start) * 1000
     w, h = get_image_dimensions(image)
 
@@ -82,19 +90,23 @@ async def enroll_face(
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
     """Detect faces, extract embeddings, and store in the database."""
+    check_scope("faces:write", key_meta)
     start = time.perf_counter()
     settings = request.app.state.settings
     raw_bytes, image = await validate_and_decode(file, max_file_size=settings.MAX_FILE_SIZE)
 
     embedder = request.app.state.model_registry.get("face")
     if embedder is None:
-        return APIResponse(
-            success=False,
-            request_id=getattr(request.state, "request_id", ""),
-            error={"code": "MODEL_UNAVAILABLE", "message": "Face model not loaded"},
+        return JSONResponse(
+            status_code=503,
+            content=APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={"code": "MODEL_UNAVAILABLE", "message": "Face model not loaded"},
+            ).model_dump(mode="json"),
         )
 
-    faces = embedder.get_embeddings(image)
+    faces = await asyncio.to_thread(embedder.get_embeddings, image)
     if not faces:
         return APIResponse(
             success=False,
@@ -103,16 +115,24 @@ async def enroll_face(
         )
 
     image_hash = hashlib.sha256(raw_bytes).hexdigest()
+    caller_key_id = key_meta.get("key_id")
 
     from src.db.repositories.face_repo import FaceRepository
-    from src.db.session import get_session
+    from src.db.session import get_session_ctx
 
-    async for session in get_session():
+    async with get_session_ctx() as session:
         repo = FaceRepository(session)
 
         if person_id:
-            pid = uuid.UUID(person_id)
-            person = await repo.get_person(pid)
+            try:
+                pid = uuid.UUID(person_id)
+            except ValueError:
+                return APIResponse(
+                    success=False,
+                    request_id=getattr(request.state, "request_id", ""),
+                    error={"code": "INVALID_INPUT", "message": "Invalid person_id format"},
+                )
+            person = await repo.get_person(pid, api_key_id=caller_key_id)
             if person is None:
                 return APIResponse(
                     success=False,
@@ -120,7 +140,9 @@ async def enroll_face(
                     error={"code": "NOT_FOUND", "message": "Person not found"},
                 )
         else:
-            person = await repo.create_person(name=person_name)
+            person = await repo.create_person(
+                name=person_name, api_key_id=caller_key_id
+            )
             pid = person.id
 
         min_conf = settings.FACE_MIN_ENROLLMENT_CONFIDENCE
@@ -162,7 +184,7 @@ async def enroll_face(
         data = FaceEnrollResponse(
             person_id=pid,
             person_name=person_name,
-            faces_enrolled=len(faces),
+            faces_enrolled=stored,
             embeddings_stored=stored,
             processing_time_ms=round(elapsed_ms, 2),
         )
@@ -182,48 +204,59 @@ async def search_faces(
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
     """Detect faces in an image and search the database for matches."""
+    check_scope("faces:read", key_meta)
     start = time.perf_counter()
     settings = request.app.state.settings
     _, image = await validate_and_decode(file, max_file_size=settings.MAX_FILE_SIZE)
 
     embedder = request.app.state.model_registry.get("face")
     if embedder is None:
-        return APIResponse(
-            success=False,
-            request_id=getattr(request.state, "request_id", ""),
-            error={"code": "MODEL_UNAVAILABLE", "message": "Face model not loaded"},
+        return JSONResponse(
+            status_code=503,
+            content=APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={"code": "MODEL_UNAVAILABLE", "message": "Face model not loaded"},
+            ).model_dump(mode="json"),
         )
 
-    faces = embedder.get_embeddings(image)
+    faces = await asyncio.to_thread(embedder.get_embeddings, image)
 
     matches = []
     unmatched = []
+    caller_key_id = key_meta.get("key_id")
 
     from src.db.repositories.face_repo import FaceRepository
-    from src.db.session import get_session
+    from src.db.session import get_session_ctx
 
-    async for session in get_session():
+    async with get_session_ctx() as session:
         repo = FaceRepository(session)
-        for face in faces:
-            results = await repo.search_similar(
-                query_embedding=face["embedding"],
+
+        if faces:
+            # Batch search: single DB round-trip for all faces instead of N queries
+            all_embeddings = [face["embedding"] for face in faces]
+            all_results = await repo.batch_search_similar(
+                embeddings=all_embeddings,
                 threshold=threshold,
                 top_k=top_k,
+                api_key_id=caller_key_id,
             )
-            bbox = BoundingBox(**face["bbox"])
-            if results:
-                for r in results:
-                    matches.append(FaceSearchResult(
-                        person_id=r["person_id"],
-                        person_name=r["person_name"],
-                        similarity=r["similarity"],
+
+            for face, results in zip(faces, all_results):
+                bbox = BoundingBox(**face["bbox"])
+                if results:
+                    for r in results:
+                        matches.append(FaceSearchResult(
+                            person_id=r["person_id"],
+                            person_name=r["person_name"],
+                            similarity=r["similarity"],
+                            bbox=bbox,
+                        ))
+                else:
+                    unmatched.append(FaceDetection(
                         bbox=bbox,
+                        landmarks=face.get("landmarks"),
                     ))
-            else:
-                unmatched.append(FaceDetection(
-                    bbox=bbox,
-                    landmarks=face.get("landmarks"),
-                ))
 
     elapsed_ms = (time.perf_counter() - start) * 1000
     data = FaceSearchResponse(
@@ -247,6 +280,7 @@ async def compare_faces(
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
     """Compare two images for 1:1 face verification."""
+    check_scope("faces:read", key_meta)
     start = time.perf_counter()
     settings = request.app.state.settings
 
@@ -255,14 +289,19 @@ async def compare_faces(
 
     embedder = request.app.state.model_registry.get("face")
     if embedder is None:
-        return APIResponse(
-            success=False,
-            request_id=getattr(request.state, "request_id", ""),
-            error={"code": "MODEL_UNAVAILABLE", "message": "Face model not loaded"},
+        return JSONResponse(
+            status_code=503,
+            content=APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={"code": "MODEL_UNAVAILABLE", "message": "Face model not loaded"},
+            ).model_dump(mode="json"),
         )
 
-    faces1 = embedder.get_embeddings(image1)
-    faces2 = embedder.get_embeddings(image2)
+    faces1, faces2 = await asyncio.gather(
+        asyncio.to_thread(embedder.get_embeddings, image1),
+        asyncio.to_thread(embedder.get_embeddings, image2),
+    )
 
     if not faces1 or not faces2:
         return APIResponse(
@@ -302,13 +341,16 @@ async def get_person(
     person_id: uuid.UUID,
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
-    """Get an enrolled person's metadata."""
+    """Get an enrolled person's metadata (tenant-isolated)."""
+    check_scope("faces:read", key_meta)
     from src.db.repositories.face_repo import FaceRepository
-    from src.db.session import get_session
+    from src.db.session import get_session_ctx
 
-    async for session in get_session():
+    caller_key_id = key_meta.get("key_id")
+
+    async with get_session_ctx() as session:
         repo = FaceRepository(session)
-        person = await repo.get_person(person_id)
+        person = await repo.get_person(person_id, api_key_id=caller_key_id)
         if person is None:
             return APIResponse(
                 success=False,
@@ -337,13 +379,16 @@ async def delete_person(
     person_id: uuid.UUID,
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
-    """Remove an enrolled person and all their embeddings (GDPR erasure)."""
+    """Remove an enrolled person and all their embeddings (GDPR erasure, tenant-isolated)."""
+    check_scope("faces:delete", key_meta)
     from src.db.repositories.face_repo import FaceRepository
-    from src.db.session import get_session
+    from src.db.session import get_session_ctx
 
-    async for session in get_session():
+    caller_key_id = key_meta.get("key_id")
+
+    async with get_session_ctx() as session:
         repo = FaceRepository(session)
-        deleted = await repo.delete_person(person_id)
+        deleted = await repo.delete_person(person_id, api_key_id=caller_key_id)
         if not deleted:
             return APIResponse(
                 success=False,
@@ -373,62 +418,24 @@ async def search_faces_batch(
 
     Returns a job ID immediately. Poll GET /api/v1/jobs/{job_id} for results.
     """
+    check_scope("faces:read", key_meta)
     settings = request.app.state.settings
 
-    if len(files) == 0:
-        return JSONResponse(
-            status_code=400,
-            content=APIResponse(
-                success=False,
-                request_id=getattr(request.state, "request_id", ""),
-                error={"code": "EMPTY_BATCH", "message": "No files provided"},
-            ).model_dump(mode="json"),
-        )
+    result = await validate_and_encode_batch(
+        request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE
+    )
+    if isinstance(result, JSONResponse):
+        return result
+    image_data_list = result
 
-    if len(files) > settings.MAX_BATCH_SIZE:
-        return JSONResponse(
-            status_code=400,
-            content=APIResponse(
-                success=False,
-                request_id=getattr(request.state, "request_id", ""),
-                error={
-                    "code": "BATCH_TOO_LARGE",
-                    "message": f"Maximum {settings.MAX_BATCH_SIZE} files per batch",
-                },
-            ).model_dump(mode="json"),
-        )
+    job_id = await create_batch_job(
+        request, f"face_{operation}_batch", len(files), key_meta.get("key_id")
+    )
+    if isinstance(job_id, JSONResponse):
+        return job_id
 
-    # Read and base64 encode all files
-    image_data_list = []
-    for f in files:
-        raw = await f.read()
-        image_data_list.append(base64.b64encode(raw).decode("ascii"))
-
-    # Create job record
-    from src.db.repositories.job_repo import JobRepository
-    from src.db.session import get_session
-
-    async for session in get_session():
-        repo = JobRepository(session)
-        job = await repo.create(job_type=f"face_{operation}_batch", total_items=len(files))
-        job_id = str(job.id)
-
-    # Queue Celery task
     from src.workers.tasks.face_tasks import face_process_batch
 
     face_process_batch.delay(job_id, image_data_list, operation)
 
-    data = JobCreateResponse(
-        job_id=job_id,
-        status="pending",
-        total_items=len(files),
-        poll_url=f"/api/v1/jobs/{job_id}",
-    )
-    return JSONResponse(
-        status_code=202,
-        content=APIResponse(
-            success=True,
-            request_id=getattr(request.state, "request_id", ""),
-            data=data.model_dump(mode="json"),
-        ).model_dump(mode="json"),
-    )
+    return batch_accepted_response(request, job_id, len(files))
