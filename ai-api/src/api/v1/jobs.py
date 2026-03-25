@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 
-from src.middleware.auth import verify_api_key
+from src.middleware.auth import check_scope, verify_api_key
 from src.schemas.common import APIResponse
 from src.schemas.jobs import JobStatusResponse
 
@@ -17,13 +17,15 @@ async def get_job_status(
     job_id: uuid.UUID,
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
-    """Get the status and results of an async job."""
+    """Get the status and results of an async job (tenant-isolated)."""
+    check_scope("jobs:read", key_meta)
     from src.db.repositories.job_repo import JobRepository
-    from src.db.session import get_session
+    from src.db.session import get_session_ctx
 
-    async for session in get_session():
+    async with get_session_ctx() as session:
         repo = JobRepository(session)
-        job = await repo.get(job_id)
+        key_id = key_meta.get("key_id", "")
+        job = await repo.get_by_owner(job_id, key_id)
         if job is None:
             return APIResponse(
                 success=False,

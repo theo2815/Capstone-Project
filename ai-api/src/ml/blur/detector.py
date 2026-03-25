@@ -28,15 +28,20 @@ class BlurDetector:
     def __init__(self, laplacian_threshold: float = 100.0) -> None:
         self.laplacian_threshold = laplacian_threshold
 
-    def detect(self, image: np.ndarray) -> dict:
+    def detect(
+        self, image: np.ndarray, threshold_override: float | None = None
+    ) -> dict:
         """Analyze an image for blur.
 
         Args:
             image: BGR numpy array from cv2.
+            threshold_override: If provided, uses this threshold instead of
+                the instance default. Thread-safe (no shared state mutation).
 
         Returns:
             Dict with is_blurry, confidence, and metrics.
         """
+        threshold = threshold_override if threshold_override is not None else self.laplacian_threshold
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
         if _HAS_CPP:
@@ -58,11 +63,11 @@ class BlurDetector:
             total = np.sum(magnitude)
             hf_ratio = float(np.sum(magnitude * mask) / total) if total > 0 else 0.0
 
-        is_blurry = laplacian_var < self.laplacian_threshold
+        is_blurry = laplacian_var < threshold
         if is_blurry:
-            confidence = 1.0 - min(1.0, laplacian_var / self.laplacian_threshold)
+            confidence = 1.0 - min(1.0, laplacian_var / threshold)
         else:
-            confidence = min(1.0, laplacian_var / self.laplacian_threshold)
+            confidence = min(1.0, laplacian_var / threshold)
 
         return {
             "is_blurry": is_blurry,

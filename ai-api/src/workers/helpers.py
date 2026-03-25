@@ -15,18 +15,36 @@ logger = get_logger(__name__)
 
 
 def decode_base64_image(b64_data: str) -> np.ndarray | None:
-    """Decode a base64 string to a BGR numpy array."""
+    """Decode a base64 string to a BGR numpy array with EXIF rotation.
+
+    Uses PIL for decoding to match the single-image pipeline
+    (``validate_and_decode``), ensuring EXIF orientation is applied
+    consistently for phone photos.
+    """
     try:
+        import io
+
+        from PIL import Image, ImageOps
+
         image_bytes = base64.b64decode(b64_data)
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        pil_img = Image.open(io.BytesIO(image_bytes))
+        pil_img = ImageOps.exif_transpose(pil_img)
+        rgb_array = np.array(pil_img.convert("RGB"))
+        image = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
         return image
     except Exception:
         return None
 
 
-def update_job_progress(job_id: str, processed: int, total: int) -> None:
-    """Update job progress in the database."""
+def update_job_progress(
+    job_id: str, processed: int, total: int, every_n: int = 10
+) -> None:
+    """Update job progress in the database, throttled to every N items.
+
+    Always writes on the final item to ensure 100% progress is recorded.
+    """
+    if processed < total and processed % every_n != 0:
+        return
     progress = processed / total if total > 0 else 0.0
     with get_sync_session() as session:
         repo = SyncJobRepository(session)
@@ -64,6 +82,8 @@ def dispatch_webhook_sync(event: str, payload: dict) -> int:
         repo = SyncWebhookRepository(session)
         webhooks = repo.list_by_event(event)
 
+    from src.utils.crypto import decrypt_secret
+
     for wh in webhooks:
         from src.workers.tasks.webhook_tasks import deliver_webhook
 
@@ -71,7 +91,7 @@ def dispatch_webhook_sync(event: str, payload: dict) -> int:
             url=wh.url,
             event=event,
             payload=payload,
-            secret=wh.secret,
+            secret=decrypt_secret(wh.secret) if wh.secret else None,
         )
         count += 1
 

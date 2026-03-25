@@ -12,16 +12,18 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
     ENVIRONMENT: str = "development"
+    SQL_ECHO: bool = False
 
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     WORKERS: int = 2
+    MAX_REQUEST_BODY: int = 50 * 1024 * 1024  # 50 MB (covers batch of 5 x 10MB)
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/eventai"
 
-    # Redis
+    # Redis (use redis://:password@host:port/db for authenticated instances)
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # ML Models
@@ -56,10 +58,19 @@ class Settings(BaseSettings):
     # Webhooks
     WEBHOOK_TIMEOUT: int = 10
     WEBHOOK_MAX_RETRIES: int = 3
+    WEBHOOK_SECRET_KEY: str = ""  # Fernet key for encrypting webhook secrets at rest
+
+    # Celery
+    CELERY_SECURITY_KEY: str = ""
 
     # File Upload
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10 MB
-    MAX_BATCH_SIZE: int = 100
+    MAX_BATCH_SIZE: int = 20  # Kept low to limit memory (base64 in Redis)
+    MAX_ACTIVE_JOBS_PER_KEY: int = 10  # Backpressure: max pending+processing jobs per API key
+
+    # Image preprocessing — downscale large images before inference
+    # Models resize internally to 640x640 so images beyond this are wasted memory
+    MAX_INFERENCE_DIMENSION: int = 2048  # 0 = disabled
 
     model_config = {
         "env_file": ".env",

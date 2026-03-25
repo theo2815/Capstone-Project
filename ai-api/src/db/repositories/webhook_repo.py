@@ -21,8 +21,11 @@ class WebhookRepository:
         secret: str | None = None,
         api_key_id: str | None = None,
     ) -> WebhookSubscription:
+        from src.utils.crypto import encrypt_secret
+
+        encrypted_secret = encrypt_secret(secret) if secret else None
         webhook = WebhookSubscription(
-            url=url, events=events, secret=secret, api_key_id=api_key_id
+            url=url, events=events, secret=encrypted_secret, api_key_id=api_key_id
         )
         self.session.add(webhook)
         await self.session.flush()
@@ -42,14 +45,16 @@ class WebhookRepository:
         return list(result.scalars().all())
 
     async def list_by_event(self, event: str) -> list[WebhookSubscription]:
+        from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
+
         result = await self.session.execute(
             select(WebhookSubscription).where(
                 WebhookSubscription.active.is_(True),
+                WebhookSubscription.events.op("@>")(cast([event], PG_JSONB)),
             )
         )
-        return [
-            wh for wh in result.scalars().all() if event in wh.events
-        ]
+        return list(result.scalars().all())
 
     async def delete(self, webhook_id: uuid.UUID) -> bool:
         webhook = await self.get(webhook_id)

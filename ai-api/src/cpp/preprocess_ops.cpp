@@ -91,4 +91,79 @@ py::array_t<uint8_t> resize_gray(py::array_t<uint8_t> gray, int new_h,
     return result;
 }
 
+py::array_t<float> classify_preprocess(py::array_t<uint8_t> bgr,
+                                        int target_size) {
+    auto buf = bgr.unchecked<3>();
+    const py::ssize_t H = buf.shape(0);
+    const py::ssize_t W = buf.shape(1);
+
+    if (buf.shape(2) != 3) {
+        throw std::invalid_argument("Input must be (H, W, 3) BGR image");
+    }
+    if (target_size <= 0) {
+        throw std::invalid_argument("target_size must be positive");
+    }
+
+    // Output: (1, 3, target_size, target_size) float32
+    auto result = py::array_t<float>(
+        {static_cast<py::ssize_t>(1), static_cast<py::ssize_t>(3),
+         static_cast<py::ssize_t>(target_size),
+         static_cast<py::ssize_t>(target_size)});
+    auto out = result.mutable_unchecked<4>();
+
+    {
+        py::gil_scoped_release release;
+
+        // 1. Center-crop to square
+        const py::ssize_t m = std::min(H, W);
+        const py::ssize_t top = (H - m) / 2;
+        const py::ssize_t left = (W - m) / 2;
+
+        // 2+3+4. Bilinear resize + BGR->RGB normalize + HWC->CHW in one pass
+        const double scale = static_cast<double>(m) / target_size;
+        const float inv255 = 1.0f / 255.0f;
+
+        for (int y = 0; y < target_size; ++y) {
+            double src_y = (y + 0.5) * scale - 0.5;
+            py::ssize_t y0 = static_cast<py::ssize_t>(std::floor(src_y));
+            py::ssize_t y1 = y0 + 1;
+            double fy = src_y - y0;
+
+            // Clamp to crop region
+            y0 = std::max(static_cast<py::ssize_t>(0),
+                          std::min(y0, m - 1)) + top;
+            y1 = std::max(static_cast<py::ssize_t>(0),
+                          std::min(y1, m - 1)) + top;
+
+            for (int x = 0; x < target_size; ++x) {
+                double src_x = (x + 0.5) * scale - 0.5;
+                py::ssize_t x0 = static_cast<py::ssize_t>(std::floor(src_x));
+                py::ssize_t x1 = x0 + 1;
+                double fx = src_x - x0;
+
+                x0 = std::max(static_cast<py::ssize_t>(0),
+                              std::min(x0, m - 1)) + left;
+                x1 = std::max(static_cast<py::ssize_t>(0),
+                              std::min(x1, m - 1)) + left;
+
+                // Interpolate each BGR channel, convert to RGB, normalize
+                for (int c = 0; c < 3; ++c) {
+                    double val =
+                        (1.0 - fy) *
+                            ((1.0 - fx) * buf(y0, x0, c) +
+                             fx * buf(y0, x1, c)) +
+                        fy *
+                            ((1.0 - fx) * buf(y1, x0, c) +
+                             fx * buf(y1, x1, c));
+                    // BGR->RGB: channel 0(B)->2(R), 1(G)->1(G), 2(R)->0(B)
+                    int out_c = 2 - c;
+                    out(0, out_c, y, x) = static_cast<float>(val) * inv255;
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
 }  // namespace eventai

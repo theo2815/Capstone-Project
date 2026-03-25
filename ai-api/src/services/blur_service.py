@@ -28,10 +28,7 @@ class BlurService:
             threshold: Optional override for the Laplacian threshold.
         """
         if threshold is not None:
-            original = self.detector.laplacian_threshold
-            self.detector.laplacian_threshold = threshold
-            result = self.detector.detect(image)
-            self.detector.laplacian_threshold = original
+            result = self.detector.detect(image, threshold_override=threshold)
         else:
             result = self.detector.detect(image)
 

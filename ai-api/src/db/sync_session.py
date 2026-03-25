@@ -4,6 +4,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.config import get_settings
@@ -18,7 +19,8 @@ _sync_session_factory = None
 def _get_sync_url() -> str:
     """Derive a synchronous database URL from the async one."""
     settings = get_settings()
-    return settings.DATABASE_URL.replace("+asyncpg", "+psycopg2")
+    url = make_url(settings.DATABASE_URL)
+    return str(url.set(drivername="postgresql+psycopg2"))
 
 
 def init_sync_db() -> None:
@@ -29,9 +31,11 @@ def init_sync_db() -> None:
 
     _sync_engine = create_engine(
         _get_sync_url(),
-        pool_size=5,
-        max_overflow=5,
+        pool_size=15,
+        max_overflow=10,
         pool_pre_ping=True,
+        pool_timeout=30,
+        pool_recycle=3600,
     )
     _sync_session_factory = sessionmaker(bind=_sync_engine, expire_on_commit=False)
     logger.info("Sync database engine initialized")

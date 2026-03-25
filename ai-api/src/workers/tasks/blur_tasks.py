@@ -28,20 +28,27 @@ def blur_detect_batch(self, job_id: str, image_data_list: list[str]):
         return
 
     total = len(image_data_list)
-    results = []
+    results: list[dict] = [{}] * total
 
+    # PERF-8: Pre-decode all images upfront (fail fast, better memory locality)
+    images = []
     for i, b64_data in enumerate(image_data_list):
+        image = decode_base64_image(b64_data)
+        if image is None:
+            results[i] = {"index": i, "error": "Failed to decode image"}
+        images.append(image)
+
+    # Run inference on successfully decoded images
+    for i, image in enumerate(images):
+        if image is None:
+            update_job_progress(job_id, i + 1, total)
+            continue
         try:
-            image = decode_base64_image(b64_data)
-            if image is None:
-                results.append({"index": i, "error": "Failed to decode image"})
-            else:
-                detection = detector.detect(image)
-                results.append({"index": i, **detection})
+            detection = detector.detect(image)
+            results[i] = {"index": i, **detection}
         except Exception as e:
             logger.error("Blur detection failed for image", index=i, error=str(e))
-            results.append({"index": i, "error": str(e)})
-
+            results[i] = {"index": i, "error": str(e)}
         update_job_progress(job_id, i + 1, total)
 
     complete_job(job_id, results)
@@ -74,30 +81,37 @@ def blur_classify_batch(
         return
 
     total = len(image_data_list)
-    results = []
+    results: list[dict] = [{}] * total
 
+    # PERF-8: Pre-decode all images upfront
+    images = []
     for i, b64_data in enumerate(image_data_list):
+        image = decode_base64_image(b64_data)
+        if image is None:
+            results[i] = {"index": i, "error": "Failed to decode image"}
+        images.append(image)
+
+    # Run inference on successfully decoded images
+    for i, image in enumerate(images):
+        if image is None:
+            update_job_progress(job_id, i + 1, total)
+            continue
         try:
-            image = decode_base64_image(b64_data)
-            if image is None:
-                results.append({"index": i, "error": "Failed to decode image"})
-            else:
-                if blur_type is not None:
-                    detection = classifier.detect_blur_type(image, blur_type)
-                    if detection is None:
-                        results.append({"index": i, "error": "Classifier returned None"})
-                    else:
-                        results.append({"index": i, **detection})
+            if blur_type is not None:
+                detection = classifier.detect_blur_type(image, blur_type)
+                if detection is None:
+                    results[i] = {"index": i, "error": "Classifier returned None"}
                 else:
-                    classification = classifier.classify(image)
-                    if classification is None:
-                        results.append({"index": i, "error": "Classifier returned None"})
-                    else:
-                        results.append({"index": i, **classification})
+                    results[i] = {"index": i, **detection}
+            else:
+                classification = classifier.classify(image)
+                if classification is None:
+                    results[i] = {"index": i, "error": "Classifier returned None"}
+                else:
+                    results[i] = {"index": i, **classification}
         except Exception as e:
             logger.error("Blur classification failed for image", index=i, error=str(e))
-            results.append({"index": i, "error": str(e)})
-
+            results[i] = {"index": i, "error": str(e)}
         update_job_progress(job_id, i + 1, total)
 
     complete_job(job_id, results)

@@ -7,7 +7,7 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/eventai
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://:eventai_redis_pass@redis:6379/0
       - MODEL_DIR=/app/models
       - LOG_LEVEL=DEBUG
       - DEBUG=true
@@ -20,19 +20,30 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: 8G
 
+  # SCALE-1: In production, split into per-queue workers:
+  #   celery -A src.workers.celery_app worker -Q blur --concurrency=4
+  #   celery -A src.workers.celery_app worker -Q face --concurrency=2
+  #   celery -A src.workers.celery_app worker -Q bib  --concurrency=2
+  # For development, a single worker consuming all queues is fine:
   celery-worker:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    command: celery -A src.workers.celery_app worker --loglevel=info --concurrency=2
+    command: celery -A src.workers.celery_app worker --loglevel=info --concurrency=2 -Q default,blur,face,bib
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/eventai
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://:eventai_redis_pass@redis:6379/0
       - MODEL_DIR=/app/models
     volumes:
       - ./src:/app/src
@@ -42,7 +53,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: 8G
 
   db:
     image: pgvector/pgvector:pg16
@@ -59,18 +70,27 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2G
 
   redis:
     image: redis:7.4-alpine
+    command: redis-server --requirepass eventai_redis_pass --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "eventai_redis_pass", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
     volumes:
       - redisdata:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
 volumes:
   pgdata:

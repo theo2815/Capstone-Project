@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-import base64
+import asyncio
 import time
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from src.middleware.auth import verify_api_key
+from src.api.v1.batch_utils import (
+    batch_accepted_response,
+    create_batch_job,
+    validate_and_encode_batch,
+)
+from src.middleware.auth import check_scope, verify_api_key
 from src.schemas.bibs import BibCandidate, BibDetection, BibRecognitionResponse
 from src.schemas.common import APIResponse
-from src.schemas.jobs import JobCreateResponse
 from src.utils.image_utils import get_image_dimensions, validate_and_decode
 
 router = APIRouter(prefix="/bibs", tags=["Bib Number Recognition"])
@@ -29,6 +33,7 @@ async def recognize_bibs(
     If only the OCR model is available, runs OCR directly on the full image
     (fallback mode).
     """
+    check_scope("bibs:read", key_meta)
     start = time.perf_counter()
     settings = request.app.state.settings
     _, image = await validate_and_decode(file, max_file_size=settings.MAX_FILE_SIZE)
@@ -38,18 +43,22 @@ async def recognize_bibs(
     bib_ocr = registry.get("bib_ocr")
 
     if bib_ocr is None:
-        return APIResponse(
-            success=False,
-            request_id=getattr(request.state, "request_id", ""),
-            error={"code": "MODEL_UNAVAILABLE", "message": "Bib OCR model not loaded"},
+        return JSONResponse(
+            status_code=503,
+            content=APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={"code": "MODEL_UNAVAILABLE", "message": "Bib OCR model not loaded"},
+            ).model_dump(mode="json"),
         )
 
     w, h = get_image_dimensions(image)
     bib_results = []
 
     if bib_detector is not None and bib_detector.model is not None:
-        # Full pipeline: detect bib regions -> crop -> OCR
-        detections = bib_detector.detect(image)
+        # Full pipeline: detect bib regions -> crop -> OCR (parallel)
+        detections = await asyncio.to_thread(bib_detector.detect, image)
+        crops_and_bboxes = []
         for det in detections:
             bbox = det["bbox"]
             x1, y1 = int(bbox["x1"]), int(bbox["y1"])
@@ -57,21 +66,27 @@ async def recognize_bibs(
             cropped = image[y1:y2, x1:x2]
             if cropped.size == 0:
                 continue
-            ocr_result = bib_ocr.recognize(cropped)
-            if ocr_result["bib_number"]:
-                bib_results.append(
-                    BibDetection(
-                        bib_number=ocr_result["bib_number"],
-                        confidence=ocr_result["confidence"],
-                        bbox=bbox,
-                        all_candidates=[
-                            BibCandidate(**c) for c in ocr_result["all_candidates"]
-                        ],
+            crops_and_bboxes.append((cropped, bbox))
+
+        if crops_and_bboxes:
+            ocr_results = await asyncio.gather(
+                *[asyncio.to_thread(bib_ocr.recognize, crop) for crop, _ in crops_and_bboxes]
+            )
+            for (_, bbox), ocr_result in zip(crops_and_bboxes, ocr_results):
+                if ocr_result["bib_number"]:
+                    bib_results.append(
+                        BibDetection(
+                            bib_number=ocr_result["bib_number"],
+                            confidence=ocr_result["confidence"],
+                            bbox=bbox,
+                            all_candidates=[
+                                BibCandidate(**c) for c in ocr_result["all_candidates"]
+                            ],
+                        )
                     )
-                )
     else:
         # Fallback: run OCR on the full image
-        ocr_result = bib_ocr.recognize(image)
+        ocr_result = await asyncio.to_thread(bib_ocr.recognize, image)
         if ocr_result["bib_number"]:
             bib_results.append(
                 BibDetection(
@@ -109,62 +124,24 @@ async def recognize_bibs_batch(
 
     Returns a job ID immediately. Poll GET /api/v1/jobs/{job_id} for results.
     """
+    check_scope("bibs:read", key_meta)
     settings = request.app.state.settings
 
-    if len(files) == 0:
-        return JSONResponse(
-            status_code=400,
-            content=APIResponse(
-                success=False,
-                request_id=getattr(request.state, "request_id", ""),
-                error={"code": "EMPTY_BATCH", "message": "No files provided"},
-            ).model_dump(mode="json"),
-        )
+    result = await validate_and_encode_batch(
+        request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE
+    )
+    if isinstance(result, JSONResponse):
+        return result
+    image_data_list = result
 
-    if len(files) > settings.MAX_BATCH_SIZE:
-        return JSONResponse(
-            status_code=400,
-            content=APIResponse(
-                success=False,
-                request_id=getattr(request.state, "request_id", ""),
-                error={
-                    "code": "BATCH_TOO_LARGE",
-                    "message": f"Maximum {settings.MAX_BATCH_SIZE} files per batch",
-                },
-            ).model_dump(mode="json"),
-        )
+    job_id = await create_batch_job(
+        request, "bib_recognize_batch", len(files), key_meta.get("key_id")
+    )
+    if isinstance(job_id, JSONResponse):
+        return job_id
 
-    # Read and base64 encode all files
-    image_data_list = []
-    for f in files:
-        raw = await f.read()
-        image_data_list.append(base64.b64encode(raw).decode("ascii"))
-
-    # Create job record
-    from src.db.repositories.job_repo import JobRepository
-    from src.db.session import get_session
-
-    async for session in get_session():
-        repo = JobRepository(session)
-        job = await repo.create(job_type="bib_recognize_batch", total_items=len(files))
-        job_id = str(job.id)
-
-    # Queue Celery task
     from src.workers.tasks.bib_tasks import bib_recognize_batch
 
     bib_recognize_batch.delay(job_id, image_data_list)
 
-    data = JobCreateResponse(
-        job_id=job_id,
-        status="pending",
-        total_items=len(files),
-        poll_url=f"/api/v1/jobs/{job_id}",
-    )
-    return JSONResponse(
-        status_code=202,
-        content=APIResponse(
-            success=True,
-            request_id=getattr(request.state, "request_id", ""),
-            data=data.model_dump(mode="json"),
-        ).model_dump(mode="json"),
-    )
+    return batch_accepted_response(request, job_id, len(files))

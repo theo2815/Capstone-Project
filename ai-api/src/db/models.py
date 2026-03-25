@@ -20,6 +20,7 @@ class Person(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    api_key_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -43,7 +44,7 @@ class FaceEmbedding(Base):
         UUID(as_uuid=True), ForeignKey("persons.id", ondelete="CASCADE"), nullable=False
     )
     embedding = mapped_column(Vector(512), nullable=False)
-    source_image_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_image_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -59,14 +60,15 @@ class Job(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     job_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     total_items: Mapped[int] = mapped_column(Integer, default=0)
     processed_items: Mapped[int] = mapped_column(Integer, default=0)
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_key_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), server_default=func.now(), index=True
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -81,9 +83,9 @@ class WebhookSubscription(Base):
     )
     url: Mapped[str] = mapped_column(String(2048), nullable=False)
     events: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    secret: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
-    api_key_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    api_key_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

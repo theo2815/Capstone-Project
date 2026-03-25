@@ -11,8 +11,16 @@ except ImportError:
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    """Compute cosine similarity between two L2-normalized vectors."""
-    return float(np.dot(a, b))
+    """Compute cosine similarity between two vectors.
+
+    Normalizes inputs to L2 unit length for safety, so this works
+    correctly even if embeddings are not pre-normalized.
+    """
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a / norm_a, b / norm_b))
 
 
 def find_matches(

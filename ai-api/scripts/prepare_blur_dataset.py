@@ -177,17 +177,14 @@ def prepare_dataset() -> None:
             shutil.copy2(img_path, dest)
             train_count += 1
 
-        # Augment if this class needs more images
+        # Augment if this class needs more images (train only — never augment val)
         if n_originals < AUGMENTATION_TARGET:
             n_augmented_needed = AUGMENTATION_TARGET - n_originals
-            # Split augmentation budget: 80% train, 20% val
-            n_aug_train = int(n_augmented_needed * (1 - VAL_RATIO))
-            n_aug_val = n_augmented_needed - n_aug_train
 
-            print(f"  Augmenting: {n_aug_train} train + {n_aug_val} val")
+            print(f"  Augmenting: {n_augmented_needed} train (val uses originals only)")
 
-            # Generate train augmentations
-            for i in range(n_aug_train):
+            # Generate train augmentations only
+            for i in range(n_augmented_needed):
                 src_path = train_images[i % len(train_images)]
                 img = cv2.imread(str(src_path))
                 if img is None:
@@ -197,18 +194,6 @@ def prepare_dataset() -> None:
                 dest = DATASET_DIR / "train" / cls_name / f"{stem}_aug{i:04d}.jpg"
                 cv2.imwrite(str(dest), aug)
                 train_count += 1
-
-            # Generate val augmentations
-            for i in range(n_aug_val):
-                src_path = val_images[i % len(val_images)]
-                img = cv2.imread(str(src_path))
-                if img is None:
-                    continue
-                aug = augment_image(img, rng)
-                stem = src_path.stem
-                dest = DATASET_DIR / "val" / cls_name / f"{stem}_aug{i:04d}.jpg"
-                cv2.imwrite(str(dest), aug)
-                val_count += 1
 
         total_stats[cls_name] = {"train": train_count, "val": val_count}
 

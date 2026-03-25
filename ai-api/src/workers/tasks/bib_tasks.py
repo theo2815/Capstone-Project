@@ -29,20 +29,27 @@ def bib_recognize_batch(self, job_id: str, image_data_list: list[str]):
 
     bib_detector = get_bib_detector()
     total = len(image_data_list)
-    results = []
+    results: list[dict] = [{}] * total
 
+    # PERF-8: Pre-decode all images upfront
+    images = []
     for i, b64_data in enumerate(image_data_list):
+        image = decode_base64_image(b64_data)
+        if image is None:
+            results[i] = {"index": i, "bibs": [], "error": "Failed to decode image"}
+        images.append(image)
+
+    # Run inference on successfully decoded images
+    for i, image in enumerate(images):
+        if image is None:
+            update_job_progress(job_id, i + 1, total)
+            continue
         try:
-            image = decode_base64_image(b64_data)
-            if image is None:
-                results.append({"index": i, "bibs": [], "error": "Failed to decode image"})
-            else:
-                bibs = _recognize_single(image, bib_detector, bib_ocr)
-                results.append({"index": i, "bibs": bibs})
+            bibs = _recognize_single(image, bib_detector, bib_ocr)
+            results[i] = {"index": i, "bibs": bibs}
         except Exception as e:
             logger.error("Bib recognition failed for image", index=i, error=str(e))
-            results.append({"index": i, "bibs": [], "error": str(e)})
-
+            results[i] = {"index": i, "bibs": [], "error": str(e)}
         update_job_progress(job_id, i + 1, total)
 
     complete_job(job_id, results)

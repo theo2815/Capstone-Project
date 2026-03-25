@@ -33,7 +33,7 @@ dependencies = [
     # Database
     "sqlalchemy[asyncio]>=2.0.36,<3",
     "asyncpg>=0.30.0,<1",
-    "psycopg2-binary>=2.9.9,<3",
+    "psycopg2>=2.9.9,<3",
     "alembic>=1.14.0,<2",
     "pgvector>=0.3.6,<0.4",
 
@@ -41,9 +41,9 @@ dependencies = [
     "celery[redis]>=5.4.0,<6",
     "redis>=5.2.0,<6",
 
-    # Auth
-    "python-jose[cryptography]>=3.3.0,<4",
-    "passlib[bcrypt]>=1.7.4,<2",
+    # Auth (PyJWT replaces python-jose — CVE-2024-33664)
+    "PyJWT[crypto]>=2.9.0,<3",
+    "bcrypt>=4.2.0,<5",
 
     # Observability
     "structlog>=24.4.0,<25",
@@ -52,7 +52,6 @@ dependencies = [
 
     # Utilities
     "httpx>=0.28.0,<1",
-    "tenacity>=9.0.0,<10",
 ]
 
 [project.optional-dependencies]
