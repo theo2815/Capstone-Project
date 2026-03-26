@@ -45,9 +45,17 @@ class FaceEmbedder:
 
         logger.info("FaceEmbedder initialized", gpu=use_gpu, det_size=det_size)
 
+    def _run_inference(self, image: np.ndarray) -> list:
+        """Run InsightFace inference with a per-image timeout."""
+        from src.config import get_settings
+        from src.utils.timeout import run_with_timeout
+
+        timeout = get_settings().INFERENCE_TIMEOUT
+        return run_with_timeout(self.app.get, args=(image,), timeout_seconds=timeout)
+
     def detect_faces(self, image: np.ndarray) -> list[dict]:
         """Detect faces and return bounding boxes + landmarks."""
-        faces = self.app.get(image)
+        faces = self._run_inference(image)
         return [
             {
                 "bbox": {
@@ -64,7 +72,7 @@ class FaceEmbedder:
 
     def get_embeddings(self, image: np.ndarray) -> list[dict]:
         """Detect faces and extract 512-dim embeddings."""
-        faces = self.app.get(image)
+        faces = self._run_inference(image)
         return [
             {
                 "bbox": {

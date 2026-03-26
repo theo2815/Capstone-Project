@@ -68,11 +68,15 @@ class BlurClassifier:
                 else ["CPUExecutionProvider"]
             )
 
+            from src.config import get_settings
+
+            _settings = get_settings()
+
             # Optimized session options for production inference
             sess_opts = ort.SessionOptions()
             sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            sess_opts.intra_op_num_threads = 2
-            sess_opts.inter_op_num_threads = 1
+            sess_opts.intra_op_num_threads = _settings.ONNX_INTRA_OP_THREADS
+            sess_opts.inter_op_num_threads = _settings.ONNX_INTER_OP_THREADS
             sess_opts.enable_mem_pattern = True
             sess_opts.enable_cpu_mem_arena = True
             sess_opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
@@ -88,6 +92,19 @@ class BlurClassifier:
             if names_path.exists():
                 with open(names_path) as f:
                     self.class_names = json.load(f)
+
+            # Validate class names count matches model output dimension
+            output_shape = self.session.get_outputs()[0].shape
+            num_classes = output_shape[-1]
+            if len(self.class_names) != num_classes:
+                logger.error(
+                    "Class names count does not match model output dimension",
+                    class_names_count=len(self.class_names),
+                    model_output_classes=num_classes,
+                    class_names=self.class_names,
+                )
+                self.session = None
+                return
 
             logger.info(
                 "BlurClassifier loaded",
@@ -148,7 +165,15 @@ class BlurClassifier:
         input_tensor = self._preprocess(image)
 
         input_name = self.session.get_inputs()[0].name
-        outputs = self.session.run(None, {input_name: input_tensor})
+
+        from src.config import get_settings
+        from src.utils.timeout import run_with_timeout
+
+        timeout = get_settings().INFERENCE_TIMEOUT
+        outputs = run_with_timeout(
+            self.session.run, args=(None, {input_name: input_tensor}),
+            timeout_seconds=timeout,
+        )
         logits = outputs[0][0]  # shape: (num_classes,)
 
         # Softmax

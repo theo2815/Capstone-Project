@@ -14,23 +14,34 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def decode_base64_image(b64_data: str) -> np.ndarray | None:
+def decode_base64_image(
+    b64_data: str, *, raw_bytes: bytes | None = None
+) -> np.ndarray | None:
     """Decode a base64 string to a BGR numpy array with EXIF rotation.
 
     Uses PIL for decoding to match the single-image pipeline
     (``validate_and_decode``), ensuring EXIF orientation is applied
-    consistently for phone photos.
+    consistently for phone photos. Applies ``downscale_for_inference()``
+    to cap image dimensions, preventing OOM on high-resolution batch images.
+
+    Args:
+        b64_data: Base64-encoded image data.
+        raw_bytes: Pre-decoded bytes to avoid redundant base64 decode.
     """
     try:
         import io
 
         from PIL import Image, ImageOps
 
-        image_bytes = base64.b64decode(b64_data)
-        pil_img = Image.open(io.BytesIO(image_bytes))
+        from src.utils.image_utils import downscale_for_inference
+
+        if raw_bytes is None:
+            raw_bytes = base64.b64decode(b64_data)
+        pil_img = Image.open(io.BytesIO(raw_bytes))
         pil_img = ImageOps.exif_transpose(pil_img)
         rgb_array = np.array(pil_img.convert("RGB"))
         image = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
+        image = downscale_for_inference(image)
         return image
     except Exception:
         return None

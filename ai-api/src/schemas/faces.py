@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -42,6 +43,7 @@ class FaceSearchResponse(BaseModel):
 class FaceEnrollResponse(BaseModel):
     person_id: UUID
     person_name: str
+    event_id: str | None = None
     faces_enrolled: int
     embeddings_stored: int
     processing_time_ms: float
@@ -58,6 +60,14 @@ class FaceCompareResponse(BaseModel):
 class PersonResponse(BaseModel):
     person_id: UUID
     person_name: str
+    event_id: str | None = None
     embeddings_count: int
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PersonListResponse(BaseModel):
+    persons: list[PersonResponse]
+    total: int
+    offset: int
+    limit: int

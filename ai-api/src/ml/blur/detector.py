@@ -44,6 +44,8 @@ class BlurDetector:
         threshold = threshold_override if threshold_override is not None else self.laplacian_threshold
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
+        h, w = gray.shape
+
         if _HAS_CPP:
             laplacian_var = float(_cpp_laplacian_var(gray))
             hf_ratio = float(_cpp_hf_ratio(gray))
@@ -55,13 +57,20 @@ class BlurDetector:
             f_transform = np.fft.fft2(gray)
             f_shift = np.fft.fftshift(f_transform)
             magnitude = np.abs(f_shift)
-            h, w = gray.shape
             cy, cx = h // 2, w // 2
             r = min(h, w) // 8
             mask = np.ones_like(magnitude)
             mask[cy - r : cy + r, cx - r : cx + r] = 0
             total = np.sum(magnitude)
             hf_ratio = float(np.sum(magnitude * mask) / total) if total > 0 else 0.0
+
+        # Normalize Laplacian variance to 640px reference resolution
+        # using linear resolution ratio (not pixel count) because Laplacian
+        # variance scales with linear resolution, not total pixel count.
+        ref_dim = 640
+        actual_dim = max(h, w)
+        if actual_dim > 0:
+            laplacian_var = laplacian_var * ref_dim / actual_dim
 
         is_blurry = laplacian_var < threshold
         if is_blurry:

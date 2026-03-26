@@ -58,7 +58,10 @@ class JobRepository:
     async def complete(
         self, job_id: uuid.UUID, result: dict | list
     ) -> None:
-        job = await self.get(job_id)
+        row = await self.session.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        )
+        job = row.scalar_one_or_none()
         if job:
             job.status = "completed"
             job.progress = 1.0
@@ -86,7 +89,10 @@ class JobRepository:
         return result.scalar_one()
 
     async def fail(self, job_id: uuid.UUID, error: str) -> None:
-        job = await self.get(job_id)
+        row = await self.session.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        )
+        job = row.scalar_one_or_none()
         if job:
             job.status = "failed"
             job.error = error

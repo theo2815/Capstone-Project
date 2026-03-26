@@ -1,8 +1,29 @@
 # EventAI
 
-A modular AI-powered REST API for event photography processing. Built with FastAPI (Python 3.11+), PostgreSQL + pgvector, Redis, and Celery.
+A complete ecosystem for marathon photography — combining real-time photo uploading, AI-powered blur detection, face and bib number search, and an online marketplace for runners to find and purchase their event photos.
 
-## Features
+## Platform
+
+| Product | Technology | Status |
+|---------|-----------|--------|
+| **Mobile App** | Kotlin (Android first, iOS planned) | Not started |
+| **Website** | Next.js (Vercel) | Not started |
+| **Desktop App** | Electron | Built |
+| **Web/Mobile Backend** | Spring Boot (Java) | Not started |
+| **AI Services (ai-api)** | FastAPI + Celery (Python) | Phases 1-6 complete |
+
+## Project Structure
+
+```
+Capstone-Project/
+├── ai-api/          # AI microservice (FastAPI + ML pipeline) — built
+├── backend/         # Web/Mobile backend (Spring Boot) — planned
+├── mobile/          # Mobile app (Kotlin) — planned
+├── website/         # Web frontend (Next.js) — planned
+└── docs/            # Project-level documentation
+```
+
+## AI Features (ai-api)
 
 - **Blur Detection** -- Laplacian variance + FFT analysis, and a CNN classifier (YOLOv8n-cls, 98.68% accuracy) for 4-class blur type classification
 - **Face Recognition** -- InsightFace (RetinaFace + ArcFace) with pgvector cosine similarity search
@@ -10,17 +31,20 @@ A modular AI-powered REST API for event photography processing. Built with FastA
 - **Async Batch Processing** -- Celery + Redis for processing 100+ images per request
 - **Optional C++ Acceleration** -- pybind11 extensions for performance-critical paths (AVX2)
 
-## Project Structure
+## Tech Stack
 
-```
-Capstone-Project/
-├── ai-api/          # Main application (FastAPI + ML pipeline)
-├── backend/         # Backend service (planned)
-├── mobile/          # Mobile app (planned)
-└── website/         # Web frontend (planned)
-```
+| Category | Technology | Hosting |
+|---|---|---|
+| Web/Mobile Backend | Spring Boot (Java) | AWS EC2 |
+| AI Services | FastAPI + Celery (Python) | AWS EC2 |
+| Database | PostgreSQL 16 + pgvector | AWS RDS |
+| Object Storage | AWS S3 (CloudFront CDN planned) | AWS |
+| Task Queue | Redis | AWS EC2 |
+| Website | Next.js | Vercel |
+| Mobile | Kotlin | Google Play Store |
+| Desktop | Electron | Direct download |
 
-## Quick Start
+## Quick Start (ai-api)
 
 ```bash
 cd ai-api
@@ -45,19 +69,14 @@ API docs available at http://localhost:8000/docs after startup.
 
 ## Documentation
 
-See [`ai-api/docs/`](ai-api/docs/README.md) for full documentation including architecture, API reference, deployment guide, and training plans.
+| Document | Description |
+|----------|-------------|
+| [`docs/project-vision.md`](docs/project-vision.md) | Product vision, problem statement, user journeys, full tech stack |
+| [`ai-api/docs/`](ai-api/docs/README.md) | AI service documentation — architecture, API reference, deployment, training plans |
+| [`ai-api/docs/integration-architecture.md`](ai-api/docs/integration-architecture.md) | System architecture — responsibility boundaries between ai-api, backends, and desktop |
+| [`ai-api/docs/integration-contracts.md`](ai-api/docs/integration-contracts.md) | API contracts — how each backend calls ai-api, with code examples |
 
-## Tech Stack
-
-| Category | Technology |
-|---|---|
-| Web Framework | FastAPI + Uvicorn |
-| ML Inference | InsightFace, PaddleOCR, Ultralytics YOLOv8, ONNX Runtime |
-| Database | PostgreSQL 16 + pgvector |
-| Task Queue | Celery + Redis |
-| Containerization | Docker Compose (4 services) |
-
-## Development Status
+## ai-api Development Status
 
 | Phase | Feature | Status |
 |---|---|---|

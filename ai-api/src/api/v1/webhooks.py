@@ -94,10 +94,9 @@ async def list_webhooks(
 
     async with get_session_ctx() as session:
         repo = WebhookRepository(session)
-        webhooks = await repo.list_all(
+        webhooks, total = await repo.list_with_count(
             api_key_id=api_key_id, limit=limit, offset=offset
         )
-        total = await repo.count_all(api_key_id=api_key_id)
 
         data = WebhookListResponse(
             webhooks=[
@@ -141,6 +140,12 @@ async def delete_webhook(
             )
 
         deleted = await repo.delete(webhook_id)
+        if not deleted:
+            return APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={"code": "DELETE_FAILED", "message": "Webhook was already deleted"},
+            )
 
         return APIResponse(
             success=True,

@@ -65,8 +65,12 @@ def _recognize_single(image, bib_detector, bib_ocr) -> list[dict]:
         bib_results = []
         for det in detections:
             bbox = det["bbox"]
-            x1, y1 = int(bbox["x1"]), int(bbox["y1"])
-            x2, y2 = int(bbox["x2"]), int(bbox["y2"])
+            x1 = max(0, int(bbox["x1"]))
+            y1 = max(0, int(bbox["y1"]))
+            x2 = min(w, int(bbox["x2"]))
+            y2 = min(h, int(bbox["y2"]))
+            if x2 <= x1 or y2 <= y1:
+                continue
             cropped = image[y1:y2, x1:x2]
             if cropped.size == 0:
                 continue
@@ -88,5 +92,6 @@ def _recognize_single(image, bib_detector, bib_ocr) -> list[dict]:
             "confidence": ocr_result["confidence"],
             "bbox": {"x1": 0.0, "y1": 0.0, "x2": float(w), "y2": float(h)},
             "all_candidates": ocr_result["all_candidates"],
+            "warning": "full_image_fallback",
         }]
     return []

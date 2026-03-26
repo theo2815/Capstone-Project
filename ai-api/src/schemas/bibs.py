@@ -20,3 +20,4 @@ class BibRecognitionResponse(BaseModel):
     detections: list[BibDetection]
     image_dimensions: tuple[int, int]
     processing_time_ms: float
+    warnings: list[str] | None = None

@@ -33,7 +33,10 @@ class SyncJobRepository:
             self.session.flush()
 
     def complete(self, job_id: uuid.UUID, result: dict | list) -> None:
-        job = self.get(job_id)
+        row = self.session.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        )
+        job = row.scalar_one_or_none()
         if job:
             job.status = "completed"
             job.progress = 1.0
@@ -43,7 +46,10 @@ class SyncJobRepository:
             self.session.flush()
 
     def fail(self, job_id: uuid.UUID, error: str) -> None:
-        job = self.get(job_id)
+        row = self.session.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        )
+        job = row.scalar_one_or_none()
         if job:
             job.status = "failed"
             job.error = error

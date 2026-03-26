@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from src.api.v1.batch_utils import (
@@ -23,6 +23,7 @@ router = APIRouter(prefix="/bibs", tags=["Bib Number Recognition"])
 async def recognize_bibs(
     request: Request,
     file: UploadFile = File(..., description="Image file (JPEG, PNG, WebP)"),
+    min_chars: int | None = Query(default=None, ge=1, le=10, description="Override minimum digit count for bib recognition"),
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
     """Detect bib regions and recognize bib numbers via OCR.
@@ -54,6 +55,7 @@ async def recognize_bibs(
 
     w, h = get_image_dimensions(image)
     bib_results = []
+    warnings = None
 
     if bib_detector is not None and bib_detector.model is not None:
         # Full pipeline: detect bib regions -> crop -> OCR (parallel)
@@ -61,8 +63,12 @@ async def recognize_bibs(
         crops_and_bboxes = []
         for det in detections:
             bbox = det["bbox"]
-            x1, y1 = int(bbox["x1"]), int(bbox["y1"])
-            x2, y2 = int(bbox["x2"]), int(bbox["y2"])
+            x1 = max(0, int(bbox["x1"]))
+            y1 = max(0, int(bbox["y1"]))
+            x2 = min(w, int(bbox["x2"]))
+            y2 = min(h, int(bbox["y2"]))
+            if x2 <= x1 or y2 <= y1:
+                continue
             cropped = image[y1:y2, x1:x2]
             if cropped.size == 0:
                 continue
@@ -70,7 +76,10 @@ async def recognize_bibs(
 
         if crops_and_bboxes:
             ocr_results = await asyncio.gather(
-                *[asyncio.to_thread(bib_ocr.recognize, crop) for crop, _ in crops_and_bboxes]
+                *[
+                    asyncio.to_thread(bib_ocr.recognize, crop, min_chars_override=min_chars)
+                    for crop, _ in crops_and_bboxes
+                ]
             )
             for (_, bbox), ocr_result in zip(crops_and_bboxes, ocr_results):
                 if ocr_result["bib_number"]:
@@ -86,7 +95,13 @@ async def recognize_bibs(
                     )
     else:
         # Fallback: run OCR on the full image
-        ocr_result = await asyncio.to_thread(bib_ocr.recognize, image)
+        warnings = [
+            "Bib detection model unavailable; OCR ran on full image. "
+            "Results may include non-bib text."
+        ]
+        ocr_result = await asyncio.to_thread(
+            bib_ocr.recognize, image, min_chars_override=min_chars
+        )
         if ocr_result["bib_number"]:
             bib_results.append(
                 BibDetection(
@@ -106,6 +121,7 @@ async def recognize_bibs(
         detections=bib_results,
         image_dimensions=(w, h),
         processing_time_ms=round(elapsed_ms, 2),
+        warnings=warnings,
     )
     return APIResponse(
         success=True,

@@ -29,7 +29,9 @@
       "Bash(.venv/Scripts/alembic upgrade:*)",
       "Bash(.venv/Scripts/uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --reload --limit-max-request-size 52428800)",
       "Bash(.venv/Scripts/uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --reload)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(find '/c/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project' -type f -name *feature*analysis* -o -name *FA*)",
+      "Bash(find '/c/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project' -type f -name *feature*analysis* -o -name *blur*report*)"
     ]
   }
 }

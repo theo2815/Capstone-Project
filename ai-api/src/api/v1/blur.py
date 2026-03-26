@@ -53,7 +53,7 @@ async def detect_blur(
             ).model_dump(mode="json"),
         )
 
-    result = await asyncio.to_thread(detector.detect, image)
+    result = await asyncio.to_thread(detector.detect, image, threshold_override=threshold)
     elapsed_ms = (time.perf_counter() - start) * 1000
     w, h = get_image_dimensions(image)
 
