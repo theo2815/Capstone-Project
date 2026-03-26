@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 
 from src.middleware.auth import verify_api_key
 from src.schemas.common import APIResponse, HealthResponse, ReadinessResponse
@@ -51,8 +52,16 @@ async def readiness(
     )
     healthy = checks.models_loaded and checks.database and checks.redis
 
-    return APIResponse(
+    response_data = APIResponse(
         success=healthy,
         request_id="healthcheck",
         data=checks.model_dump(),
     )
+
+    if not healthy:
+        return JSONResponse(
+            status_code=503,
+            content=response_data.model_dump(mode="json"),
+        )
+
+    return response_data

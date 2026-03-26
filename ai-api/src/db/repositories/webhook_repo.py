@@ -68,6 +68,35 @@ class WebhookRepository:
         result = await self.session.execute(query)
         return result.scalar_one()
 
+    async def list_with_count(
+        self,
+        api_key_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[WebhookSubscription], int]:
+        """List webhooks and count in one call, ensuring consistent filters."""
+        from sqlalchemy import func
+
+        base_filter = [WebhookSubscription.active.is_(True)]
+        if api_key_id:
+            base_filter.append(WebhookSubscription.api_key_id == api_key_id)
+
+        count_q = select(func.count()).select_from(WebhookSubscription).where(*base_filter)
+        count_result = await self.session.execute(count_q)
+        total = count_result.scalar_one()
+
+        list_q = (
+            select(WebhookSubscription)
+            .where(*base_filter)
+            .order_by(WebhookSubscription.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        list_result = await self.session.execute(list_q)
+        webhooks = list(list_result.scalars().all())
+
+        return webhooks, total
+
     async def list_by_event(self, event: str) -> list[WebhookSubscription]:
         from sqlalchemy import cast
         from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB

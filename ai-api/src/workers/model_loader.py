@@ -39,10 +39,15 @@ def load_models_on_worker_start(**kwargs):
     """Load all ML models when a Celery worker process starts."""
     global _blur_detector, _blur_classifier, _face_embedder, _bib_detector, _bib_recognizer
 
+    import os
+
     from src.config import get_settings
     from src.db.sync_session import init_sync_db
 
     settings = get_settings()
+
+    # Set thread limits before any model loading to prevent thread over-subscription
+    os.environ.setdefault("OMP_NUM_THREADS", str(settings.ONNX_INTRA_OP_THREADS))
 
     # Initialize sync database engine for this worker process
     init_sync_db()

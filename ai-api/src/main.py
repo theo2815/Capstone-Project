@@ -116,19 +116,35 @@ def create_app() -> FastAPI:
                     },
                 )
 
-    # SEC-11: Security response headers
-    class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request, call_next):
-            response = await call_next(request)
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            response.headers["X-Frame-Options"] = "DENY"
-            response.headers["X-XSS-Protection"] = "1; mode=block"
-            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-            if settings.ENVIRONMENT == "production":
-                response.headers["Strict-Transport-Security"] = (
-                    "max-age=31536000; includeSubDomains"
-                )
-            return response
+    # SEC-11: Security response headers (pure ASGI — no response body buffering)
+    _security_headers = [
+        (b"x-content-type-options", b"nosniff"),
+        (b"x-frame-options", b"DENY"),
+        (b"x-xss-protection", b"1; mode=block"),
+        (b"referrer-policy", b"strict-origin-when-cross-origin"),
+    ]
+    if settings.ENVIRONMENT == "production":
+        _security_headers.append(
+            (b"strict-transport-security", b"max-age=31536000; includeSubDomains")
+        )
+
+    class SecurityHeadersMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+
+            async def send_wrapper(message):
+                if message["type"] == "http.response.start":
+                    headers = list(message.get("headers", []))
+                    headers.extend(_security_headers)
+                    message = {**message, "headers": headers}
+                await send(message)
+
+            await self.app(scope, receive, send_wrapper)
 
     # RS-5: Rate limit headers on all responses
     class RateLimitHeadersMiddleware(BaseHTTPMiddleware):
@@ -141,12 +157,13 @@ def create_app() -> FastAPI:
                 response.headers["X-RateLimit-Reset"] = str(rate_info["reset"])
             return response
 
-    # Middleware (order matters: last added = first executed)
-    app.add_middleware(SecurityHeadersMiddleware)
+    # Middleware (order matters: last added = outermost = first on request)
     app.add_middleware(RateLimitHeadersMiddleware)
     app.add_middleware(TimeoutMiddleware)
     app.add_middleware(RequestIDMiddleware)
     setup_cors(app, settings.ALLOWED_ORIGINS)
+    # SecurityHeaders outermost: catches ALL responses including timeout/rate-limit errors
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # Exception handlers
     @app.exception_handler(EventAIError)
@@ -183,11 +200,38 @@ def create_app() -> FastAPI:
 
         @app.get("/metrics", include_in_schema=False)
         async def metrics(request: Request):
+            import hashlib
+
+            from src.db.session import get_session_ctx
+
             api_key = request.headers.get(settings.API_KEY_HEADER)
             if not api_key:
                 return JSONResponse(
                     status_code=401, content={"detail": "Missing API key"}
                 )
+
+            # Validate API key against DB (same logic as verify_api_key)
+            key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+            from src.db.models import APIKey
+            from sqlalchemy import select
+
+            try:
+                async with get_session_ctx() as session:
+                    result = await session.execute(
+                        select(APIKey).where(
+                            APIKey.key_hash == key_hash,
+                            APIKey.active.is_(True),
+                        )
+                    )
+                    if result.scalar_one_or_none() is None:
+                        return JSONResponse(
+                            status_code=403, content={"detail": "Invalid API key"}
+                        )
+            except Exception:
+                return JSONResponse(
+                    status_code=503, content={"detail": "Cannot validate API key"}
+                )
+
             return Response(
                 content=generate_latest(), media_type=CONTENT_TYPE_LATEST
             )

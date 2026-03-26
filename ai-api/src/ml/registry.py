@@ -56,8 +56,30 @@ class ModelRegistry:
         return all(self.is_loaded(name) for name in required)
 
     async def unload_all(self) -> None:
-        """Release model memory during graceful shutdown."""
+        """Release model memory and GPU/ONNX resources during graceful shutdown."""
         logger.info("Unloading ML models...")
+        for name, model in self._models.items():
+            if model is None:
+                continue
+            try:
+                # BlurClassifier — ONNX session
+                if hasattr(model, "session") and model.session is not None:
+                    del model.session
+                    model.session = None
+                # FaceEmbedder — InsightFace app with multiple ONNX sessions
+                if hasattr(model, "app") and hasattr(model.app, "models"):
+                    model.app.models.clear()
+                # BibRecognizer — PaddleOCR engine
+                if hasattr(model, "ocr"):
+                    del model.ocr
+                    model.ocr = None
+                # BibDetector — ONNX/YOLO model
+                if hasattr(model, "model") and model.model is not None:
+                    del model.model
+                    model.model = None
+                logger.info("Model resources released", model=name)
+            except Exception as e:
+                logger.warning("Error releasing model resources", model=name, error=str(e))
         self._models.clear()
         logger.info("All models unloaded")
 

@@ -56,22 +56,21 @@ celery_app.conf.update(
 # Auto-discover tasks
 celery_app.autodiscover_tasks(["src.workers.tasks"])
 
-# SEC-3: Enable Celery message signing when security key is configured.
-# This uses HMAC to sign task messages, preventing injection via Redis.
-# Generate a key with: python -c "import os; print(os.urandom(32).hex())"
+# SEC-3: Celery message signing placeholder.
+# The "auth" serializer requires X.509 certificates (pyOpenSSL), NOT an HMAC key.
+# CELERY_SECURITY_KEY (HMAC hex string) is incompatible with task_serializer="auth".
+# Until proper PKI is set up, task messages remain unsigned.
 _security_key = getattr(settings, "CELERY_SECURITY_KEY", "") or ""
 if _security_key:
-    celery_app.conf.update(
-        security_key=_security_key,
-        task_serializer="auth",
-        accept_content=["auth", "json"],
-        event_serializer="json",
+    logger.warning(
+        "CELERY_SECURITY_KEY is set but Celery's 'auth' serializer requires X.509 "
+        "certificates, not an HMAC key. Task messages remain unsigned until PKI is "
+        "configured. See Celery security docs for setup instructions."
     )
-    logger.info("Celery message signing enabled")
 else:
     logger.warning(
         "CELERY_SECURITY_KEY not set — task messages are unsigned. "
-        "Set CELERY_SECURITY_KEY for production use."
+        "Set up X.509 PKI for Celery message signing in production."
     )
 
 # Register worker startup signals (model loading, sync DB init)

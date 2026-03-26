@@ -21,6 +21,7 @@ class Person(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     api_key_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    event_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -41,7 +42,7 @@ class FaceEmbedding(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     person_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("persons.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("persons.id", ondelete="CASCADE"), nullable=False, index=True
     )
     embedding = mapped_column(Vector(512), nullable=False)
     source_image_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

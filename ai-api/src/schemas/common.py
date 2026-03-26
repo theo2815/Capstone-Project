@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Generic, TypeVar
 
 from pydantic import BaseModel, Field
+
+T = TypeVar("T")
 
 
 class ErrorDetail(BaseModel):
@@ -11,13 +14,17 @@ class ErrorDetail(BaseModel):
     field: str | None = None
 
 
-class APIResponse(BaseModel):
-    """Standard response wrapper for all endpoints."""
+class APIResponse(BaseModel, Generic[T]):
+    """Standard response wrapper for all endpoints.
+
+    Generic over T for typed ``data`` payloads. Backwards-compatible:
+    ``APIResponse(data=...)`` still accepts dict/list/None.
+    """
 
     success: bool
     request_id: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    data: dict | list | None = None
+    data: T | dict | list | None = None
     error: ErrorDetail | None = None
 
 

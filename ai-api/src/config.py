@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # Bib Recognition
     BIB_MIN_CHARS: int = 2
 
+    # Inference
+    INFERENCE_TIMEOUT: int = 120  # Per-image inference timeout in seconds
+    ONNX_INTRA_OP_THREADS: int = 2
+    ONNX_INTER_OP_THREADS: int = 1
+
     # Auth
     API_KEY_HEADER: str = "X-API-Key"
     JWT_PUBLIC_KEY: str = ""

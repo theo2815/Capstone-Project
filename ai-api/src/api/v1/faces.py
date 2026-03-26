@@ -23,6 +23,7 @@ from src.schemas.faces import (
     FaceEnrollResponse,
     FaceSearchResponse,
     FaceSearchResult,
+    PersonListResponse,
     PersonResponse,
 )
 from src.utils.image_utils import get_image_dimensions, validate_and_decode
@@ -85,8 +86,9 @@ async def detect_faces(
 async def enroll_face(
     request: Request,
     file: UploadFile = File(...),
-    person_name: str = Form(...),
+    person_name: str = Form(..., min_length=1, max_length=255),
     person_id: str | None = Form(default=None),
+    event_id: str | None = Form(default=None, max_length=255),
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
     """Detect faces, extract embeddings, and store in the database."""
@@ -141,7 +143,7 @@ async def enroll_face(
                 )
         else:
             person = await repo.create_person(
-                name=person_name, api_key_id=caller_key_id
+                name=person_name, api_key_id=caller_key_id, event_id=event_id
             )
             pid = person.id
 
@@ -159,12 +161,15 @@ async def enroll_face(
                     person_id=str(pid),
                 )
                 continue
-            await repo.store_embedding(
+            result = await repo.store_embedding(
                 person_id=pid,
                 embedding=face["embedding"],
                 source_image_hash=image_hash,
                 quality_score=conf,
             )
+            if result is None:
+                skipped += 1
+                continue
             stored += 1
 
         if stored == 0:
@@ -183,7 +188,8 @@ async def enroll_face(
         elapsed_ms = (time.perf_counter() - start) * 1000
         data = FaceEnrollResponse(
             person_id=pid,
-            person_name=person_name,
+            person_name=person.name,
+            event_id=person.event_id,
             faces_enrolled=stored,
             embeddings_stored=stored,
             processing_time_ms=round(elapsed_ms, 2),
@@ -201,6 +207,7 @@ async def search_faces(
     file: UploadFile = File(...),
     threshold: float = Query(default=0.4, ge=0.0, le=1.0),
     top_k: int = Query(default=10, ge=1, le=100),
+    event_id: str | None = Query(default=None),
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
     """Detect faces in an image and search the database for matches."""
@@ -240,6 +247,7 @@ async def search_faces(
                 threshold=threshold,
                 top_k=top_k,
                 api_key_id=caller_key_id,
+                event_id=event_id,
             )
 
             for face, results in zip(faces, all_results):
@@ -316,7 +324,7 @@ async def compare_faces(
 
     emb1 = np.array(faces1[0]["embedding"])
     emb2 = np.array(faces2[0]["embedding"])
-    similarity = cosine_similarity(emb1, emb2)
+    similarity = min(1.0, max(0.0, cosine_similarity(emb1, emb2)))
 
     threshold = settings.FACE_SIMILARITY_THRESHOLD
     elapsed_ms = (time.perf_counter() - start) * 1000
@@ -333,6 +341,54 @@ async def compare_faces(
         request_id=getattr(request.state, "request_id", ""),
         data=data.model_dump(),
     )
+
+
+@router.get("/persons", response_model=APIResponse)
+async def list_persons(
+    request: Request,
+    event_id: str | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    key_meta: dict = Depends(verify_api_key),
+) -> APIResponse:
+    """List enrolled persons with pagination (tenant-isolated)."""
+    check_scope("faces:read", key_meta)
+    from src.db.repositories.face_repo import FaceRepository
+    from src.db.session import get_session_ctx
+
+    caller_key_id = key_meta.get("key_id")
+
+    async with get_session_ctx() as session:
+        repo = FaceRepository(session)
+        persons, total = await repo.list_persons_with_counts(
+            api_key_id=caller_key_id,
+            event_id=event_id,
+            offset=offset,
+            limit=limit,
+        )
+
+        person_list = []
+        for p, count in persons:
+            person_list.append(PersonResponse(
+                person_id=p.id,
+                person_name=p.name,
+                event_id=p.event_id,
+                embeddings_count=count,
+                created_at=p.created_at,
+                updated_at=p.updated_at,
+            ))
+
+        data = PersonListResponse(
+            persons=person_list,
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
+        return APIResponse(
+            success=True,
+            request_id=getattr(request.state, "request_id", ""),
+            data=data.model_dump(),
+        )
 
 
 @router.get("/persons/{person_id}", response_model=APIResponse)
@@ -362,9 +418,10 @@ async def get_person(
         data = PersonResponse(
             person_id=person.id,
             person_name=person.name,
+            event_id=person.event_id,
             embeddings_count=count,
-            created_at=person.created_at.isoformat(),
-            updated_at=person.updated_at.isoformat(),
+            created_at=person.created_at,
+            updated_at=person.updated_at,
         )
         return APIResponse(
             success=True,
@@ -408,6 +465,9 @@ async def search_faces_batch(
     request: Request,
     files: list[UploadFile] = File(..., description="Image files (JPEG, PNG, WebP)"),
     operation: str = Query(default="search", pattern="^(detect|search)$"),
+    event_id: str | None = Query(default=None),
+    threshold: float = Query(default=0.4, ge=0.0, le=1.0),
+    top_k: int = Query(default=10, ge=1, le=100),
     key_meta: dict = Depends(verify_api_key),
 ):
     """Submit a batch of images for async face processing.
@@ -436,6 +496,58 @@ async def search_faces_batch(
 
     from src.workers.tasks.face_tasks import face_process_batch
 
-    face_process_batch.delay(job_id, image_data_list, operation, api_key_id=key_meta.get("key_id"))
+    face_process_batch.delay(
+        job_id, image_data_list, operation,
+        api_key_id=key_meta.get("key_id"),
+        event_id=event_id,
+        threshold=threshold,
+        top_k=top_k,
+    )
+
+    return batch_accepted_response(request, job_id, len(files))
+
+
+@router.post("/enroll/batch", status_code=202)
+async def enroll_faces_batch(
+    request: Request,
+    files: list[UploadFile] = File(..., description="Image files (JPEG, PNG, WebP)"),
+    person_name: str = Form(..., min_length=1, max_length=255),
+    person_id: str | None = Form(default=None),
+    event_id: str | None = Form(default=None, max_length=255),
+    key_meta: dict = Depends(verify_api_key),
+):
+    """Submit a batch of images for async face enrollment.
+
+    All images are enrolled under the same person. If `person_id` is provided,
+    embeddings are added to that existing person; otherwise a new person is created.
+
+    Returns a job ID immediately. Poll GET /api/v1/jobs/{job_id} for results.
+    """
+    check_scope("faces:write", key_meta)
+    settings = request.app.state.settings
+
+    result = await validate_and_encode_batch(
+        request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE
+    )
+    if isinstance(result, JSONResponse):
+        return result
+    image_data_list = result
+
+    job_id = await create_batch_job(
+        request, "face_enroll_batch", len(files), key_meta.get("key_id")
+    )
+    if isinstance(job_id, JSONResponse):
+        return job_id
+
+    from src.workers.tasks.face_tasks import face_enroll_batch
+
+    face_enroll_batch.delay(
+        job_id,
+        image_data_list,
+        person_name=person_name,
+        person_id=person_id,
+        api_key_id=key_meta.get("key_id"),
+        event_id=event_id,
+    )
 
     return batch_accepted_response(request, job_id, len(files))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -13,11 +14,12 @@ logger = get_logger(__name__)
 
 _engine = None
 _session_factory = None
+_engine_pid: int | None = None
 
 
 async def init_db() -> None:
     """Initialize the async database engine and session factory."""
-    global _engine, _session_factory
+    global _engine, _session_factory, _engine_pid
     settings = get_settings()
 
     _engine = create_async_engine(
@@ -35,6 +37,7 @@ async def init_db() -> None:
         class_=AsyncSession,
         expire_on_commit=False,
     )
+    _engine_pid = os.getpid()
     logger.info("Database engine initialized")
 
 
@@ -46,10 +49,21 @@ async def close_db() -> None:
         logger.info("Database engine disposed")
 
 
+def _check_fork_safety() -> None:
+    """Guard against using a pre-fork connection pool in a child process."""
+    if _engine_pid is not None and os.getpid() != _engine_pid:
+        raise RuntimeError(
+            f"Database engine was created in PID {_engine_pid} but is being used "
+            f"in PID {os.getpid()}. asyncpg connections are not fork-safe. "
+            "Ensure init_db() is called after fork, not before (disable --preload)."
+        )
+
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Yield an async database session (for FastAPI Depends only)."""
     if _session_factory is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
+    _check_fork_safety()
     async with _session_factory() as session:
         try:
             yield session
@@ -68,6 +82,7 @@ async def get_session_ctx() -> AsyncGenerator[AsyncSession, None]:
     """
     if _session_factory is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
+    _check_fork_safety()
     async with _session_factory() as session:
         try:
             yield session
@@ -75,6 +90,23 @@ async def get_session_ctx() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+@asynccontextmanager
+async def get_readonly_session() -> AsyncGenerator[AsyncSession, None]:
+    """Async context manager for read-only database sessions.
+
+    Rolls back instead of committing — avoids the unnecessary COMMIT
+    round-trip for GET/read-only endpoints.
+    """
+    if _session_factory is None:
+        raise RuntimeError("Database not initialized. Call init_db() first.")
+    _check_fork_safety()
+    async with _session_factory() as session:
+        try:
+            yield session
+        finally:
+            await session.rollback()
 
 
 async def check_db_health() -> bool:

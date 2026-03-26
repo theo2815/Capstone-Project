@@ -49,5 +49,10 @@ def decrypt_secret(ciphertext: str) -> str:
     try:
         return f.decrypt(ciphertext.encode()).decode()
     except InvalidToken:
-        # Likely a plaintext secret from before encryption was enabled
+        # Likely a plaintext secret from before encryption was enabled,
+        # or key rotation occurred. Log so operators can investigate.
+        logger.warning(
+            "Failed to decrypt webhook secret — returning ciphertext as-is. "
+            "This may indicate a key rotation or a pre-encryption plaintext secret."
+        )
         return ciphertext

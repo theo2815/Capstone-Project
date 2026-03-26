@@ -1,9 +1,10 @@
 # Feature Analysis Report — EventAI API
 
-**Date:** 2026-03-26
+**Date:** 2026-03-26 (revised 2026-03-26 for architecture alignment, updated 2026-03-26 post-implementation)
 **Scope:** Blur Detection, Face Search, Bib Number Recognition
-**Purpose:** Identify issues for production readiness. No fixes proposed.
+**Purpose:** Identify issues for production readiness. **13 of 13 prioritized findings now RESOLVED.**
 **Prior audits:** `deep-audit-report.md`, `rescan-audit-report.md` (all findings implemented)
+**Architecture context:** `integration-architecture.md`, `integration-contracts.md`, `docs/project-vision.md`
 
 ---
 
@@ -12,13 +13,14 @@
 | Tag | Meaning |
 |-----|---------|
 | **Severity** | CRITICAL / HIGH / MEDIUM / LOW / INFO |
-| **Owner** | `ai-api` = this codebase, `backend` = upstream backend service, `both` = shared responsibility |
+| **Owner** | `ai-api` = this codebase, `backend` = upstream backend service (Spring Boot), `desktop` = desktop backend, `both` = shared responsibility |
+| **Status** | OPEN = needs fix, RESOLVED = addressed by architecture decision, BY-DESIGN = intentional per architecture |
 
 ---
 
 ## 1. Face Search
 
-### FA-1 — No event or gallery isolation (CRITICAL) `ai-api + backend`
+### FA-1 — No event or gallery isolation (CRITICAL) `ai-api` — RESOLVED
 
 **What:** Face search is isolated by `api_key_id` only. The `Person` model has no `event_id` or `gallery_id` column. Every search query filters solely by `WHERE p.api_key_id = :api_key_id`.
 
@@ -33,11 +35,11 @@
 
 **Impact:** Cross-event contamination in search results for any client that reuses an API key across events. This is the most significant production-readiness gap in the face search feature.
 
-**Architecture note:** Whether `event_id` lives in ai-api's DB or is passed as a parameter from the backend is a design decision that spans both codebases. The backend must know about events; ai-api must filter by them.
+**Resolution:** Added `event_id` column (nullable, indexed) to `Person` model with Alembic migration. All enroll/search/batch-search endpoints and Celery tasks now accept optional `event_id` and filter by `AND p.event_id = :event_id` when provided. Backward compatible — existing callers without `event_id` are unaffected.
 
 ---
 
-### FA-2 — No bulk enrollment endpoint (MEDIUM) `ai-api`
+### FA-2 — No bulk enrollment endpoint (MEDIUM) `ai-api` — RESOLVED
 
 **What:** The `/faces/enroll` endpoint accepts a single image. There is no batch enrollment endpoint. For a typical event with 500+ participants, enrolling one image at a time is slow and rate-limit-unfriendly.
 
@@ -45,6 +47,8 @@
 - `src/api/v1/faces.py:84-195` — only single-image `enroll_face()` exists
 
 **Impact:** Clients must loop single-image enrollment calls, incurring per-request overhead (auth, DB session, model load check) for each photo. This is a usability gap for production event setup.
+
+**Resolution:** Added `POST /faces/enroll/batch` endpoint (HTTP 202) with `face_enroll_batch` Celery task. Accepts multiple files + `person_name` + optional `person_id`/`event_id`. Includes duplicate embedding guard and per-image progress tracking.
 
 ---
 
@@ -71,7 +75,7 @@
 
 ---
 
-### FA-5 — Batch face search hardcodes top_k=10 and uses global threshold (LOW) `ai-api`
+### FA-5 — Batch face search hardcodes top_k=10 and uses global threshold (LOW) `ai-api` — RESOLVED
 
 **What:** The batch face search Celery task uses `settings.FACE_SIMILARITY_THRESHOLD` and hardcodes `top_k=10`. The single-image endpoint allows per-request `threshold` (0.0-1.0) and `top_k` (1-100) query parameters. Batch callers cannot customize these.
 
@@ -81,9 +85,11 @@
 
 **Impact:** Batch and single-image endpoints produce different results for the same image when the caller uses non-default threshold/top_k values.
 
+**Resolution:** Added `threshold` and `top_k` query params to `search_faces_batch` endpoint. Passed through to Celery task and `_search_single()`. Falls back to `settings.FACE_SIMILARITY_THRESHOLD` / `10` when not provided.
+
 ---
 
-### FA-6 — No duplicate-person or duplicate-embedding guard on enrollment (MEDIUM) `ai-api`
+### FA-6 — No duplicate-person or duplicate-embedding guard on enrollment (MEDIUM) `ai-api` — RESOLVED
 
 **What:** Enrolling the same face image for the same person multiple times creates duplicate `FaceEmbedding` rows. The `source_image_hash` column is indexed but never checked for uniqueness during enrollment.
 
@@ -93,35 +99,45 @@
 
 **Impact:** Duplicate embeddings inflate search results. The same person can appear multiple times in a single search response with near-identical similarity scores.
 
+**Resolution:** Added unique index `ix_face_embeddings_person_hash` on `(person_id, source_image_hash)` via Alembic migration. `store_embedding()` (both async and sync) now checks for existing row before inserting, returns `None` if duplicate. API endpoint counts duplicates as skipped.
+
 ---
 
-### FA-7 — Persons list endpoint missing (MEDIUM) `ai-api`
+### FA-7 — Persons list endpoint missing (MEDIUM) `ai-api` — RESOLVED
 
 **What:** There is a GET `/faces/persons/{person_id}` and DELETE `/faces/persons/{person_id}`, but no GET `/faces/persons` (list all enrolled persons). Clients cannot discover who is enrolled without already knowing person IDs.
 
 **Affected files:**
 - `src/api/v1/faces.py` — no list-persons endpoint exists
 
-**Impact:** Operational gap for production. Event organizers cannot audit their enrolled gallery without external tracking.
+**Impact:** Operational gap for production. The backend (or admin) cannot audit the enrolled gallery for an event without external tracking. Should be scoped by `api_key_id` and optionally `event_id`.
+
+**Resolution:** Added `GET /faces/persons` endpoint with pagination (`offset`, `limit`) and optional `event_id` filter. Returns `PersonListResponse` with `persons`, `total`, `offset`, `limit`. Tenant-isolated by `api_key_id`.
 
 ---
 
 ## 2. Bib Number Recognition
 
-### BIB-1 — No bib number search/lookup endpoint (HIGH) `ai-api`
+### BIB-1 — No bib number search/lookup endpoint ~~(HIGH)~~ BY-DESIGN `backend`
 
 **What:** The API only provides bib number *recognition* (OCR from image). There is no endpoint to search recognized bib numbers or look up results by bib number text. The API returns OCR results, but downstream matching against an event participant list is entirely the caller's responsibility.
 
 **Affected files:**
 - `src/api/v1/bibs.py` — only `recognize_bibs()` and `recognize_bibs_batch()` exist
 
-**Impact:** This is not necessarily a bug — it may be by design if the backend handles participant lookup. However, there is no documentation clarifying this boundary.
+**Architecture decision (resolved):** This is **by design**. The Spring Boot backend owns participant data and bib-to-participant matching. ai-api performs OCR only and returns raw results (`bib_number`, `confidence`, `bbox`). The backend:
+1. Receives OCR results from ai-api
+2. Applies confidence threshold filtering (per-event configurable)
+3. Matches bib text against its participant table (`WHERE bib_number = :bib AND event_id = :event`)
+4. Links the photo to the matched participant
 
-**Architecture note:** If the backend matches recognized bib numbers to participant records, this is expected. If ai-api is expected to provide end-to-end bib search (image → participant), this is a missing feature.
+ai-api does **not** need a bib search endpoint. See `integration-architecture.md` → "Bib Matching Flow" and `integration-contracts.md` → "Flow 2: Photo Upload".
+
+**No action needed in ai-api.**
 
 ---
 
-### BIB-2 — No confidence threshold on OCR output (HIGH) `ai-api`
+### BIB-2 — No confidence threshold on OCR output ~~(HIGH)~~ LOW `ai-api` — OPEN (minor)
 
 **What:** The `BibRecognizer.recognize()` method returns the best candidate regardless of confidence. A recognition with 0.05 confidence is returned identically to one with 0.95. There is no configurable floor.
 
@@ -131,11 +147,13 @@
 - `src/workers/tasks/bib_tasks.py:48-49` — same: no confidence check
 - `src/config.py` — no `BIB_MIN_CONFIDENCE` setting exists
 
-**Impact:** Low-confidence OCR results (wrong digits, partial reads) are presented as valid bib detections. Callers must implement their own confidence filtering, but nothing in the API documentation or response schema signals that this is expected.
+**Architecture decision (severity reduced):** Per `integration-architecture.md` → "Confidence Threshold Strategy", **backends are responsible for confidence filtering**, not ai-api. ai-api returns raw confidence scores; the Spring Boot backend applies per-event thresholds (e.g., discard if `confidence < 0.7`). This is the correct design — ai-api should not silently discard results that a backend might want.
+
+**Remaining concern:** ai-api could optionally add a `BIB_MIN_CONFIDENCE` floor to avoid processing obviously garbage results (e.g., confidence < 0.05), but this is low priority since the backend filters anyway.
 
 ---
 
-### BIB-3 — Single-digit bib numbers silently rejected (MEDIUM) `ai-api`
+### BIB-3 — Single-digit bib numbers silently rejected (MEDIUM) `ai-api` — RESOLVED
 
 **What:** `BibRecognizer` filters candidates where `digit_count < min_chars` (default 2). Bib numbers "1" through "9" are rejected as invalid even when correctly recognized.
 
@@ -144,6 +162,8 @@
 - `src/config.py:44` — `BIB_MIN_CHARS: int = 2`
 
 **Impact:** Events using single-digit bib numbers (e.g., elite runners 1-9) get empty results with no error indicator. The response shows `bib_number: ""` with no explanation of why a valid recognition was discarded.
+
+**Resolution:** Added `min_chars_override` param to `recognize()` (thread-safe, no shared state mutation). API endpoint accepts `min_chars: int | None = Query(default=None, ge=1, le=10)` and passes it through. Callers can set `min_chars=1` for events with single-digit bibs.
 
 ---
 
@@ -160,7 +180,7 @@
 
 ---
 
-### BIB-5 — OCR character substitution not handled (MEDIUM) `ai-api`
+### BIB-5 — OCR character substitution not handled (MEDIUM) `ai-api` — RESOLVED
 
 **What:** The regex `[A-Za-z0-9\-_]` preserves letters in recognized bib text. Common OCR confusions like "O" → "0", "I" → "1", "l" → "1" are not corrected. The bib number "1O23" (letter O) and "1023" (digit 0) are treated as different results.
 
@@ -168,11 +188,13 @@
 - `src/ml/bibs/recognizer.py:12` — `_BIB_CHAR_RE = re.compile(r"[A-Za-z0-9\-_]")`
 - `src/ml/bibs/recognizer.py:62` — cleaned text preserves mixed alpha/numeric
 
-**Impact:** OCR returns bib numbers with letter/digit confusion that downstream exact-match lookups will fail on.
+**Impact:** OCR returns bib numbers with letter/digit confusion that downstream exact-match lookups in the backend will fail on.
+
+**Resolution:** Added `_OCR_SUBSTITUTIONS` translation table (`O→0, o→0, I→1, l→1, S→5, s→5, B→8, Z→2, z→2`). Applied via `str.translate()` after regex clean, before digit count. Covers the most common OCR confusions for numeric bib numbers.
 
 ---
 
-### BIB-6 — Fallback mode (no YOLO) runs OCR on full image (MEDIUM) `ai-api`
+### BIB-6 — Fallback mode (no YOLO) runs OCR on full image (MEDIUM) `ai-api` — RESOLVED
 
 **What:** When `BibDetector` is unavailable or its model is not loaded, both the API endpoint and the batch worker run OCR on the entire image rather than failing gracefully. The full-image OCR will pick up any text in the scene (sponsor logos, timing boards, spectator signs) and return it as a bib number candidate.
 
@@ -181,6 +203,8 @@
 - `src/workers/tasks/bib_tasks.py:83-92` — `_recognize_single` same fallback
 
 **Impact:** Without the detector, false positives from non-bib text in the scene. The full-frame bbox `{x1: 0, y1: 0, x2: width, y2: height}` gives the caller no spatial information to verify the detection.
+
+**Resolution:** API endpoint now returns `warnings: ["Bib detection model unavailable; OCR ran on full image. Results may include non-bib text."]` when detector is unavailable. Batch worker adds `"warning": "full_image_fallback"` key to result dict. `BibRecognitionResponse` schema updated with `warnings: list[str] | None` field.
 
 ---
 
@@ -198,7 +222,7 @@
 
 ## 3. Blur Detection
 
-### BLUR-1 — Laplacian variance is image-size-dependent (MEDIUM) `ai-api`
+### BLUR-1 — Laplacian variance is image-size-dependent (MEDIUM) `ai-api` — RESOLVED
 
 **What:** Laplacian variance increases with image resolution. A 4096x4096 sharp image and a 640x640 sharp image produce different variance values, but the same threshold (default 100.0) is applied. Images are downscaled to `MAX_INFERENCE_DIMENSION` (2048) before inference, but this still means different-sized inputs below 2048px produce inconsistent scores.
 
@@ -207,6 +231,8 @@
 - `src/utils/image_utils.py:89-106` — downscale only if exceeds MAX_INFERENCE_DIMENSION
 
 **Impact:** Small images (e.g., thumbnails, cropped regions) may be misclassified as blurry because their Laplacian variance is naturally lower. The threshold does not normalize for resolution.
+
+**Resolution:** After computing Laplacian variance, normalize to 640x640 reference resolution: `laplacian_var = laplacian_var * (640 * 640) / (h * w)`. Applied after both C++ and Python code paths. Same scene at different resolutions now produces similar variance values.
 
 ---
 
@@ -221,23 +247,17 @@
 
 ---
 
-### BLUR-3 — Detect endpoint ignores user's config threshold (INFO) `ai-api`
+### BLUR-3 — Detect endpoint ignores user's config threshold (INFO) `ai-api` — RESOLVED
 
-**What:** The `/blur/detect` endpoint accepts a `threshold` query parameter (default 100.0). The `BlurDetector` instance is initialized with `settings.BLUR_THRESHOLD`. The endpoint passes the user's threshold via `threshold_override`, which correctly overrides per-request. However, the batch detect task does not accept or pass a custom threshold.
-
-**Affected files:**
-- `src/api/v1/blur.py:56` — single endpoint: `detector.detect(image)` — does NOT pass threshold_override
-- `src/workers/tasks/blur_tasks.py:47` — batch: `detector.detect(image)` — does NOT pass threshold_override
-
-**Wait — re-checking:** Actually, looking at `blur.py:56`, the single endpoint calls `detector.detect(image)` without the threshold override. The `threshold` query parameter is accepted but never used.
-
-**Corrected finding:** The `/blur/detect` endpoint accepts a `threshold` query parameter but never passes it to `detector.detect()` as `threshold_override`. The parameter is dead code.
+**What:** The `/blur/detect` endpoint accepts a `threshold` query parameter (default 100.0) but never passes it to `detector.detect()` as `threshold_override`. The parameter was dead code.
 
 **Affected files:**
 - `src/api/v1/blur.py:33` — `threshold: float = Query(default=100.0, ...)` — accepted
 - `src/api/v1/blur.py:56` — `detector.detect(image)` — threshold not passed
 
 **Impact:** Users who set a custom threshold see no effect. The instance default from config is always used.
+
+**Resolution:** Changed `detector.detect(image)` to `detector.detect(image, threshold_override=threshold)`. The `threshold` query param now correctly overrides the per-request blur classification threshold.
 
 ---
 
@@ -252,7 +272,7 @@
 
 ---
 
-### BLUR-5 — Class name ordering must match trained model exactly (MEDIUM) `ai-api`
+### BLUR-5 — Class name ordering must match trained model exactly (MEDIUM) `ai-api` — RESOLVED
 
 **What:** The hardcoded class names in `BlurClassifier._load_model()` are alphabetically ordered: `["defocused_blurred", "defocused_object_portrait", "motion_blurred", "sharp"]`. If the ONNX export or training script produced a model with a different class order, all probabilities are silently misaligned. A `class_names.json` file can override defaults, but there is no runtime validation that the file matches the model's actual output layer ordering.
 
@@ -261,6 +281,8 @@
 - `src/ml/blur/classifier.py:86-90` — override from JSON file, no validation
 
 **Impact:** If class order is wrong, every classification result maps to the wrong label. "Sharp" would be reported as "defocused_blurred" or vice versa. This is a silent, hard-to-detect failure.
+
+**Resolution:** After loading ONNX session + class names, validate `len(self.class_names) == session.get_outputs()[0].shape[-1]`. On mismatch: log error with both counts, set `self.session = None` (disables classifier safely). Prevents silent label misalignment.
 
 ---
 
@@ -278,29 +300,41 @@
 
 ## 4. Cross-Cutting / Architecture Boundary
 
-### ARCH-1 — No documentation of ai-api vs backend responsibility boundary (HIGH) `both`
+### ARCH-1 — No documentation of ai-api vs backend responsibility boundary ~~(HIGH)~~ RESOLVED `both`
 
-**What:** There is no document defining what ai-api is responsible for versus what the backend handles. Specific ambiguities:
+**What:** There was no document defining what ai-api is responsible for versus what the backend handles.
 
-| Question | Unclear |
+**Resolution:** This is now fully documented. The following documents define the responsibility boundary:
+
+| Document | Answers |
 |----------|---------|
-| Who owns participant/event data? | Backend presumably, but no API contract |
-| Who matches bib numbers to participants? | Unknown — ai-api returns raw OCR |
-| Who manages event galleries for face search? | Neither — no event concept exists in ai-api |
-| Who presents results to end users? | Backend presumably |
-| Who decides acceptable confidence thresholds? | ai-api returns raw confidence, no filtering |
+| `integration-architecture.md` | Who owns what (ai-api vs Spring Boot backend vs Desktop backend), event isolation design, bib matching flow, confidence threshold strategy, network topology, data flow |
+| `integration-contracts.md` | Exact API usage per backend, code examples, error handling, retry strategy, health checks |
+| `docs/project-vision.md` | Product context — user roles (runners, photographers, admin), platform scope, user journeys |
 
-**Impact:** Without a clear contract, both teams may assume the other handles a concern (bib matching, event isolation, confidence filtering), leading to gaps in production.
+All previously ambiguous questions are now answered:
+
+| Question | Answer |
+|----------|--------|
+| Who owns participant/event data? | Spring Boot backend (Web/Mobile) |
+| Who matches bib numbers to participants? | Backend — ai-api returns raw OCR only |
+| Who manages event galleries for face search? | Admin creates events via backend; backend passes `event_id` to ai-api |
+| Who presents results to end users? | Backend shapes responses for mobile/web clients |
+| Who decides acceptable confidence thresholds? | Backends — ai-api returns raw confidence, backends filter per-event |
+
+**No further action needed.**
 
 ---
 
-### ARCH-2 — No api_key_id scoping for bib or blur results retrieval (LOW) `ai-api`
+### ARCH-2 — No api_key_id scoping for bib or blur results retrieval (LOW) `ai-api` — OPEN (low priority)
 
 **What:** Job results are retrieved via `GET /api/v1/jobs/{job_id}`. The job `id` is a UUID that is unguessable, but the retrieval endpoint does not verify that the requesting API key matches the `api_key_id` that created the job. Any valid API key can poll any job if it knows the UUID.
 
 **Affected files:** (Would need to check the jobs endpoint — not in scope of this analysis but noted as an architecture observation.)
 
 **Impact:** Low risk due to UUID unguessability, but violates defense-in-depth. A leaked job ID from logs or webhooks could expose another tenant's results.
+
+**Architecture note:** Risk is further reduced because ai-api is internal-only (private within AWS EC2, not internet-accessible). Only the Spring Boot backend and Desktop backend can reach ai-api, and each has its own API key. Cross-tenant job access would require one backend to know the other's job UUIDs, which shouldn't happen in normal operation. Still worth fixing for defense-in-depth, but low priority.
 
 ---
 
@@ -317,28 +351,47 @@
 
 ## Summary Table
 
-| ID | Feature | Severity | Owner | Description |
-|----|---------|----------|-------|-------------|
-| FA-1 | Face | CRITICAL | both | No event/gallery isolation — cross-event contamination |
-| FA-2 | Face | MEDIUM | ai-api | No bulk enrollment endpoint |
-| FA-3 | Face | LOW | ai-api | Batch worker uses per-face DB queries instead of batch |
-| FA-4 | Face | INFO | ai-api | Compare uses only first face from each image |
-| FA-5 | Face | LOW | ai-api | Batch search hardcodes top_k and threshold |
-| FA-6 | Face | MEDIUM | ai-api | No duplicate embedding guard on enrollment |
-| FA-7 | Face | MEDIUM | ai-api | No list-persons endpoint |
-| BIB-1 | Bib | HIGH | both | No bib search/lookup endpoint — unclear ownership |
-| BIB-2 | Bib | HIGH | ai-api | No confidence threshold on OCR output |
-| BIB-3 | Bib | MEDIUM | ai-api | Single-digit bib numbers silently rejected |
-| BIB-4 | Bib | LOW | ai-api | YOLO detection confidence hardcoded |
-| BIB-5 | Bib | MEDIUM | ai-api | OCR character substitution (O/0, I/1) not handled |
-| BIB-6 | Bib | MEDIUM | ai-api | Fallback OCR on full image produces false positives |
-| BIB-7 | Bib | INFO | ai-api | Batch bib task missing api_key_id passthrough |
-| BLUR-1 | Blur | MEDIUM | ai-api | Laplacian variance is image-size-dependent |
-| BLUR-2 | Blur | LOW | ai-api | FFT mask unreliable near MIN_DIMENSION |
-| BLUR-3 | Blur | MEDIUM | ai-api | Detect endpoint accepts threshold param but never uses it |
-| BLUR-4 | Blur | LOW | ai-api | Center-crop loses edge blur information |
-| BLUR-5 | Blur | MEDIUM | ai-api | Class name ordering not validated against model |
-| BLUR-6 | Blur | INFO | ai-api | Batch results missing image dimensions |
-| ARCH-1 | Cross | HIGH | both | No documented ai-api/backend responsibility boundary |
-| ARCH-2 | Cross | LOW | ai-api | Job results not scoped by api_key_id on retrieval |
-| ARCH-3 | Cross | INFO | ai-api | Webhooks don't include result data |
+| ID | Feature | Severity | Owner | Status | Description |
+|----|---------|----------|-------|--------|-------------|
+| FA-1 | Face | CRITICAL | ai-api | **RESOLVED** | Added `event_id` to Person model, enroll, search, batch-search |
+| FA-2 | Face | MEDIUM | ai-api | **RESOLVED** | Added `POST /faces/enroll/batch` bulk enrollment endpoint |
+| FA-3 | Face | LOW | ai-api | OPEN | Batch worker uses per-face DB queries instead of batch |
+| FA-4 | Face | INFO | ai-api | OPEN | Compare uses only first face from each image |
+| FA-5 | Face | LOW | ai-api | **RESOLVED** | Added `threshold` and `top_k` params to batch face search |
+| FA-6 | Face | MEDIUM | ai-api | **RESOLVED** | Added duplicate embedding guard (`person_id` + `source_image_hash`) |
+| FA-7 | Face | MEDIUM | ai-api | **RESOLVED** | Added `GET /faces/persons` list endpoint with pagination |
+| BIB-1 | Bib | ~~HIGH~~ | backend | BY-DESIGN | Bib-to-participant matching is backend's job, not ai-api's |
+| BIB-2 | Bib | ~~HIGH~~ LOW | ai-api | OPEN (minor) | Backends apply confidence thresholds; ai-api returns raw scores |
+| BIB-3 | Bib | MEDIUM | ai-api | **RESOLVED** | Added per-request `min_chars` override for single-digit bibs |
+| BIB-4 | Bib | LOW | ai-api | OPEN | YOLO detection confidence hardcoded |
+| BIB-5 | Bib | MEDIUM | ai-api | **RESOLVED** | Added OCR character substitution (O→0, I→1, l→1, S→5, B→8, Z→2) |
+| BIB-6 | Bib | MEDIUM | ai-api | **RESOLVED** | Added `warnings` field for full-image OCR fallback |
+| BIB-7 | Bib | INFO | ai-api | OPEN | Batch bib task missing api_key_id passthrough |
+| BLUR-1 | Blur | MEDIUM | ai-api | **RESOLVED** | Normalized Laplacian variance to 640x640 reference resolution |
+| BLUR-2 | Blur | LOW | ai-api | OPEN | FFT mask unreliable near MIN_DIMENSION |
+| BLUR-3 | Blur | MEDIUM | ai-api | **RESOLVED** | Fixed dead `threshold` param — now passed to detector |
+| BLUR-4 | Blur | LOW | ai-api | OPEN | Center-crop loses edge blur information |
+| BLUR-5 | Blur | MEDIUM | ai-api | **RESOLVED** | Added class name count validation against ONNX model output shape |
+| BLUR-6 | Blur | INFO | ai-api | OPEN | Batch results missing image dimensions |
+| ARCH-1 | Cross | ~~HIGH~~ | both | RESOLVED | Documented in `integration-architecture.md` + `integration-contracts.md` |
+| ARCH-2 | Cross | LOW | ai-api | OPEN (low) | Job results not scoped by api_key_id — low risk since ai-api is internal |
+| ARCH-3 | Cross | INFO | ai-api | OPEN | Webhooks don't include result data |
+
+### Priority for ai-api Production Hardening
+
+**13 of 13 prioritized items have been implemented.** Remaining open items are all LOW/INFO severity (Priority 4 — deferred).
+
+| Priority | ID | Status | What was done |
+|----------|----|--------|--------------|
+| 1 (must) | FA-1 | **RESOLVED** | Added `event_id` to Person model, enroll, search, batch-search |
+| 2 (should) | FA-6 | **RESOLVED** | Added duplicate embedding guard + unique index |
+| 2 (should) | FA-7 | **RESOLVED** | Added `GET /faces/persons` list endpoint |
+| 2 (should) | BIB-5 | **RESOLVED** | Added OCR character substitution (O→0, I→1, l→1, S→5, B→8, Z→2) |
+| 2 (should) | BIB-3 | **RESOLVED** | Added per-request `min_chars` override |
+| 2 (should) | BLUR-3 | **RESOLVED** | Fixed dead `threshold` param — now passed to detector |
+| 2 (should) | BLUR-5 | **RESOLVED** | Added class name count validation against model output |
+| 3 (nice) | FA-2 | **RESOLVED** | Added `POST /faces/enroll/batch` bulk enrollment endpoint |
+| 3 (nice) | FA-5 | **RESOLVED** | Added `threshold` and `top_k` params to batch face search |
+| 3 (nice) | BIB-6 | **RESOLVED** | Added `warnings` field for full-image OCR fallback |
+| 3 (nice) | BLUR-1 | **RESOLVED** | Normalized Laplacian variance to 640x640 reference resolution |
+| 4 (defer) | FA-3, FA-4, BIB-2, BIB-4, BIB-7, BLUR-2, BLUR-4, BLUR-6, ARCH-2, ARCH-3 | OPEN | Low/INFO items — deferred |

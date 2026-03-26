@@ -16,19 +16,28 @@ class FaceRepository:
         self.session = session
 
     async def create_person(
-        self, name: str, metadata: dict | None = None, api_key_id: str | None = None
+        self,
+        name: str,
+        metadata: dict | None = None,
+        api_key_id: str | None = None,
+        event_id: str | None = None,
     ) -> Person:
-        person = Person(name=name, metadata_=metadata, api_key_id=api_key_id)
+        person = Person(name=name, metadata_=metadata, api_key_id=api_key_id, event_id=event_id)
         self.session.add(person)
         await self.session.flush()
         return person
 
     async def get_person(
-        self, person_id: uuid.UUID, api_key_id: str | None = None
+        self,
+        person_id: uuid.UUID,
+        api_key_id: str | None = None,
+        event_id: str | None = None,
     ) -> Person | None:
         stmt = select(Person).where(Person.id == person_id)
         if api_key_id is not None:
             stmt = stmt.where(Person.api_key_id == api_key_id)
+        if event_id is not None:
+            stmt = stmt.where(Person.event_id == event_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -48,7 +57,17 @@ class FaceRepository:
         embedding: list[float],
         source_image_hash: str,
         quality_score: float | None = None,
-    ) -> FaceEmbedding:
+    ) -> FaceEmbedding | None:
+        """Store a face embedding. Returns None if duplicate (same person + image hash)."""
+        existing = await self.session.execute(
+            select(FaceEmbedding).where(
+                FaceEmbedding.person_id == person_id,
+                FaceEmbedding.source_image_hash == source_image_hash,
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            return None
+
         face_emb = FaceEmbedding(
             person_id=person_id,
             embedding=embedding,
@@ -65,20 +84,24 @@ class FaceRepository:
         threshold: float = 0.4,
         top_k: int = 10,
         api_key_id: str | None = None,
+        event_id: str | None = None,
     ) -> list[dict]:
         """Search for similar face embeddings using pgvector cosine distance.
 
         Uses proper vector literal binding instead of Python str() conversion.
         Computes cosine distance once via a subquery to avoid triple evaluation.
-        Optionally filters by api_key_id for tenant isolation.
+        Optionally filters by api_key_id and event_id for tenant/event isolation.
         """
         query_vec = "[" + ",".join(str(f) for f in query_embedding) + "]"
 
         tenant_filter = ""
         params: dict = {"query": query_vec, "threshold": threshold, "top_k": top_k}
         if api_key_id is not None:
-            tenant_filter = "AND p.api_key_id = :api_key_id"
+            tenant_filter += " AND p.api_key_id = :api_key_id"
             params["api_key_id"] = api_key_id
+        if event_id is not None:
+            tenant_filter += " AND p.event_id = :event_id"
+            params["event_id"] = event_id
 
         result = await self.session.execute(
             text(f"""
@@ -102,7 +125,7 @@ class FaceRepository:
             {
                 "person_id": row.person_id,
                 "person_name": row.person_name,
-                "similarity": float(row.similarity),
+                "similarity": min(1.0, max(0.0, float(row.similarity))),
             }
             for row in result.fetchall()
         ]
@@ -113,63 +136,93 @@ class FaceRepository:
         threshold: float = 0.4,
         top_k: int = 10,
         api_key_id: str | None = None,
+        event_id: str | None = None,
     ) -> list[list[dict]]:
-        """Batch search for multiple embeddings in a single query.
+        """Batch search for multiple embeddings.
 
-        Uses UNION ALL to combine all embedding queries into one database
-        round-trip instead of N sequential queries.
+        Delegates to the correct single-embedding ``search_similar()`` method
+        per embedding. The previous UNION ALL approach silently dropped
+        per-branch ORDER BY / LIMIT clauses in PostgreSQL.
         """
         if not embeddings:
             return []
 
-        # Build a UNION ALL query for all embeddings
-        union_parts = []
-        params: dict = {"threshold": threshold, "top_k": top_k}
+        results = []
+        for emb in embeddings:
+            matches = await self.search_similar(
+                query_embedding=emb,
+                threshold=threshold,
+                top_k=top_k,
+                api_key_id=api_key_id,
+                event_id=event_id,
+            )
+            results.append(matches)
+        return results
 
-        tenant_filter = ""
+    async def list_persons(
+        self,
+        api_key_id: str | None = None,
+        event_id: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[Person], int]:
+        """List enrolled persons with pagination, filtered by api_key_id and event_id."""
+        from sqlalchemy import func
+
+        stmt = select(Person)
+        count_stmt = select(func.count()).select_from(Person)
+
         if api_key_id is not None:
-            tenant_filter = "AND p.api_key_id = :api_key_id"
-            params["api_key_id"] = api_key_id
+            stmt = stmt.where(Person.api_key_id == api_key_id)
+            count_stmt = count_stmt.where(Person.api_key_id == api_key_id)
+        if event_id is not None:
+            stmt = stmt.where(Person.event_id == event_id)
+            count_stmt = count_stmt.where(Person.event_id == event_id)
 
-        for i, emb in enumerate(embeddings):
-            vec = "[" + ",".join(str(f) for f in emb) + "]"
-            param_key = f"q{i}"
-            params[param_key] = vec
-            union_parts.append(f"""
-                SELECT
-                    {i} AS query_idx,
-                    sub.person_id,
-                    sub.person_name,
-                    sub.similarity
-                FROM (
-                    SELECT
-                        fe.person_id,
-                        p.name AS person_name,
-                        1 - (fe.embedding <=> :{param_key}::vector) AS similarity
-                    FROM face_embeddings fe
-                    JOIN persons p ON p.id = fe.person_id
-                    WHERE 1 = 1 {tenant_filter}
-                ) sub
-                WHERE sub.similarity >= :threshold
-                ORDER BY sub.similarity DESC
-                LIMIT :top_k
-            """)
+        total_result = await self.session.execute(count_stmt)
+        total = total_result.scalar_one()
 
-        full_query = " UNION ALL ".join(union_parts) + " ORDER BY query_idx, similarity DESC"
+        stmt = stmt.order_by(Person.created_at.desc()).offset(offset).limit(limit)
+        result = await self.session.execute(stmt)
+        persons = list(result.scalars().all())
 
-        result = await self.session.execute(text(full_query), params)
-        rows = result.fetchall()
+        return persons, total
 
-        # Group results by query_idx
-        results_by_idx: dict[int, list[dict]] = {i: [] for i in range(len(embeddings))}
-        for row in rows:
-            results_by_idx[row.query_idx].append({
-                "person_id": row.person_id,
-                "person_name": row.person_name,
-                "similarity": float(row.similarity),
-            })
+    async def list_persons_with_counts(
+        self,
+        api_key_id: str | None = None,
+        event_id: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[tuple[Person, int]], int]:
+        """List persons with embedding counts in a single query (no N+1)."""
+        from sqlalchemy import func
 
-        return [results_by_idx[i] for i in range(len(embeddings))]
+        # Count query
+        count_stmt = select(func.count()).select_from(Person)
+        if api_key_id is not None:
+            count_stmt = count_stmt.where(Person.api_key_id == api_key_id)
+        if event_id is not None:
+            count_stmt = count_stmt.where(Person.event_id == event_id)
+        total_result = await self.session.execute(count_stmt)
+        total = total_result.scalar_one()
+
+        # Main query with LEFT JOIN + GROUP BY
+        stmt = (
+            select(Person, func.count(FaceEmbedding.id).label("emb_count"))
+            .outerjoin(FaceEmbedding, Person.id == FaceEmbedding.person_id)
+            .group_by(Person.id)
+        )
+        if api_key_id is not None:
+            stmt = stmt.where(Person.api_key_id == api_key_id)
+        if event_id is not None:
+            stmt = stmt.where(Person.event_id == event_id)
+        stmt = stmt.order_by(Person.created_at.desc()).offset(offset).limit(limit)
+
+        result = await self.session.execute(stmt)
+        rows = [(row[0], row[1]) for row in result.all()]
+
+        return rows, total
 
     async def get_embeddings_count(self, person_id: uuid.UUID) -> int:
         from sqlalchemy import func
