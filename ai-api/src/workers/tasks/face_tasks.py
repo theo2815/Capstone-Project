@@ -10,7 +10,7 @@ logger = get_logger(__name__)
 def face_process_batch(
     self,
     job_id: str,
-    image_data_list: list[str],
+    image_paths: list[str],
     operation: str,
     api_key_id: str | None = None,
     event_id: str | None = None,
@@ -21,7 +21,7 @@ def face_process_batch(
 
     Args:
         job_id: UUID of the job record.
-        image_data_list: List of base64-encoded image data.
+        image_paths: List of blob-store file paths for each image.
         operation: One of 'detect', 'search'.
         api_key_id: Tenant API key ID for search isolation.
         event_id: Event ID for event-scoped face search.
@@ -30,7 +30,7 @@ def face_process_batch(
     """
     from src.workers.helpers import (
         complete_job,
-        decode_base64_image,
+        decode_image_from_path,
         fail_job,
         update_job_progress,
     )
@@ -41,92 +41,110 @@ def face_process_batch(
         fail_job(job_id, "Face embedder model not loaded in worker")
         return
 
-    total = len(image_data_list)
+    total = len(image_paths)
     results: list[dict] = [{} for _ in range(total)]
 
-    # PERF-8: Pre-decode all images upfront
-    images = []
-    for i, b64_data in enumerate(image_data_list):
-        image = decode_base64_image(b64_data)
-        if image is None:
-            results[i] = {"index": i, "error": "Failed to decode image"}
-        images.append(image)
-
-    # Run inference on successfully decoded images
-    for i, image in enumerate(images):
-        if image is None:
-            update_job_progress(job_id, i + 1, total)
-            continue
-        try:
-            if operation == "detect":
+    if operation == "search":
+        # Open ONE session for all images instead of per-image
+        _search_batch(
+            image_paths, embedder, results, job_id, total,
+            api_key_id=api_key_id, event_id=event_id,
+            threshold=threshold, top_k=top_k,
+        )
+    else:
+        # detect: per-image, no DB needed
+        for i, path in enumerate(image_paths):
+            image = decode_image_from_path(path, max_dim=768)
+            if image is None:
+                results[i] = {"index": i, "error": "Failed to decode image"}
+                update_job_progress(job_id, i + 1, total)
+                continue
+            try:
                 faces = embedder.detect_faces(image)
                 results[i] = {"index": i, "faces_detected": len(faces), "faces": faces}
-            elif operation == "search":
-                result = _search_single(
-                    image, embedder,
-                    api_key_id=api_key_id,
-                    event_id=event_id,
-                    threshold=threshold,
-                    top_k=top_k,
-                )
-                results[i] = {"index": i, **result}
-            else:
-                results[i] = {"index": i, "error": f"Unknown operation: {operation}"}
-        except Exception as e:
-            logger.error("Face processing failed for image", index=i, error=str(e))
-            results[i] = {"index": i, "error": str(e)}
-        update_job_progress(job_id, i + 1, total)
+            except Exception as e:
+                logger.error("Face detection failed for image", index=i, error=str(e))
+                results[i] = {"index": i, "error": str(e)}
+            update_job_progress(job_id, i + 1, total)
 
+    if not job_id:
+        return results
     complete_job(job_id, results)
     logger.info("Face batch job completed", job_id=job_id, total=total)
 
 
-def _search_single(
-    image,
+def _search_batch(
+    image_paths: list[str],
     embedder,
+    results: list[dict],
+    job_id: str,
+    total: int,
     api_key_id: str | None = None,
     event_id: str | None = None,
     threshold: float | None = None,
     top_k: int | None = None,
-) -> dict:
-    """Detect faces, extract embeddings, and search the database."""
+) -> None:
+    """Detect + search for all images using a single DB session.
+
+    Uses batch_search_similar() to issue a single LATERAL JOIN query for
+    all faces in each image instead of N separate search_similar() round-trips.
+    One DB session for the entire task instead of one per image.
+    """
     from src.config import get_settings
     from src.db.repositories.sync_face_repo import SyncFaceRepository
     from src.db.sync_session import get_sync_session
+    from src.workers.helpers import decode_image_from_path, update_job_progress
 
     settings = get_settings()
+    eff_threshold = threshold if threshold is not None else settings.FACE_SIMILARITY_THRESHOLD
+    eff_top_k = top_k if top_k is not None else 10
 
-    faces = embedder.get_embeddings(image)
-    if not faces:
-        return {"faces_detected": 0, "matches": []}
-
-    matches = []
     with get_sync_session() as session:
         repo = SyncFaceRepository(session)
-        for face in faces:
-            results = repo.search_similar(
-                query_embedding=face["embedding"],
-                threshold=threshold if threshold is not None else settings.FACE_SIMILARITY_THRESHOLD,
-                top_k=top_k if top_k is not None else 10,
-                api_key_id=api_key_id,
-                event_id=event_id,
-            )
-            for r in results:
-                matches.append({
-                    "person_id": r["person_id"],
-                    "person_name": r["person_name"],
-                    "similarity": r["similarity"],
-                    "bbox": face["bbox"],
-                })
 
-    return {"faces_detected": len(faces), "matches": matches}
+        for i, path in enumerate(image_paths):
+            image = decode_image_from_path(path, max_dim=768)
+            if image is None:
+                results[i] = {"index": i, "error": "Failed to decode image"}
+                update_job_progress(job_id, i + 1, total)
+                continue
+            try:
+                faces = embedder.get_embeddings(image)
+                if not faces:
+                    results[i] = {"index": i, "faces_detected": 0, "matches": []}
+                    update_job_progress(job_id, i + 1, total)
+                    continue
+
+                embeddings = [face["embedding"] for face in faces]
+                per_face_results = repo.batch_search_similar(
+                    embeddings=embeddings,
+                    threshold=eff_threshold,
+                    top_k=eff_top_k,
+                    api_key_id=api_key_id,
+                    event_id=event_id,
+                )
+
+                matches = []
+                for face, face_results in zip(faces, per_face_results):
+                    for r in face_results:
+                        matches.append({
+                            "person_id": r["person_id"],
+                            "person_name": r["person_name"],
+                            "similarity": r["similarity"],
+                            "bbox": face["bbox"],
+                        })
+                results[i] = {"index": i, "faces_detected": len(faces), "matches": matches}
+            except Exception as e:
+                logger.error("Face search failed for image", index=i, error=str(e))
+                results[i] = {"index": i, "error": str(e)}
+            update_job_progress(job_id, i + 1, total)
 
 
 @celery_app.task(bind=True, name="faces.enroll_batch")
 def face_enroll_batch(
     self,
     job_id: str,
-    image_data_list: list[str],
+    image_paths: list[str],
     person_name: str,
     person_id: str | None = None,
     api_key_id: str | None = None,
@@ -141,16 +159,16 @@ def face_enroll_batch(
     This avoids holding a DB session open during inference (PR2-9) and
     prevents a single bad image from rolling back all prior work (PR2-10).
     """
-    import base64
     import hashlib
     import uuid as _uuid
 
     from src.config import get_settings
     from src.db.repositories.sync_face_repo import SyncFaceRepository
     from src.db.sync_session import get_sync_session
+    from src.utils.blob_store import load_blob
     from src.workers.helpers import (
+        _decode_raw_bytes,
         complete_job,
-        decode_base64_image,
         fail_job,
         update_job_progress,
     )
@@ -163,15 +181,15 @@ def face_enroll_batch(
 
     settings = get_settings()
     min_conf = settings.FACE_MIN_ENROLLMENT_CONFIDENCE
-    total = len(image_data_list)
+    total = len(image_paths)
     results: list[dict] = [{} for _ in range(total)]
 
     # --- Phase 1: Decode + ML inference (no DB session held) ---
     inference_results: list[tuple[list[dict], str] | None] = [None] * total
-    for i, b64_data in enumerate(image_data_list):
+    for i, path in enumerate(image_paths):
         try:
-            raw_bytes = base64.b64decode(b64_data)
-            image = decode_base64_image(b64_data, raw_bytes=raw_bytes)
+            raw_bytes = load_blob(path)
+            image = _decode_raw_bytes(raw_bytes, max_dim=768)
             if image is None:
                 results[i] = {"index": i, "error": "Failed to decode image"}
                 continue
@@ -193,7 +211,6 @@ def face_enroll_batch(
             except ValueError:
                 fail_job(job_id, f"Invalid person_id format: {person_id}")
                 return
-            # Verify person exists (mirrors the sync enroll endpoint check)
             from sqlalchemy import select
             from src.db.models import Person
             result = session.execute(
@@ -208,41 +225,34 @@ def face_enroll_batch(
             )
             pid = person.id
 
-    # Store embeddings per image — each in its own session so partial
-    # failures don't roll back prior successful images.
-    for i, inf in enumerate(inference_results):
-        if inf is None:
-            continue
-        faces, image_hash = inf
-        try:
-            with get_sync_session() as session:
-                repo = SyncFaceRepository(session)
-                stored = 0
-                skipped = 0
+    # Store embeddings — single session with savepoints for per-image
+    # isolation (1 connection instead of N).
+    with get_sync_session() as session:
+        repo = SyncFaceRepository(session)
+        for i, inf in enumerate(inference_results):
+            if inf is None:
+                continue
+            faces, image_hash = inf
+            try:
                 for face in faces:
-                    conf = face["bbox"]["confidence"]
-                    if conf < min_conf:
-                        skipped += 1
-                        continue
-                    emb_result = repo.store_embedding(
-                        person_id=pid,
-                        embedding=face["embedding"],
-                        source_image_hash=image_hash,
-                        quality_score=conf,
-                    )
-                    if emb_result is None:
-                        skipped += 1
-                        continue
-                    stored += 1
+                    face["source_image_hash"] = image_hash
+                savepoint = session.begin_nested()
+                stored, skipped = repo.bulk_store_embeddings(
+                    person_id=pid,
+                    faces=faces,
+                    min_conf=min_conf,
+                )
+                savepoint.commit()
                 results[i] = {
                     "index": i,
                     "faces_detected": len(faces),
                     "faces_enrolled": stored,
                     "skipped": skipped,
                 }
-        except Exception as e:
-            logger.error("Face enrollment failed for image", index=i, error=str(e))
-            results[i] = {"index": i, "error": str(e)}
+            except Exception as e:
+                savepoint.rollback()
+                logger.error("Face enrollment failed for image", index=i, error=str(e))
+                results[i] = {"index": i, "error": str(e)}
 
     complete_job(job_id, results)
     logger.info(

@@ -84,3 +84,48 @@ class BlurDetector:
             "laplacian_variance": laplacian_var,
             "hf_ratio": hf_ratio,
         }
+
+    def detect_fast(
+        self, gray: np.ndarray, threshold_override: float | None = None
+    ) -> dict:
+        """Laplacian-only blur detection on a pre-converted grayscale image.
+
+        Skips FFT high-frequency ratio (~4x faster than detect()) and skips
+        the BGR→gray conversion (caller provides grayscale directly).
+        Designed for high-throughput batch pipelines where hf_ratio is not needed.
+
+        Args:
+            gray: Grayscale numpy array (single channel).
+            threshold_override: Optional threshold override.
+
+        Returns:
+            Dict with is_blurry, confidence, and laplacian_variance.
+        """
+        threshold = (
+            threshold_override if threshold_override is not None else self.laplacian_threshold
+        )
+
+        h, w = gray.shape[:2]
+
+        if _HAS_CPP:
+            laplacian_var = float(_cpp_laplacian_var(gray))
+        else:
+            laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+        # Normalize to 640px reference resolution
+        ref_dim = 640
+        actual_dim = max(h, w)
+        if actual_dim > 0:
+            laplacian_var = laplacian_var * ref_dim / actual_dim
+
+        is_blurry = laplacian_var < threshold
+        if is_blurry:
+            confidence = 1.0 - min(1.0, laplacian_var / threshold)
+        else:
+            confidence = min(1.0, laplacian_var / threshold)
+
+        return {
+            "is_blurry": is_blurry,
+            "confidence": round(confidence, 4),
+            "laplacian_variance": round(laplacian_var, 2),
+        }

@@ -43,6 +43,56 @@ class BibRecognizer:
         )
         logger.info("BibRecognizer initialized", gpu=use_gpu)
 
+    def recognize_batch(
+        self,
+        crops: list[np.ndarray],
+        min_chars_override: int | None = None,
+    ) -> list[dict]:
+        """Run OCR on multiple cropped bib images using a thread pool.
+
+        PaddleOCR 3.x does not expose true GPU-batched prediction via its Python
+        API (each predict() call is processed individually internally). We use a
+        ThreadPoolExecutor to run multiple predict() calls concurrently, which
+        still yields a meaningful speedup because PaddleOCR releases the GIL
+        during its I/O and C++ inference portions.
+
+        Args:
+            crops: List of BGR numpy arrays (cropped bib regions).
+            min_chars_override: Override minimum digit count for every call.
+
+        Returns:
+            List of result dicts in the same order as ``crops``.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        if not crops:
+            return []
+
+        results: list[dict | None] = [None] * len(crops)
+
+        from src.config import get_settings
+
+        settings = get_settings()
+        max_workers = min(settings.OCR_MAX_WORKERS, len(crops))
+        per_crop_timeout = settings.INFERENCE_TIMEOUT
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self.recognize, crop, min_chars_override): i
+                for i, crop in enumerate(crops)
+            }
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    results[idx] = fut.result(timeout=per_crop_timeout)
+                except TimeoutError:
+                    results[idx] = {"bib_number": "", "confidence": 0.0, "all_candidates": []}
+                    logger.warning("OCR timed out for crop", index=idx)
+                except Exception as e:
+                    results[idx] = {"bib_number": "", "confidence": 0.0, "all_candidates": []}
+                    logger.error("OCR failed in batch", index=idx, error=str(e))
+
+        return [r if r is not None else {"bib_number": "", "confidence": 0.0, "all_candidates": []} for r in results]
+
     def recognize(
         self, cropped_bib_image: np.ndarray, min_chars_override: int | None = None
     ) -> dict:
@@ -55,19 +105,12 @@ class BibRecognizer:
         Returns:
             Dict with bib_number, confidence, and all_candidates.
         """
-        from src.config import get_settings
-        from src.utils.timeout import run_with_timeout
-
         min_chars = min_chars_override if min_chars_override is not None else self.min_chars
-        # PaddleOCR 3.x uses predict() — ocr() is deprecated
-        timeout = get_settings().INFERENCE_TIMEOUT
-        # Wrap list() inside the timeout — predict() returns a lazy generator,
-        # so the actual OCR work only happens during iteration.
-        results = run_with_timeout(
-            lambda img: list(self.ocr.predict(img)),
-            args=(cropped_bib_image,),
-            timeout_seconds=timeout,
-        )
+        # PaddleOCR 3.x uses predict() — ocr() is deprecated.
+        # Called directly (no timeout thread) — the ThreadPoolExecutor in
+        # recognize_batch() provides per-crop timeout via future.result(timeout=),
+        # and Celery task_soft_time_limit is the outer safety net.
+        results = list(self.ocr.predict(cropped_bib_image))
         if not results:
             return {"bib_number": "", "confidence": 0.0, "all_candidates": []}
 

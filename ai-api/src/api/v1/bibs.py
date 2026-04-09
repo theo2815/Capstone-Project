@@ -9,8 +9,10 @@ from fastapi.responses import JSONResponse
 from src.api.v1.batch_utils import (
     batch_accepted_response,
     create_batch_job,
-    validate_and_encode_batch,
+    store_blobs_and_get_paths,
+    validate_batch_files,
 )
+from src.api.v1.mega_batch import dispatch_mega_batch
 from src.middleware.auth import check_scope, verify_api_key
 from src.schemas.bibs import BibCandidate, BibDetection, BibRecognitionResponse
 from src.schemas.common import APIResponse
@@ -143,12 +145,12 @@ async def recognize_bibs_batch(
     check_scope("bibs:read", key_meta)
     settings = request.app.state.settings
 
-    result = await validate_and_encode_batch(
+    result = await validate_batch_files(
         request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE
     )
     if isinstance(result, JSONResponse):
         return result
-    image_data_list = result
+    raw_bytes_list = result
 
     job_id = await create_batch_job(
         request, "bib_recognize_batch", len(files), key_meta.get("key_id")
@@ -156,8 +158,44 @@ async def recognize_bibs_batch(
     if isinstance(job_id, JSONResponse):
         return job_id
 
+    image_paths = store_blobs_and_get_paths(job_id, raw_bytes_list)
+
     from src.workers.tasks.bib_tasks import bib_recognize_batch
 
-    bib_recognize_batch.delay(job_id, image_data_list)
+    bib_recognize_batch.delay(job_id, image_paths)
+
+    return batch_accepted_response(request, job_id, len(files))
+
+
+@router.post("/recognize/mega", status_code=202)
+async def recognize_bibs_mega(
+    request: Request,
+    files: list[UploadFile] = File(..., description="Image files (up to 500)"),
+    key_meta: dict = Depends(verify_api_key),
+):
+    """Submit a mega-batch of images for async bib number recognition.
+
+    Accepts up to 500 images per request. The server automatically splits
+    them into sub-tasks and merges results into a single job.
+    """
+    check_scope("bibs:read", key_meta)
+    settings = request.app.state.settings
+
+    result = await validate_batch_files(
+        request, files, settings.MEGA_BATCH_MAX_SIZE, settings.MAX_FILE_SIZE
+    )
+    if isinstance(result, JSONResponse):
+        return result
+    raw_bytes_list = result
+
+    job_id = await create_batch_job(
+        request, "bib_recognize_mega", len(files), key_meta.get("key_id")
+    )
+    if isinstance(job_id, JSONResponse):
+        return job_id
+
+    from src.workers.tasks.bib_tasks import bib_recognize_batch
+
+    dispatch_mega_batch(job_id, raw_bytes_list, bib_recognize_batch)
 
     return batch_accepted_response(request, job_id, len(files))

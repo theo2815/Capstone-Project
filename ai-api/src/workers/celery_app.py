@@ -16,17 +16,25 @@ celery_app = Celery(
 )
 
 celery_app.conf.update(
+    include=[
+        "src.workers.tasks.blur_tasks",
+        "src.workers.tasks.face_tasks",
+        "src.workers.tasks.bib_tasks",
+        "src.workers.tasks.webhook_tasks",
+        "src.workers.tasks.maintenance_tasks",
+    ],
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
     task_track_started=True,
     task_acks_late=True,
-    worker_prefetch_multiplier=1,
+    worker_prefetch_multiplier=4,  # Safe now that tasks carry paths, not image data
     result_expires=3600,
     task_reject_on_worker_lost=True,
     task_time_limit=3600,
     task_soft_time_limit=3300,
-    worker_max_tasks_per_child=100,
+    worker_max_tasks_per_child=500,  # Avoid model-reload restarts during large batches
+    worker_max_memory_per_child=2_000_000,  # 2 GB — restart process on OOM
     broker_connection_retry_on_startup=True,
     # SCALE-1: Route tasks to specialized queues.
     # Start workers with: celery -A src.workers.celery_app worker -Q blur
@@ -50,11 +58,13 @@ celery_app.conf.update(
             "task": "maintenance.cleanup_old_jobs",
             "schedule": 86400.0,  # Once per day
         },
+        "cleanup-stale-blobs": {
+            "task": "maintenance.cleanup_stale_blobs",
+            "schedule": 1800.0,  # Every 30 minutes
+        },
     },
 )
 
-# Auto-discover tasks
-celery_app.autodiscover_tasks(["src.workers.tasks"])
 
 # SEC-3: Celery message signing placeholder.
 # The "auth" serializer requires X.509 certificates (pyOpenSSL), NOT an HMAC key.

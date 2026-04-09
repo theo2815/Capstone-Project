@@ -18,6 +18,11 @@ class ModelRegistry:
         """Load all ML models during FastAPI lifespan startup."""
         logger.info("Loading ML models...")
 
+        # Pre-import heavy libraries in the main thread to avoid Windows DLL
+        # race conditions when multiple threads try to load torch/shm.dll
+        # concurrently via asyncio.to_thread.
+        await asyncio.to_thread(self._preimport_libs)
+
         loaders = {
             "blur": self._load_blur,
             "blur_classifier": self._load_blur_classifier,
@@ -82,6 +87,23 @@ class ModelRegistry:
                 logger.warning("Error releasing model resources", model=name, error=str(e))
         self._models.clear()
         logger.info("All models unloaded")
+
+    @staticmethod
+    def _preimport_libs() -> None:
+        """Pre-import libraries that load native DLLs so concurrent threads
+        don't race on DLL loading (Windows-specific issue with shm.dll)."""
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            pass
+        try:
+            import insightface  # noqa: F401
+        except ImportError:
+            pass
+        try:
+            from ultralytics import YOLO  # noqa: F401
+        except ImportError:
+            pass
 
     def _load_blur(self, settings: Any) -> Any:
         from src.ml.blur.detector import BlurDetector

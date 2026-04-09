@@ -40,6 +40,49 @@ class BibDetector:
             )
             self.model = None
 
+    def detect_batch(
+        self, images: list[np.ndarray], confidence: float = 0.5
+    ) -> list[list[dict]]:
+        """Detect bib regions in multiple images in one YOLO inference call.
+
+        Ultralytics YOLO natively accepts a list of images and returns a list
+        of Results objects, so kernel-launch overhead is paid only once per
+        batch instead of once per image.
+
+        Args:
+            images: List of BGR numpy arrays.
+            confidence: Minimum detection confidence.
+
+        Returns:
+            List of detection lists — one per input image.
+        """
+        if self.model is None:
+            return [[] for _ in images]
+
+        batch_results = self.model(images, conf=confidence, verbose=False)
+        all_detections: list[list[dict]] = []
+        for result in batch_results:
+            names = result.names
+            detections: list[dict] = []
+            for box in result.boxes:
+                cls_id = int(box.cls[0])
+                class_name = names.get(cls_id, "")
+                if class_name not in self._BIB_CLASS_NAMES:
+                    continue
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                detections.append({
+                    "bbox": {
+                        "x1": float(x1),
+                        "y1": float(y1),
+                        "x2": float(x2),
+                        "y2": float(y2),
+                    },
+                    "confidence": float(box.conf[0]),
+                    "class_name": class_name,
+                })
+            all_detections.append(detections)
+        return all_detections
+
     def detect(self, image: np.ndarray, confidence: float = 0.5) -> list[dict]:
         """Detect bib regions in an image.
 

@@ -55,17 +55,15 @@ def _decode_image_bytes(contents: bytes) -> np.ndarray:
     Validates magic bytes, applies EXIF rotation, checks dimensions, and
     downscales for inference.
     """
-    # Verify it's actually a valid image (magic bytes, not just Content-Type)
+    # Single open + EXIF transpose (no .verify() — the decode itself catches
+    # corrupt files, and .verify() forces a full decode then invalidates the
+    # object, requiring a wasteful second open).
     try:
         img = Image.open(io.BytesIO(contents))
-        img.verify()
+        img = ImageOps.exif_transpose(img)
     except Exception:
         raise ImageValidationError("Invalid or corrupt image file")
 
-    # Re-open after verify (verify() invalidates the image object), then
-    # apply EXIF rotation and convert to numpy — single decode, no cv2.imdecode
-    img = Image.open(io.BytesIO(contents))
-    img = ImageOps.exif_transpose(img)
     w, h = img.size
     if w > MAX_DIMENSION or h > MAX_DIMENSION:
         raise ImageValidationError(
@@ -76,8 +74,11 @@ def _decode_image_bytes(contents: bytes) -> np.ndarray:
             f"Image too small ({w}x{h}). Minimum is {MIN_DIMENSION}px"
         )
 
-    # Convert PIL -> numpy RGB -> BGR (replaces separate cv2.imdecode)
-    rgb_array = np.array(img.convert("RGB"))
+    # Skip .convert("RGB") when already RGB (always true for JPEG after EXIF
+    # transpose). np.asarray gives a zero-copy view when possible.
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    rgb_array = np.asarray(img)
     image = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
 
     # Downscale large images before inference (models resize to 640px internally)
@@ -86,14 +87,19 @@ def _decode_image_bytes(contents: bytes) -> np.ndarray:
     return image
 
 
-def downscale_for_inference(image: np.ndarray) -> np.ndarray:
-    """Downscale image if it exceeds MAX_INFERENCE_DIMENSION.
+def downscale_for_inference(image: np.ndarray, max_dim: int = 0) -> np.ndarray:
+    """Downscale image if it exceeds *max_dim* (or MAX_INFERENCE_DIMENSION).
+
+    Args:
+        image: BGR numpy array.
+        max_dim: Override dimension. 0 (default) uses the global setting.
 
     Returns the original image if downscaling is disabled (0) or not needed.
     """
-    from src.config import get_settings
+    if max_dim <= 0:
+        from src.config import get_settings
 
-    max_dim = get_settings().MAX_INFERENCE_DIMENSION
+        max_dim = get_settings().MAX_INFERENCE_DIMENSION
     if max_dim <= 0:
         return image
 

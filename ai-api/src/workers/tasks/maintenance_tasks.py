@@ -46,3 +46,47 @@ def cleanup_old_jobs():
     if count > 0:
         logger.info("Cleaned up old jobs", count=count, retention_days=settings.JOB_RETENTION_DAYS)
     return count
+
+
+@celery_app.task(name="maintenance.cleanup_stale_blobs")
+def cleanup_stale_blobs():
+    """Remove blob staging directories older than 2 hours.
+
+    Safety net for jobs that crashed before cleanup ran in complete_job/fail_job.
+    """
+    from src.utils.blob_store import cleanup_stale_blobs as _cleanup
+
+    count = _cleanup(max_age_seconds=7200)
+    return count
+
+
+@celery_app.task(name="maintenance.finalize_mega_batch")
+def finalize_mega_batch(chunk_results: list, parent_job_id: str):
+    """Merge results from chunked mega-batch sub-tasks into the parent job.
+
+    Called as the Celery chord callback after all chunk tasks complete.
+    Each element of *chunk_results* is a list[dict] from one sub-task.
+    """
+    from itertools import chain
+
+    from src.workers.helpers import complete_job
+
+    # Flatten sub-task results. Celery chord delivers results in task
+    # submission order, so the flat list is already in global image order.
+    flat = list(chain.from_iterable(
+        chunk if isinstance(chunk, list) else [chunk]
+        for chunk in chunk_results
+    ))
+    # Re-assign globally consistent indices. Sub-tasks produce local
+    # indices (0..chunk_size-1) because they don't know their global
+    # offset. Chord order guarantees the flat list matches upload order.
+    for global_idx, result in enumerate(flat):
+        result["index"] = global_idx
+    merged = flat
+
+    complete_job(parent_job_id, merged)
+    logger.info(
+        "Mega-batch finalized",
+        parent_job_id=parent_job_id,
+        total_results=len(merged),
+    )

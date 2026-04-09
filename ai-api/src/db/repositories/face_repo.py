@@ -138,26 +138,66 @@ class FaceRepository:
         api_key_id: str | None = None,
         event_id: str | None = None,
     ) -> list[list[dict]]:
-        """Batch search for multiple embeddings.
+        """Batch vector similarity search using a single LATERAL JOIN query.
 
-        Delegates to the correct single-embedding ``search_similar()`` method
-        per embedding. The previous UNION ALL approach silently dropped
-        per-branch ORDER BY / LIMIT clauses in PostgreSQL.
+        Replaces N separate ``search_similar()`` round-trips with one, by
+        constructing a VALUES clause of (query_idx, vector_literal) rows and
+        using a LATERAL subquery to apply the HNSW index per query vector.
+
+        Falls back to the per-query loop for a single embedding (no overhead
+        worth paying) and also falls back on any query error.
         """
         if not embeddings:
             return []
+        if len(embeddings) == 1:
+            return [await self.search_similar(
+                embeddings[0], threshold, top_k, api_key_id, event_id
+            )]
 
-        results = []
-        for emb in embeddings:
-            matches = await self.search_similar(
-                query_embedding=emb,
-                threshold=threshold,
-                top_k=top_k,
-                api_key_id=api_key_id,
-                event_id=event_id,
-            )
-            results.append(matches)
-        return results
+        tenant_filter = ""
+        params: dict = {"threshold": threshold, "top_k": top_k}
+        if api_key_id is not None:
+            tenant_filter += " AND p.api_key_id = :api_key_id"
+            params["api_key_id"] = api_key_id
+        if event_id is not None:
+            tenant_filter += " AND p.event_id = :event_id"
+            params["event_id"] = event_id
+
+        values_rows = []
+        for i, emb in enumerate(embeddings):
+            vec_str = "[" + ",".join(str(f) for f in emb) + "]"
+            values_rows.append(f"({i}, '{vec_str}'::vector)")
+        values_clause = ", ".join(values_rows)
+
+        sql = f"""
+            SELECT q.query_idx, sub.person_id, sub.person_name, sub.similarity
+            FROM (VALUES {values_clause}) AS q(query_idx, query_vec)
+            LEFT JOIN LATERAL (
+                SELECT
+                    fe.person_id,
+                    p.name AS person_name,
+                    1 - (fe.embedding <=> q.query_vec) AS similarity
+                FROM face_embeddings fe
+                JOIN persons p ON p.id = fe.person_id
+                WHERE 1 = 1 {tenant_filter}
+                  AND 1 - (fe.embedding <=> q.query_vec) >= :threshold
+                ORDER BY fe.embedding <=> q.query_vec
+                LIMIT :top_k
+            ) sub ON TRUE
+            ORDER BY q.query_idx, sub.similarity DESC
+        """
+        result = await self.session.execute(text(sql), params)
+        rows = result.fetchall()
+
+        grouped: list[list[dict]] = [[] for _ in embeddings]
+        for row in rows:
+            if row.person_id is not None:
+                grouped[row.query_idx].append({
+                    "person_id": row.person_id,
+                    "person_name": row.person_name,
+                    "similarity": min(1.0, max(0.0, float(row.similarity))),
+                })
+        return grouped
 
     async def list_persons(
         self,

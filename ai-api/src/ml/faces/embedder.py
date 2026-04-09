@@ -46,12 +46,10 @@ class FaceEmbedder:
         logger.info("FaceEmbedder initialized", gpu=use_gpu, det_size=det_size)
 
     def _run_inference(self, image: np.ndarray) -> list:
-        """Run InsightFace inference with a per-image timeout."""
-        from src.config import get_settings
-        from src.utils.timeout import run_with_timeout
+        """Run InsightFace inference — covered by Celery task_soft_time_limit."""
+        from src.utils.timeout import run_direct
 
-        timeout = get_settings().INFERENCE_TIMEOUT
-        return run_with_timeout(self.app.get, args=(image,), timeout_seconds=timeout)
+        return run_direct(self.app.get, args=(image,))
 
     def detect_faces(self, image: np.ndarray) -> list[dict]:
         """Detect faces and return bounding boxes + landmarks."""
