@@ -44,7 +44,12 @@
       "Bash(find 'C:\\\\Users\\\\Theo Cedric Chan\\\\Documents\\\\Start Up project\\\\BatchMyPhotos\\\\src\\\\main' -type f -name *.js)",
       "Bash(find 'C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\ai-api\\\\src' -type f -name *.py)",
       "Bash(node -c \"/c/Users/Theo Cedric Chan/Documents/Start Up project/BatchMyPhotos/src/main/blurDetectionService.js\")",
-      "Bash(node -c \"/c/Users/Theo Cedric Chan/Documents/Start Up project/BatchMyPhotos/src/main/constants.js\")"
+      "Bash(node -c \"/c/Users/Theo Cedric Chan/Documents/Start Up project/BatchMyPhotos/src/main/constants.js\")",
+      "Bash(npm -v)",
+      "Bash(npm view:*)",
+      "Bash(npx create-next-app@15 website --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --use-npm --no-turbopack)",
+      "Bash(npm install:*)",
+      "Bash(npx next:*)"
     ]
   }
 }
