@@ -22,15 +22,17 @@ class SyncJobRepository:
     def update_progress(
         self, job_id: uuid.UUID, processed_items: int, progress: float
     ) -> None:
-        result = self.session.execute(
-            select(Job).where(Job.id == job_id).with_for_update()
+        # Single UPDATE — no row lock needed since progress only increases
+        self.session.execute(
+            update(Job)
+            .where(Job.id == job_id)
+            .values(
+                processed_items=processed_items,
+                progress=progress,
+                status="processing",
+            )
         )
-        job = result.scalar_one_or_none()
-        if job:
-            job.processed_items = processed_items
-            job.progress = progress
-            job.status = "processing"
-            self.session.flush()
+        self.session.flush()
 
     def complete(self, job_id: uuid.UUID, result: dict | list) -> None:
         row = self.session.execute(

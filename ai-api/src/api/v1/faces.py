@@ -11,8 +11,10 @@ from fastapi.responses import JSONResponse
 from src.api.v1.batch_utils import (
     batch_accepted_response,
     create_batch_job,
-    validate_and_encode_batch,
+    store_blobs_and_get_paths,
+    validate_batch_files,
 )
+from src.api.v1.mega_batch import dispatch_mega_batch
 from src.middleware.auth import check_scope, verify_api_key
 from src.schemas.common import APIResponse
 from src.schemas.faces import (
@@ -481,12 +483,12 @@ async def search_faces_batch(
     check_scope("faces:read", key_meta)
     settings = request.app.state.settings
 
-    result = await validate_and_encode_batch(
+    result = await validate_batch_files(
         request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE
     )
     if isinstance(result, JSONResponse):
         return result
-    image_data_list = result
+    raw_bytes_list = result
 
     job_id = await create_batch_job(
         request, f"face_{operation}_batch", len(files), key_meta.get("key_id")
@@ -494,10 +496,12 @@ async def search_faces_batch(
     if isinstance(job_id, JSONResponse):
         return job_id
 
+    image_paths = store_blobs_and_get_paths(job_id, raw_bytes_list)
+
     from src.workers.tasks.face_tasks import face_process_batch
 
     face_process_batch.delay(
-        job_id, image_data_list, operation,
+        job_id, image_paths, operation,
         api_key_id=key_meta.get("key_id"),
         event_id=event_id,
         threshold=threshold,
@@ -526,12 +530,12 @@ async def enroll_faces_batch(
     check_scope("faces:write", key_meta)
     settings = request.app.state.settings
 
-    result = await validate_and_encode_batch(
+    result = await validate_batch_files(
         request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE
     )
     if isinstance(result, JSONResponse):
         return result
-    image_data_list = result
+    raw_bytes_list = result
 
     job_id = await create_batch_job(
         request, "face_enroll_batch", len(files), key_meta.get("key_id")
@@ -539,15 +543,64 @@ async def enroll_faces_batch(
     if isinstance(job_id, JSONResponse):
         return job_id
 
+    image_paths = store_blobs_and_get_paths(job_id, raw_bytes_list)
+
     from src.workers.tasks.face_tasks import face_enroll_batch
 
     face_enroll_batch.delay(
         job_id,
-        image_data_list,
+        image_paths,
         person_name=person_name,
         person_id=person_id,
         api_key_id=key_meta.get("key_id"),
         event_id=event_id,
+    )
+
+    return batch_accepted_response(request, job_id, len(files))
+
+
+@router.post("/search/mega", status_code=202)
+async def search_faces_mega(
+    request: Request,
+    files: list[UploadFile] = File(..., description="Image files (up to 500)"),
+    operation: str = Query(default="search", pattern="^(detect|search)$"),
+    event_id: str | None = Query(default=None),
+    threshold: float = Query(default=0.4, ge=0.0, le=1.0),
+    top_k: int = Query(default=10, ge=1, le=100),
+    key_meta: dict = Depends(verify_api_key),
+):
+    """Submit a mega-batch of images for async face processing.
+
+    Accepts up to 500 images per request. The server automatically splits
+    them into sub-tasks and merges results into a single job.
+    """
+    check_scope("faces:read", key_meta)
+    settings = request.app.state.settings
+
+    result = await validate_batch_files(
+        request, files, settings.MEGA_BATCH_MAX_SIZE, settings.MAX_FILE_SIZE
+    )
+    if isinstance(result, JSONResponse):
+        return result
+    raw_bytes_list = result
+
+    job_id = await create_batch_job(
+        request, f"face_{operation}_mega", len(files), key_meta.get("key_id")
+    )
+    if isinstance(job_id, JSONResponse):
+        return job_id
+
+    from src.workers.tasks.face_tasks import face_process_batch
+
+    dispatch_mega_batch(
+        job_id, raw_bytes_list, face_process_batch,
+        extra_kwargs={
+            "operation": operation,
+            "api_key_id": key_meta.get("key_id"),
+            "event_id": event_id,
+            "threshold": threshold,
+            "top_k": top_k,
+        },
     )
 
     return batch_accepted_response(request, job_id, len(files))

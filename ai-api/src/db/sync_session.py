@@ -20,7 +20,7 @@ def _get_sync_url() -> str:
     """Derive a synchronous database URL from the async one."""
     settings = get_settings()
     url = make_url(settings.DATABASE_URL)
-    return str(url.set(drivername="postgresql+psycopg2"))
+    return url.set(drivername="postgresql+psycopg2").render_as_string(hide_password=False)
 
 
 def init_sync_db() -> None:
@@ -31,10 +31,10 @@ def init_sync_db() -> None:
 
     _sync_engine = create_engine(
         _get_sync_url(),
-        pool_size=15,
-        max_overflow=10,
+        pool_size=5,       # Low base — most tasks need 1 connection at a time
+        max_overflow=20,   # Burst capacity for face enrollment (per-image sessions)
         pool_pre_ping=True,
-        pool_timeout=30,
+        pool_timeout=10,   # Fail fast on exhaustion instead of blocking 30s
         pool_recycle=3600,
     )
     _sync_session_factory = sessionmaker(bind=_sync_engine, expire_on_commit=False)

@@ -30,4 +30,7 @@ class JobStatusResponse(BaseModel):
     created_at: datetime
     completed_at: datetime | None = None
     result: list[dict] | None = None
+    result_total: int | None = None
+    result_offset: int | None = None
+    result_limit: int | None = None
     error: str | None = None

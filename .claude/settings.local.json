@@ -31,7 +31,20 @@
       "Bash(.venv/Scripts/uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --reload)",
       "Bash(xargs grep:*)",
       "Bash(find '/c/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project' -type f -name *feature*analysis* -o -name *FA*)",
-      "Bash(find '/c/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project' -type f -name *feature*analysis* -o -name *blur*report*)"
+      "Bash(find '/c/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project' -type f -name *feature*analysis* -o -name *blur*report*)",
+      "Bash(find '/c/Users/Theo Cedric Chan/Documents/Start Up project/Capstone-Project' -maxdepth 2 -name *.toml -o -name *.json -o -name *.yml -o -name .cursorrules -o -name copilot*)",
+      "Bash(pip list:*)",
+      "Bash(pip install:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker exec:*)",
+      "Bash(PGPASSWORD=postgres psql -h localhost -U postgres -d eventai -c \"SELECT 1\" 2>&1)",
+      "Bash(cd /c/Users/\"Theo Cedric Chan\"/documents/\"Start up project\"/capstone-project)",
+      "Bash(find /c/Users/Theo Cedric Chan/documents/Start up project/capstone-project -name *.pt -o -name *.onnx -o -name *.pth)",
+      "Bash(find /c/Users/Theo Cedric Chan/documents/Start up project/capstone-project -path */.venv -prune -o \\\\\\(-name *.pt -o -name *.onnx -o -name *.pth \\\\\\) -type f -print)",
+      "Bash(find 'C:\\\\Users\\\\Theo Cedric Chan\\\\Documents\\\\Start Up project\\\\BatchMyPhotos\\\\src\\\\main' -type f -name *.js)",
+      "Bash(find 'C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\ai-api\\\\src' -type f -name *.py)",
+      "Bash(node -c \"/c/Users/Theo Cedric Chan/Documents/Start Up project/BatchMyPhotos/src/main/blurDetectionService.js\")",
+      "Bash(node -c \"/c/Users/Theo Cedric Chan/Documents/Start Up project/BatchMyPhotos/src/main/constants.js\")"
     ]
   }
 }

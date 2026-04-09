@@ -17,6 +17,9 @@ env/
 # Environment variables
 .env
 
+# API keys (sensitive)
+docs/api-keys.md
+
 # IDE
 .vscode/
 .idea/

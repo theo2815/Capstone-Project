@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     WORKERS: int = 2
-    MAX_REQUEST_BODY: int = 50 * 1024 * 1024  # 50 MB (covers batch of 5 x 10MB)
+    MAX_REQUEST_BODY: int = 500 * 1024 * 1024  # 500 MB (covers stream batch of 500 images)
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/eventai"
@@ -45,8 +45,13 @@ class Settings(BaseSettings):
 
     # Inference
     INFERENCE_TIMEOUT: int = 120  # Per-image inference timeout in seconds
-    ONNX_INTRA_OP_THREADS: int = 2
-    ONNX_INTER_OP_THREADS: int = 1
+    INFERENCE_BATCH_TIMEOUT: int = 300  # Max seconds for any single batch ONNX call
+    INFERENCE_SUB_BATCH_SIZE: int = 50  # Match MAX_BATCH_SIZE: 1 ONNX call per task
+    ONNX_INTRA_OP_THREADS: int = 6
+    ONNX_INTER_OP_THREADS: int = 4
+
+    # OCR
+    OCR_MAX_WORKERS: int = 8  # Thread pool size for PaddleOCR batch inference
 
     # Auth
     API_KEY_HEADER: str = "X-API-Key"
@@ -70,13 +75,21 @@ class Settings(BaseSettings):
 
     # File Upload
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10 MB
-    MAX_BATCH_SIZE: int = 20  # Kept low to limit memory (base64 in Redis)
+    MAX_BATCH_SIZE: int = 50  # Raised from 20: Redis now 1GB + lazy decode keeps memory O(1)
+    MEGA_BATCH_MAX_SIZE: int = 500  # Max images per mega-batch request (server-side chunking)
+    STREAM_BATCH_MAX_SIZE: int = 500  # Max images per streaming sync batch request
+    STREAM_CONCURRENCY: int = 8  # Thread pool size for concurrent image processing
+    STREAM_CLASSIFY_MAX_SIZE: int = 500  # Max images per streaming classify request
+    STREAM_CLASSIFY_CONCURRENCY: int = 8  # Thread pool for classify/stream (ONNX is heavier)
     MAX_ACTIVE_JOBS_PER_KEY: int = 10  # Backpressure: max pending+processing jobs per API key
     JOB_RETENTION_DAYS: int = 7  # Auto-delete completed/failed jobs older than this
 
+    # Blob store — images written to shared volume instead of base64-in-Redis
+    BLOB_STORE_PATH: str = "/tmp/eventai-blobs"
+
     # Image preprocessing — downscale large images before inference
     # Models resize internally to 640x640 so images beyond this are wasted memory
-    MAX_INFERENCE_DIMENSION: int = 2048  # 0 = disabled
+    MAX_INFERENCE_DIMENSION: int = 640  # Match model input size to avoid double resize
 
     model_config = {
         "env_file": ".env",

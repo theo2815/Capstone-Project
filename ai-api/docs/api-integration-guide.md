@@ -32,6 +32,7 @@ make dev
 ```bash
 # Terminal 3 — worker
 celery -A src.workers.celery_app worker -l info -Q default,blur,face,bib -c 2
+celery -A src.workers.celery_app worker -l info -Q default,blur,face,bib -P solo
 ```
 
 ### Verify
@@ -118,11 +119,11 @@ Always check `json.success` first, then read `json.data` or `json.error`.
 POST /api/v1/blur/detect
 ```
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `file` | File | Yes | — | Image file (JPEG, PNG, WebP) |
-| `threshold` | Query float | No | 100.0 | Laplacian variance threshold (1.0 - 10000.0) |
-| `include_metrics` | Query bool | No | true | Include detailed metrics |
+| Parameter         | Type        | Required | Default | Description                                  |
+| ----------------- | ----------- | -------- | ------- | -------------------------------------------- |
+| `file`            | File        | Yes      | —       | Image file (JPEG, PNG, WebP)                 |
+| `threshold`       | Query float | No       | 100.0   | Laplacian variance threshold (1.0 - 10000.0) |
+| `include_metrics` | Query bool  | No       | true    | Include detailed metrics                     |
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/blur/detect \
@@ -152,10 +153,10 @@ Response `data`:
 POST /api/v1/blur/classify
 ```
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `file` | File | Yes | — | Image file |
-| `blur_type` | Query string | No | null | Specific type to detect: `defocused_object_portrait`, `defocused_blurred`, `motion_blurred` |
+| Parameter   | Type         | Required | Default | Description                                                                                 |
+| ----------- | ------------ | -------- | ------- | ------------------------------------------------------------------------------------------- |
+| `file`      | File         | Yes      | —       | Image file                                                                                  |
+| `blur_type` | Query string | No       | null    | Specific type to detect: `defocused_object_portrait`, `defocused_blurred`, `motion_blurred` |
 
 ```bash
 # Full classification
@@ -209,12 +210,12 @@ Targeted detection response `data`:
 POST /api/v1/faces/enroll
 ```
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `file` | File | Yes | — | Clear photo with the runner's face |
-| `person_name` | Form string | Yes | — | Runner's name (1-255 chars) |
-| `person_id` | Form string | No | null | Existing person UUID (to add more photos) |
-| `event_id` | Form string | No | null | Event identifier (e.g., "cebu-marathon-2026") |
+| Parameter     | Type        | Required | Default | Description                                   |
+| ------------- | ----------- | -------- | ------- | --------------------------------------------- |
+| `file`        | File        | Yes      | —       | Clear photo with the runner's face            |
+| `person_name` | Form string | Yes      | —       | Runner's name (1-255 chars)                   |
+| `person_id`   | Form string | No       | null    | Existing person UUID (to add more photos)     |
+| `event_id`    | Form string | No       | null    | Event identifier (e.g., "cebu-marathon-2026") |
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/faces/enroll \
@@ -255,12 +256,12 @@ curl -X POST http://localhost:8000/api/v1/faces/enroll \
 POST /api/v1/faces/search
 ```
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `file` | File | Yes | — | Event photo to search |
-| `threshold` | Query float | No | 0.4 | Similarity threshold (0.0 - 1.0). Lower = more results, more false positives |
-| `top_k` | Query int | No | 10 | Max matches per face (1-100) |
-| `event_id` | Query string | No | null | Scope search to this event only |
+| Parameter   | Type         | Required | Default | Description                                                                  |
+| ----------- | ------------ | -------- | ------- | ---------------------------------------------------------------------------- |
+| `file`      | File         | Yes      | —       | Event photo to search                                                        |
+| `threshold` | Query float  | No       | 0.4     | Similarity threshold (0.0 - 1.0). Lower = more results, more false positives |
+| `top_k`     | Query int    | No       | 10      | Max matches per face (1-100)                                                 |
+| `event_id`  | Query string | No       | null    | Scope search to this event only                                              |
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/faces/search?threshold=0.4&event_id=cebu-marathon-2026" \
@@ -297,10 +298,10 @@ Response `data`:
 POST /api/v1/faces/compare
 ```
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `file1` | File | Yes | First face photo |
-| `file2` | File | Yes | Second face photo |
+| Parameter | Type | Required | Description       |
+| --------- | ---- | -------- | ----------------- |
+| `file1`   | File | Yes      | First face photo  |
+| `file2`   | File | Yes      | Second face photo |
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/faces/compare \
@@ -315,8 +316,12 @@ Response `data`:
 {
   "is_match": true,
   "similarity": 0.87,
-  "face1": { "bbox": { "x1": 50, "y1": 30, "x2": 180, "y2": 200, "confidence": 0.99 } },
-  "face2": { "bbox": { "x1": 60, "y1": 40, "x2": 190, "y2": 210, "confidence": 0.98 } },
+  "face1": {
+    "bbox": { "x1": 50, "y1": 30, "x2": 180, "y2": 200, "confidence": 0.99 }
+  },
+  "face2": {
+    "bbox": { "x1": 60, "y1": 40, "x2": 190, "y2": 210, "confidence": 0.98 }
+  },
   "processing_time_ms": 620.4
 }
 ```
@@ -328,8 +333,8 @@ POST /api/v1/faces/detect
 ```
 
 | Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `file` | File | Yes | Image file |
+| --------- | ---- | -------- | ----------- |
+| `file`    | File | Yes      | Image file  |
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/faces/detect \
@@ -345,7 +350,13 @@ Response `data`:
   "faces": [
     {
       "bbox": { "x1": 100, "y1": 50, "x2": 200, "y2": 180, "confidence": 0.99 },
-      "landmarks": [[120.5, 80.2], [160.3, 79.8], [140.1, 110.0], [125.0, 140.5], [155.0, 139.8]]
+      "landmarks": [
+        [120.5, 80.2],
+        [160.3, 79.8],
+        [140.1, 110.0],
+        [125.0, 140.5],
+        [155.0, 139.8]
+      ]
     }
   ],
   "image_dimensions": [1920, 1080],
@@ -359,11 +370,11 @@ Response `data`:
 GET /api/v1/faces/persons
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `event_id` | Query string | null | Filter by event |
-| `offset` | Query int | 0 | Pagination offset |
-| `limit` | Query int | 50 | Page size (1-200) |
+| Parameter  | Type         | Default | Description       |
+| ---------- | ------------ | ------- | ----------------- |
+| `event_id` | Query string | null    | Filter by event   |
+| `offset`   | Query int    | 0       | Pagination offset |
+| `limit`    | Query int    | 50      | Page size (1-200) |
 
 ```bash
 curl "http://localhost:8000/api/v1/faces/persons?event_id=cebu-marathon-2026&limit=10" \
@@ -392,10 +403,10 @@ DELETE /api/v1/faces/persons/{person_id}
 POST /api/v1/bibs/recognize
 ```
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `file` | File | Yes | — | Photo of runner(s) with visible bib |
-| `min_chars` | Query int | No | null | Override minimum digit count (1-10) |
+| Parameter   | Type      | Required | Default | Description                         |
+| ----------- | --------- | -------- | ------- | ----------------------------------- |
+| `file`      | File      | Yes      | —       | Photo of runner(s) with visible bib |
+| `min_chars` | Query int | No       | null    | Override minimum digit count (1-10) |
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/bibs/recognize \
@@ -543,9 +554,9 @@ Readiness response:
 ### Setup
 
 ```javascript
-const API_BASE = 'http://localhost:8000/api/v1';
-const API_KEY  = 'sk_test_YOUR_KEY';
-const headers  = { 'X-API-Key': API_KEY };
+const API_BASE = "http://localhost:8000/api/v1";
+const API_KEY = "sk_test_YOUR_KEY";
+const headers = { "X-API-Key": API_KEY };
 ```
 
 ### Blur Detection
@@ -553,10 +564,10 @@ const headers  = { 'X-API-Key': API_KEY };
 ```javascript
 async function checkBlur(filePath) {
   const formData = new FormData();
-  formData.append('file', fs.createReadStream(filePath));
+  formData.append("file", fs.createReadStream(filePath));
 
   const res = await fetch(`${API_BASE}/blur/detect`, {
-    method: 'POST',
+    method: "POST",
     headers,
     body: formData,
   });
@@ -575,10 +586,10 @@ async function checkBlur(filePath) {
 ```javascript
 async function classifyBlur(filePath) {
   const formData = new FormData();
-  formData.append('file', fs.createReadStream(filePath));
+  formData.append("file", fs.createReadStream(filePath));
 
   const res = await fetch(`${API_BASE}/blur/classify`, {
-    method: 'POST',
+    method: "POST",
     headers,
     body: formData,
   });
@@ -598,13 +609,13 @@ async function classifyBlur(filePath) {
 ```javascript
 async function enrollRunner(filePath, personName, eventId, personId = null) {
   const formData = new FormData();
-  formData.append('file', fs.createReadStream(filePath));
-  formData.append('person_name', personName);
-  if (eventId) formData.append('event_id', eventId);
-  if (personId) formData.append('person_id', personId);
+  formData.append("file", fs.createReadStream(filePath));
+  formData.append("person_name", personName);
+  if (eventId) formData.append("event_id", eventId);
+  if (personId) formData.append("person_id", personId);
 
   const res = await fetch(`${API_BASE}/faces/enroll`, {
-    method: 'POST',
+    method: "POST",
     headers,
     body: formData,
   });
@@ -612,7 +623,7 @@ async function enrollRunner(filePath, personName, eventId, personId = null) {
 
   if (json.success) {
     return {
-      personId: json.data.person_id,       // save this!
+      personId: json.data.person_id, // save this!
       personName: json.data.person_name,
       facesEnrolled: json.data.faces_enrolled,
     };
@@ -626,14 +637,14 @@ async function enrollRunner(filePath, personName, eventId, personId = null) {
 ```javascript
 async function searchFaces(filePath, eventId, threshold = 0.4) {
   const url = new URL(`${API_BASE}/faces/search`);
-  url.searchParams.set('threshold', threshold);
-  if (eventId) url.searchParams.set('event_id', eventId);
+  url.searchParams.set("threshold", threshold);
+  if (eventId) url.searchParams.set("event_id", eventId);
 
   const formData = new FormData();
-  formData.append('file', fs.createReadStream(filePath));
+  formData.append("file", fs.createReadStream(filePath));
 
   const res = await fetch(url, {
-    method: 'POST',
+    method: "POST",
     headers,
     body: formData,
   });
@@ -655,11 +666,11 @@ async function searchFaces(filePath, eventId, threshold = 0.4) {
 ```javascript
 async function compareFaces(filePath1, filePath2) {
   const formData = new FormData();
-  formData.append('file1', fs.createReadStream(filePath1));
-  formData.append('file2', fs.createReadStream(filePath2));
+  formData.append("file1", fs.createReadStream(filePath1));
+  formData.append("file2", fs.createReadStream(filePath2));
 
   const res = await fetch(`${API_BASE}/faces/compare`, {
-    method: 'POST',
+    method: "POST",
     headers,
     body: formData,
   });
@@ -680,10 +691,10 @@ async function compareFaces(filePath1, filePath2) {
 ```javascript
 async function recognizeBib(filePath) {
   const formData = new FormData();
-  formData.append('file', fs.createReadStream(filePath));
+  formData.append("file", fs.createReadStream(filePath));
 
   const res = await fetch(`${API_BASE}/bibs/recognize`, {
-    method: 'POST',
+    method: "POST",
     headers,
     body: formData,
   });
@@ -692,7 +703,7 @@ async function recognizeBib(filePath) {
   if (json.success) {
     return {
       bibsDetected: json.data.bibs_detected,
-      detections: json.data.detections,  // [{bib_number, confidence, bbox}]
+      detections: json.data.detections, // [{bib_number, confidence, bbox}]
     };
   }
   throw new Error(json.error.message);
@@ -705,7 +716,7 @@ async function recognizeBib(filePath) {
 async function batchProcess(endpoint, filePaths, extraParams = {}) {
   const formData = new FormData();
   for (const fp of filePaths) {
-    formData.append('files', fs.createReadStream(fp));
+    formData.append("files", fs.createReadStream(fp));
   }
 
   const url = new URL(`${API_BASE}/${endpoint}`);
@@ -714,7 +725,7 @@ async function batchProcess(endpoint, filePaths, extraParams = {}) {
   }
 
   // 1. Submit
-  const res = await fetch(url, { method: 'POST', headers, body: formData });
+  const res = await fetch(url, { method: "POST", headers, body: formData });
   const json = await res.json();
   if (!json.success) throw new Error(json.error.message);
 
@@ -726,20 +737,27 @@ async function batchProcess(endpoint, filePaths, extraParams = {}) {
     const pollJson = await pollRes.json();
     const { status, progress, result, error } = pollJson.data;
 
-    if (status === 'completed') return result;
-    if (status === 'failed') throw new Error(error);
+    if (status === "completed") return result;
+    if (status === "failed") throw new Error(error);
 
     // Optional: update UI progress bar (progress is 0.0 - 1.0)
     onProgress?.(progress);
 
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1000));
   }
 }
 
 // Usage:
-const results = await batchProcess('blur/detect/batch', ['a.jpg', 'b.jpg', 'c.jpg']);
-const results = await batchProcess('faces/search/batch', files, { event_id: 'cebu-2026', threshold: '0.4' });
-const results = await batchProcess('bibs/recognize/batch', files);
+const results = await batchProcess("blur/detect/batch", [
+  "a.jpg",
+  "b.jpg",
+  "c.jpg",
+]);
+const results = await batchProcess("faces/search/batch", files, {
+  event_id: "cebu-2026",
+  threshold: "0.4",
+});
+const results = await batchProcess("bibs/recognize/batch", files);
 ```
 
 ### Delete a Person
@@ -747,7 +765,7 @@ const results = await batchProcess('bibs/recognize/batch', files);
 ```javascript
 async function deletePerson(personId) {
   const res = await fetch(`${API_BASE}/faces/persons/${personId}`, {
-    method: 'DELETE',
+    method: "DELETE",
     headers,
   });
   const json = await res.json();
@@ -760,9 +778,9 @@ async function deletePerson(personId) {
 ```javascript
 async function listPersons(eventId, page = 0, limit = 50) {
   const url = new URL(`${API_BASE}/faces/persons`);
-  if (eventId) url.searchParams.set('event_id', eventId);
-  url.searchParams.set('offset', page * limit);
-  url.searchParams.set('limit', limit);
+  if (eventId) url.searchParams.set("event_id", eventId);
+  url.searchParams.set("offset", page * limit);
+  url.searchParams.set("limit", limit);
 
   const res = await fetch(url, { headers });
   const json = await res.json();
@@ -781,29 +799,29 @@ async function listPersons(eventId, page = 0, limit = 50) {
 
 ## 6. Endpoint Quick Reference
 
-| Endpoint | Method | Auth Scope | Description |
-|----------|--------|------------|-------------|
-| `/api/v1/health` | GET | None | Liveness check |
-| `/api/v1/health/ready` | GET | Any key | Readiness check (models, DB, Redis) |
-| `/api/v1/blur/detect` | POST | `blur:read` | Quick blur detection |
-| `/api/v1/blur/classify` | POST | `blur:read` | Blur type classification |
-| `/api/v1/blur/detect/batch` | POST | `blur:read` | Batch blur detection |
-| `/api/v1/blur/classify/batch` | POST | `blur:read` | Batch blur classification |
-| `/api/v1/faces/detect` | POST | `faces:read` | Face detection only |
-| `/api/v1/faces/enroll` | POST | `faces:write` | Register a face |
-| `/api/v1/faces/search` | POST | `faces:read` | Search for face matches |
-| `/api/v1/faces/compare` | POST | `faces:read` | 1:1 face comparison |
-| `/api/v1/faces/persons` | GET | `faces:read` | List enrolled persons |
-| `/api/v1/faces/persons/{id}` | GET | `faces:read` | Get person details |
-| `/api/v1/faces/persons/{id}` | DELETE | `faces:delete` | Delete person + embeddings |
-| `/api/v1/faces/search/batch` | POST | `faces:read` | Batch face search |
-| `/api/v1/faces/enroll/batch` | POST | `faces:write` | Batch face enrollment |
-| `/api/v1/bibs/recognize` | POST | `bibs:read` | Recognize bib numbers |
-| `/api/v1/bibs/recognize/batch` | POST | `bibs:read` | Batch bib recognition |
-| `/api/v1/jobs/{id}` | GET | Any key | Poll batch job status |
-| `/api/v1/webhooks` | POST | `webhooks:write` | Register a webhook |
-| `/api/v1/webhooks` | GET | `webhooks:read` | List webhooks |
-| `/api/v1/webhooks/{id}` | DELETE | `webhooks:write` | Delete a webhook |
+| Endpoint                       | Method | Auth Scope       | Description                         |
+| ------------------------------ | ------ | ---------------- | ----------------------------------- |
+| `/api/v1/health`               | GET    | None             | Liveness check                      |
+| `/api/v1/health/ready`         | GET    | Any key          | Readiness check (models, DB, Redis) |
+| `/api/v1/blur/detect`          | POST   | `blur:read`      | Quick blur detection                |
+| `/api/v1/blur/classify`        | POST   | `blur:read`      | Blur type classification            |
+| `/api/v1/blur/detect/batch`    | POST   | `blur:read`      | Batch blur detection                |
+| `/api/v1/blur/classify/batch`  | POST   | `blur:read`      | Batch blur classification           |
+| `/api/v1/faces/detect`         | POST   | `faces:read`     | Face detection only                 |
+| `/api/v1/faces/enroll`         | POST   | `faces:write`    | Register a face                     |
+| `/api/v1/faces/search`         | POST   | `faces:read`     | Search for face matches             |
+| `/api/v1/faces/compare`        | POST   | `faces:read`     | 1:1 face comparison                 |
+| `/api/v1/faces/persons`        | GET    | `faces:read`     | List enrolled persons               |
+| `/api/v1/faces/persons/{id}`   | GET    | `faces:read`     | Get person details                  |
+| `/api/v1/faces/persons/{id}`   | DELETE | `faces:delete`   | Delete person + embeddings          |
+| `/api/v1/faces/search/batch`   | POST   | `faces:read`     | Batch face search                   |
+| `/api/v1/faces/enroll/batch`   | POST   | `faces:write`    | Batch face enrollment               |
+| `/api/v1/bibs/recognize`       | POST   | `bibs:read`      | Recognize bib numbers               |
+| `/api/v1/bibs/recognize/batch` | POST   | `bibs:read`      | Batch bib recognition               |
+| `/api/v1/jobs/{id}`            | GET    | Any key          | Poll batch job status               |
+| `/api/v1/webhooks`             | POST   | `webhooks:write` | Register a webhook                  |
+| `/api/v1/webhooks`             | GET    | `webhooks:read`  | List webhooks                       |
+| `/api/v1/webhooks/{id}`        | DELETE | `webhooks:write` | Delete a webhook                    |
 
 ---
 
@@ -838,21 +856,21 @@ async function listPersons(eventId, page = 0, limit = 50) {
 
 ## 8. Error Codes
 
-| Code | HTTP Status | Meaning |
-|------|-------------|---------|
-| `MODEL_UNAVAILABLE` | 503 | ML model not loaded; check health endpoint |
-| `NO_FACES` | 200 | No faces detected in the uploaded image |
-| `LOW_QUALITY` | 200 | All faces below minimum enrollment confidence |
-| `INVALID_INPUT` | 200 | Invalid parameter (e.g., bad person_id format) |
-| `NOT_FOUND` | 200 | Person or webhook not found |
-| `BATCH_TOO_LARGE` | 400 | Exceeded max 20 files per batch |
-| `EMPTY_BATCH` | 400 | No files provided |
-| `TOO_MANY_JOBS` | 429 | Max 10 active jobs per API key |
-| `REQUEST_TIMEOUT` | 504 | Request exceeded 60s |
-| Missing API key | 401 | No `X-API-Key` header |
-| Invalid API key | 401 | Key not found or deactivated |
-| Insufficient scope | 403 | Key lacks required permission |
-| Rate limit exceeded | 429 | Too many requests; check `Retry-After` header |
+| Code                | HTTP Status | Meaning                                        |
+| ------------------- | ----------- | ---------------------------------------------- |
+| `MODEL_UNAVAILABLE` | 503         | ML model not loaded; check health endpoint     |
+| `NO_FACES`          | 200         | No faces detected in the uploaded image        |
+| `LOW_QUALITY`       | 200         | All faces below minimum enrollment confidence  |
+| `INVALID_INPUT`     | 200         | Invalid parameter (e.g., bad person_id format) |
+| `NOT_FOUND`         | 200         | Person or webhook not found                    |
+| `BATCH_TOO_LARGE`   | 400         | Exceeded max 20 files per batch                |
+| `EMPTY_BATCH`       | 400         | No files provided                              |
+| `TOO_MANY_JOBS`     | 429         | Max 10 active jobs per API key                 |
+| `REQUEST_TIMEOUT`   | 504         | Request exceeded 60s                           |
+| Missing API key     | 401         | No `X-API-Key` header                          |
+| Invalid API key     | 401         | Key not found or deactivated                   |
+| Insufficient scope  | 403         | Key lacks required permission                  |
+| Rate limit exceeded | 429         | Too many requests; check `Retry-After` header  |
 
 ---
 

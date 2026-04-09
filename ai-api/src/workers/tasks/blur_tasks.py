@@ -7,16 +7,21 @@ logger = get_logger(__name__)
 
 
 @celery_app.task(bind=True, name="blur.detect_batch")
-def blur_detect_batch(self, job_id: str, image_data_list: list[str]):
+def blur_detect_batch(self, job_id: str, image_paths: list[str]):
     """Process a batch of images for blur detection.
+
+    Uses sub-batching with parallel grayscale decode and Laplacian-only
+    detection (no FFT). Mirrors the fast path in the streaming endpoint
+    and the sub-batch pattern from blur_classify_batch.
 
     Args:
         job_id: UUID of the job record.
-        image_data_list: List of base64-encoded image data.
+        image_paths: List of blob-store file paths for each image.
     """
+    from src.config import get_settings
     from src.workers.helpers import (
         complete_job,
-        decode_base64_image,
+        decode_grays_from_paths,
         fail_job,
         update_job_progress,
     )
@@ -27,49 +32,57 @@ def blur_detect_batch(self, job_id: str, image_data_list: list[str]):
         fail_job(job_id, "Blur detector model not loaded in worker")
         return
 
-    total = len(image_data_list)
+    settings = get_settings()
+    sub_batch = settings.INFERENCE_SUB_BATCH_SIZE
+    total = len(image_paths)
     results: list[dict] = [{} for _ in range(total)]
 
-    # PERF-8: Pre-decode all images upfront (fail fast, better memory locality)
-    images = []
-    for i, b64_data in enumerate(image_data_list):
-        image = decode_base64_image(b64_data)
-        if image is None:
-            results[i] = {"index": i, "error": "Failed to decode image"}
-        images.append(image)
+    # Process in sub-batches: parallel grayscale decode + fast Laplacian-only detection.
+    for chunk_start in range(0, total, sub_batch):
+        chunk_paths = image_paths[chunk_start:chunk_start + sub_batch]
+        # Parallel decode: overlaps disk I/O with CPU decompression (grayscale, no EXIF)
+        decoded = decode_grays_from_paths(chunk_paths, max_dim=640)
 
-    # Run inference on successfully decoded images
-    for i, image in enumerate(images):
-        if image is None:
-            update_job_progress(job_id, i + 1, total)
-            continue
-        try:
-            detection = detector.detect(image)
-            results[i] = {"index": i, **detection}
-        except Exception as e:
-            logger.error("Blur detection failed for image", index=i, error=str(e))
-            results[i] = {"index": i, "error": str(e)}
-        update_job_progress(job_id, i + 1, total)
+        for j, gray in enumerate(decoded):
+            idx = chunk_start + j
+            if gray is None:
+                results[idx] = {"index": idx, "error": "Failed to decode image"}
+                continue
+            try:
+                detection = detector.detect_fast(gray)
+                results[idx] = {"index": idx, **detection}
+            except Exception as e:
+                logger.error("Blur detection failed for image", index=idx, error=str(e))
+                results[idx] = {"index": idx, "error": str(e)}
 
+        update_job_progress(job_id, min(chunk_start + len(chunk_paths), total), total)
+
+    if not job_id:
+        # Mega-batch sub-task: return results for chord callback
+        return results
     complete_job(job_id, results)
     logger.info("Blur batch job completed", job_id=job_id, total=total)
 
 
 @celery_app.task(bind=True, name="blur.classify_batch")
 def blur_classify_batch(
-    self, job_id: str, image_data_list: list[str], blur_type: str | None = None
+    self, job_id: str, image_paths: list[str], blur_type: str | None = None
 ):
     """Process a batch of images for blur classification.
 
+    Uses sub-batching (INFERENCE_SUB_BATCH_SIZE) to keep peak memory bounded
+    while still leveraging ONNX batch inference within each sub-batch.
+
     Args:
         job_id: UUID of the job record.
-        image_data_list: List of base64-encoded image data.
+        image_paths: List of blob-store file paths for each image.
         blur_type: Optional specific blur type to detect. When provided,
             returns Detected/Not Detected per image instead of full classification.
     """
+    from src.config import get_settings
     from src.workers.helpers import (
         complete_job,
-        decode_base64_image,
+        decode_images_from_paths,
         fail_job,
         update_job_progress,
     )
@@ -80,39 +93,64 @@ def blur_classify_batch(
         fail_job(job_id, "Blur classifier model not loaded in worker")
         return
 
-    total = len(image_data_list)
+    settings = get_settings()
+    sub_batch = settings.INFERENCE_SUB_BATCH_SIZE
+    total = len(image_paths)
     results: list[dict] = [{} for _ in range(total)]
 
-    # PERF-8: Pre-decode all images upfront
-    images = []
-    for i, b64_data in enumerate(image_data_list):
-        image = decode_base64_image(b64_data)
-        if image is None:
-            results[i] = {"index": i, "error": "Failed to decode image"}
-        images.append(image)
+    # Process in sub-batches to bound memory at O(sub_batch) instead of O(total).
+    for chunk_start in range(0, total, sub_batch):
+        chunk_paths = image_paths[chunk_start:chunk_start + sub_batch]
+        # Parallel decode: overlaps disk I/O with CPU decompression
+        decoded = decode_images_from_paths(chunk_paths, max_dim=640)
+        chunk_images: list = []
+        chunk_indices: list[int] = []
 
-    # Run inference on successfully decoded images
-    for i, image in enumerate(images):
-        if image is None:
-            update_job_progress(job_id, i + 1, total)
-            continue
-        try:
-            if blur_type is not None:
-                detection = classifier.detect_blur_type(image, blur_type)
-                if detection is None:
-                    results[i] = {"index": i, "error": "Classifier returned None"}
-                else:
-                    results[i] = {"index": i, **detection}
+        for j, image in enumerate(decoded):
+            idx = chunk_start + j
+            if image is None:
+                results[idx] = {"index": idx, "error": "Failed to decode image"}
             else:
-                classification = classifier.classify(image)
-                if classification is None:
-                    results[i] = {"index": i, "error": "Classifier returned None"}
-                else:
-                    results[i] = {"index": i, **classification}
-        except Exception as e:
-            logger.error("Blur classification failed for image", index=i, error=str(e))
-            results[i] = {"index": i, "error": str(e)}
-        update_job_progress(job_id, i + 1, total)
+                chunk_images.append(image)
+                chunk_indices.append(idx)
 
+        if chunk_images:
+            try:
+                batch_classifications = classifier.classify_batch(chunk_images)
+                for img_i, classification in zip(chunk_indices, batch_classifications):
+                    if classification is None:
+                        results[img_i] = {"index": img_i, "error": "Classifier returned None"}
+                        continue
+                    if blur_type is not None:
+                        blur_type_probability = classification["probabilities"].get(blur_type, 0.0)
+                        detected = classification["predicted_class"] == blur_type
+                        results[img_i] = {
+                            "index": img_i,
+                            "detected": detected,
+                            "confidence": classification["confidence"],
+                            "blur_type": blur_type,
+                            "blur_type_probability": blur_type_probability,
+                            "predicted_class": classification["predicted_class"],
+                            "probabilities": classification["probabilities"],
+                        }
+                    else:
+                        results[img_i] = {"index": img_i, **classification}
+            except Exception as e:
+                logger.error("Blur classification sub-batch failed", error=str(e))
+                # Fall back to per-image on sub-batch failure
+                for img_i, image in zip(chunk_indices, chunk_images):
+                    try:
+                        if blur_type is not None:
+                            r = classifier.detect_blur_type(image, blur_type)
+                        else:
+                            r = classifier.classify(image)
+                        results[img_i] = {"index": img_i, **(r or {"error": "Classifier returned None"})}
+                    except Exception as e2:
+                        results[img_i] = {"index": img_i, "error": str(e2)}
+
+        update_job_progress(job_id, min(chunk_start + len(chunk_paths), total), total)
+
+    if not job_id:
+        return results
     complete_job(job_id, results)
     logger.info("Blur classify batch job completed", job_id=job_id, total=total)
