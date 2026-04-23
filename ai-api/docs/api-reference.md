@@ -6,7 +6,7 @@ All endpoints are prefixed with `/api/v1/`. All responses use a standard envelop
 {
   "success": true,
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "timestamp": "2026-02-21T12:34:56.789Z",
+  "timestamp": "2026-04-23T12:34:56.789Z",
   "data": { ... },
   "error": null
 }
@@ -17,16 +17,20 @@ On error:
 {
   "success": false,
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "timestamp": "2026-02-21T12:34:56.789Z",
+  "timestamp": "2026-04-23T12:34:56.789Z",
   "data": null,
   "error": {
-    "code": "IMAGE_VALIDATION_ERROR",
+    "code": "ImageValidationError",
     "message": "File exceeds 10MB limit"
   }
 }
 ```
 
-**Authentication**: All endpoints (except health) require an `X-API-Key` header.
+**Authentication**: All endpoints except `GET /api/v1/health` require an `X-API-Key` header. When the server runs with `DEBUG=true`, a missing key is allowed and treated as an internal-tier key with full scopes. The production server refuses to start with `DEBUG=true` when `ENVIRONMENT=production`.
+
+**Request ID**: Clients may pass `X-Request-ID` (up to 128 alphanumerics or `-`). If absent, the server generates a UUID. The ID is echoed in the response body and `X-Request-ID` response header.
+
+**Request timeout**: Every request has a 60-second wall-clock timeout enforced by `TimeoutMiddleware`. Exceeding it returns `504 REQUEST_TIMEOUT`.
 
 ---
 
@@ -34,25 +38,25 @@ On error:
 
 ### GET /api/v1/health
 
-Liveness probe. Returns 200 if the process is running.
+Liveness probe. Returns 200 if the process is running. **No authentication required.**
 
 **Response:**
 ```json
 {
   "status": "alive",
-  "version": "1.0.0",
-  "environment": "development"
+  "version": "1.0.0"
 }
 ```
 
 ### GET /api/v1/health/ready
 
-Readiness probe. Checks that all dependencies are available.
+Readiness probe. Checks that all required models are loaded and that the database and Redis are reachable. Requires authentication.
 
-**Response:**
+**Response (200):**
 ```json
 {
   "success": true,
+  "request_id": "healthcheck",
   "data": {
     "models_loaded": true,
     "database": true,
@@ -61,21 +65,26 @@ Readiness probe. Checks that all dependencies are available.
 }
 ```
 
+Returns `503` with `success: false` if any check fails.
+
 ---
 
 ## Blur Detection
 
+The blur pipeline has a classical CV detector (Laplacian variance + optional FFT) and a CNN classifier (YOLOv8n-cls, 4 classes). Each has single, streaming, batch, and mega-batch endpoints.
+
 ### POST /api/v1/blur/detect
 
-Upload an image to check if it's blurry.
+Check if a single image is blurry (Laplacian/FFT).
 
 **Request:**
-- Content-Type: `multipart/form-data`
-- `file` (required): Image file (JPEG, PNG, or WebP)
-- `threshold` (optional, query param): Laplacian variance threshold. Default: 100.0. Range: 1.0-10000.0. Lower = stricter.
-- `include_metrics` (optional, query param): Return detailed metrics. Default: true.
+- `file` (multipart, required): Image file (JPEG, PNG, or WebP)
+- `threshold` (query, optional): Laplacian variance threshold. Default `100.0`, range `1.0–10000.0`. Lower = stricter.
+- `include_metrics` (query, optional): Include detailed metrics. Default `true`.
 
-**Example (curl):**
+**Scope:** `blur:read`
+
+**Example:**
 ```bash
 curl -X POST http://localhost:8000/api/v1/blur/detect \
   -H "X-API-Key: sk_dev_eventai_test_key_12345" \
@@ -87,7 +96,6 @@ curl -X POST http://localhost:8000/api/v1/blur/detect \
 ```json
 {
   "success": true,
-  "request_id": "abc-123",
   "data": {
     "is_blurry": false,
     "confidence": 0.85,
@@ -102,37 +110,67 @@ curl -X POST http://localhost:8000/api/v1/blur/detect \
 }
 ```
 
-**How to interpret results:**
-- `is_blurry`: true/false verdict
-- `laplacian_variance`: Higher = sharper image. Below threshold = blurry.
-- `hf_ratio`: Ratio of high-frequency content (0-1). Lower = blurrier.
-- `confidence`: How confident the detection is (0-1).
+### POST /api/v1/blur/detect/stream
 
-### POST /api/v1/blur/classify
-
-Classify an image into blur categories using a CNN model (YOLOv8n-cls). Requires the trained ONNX model to be loaded at startup.
-
-**Two modes:**
-- **Full classification** (default): Returns the predicted class and probabilities for all 4 categories.
-- **Targeted detection**: When `blur_type` is provided, returns a binary Detected/Not Detected response for that specific blur type.
+High-throughput synchronous blur detection. Streams NDJSON — one JSON object per line, then a summary line. Up to `STREAM_BATCH_MAX_SIZE` (500) images per request. No job, no polling.
 
 **Request:**
-- Content-Type: `multipart/form-data`
-- `file` (required): Image file (JPEG, PNG, or WebP)
-- `blur_type` (optional, query param): Specific blur type to detect. Options: `defocused_object_portrait`, `defocused_blurred`, `motion_blurred`
+- `files` (multipart, required): up to 500 images
+- `threshold` (query, optional): Laplacian threshold override
+- `include_hf_ratio` (query, optional, default `false`): Also compute FFT high-frequency ratio (adds ~8 ms per image)
 
-**Example (curl) — full classification:**
-```bash
-curl -X POST http://localhost:8000/api/v1/blur/classify \
-  -H "X-API-Key: sk_dev_eventai_test_key_12345" \
-  -F "file=@photo.jpg"
+**Response:** `application/x-ndjson`, one result per line, then a summary:
+
+```
+{"index":0,"filename":"IMG_001.jpg","is_blurry":false,"confidence":0.82,"laplacian_variance":185.42}
+{"index":1,"filename":"IMG_002.jpg","is_blurry":true,"confidence":0.95,"laplacian_variance":4.12}
+{"_summary":true,"total":2,"processing_time_ms":412.3}
 ```
 
-**Response (200) — full classification:**
+Headers: `X-Total-Images` carries the request size.
+
+### POST /api/v1/blur/detect/batch
+
+Submit a batch for async processing via Celery. Up to `MAX_BATCH_SIZE` (50) images.
+
+**Request:** `files` (multipart)
+
+**Response (202):**
 ```json
 {
   "success": true,
-  "request_id": "abc-123",
+  "data": {
+    "job_id": "550e8400-...",
+    "status": "pending",
+    "total_items": 10,
+    "poll_url": "/api/v1/jobs/550e8400-..."
+  }
+}
+```
+
+Rejected with `429 TOO_MANY_JOBS` if the caller already has `MAX_ACTIVE_JOBS_PER_KEY` (10) active jobs.
+
+### POST /api/v1/blur/detect/mega
+
+Same as `/batch` but accepts up to `MEGA_BATCH_MAX_SIZE` (500) images. The server chunks the input and dispatches a Celery chord; results are merged back into the single parent job.
+
+### POST /api/v1/blur/classify
+
+Classify an image into blur categories using a CNN model (YOLOv8n-cls). Returns 503 `MODEL_UNAVAILABLE` if the ONNX file is missing.
+
+Two modes:
+
+- **Full classification** (default): predicted class + probability vector over `sharp`, `defocused_object_portrait`, `defocused_blurred`, `motion_blurred`.
+- **Targeted detection**: when `blur_type` is set, returns a binary Detected / Not Detected answer for that type.
+
+**Request:**
+- `file` (multipart)
+- `blur_type` (query, optional): one of `defocused_object_portrait`, `defocused_blurred`, `motion_blurred`
+
+**Response (full classification):**
+```json
+{
+  "success": true,
   "data": {
     "predicted_class": "sharp",
     "confidence": 0.96,
@@ -148,18 +186,10 @@ curl -X POST http://localhost:8000/api/v1/blur/classify \
 }
 ```
 
-**Example (curl) — targeted detection:**
-```bash
-curl -X POST "http://localhost:8000/api/v1/blur/classify?blur_type=defocused_object_portrait" \
-  -H "X-API-Key: sk_dev_eventai_test_key_12345" \
-  -F "file=@photo.jpg"
-```
-
-**Response (200) — targeted detection:**
+**Response (targeted detection):**
 ```json
 {
   "success": true,
-  "request_id": "abc-123",
   "data": {
     "blur_type": "defocused_object_portrait",
     "detected": true,
@@ -171,55 +201,33 @@ curl -X POST "http://localhost:8000/api/v1/blur/classify?blur_type=defocused_obj
 }
 ```
 
-**How to interpret results:**
-- **Full classification mode** (`blur_type` omitted):
-  - `predicted_class`: The top predicted category (sharp, defocused_object_portrait, defocused_blurred, motion_blurred)
-  - `confidence`: Model confidence for the top prediction (0-1)
-  - `probabilities`: Probability distribution across all 4 classes
-- **Targeted detection mode** (`blur_type` provided):
-  - `detected`: true/false — whether the selected blur type is the top prediction
-  - `confidence`: Model confidence for the top prediction
-  - `blur_type_probability`: Probability the model assigned to the selected blur type
+### POST /api/v1/blur/classify/stream
 
-**Error (503):** Returns `MODEL_UNAVAILABLE` if the blur classifier ONNX model is not loaded.
+NDJSON stream of classifications, up to `STREAM_CLASSIFY_MAX_SIZE` (500) images. Same `blur_type` query param as the single endpoint.
 
 ### POST /api/v1/blur/classify/batch
 
-Submit a batch of images for async blur classification via Celery.
+Async batch classification via Celery. Up to `MAX_BATCH_SIZE` (50). Accepts `blur_type` query param.
 
-**Request:**
-- Content-Type: `multipart/form-data`
-- `files` (required): Multiple image files
-- `blur_type` (optional, query param): Specific blur type to detect per image
+### POST /api/v1/blur/classify/mega
 
-**Response (202):**
-```json
-{
-  "success": true,
-  "request_id": "abc-123",
-  "data": {
-    "job_id": "550e8400-...",
-    "status": "pending",
-    "total_items": 10,
-    "poll_url": "/api/v1/jobs/550e8400-..."
-  }
-}
-```
-
-Poll `GET /api/v1/jobs/{job_id}` for results.
+Same as `/batch` but up to 500 images via Celery chord.
 
 ---
 
 ## Face Recognition
 
+Pipeline: InsightFace (RetinaFace detection + ArcFace embedding, 512-dim) → pgvector cosine search. Face data is always scoped by `api_key_id`; passing `event_id` narrows enrollment and search further.
+
 ### POST /api/v1/faces/detect
 
-Detect faces in an image. Returns bounding boxes and landmarks.
+Detect faces and return bounding boxes + 5-point landmarks.
 
-**Request:**
-- `file` (required): Image file
+**Request:** `file`
 
-**Response (200):**
+**Scope:** `faces:read`
+
+**Response:**
 ```json
 {
   "success": true,
@@ -227,14 +235,8 @@ Detect faces in an image. Returns bounding boxes and landmarks.
     "faces_detected": 2,
     "faces": [
       {
-        "bbox": {
-          "x1": 120.5,
-          "y1": 80.3,
-          "x2": 250.1,
-          "y2": 280.7,
-          "confidence": 0.98
-        },
-        "landmarks": [[145.2, 150.1], [210.3, 148.9], ...]
+        "bbox": { "x1": 120.5, "y1": 80.3, "x2": 250.1, "y2": 280.7, "confidence": 0.98 },
+        "landmarks": [[145.2, 150.1], [210.3, 148.9], [180.5, 185.1], [160.8, 230.5], [200.2, 230.1]]
       }
     ],
     "image_dimensions": [1920, 1080],
@@ -245,30 +247,24 @@ Detect faces in an image. Returns bounding boxes and landmarks.
 
 ### POST /api/v1/faces/enroll
 
-Register a person's face in the database. Detects faces, extracts embeddings, and stores them.
+Register a person's face. Detects, embeds, and stores. Faces below `FACE_MIN_ENROLLMENT_CONFIDENCE` (default 0.7) are skipped. If all detected faces are below the threshold, returns `LOW_QUALITY`.
 
-Faces below the minimum enrollment confidence (`FACE_MIN_ENROLLMENT_CONFIDENCE`, default 0.7) are skipped to prevent low-quality embeddings from degrading search accuracy.
+**Request (multipart form):**
+- `file` (required): Image containing the person
+- `person_name` (required, 1–255 chars)
+- `person_id` (optional, UUID): Add embeddings to an existing person. Must belong to the caller's API key.
+- `event_id` (optional, ≤255 chars): Event to scope this enrollment to
 
-**Request:**
-- `file` (required): Image file containing the person's face
-- `person_name` (required, form field): Name of the person
-- `person_id` (optional, form field): UUID of an existing person (to add more photos)
+**Scope:** `faces:write`
 
-**Example:**
-```bash
-curl -X POST http://localhost:8000/api/v1/faces/enroll \
-  -H "X-API-Key: sk_dev_eventai_test_key_12345" \
-  -F "file=@john_photo.jpg" \
-  -F "person_name=John Doe"
-```
-
-**Response (200):**
+**Response:**
 ```json
 {
   "success": true,
   "data": {
-    "person_id": "550e8400-e29b-41d4-a716-446655440000",
+    "person_id": "550e8400-...",
     "person_name": "John Doe",
+    "event_id": "marathon-2026",
     "faces_enrolled": 1,
     "embeddings_stored": 1,
     "processing_time_ms": 120.5
@@ -276,7 +272,7 @@ curl -X POST http://localhost:8000/api/v1/faces/enroll \
 }
 ```
 
-**Error — Low Quality (200, success: false):**
+**LOW_QUALITY response:**
 ```json
 {
   "success": false,
@@ -287,16 +283,23 @@ curl -X POST http://localhost:8000/api/v1/faces/enroll \
 }
 ```
 
+### POST /api/v1/faces/enroll/batch
+
+Async bulk enroll — every image in the batch is attached to the same person (new or existing). Up to `MAX_BATCH_SIZE` (50).
+
+**Form fields:** same as `/enroll` plus `files` (multipart list).
+
 ### POST /api/v1/faces/search
 
-Upload a photo and find matching people in the database.
+Detect faces and search stored embeddings.
 
 **Request:**
-- `file` (required): Image file
-- `threshold` (optional, query): Minimum similarity score (0-1). Default: 0.4
-- `top_k` (optional, query): Maximum matches per face. Default: 10
+- `file` (required)
+- `threshold` (query, optional, default `0.4`): minimum cosine similarity
+- `top_k` (query, optional, default `10`, max `100`): max matches per detected face
+- `event_id` (query, optional): restrict search to this event
 
-**Response (200):**
+**Response:**
 ```json
 {
   "success": true,
@@ -304,7 +307,7 @@ Upload a photo and find matching people in the database.
     "faces_detected": 1,
     "matches": [
       {
-        "person_id": "550e8400-e29b-41d4-a716-446655440000",
+        "person_id": "550e8400-...",
         "person_name": "John Doe",
         "similarity": 0.87,
         "bbox": { "x1": 120, "y1": 80, "x2": 250, "y2": 280, "confidence": 0.98 }
@@ -316,15 +319,25 @@ Upload a photo and find matching people in the database.
 }
 ```
 
+### POST /api/v1/faces/search/batch
+
+Async face batch. Up to `MAX_BATCH_SIZE` (50).
+
+**Query params:**
+- `operation` (`detect` or `search`, default `search`)
+- `event_id`, `threshold`, `top_k` (same as single `/search`)
+
+### POST /api/v1/faces/search/mega
+
+Same as `/search/batch` but up to 500 images via Celery chord.
+
 ### POST /api/v1/faces/compare
 
-Compare two images for 1:1 face verification (are they the same person?).
+1:1 verification — are the two images the same person? Uses `FACE_SIMILARITY_THRESHOLD` (default 0.4).
 
-**Request:**
-- `file1` (required): First image
-- `file2` (required): Second image
+**Request:** `file1`, `file2`
 
-**Response (200):**
+**Response:**
 ```json
 {
   "success": true,
@@ -338,29 +351,45 @@ Compare two images for 1:1 face verification (are they the same person?).
 }
 ```
 
-### GET /api/v1/faces/persons/{person_id}
+### GET /api/v1/faces/persons
 
-Get metadata about an enrolled person.
+Paginated list of enrolled persons (tenant-isolated).
 
-**Response (200):**
+**Query params:** `event_id` (optional), `offset` (default 0), `limit` (default 50, max 200)
+
+**Response:**
 ```json
 {
   "success": true,
   "data": {
-    "person_id": "550e8400-...",
-    "person_name": "John Doe",
-    "embeddings_count": 3,
-    "created_at": "2026-02-21T10:00:00Z",
-    "updated_at": "2026-02-21T10:00:00Z"
+    "persons": [
+      {
+        "person_id": "550e8400-...",
+        "person_name": "John Doe",
+        "event_id": "marathon-2026",
+        "embeddings_count": 3,
+        "created_at": "2026-04-20T10:00:00Z",
+        "updated_at": "2026-04-22T11:00:00Z"
+      }
+    ],
+    "total": 42,
+    "offset": 0,
+    "limit": 50
   }
 }
 ```
 
+### GET /api/v1/faces/persons/{person_id}
+
+Get metadata about one enrolled person (tenant-isolated). Returns `NOT_FOUND` if missing or owned by another key.
+
 ### DELETE /api/v1/faces/persons/{person_id}
 
-Remove a person and all their stored embeddings (GDPR right-to-erasure).
+Remove a person and all their stored embeddings (cascade delete). GDPR right-to-erasure.
 
-**Response (200):**
+**Scope:** `faces:delete`
+
+**Response:**
 ```json
 {
   "success": true,
@@ -372,21 +401,17 @@ Remove a person and all their stored embeddings (GDPR right-to-erasure).
 
 ## Bib Number Recognition
 
+Custom YOLOv8n bib detector (ONNX) → PaddleOCR 3.x (PP-OCRv5). When the detector model is absent, the endpoint falls back to OCR on the full image and attaches a warning.
+
 ### POST /api/v1/bibs/recognize
 
-Upload an image to detect and read bib numbers.
-
 **Request:**
-- `file` (required): Image file containing runners with bibs
+- `file` (required)
+- `min_chars` (query, optional, 1–10): override `BIB_MIN_CHARS` (default 2) — minimum digit count for a candidate to qualify
 
-**Example:**
-```bash
-curl -X POST http://localhost:8000/api/v1/bibs/recognize \
-  -H "X-API-Key: sk_dev_eventai_test_key_12345" \
-  -F "file=@race_photo.jpg"
-```
+**Scope:** `bibs:read`
 
-**Response (200):**
+**Response:**
 ```json
 {
   "success": true,
@@ -396,26 +421,29 @@ curl -X POST http://localhost:8000/api/v1/bibs/recognize \
       {
         "bib_number": "1234",
         "confidence": 0.95,
-        "bbox": { "x1": 300, "y1": 200, "x2": 450, "y2": 350 },
+        "bbox": { "x1": 300, "y1": 200, "x2": 450, "y2": 350, "confidence": 0.91 },
         "all_candidates": [
           { "text": "1234", "confidence": 0.95 },
           { "text": "1284", "confidence": 0.72 }
         ]
-      },
-      {
-        "bib_number": "567",
-        "confidence": 0.88,
-        "bbox": { "x1": 600, "y1": 180, "x2": 720, "y2": 300 },
-        "all_candidates": [
-          { "text": "567", "confidence": 0.88 }
-        ]
       }
     ],
     "image_dimensions": [1920, 1080],
-    "processing_time_ms": 95.6
+    "processing_time_ms": 95.6,
+    "warnings": null
   }
 }
 ```
+
+If the detector is unavailable, `warnings` contains a note and the bounding box covers the whole image.
+
+### POST /api/v1/bibs/recognize/batch
+
+Async batch. Up to `MAX_BATCH_SIZE` (50).
+
+### POST /api/v1/bibs/recognize/mega
+
+Async mega-batch. Up to 500 images via Celery chord.
 
 ---
 
@@ -423,9 +451,11 @@ curl -X POST http://localhost:8000/api/v1/bibs/recognize \
 
 ### GET /api/v1/jobs/{job_id}
 
-Check the status of a batch processing job.
+Status and results of an async job. Tenant-isolated — callers only see their own jobs.
 
-**Response (200) - In progress:**
+**Query params:** `offset` (default 0), `limit` (default 100, max 500) — pagination for the `result` array once the job is complete.
+
+**Response (in progress):**
 ```json
 {
   "success": true,
@@ -435,7 +465,7 @@ Check the status of a batch processing job.
     "progress": 0.45,
     "total_items": 100,
     "processed_items": 45,
-    "created_at": "2026-02-21T10:00:00Z",
+    "created_at": "2026-04-20T10:00:00Z",
     "completed_at": null,
     "result": null,
     "error": null
@@ -443,20 +473,27 @@ Check the status of a batch processing job.
 }
 ```
 
-**Response (200) - Completed:**
+**Response (completed):**
 ```json
 {
   "success": true,
   "data": {
+    "job_id": "550e8400-...",
     "status": "completed",
     "progress": 1.0,
     "total_items": 100,
     "processed_items": 100,
-    "completed_at": "2026-02-21T10:05:00Z",
-    "result": [ ... ]
+    "completed_at": "2026-04-20T10:05:00Z",
+    "result": [ /* paginated slice — first `limit` items from offset */ ],
+    "result_total": 100,
+    "result_offset": 0,
+    "result_limit": 100,
+    "error": null
   }
 }
 ```
+
+`status` is one of `pending`, `processing`, `completed`, `failed`. The `error` field is populated only for `failed` jobs.
 
 ---
 
@@ -464,63 +501,115 @@ Check the status of a batch processing job.
 
 ### POST /api/v1/webhooks
 
-Register a URL to receive callbacks when events occur.
+Register a callback URL. Only public URLs are accepted — IP-literal URLs that resolve to private ranges are rejected at registration and delivery time (SSRF protection).
 
-**Request body (JSON):**
+**Scope:** `webhooks:write`
+
+**Body (JSON):**
 ```json
 {
   "url": "https://your-backend.com/api/webhooks/ai-results",
   "events": ["job.completed", "job.failed"],
-  "secret": "your_webhook_secret"
+  "secret": "optional_hmac_secret"
+}
+```
+
+Allowed events today: `job.completed`, `job.failed`. `secret` is encrypted at rest with `WEBHOOK_SECRET_KEY` (Fernet) when configured, otherwise stored in plaintext and the server logs a warning at startup.
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "550e8400-...",
+    "url": "https://your-backend.com/api/webhooks/ai-results",
+    "events": ["job.completed", "job.failed"],
+    "active": true,
+    "created_at": "2026-04-20T10:00:00Z"
+  }
 }
 ```
 
 ### GET /api/v1/webhooks
 
-List all your registered webhooks.
+Paginated list (`limit` 1–100 default 50, `offset` default 0) of the caller's webhooks.
+
+**Scope:** `webhooks:read`
 
 ### DELETE /api/v1/webhooks/{webhook_id}
 
-Remove a webhook.
+Remove a webhook. Tenant-isolated.
 
-**Webhook callback format (sent to your URL):**
+**Scope:** `webhooks:write`
+
+### Webhook callback payload
+
+Delivered as `POST <your url>` with `Content-Type: application/json`. The body for job events:
+
 ```json
 {
   "event": "job.completed",
   "job_id": "550e8400-...",
-  "results": [ ... ],
-  "completed_at": "2026-02-21T12:34:56Z"
+  "result_count": 100
 }
 ```
 
-If you provided a secret, the request includes an `X-EventAI-Signature` header with an HMAC-SHA256 signature of the body.
+(`job.failed` replaces `result_count` with `error`.) If a `secret` was registered, the request includes:
+
+```
+X-EventAI-Signature: sha256=<HMAC-SHA256(secret, raw body)>
+```
+
+Verify with `hmac.compare_digest`. Delivery retries up to 3 times with exponential backoff on HTTP errors.
+
+---
+
+## Metrics
+
+### GET /metrics
+
+Prometheus text format. In `DEBUG=true` mode the endpoint is open. In production it requires an `X-API-Key` header that maps to an active key (401 if missing, 403 if invalid, 503 if the DB cannot validate).
 
 ---
 
 ## Error Codes
 
-| HTTP Status | Code | Meaning |
+| HTTP | Code | Meaning |
 |---|---|---|
-| 400 | `IMAGE_VALIDATION_ERROR` | Bad image (wrong type, too large, corrupt) |
-| 401 | `AuthenticationError` | Missing or invalid API key |
-| 403 | Insufficient permissions | API key doesn't have required scope |
-| 404 | `NOT_FOUND` | Person, job, or webhook not found |
-| 413 | `IMAGE_VALIDATION_ERROR` | File exceeds size limit |
-| 429 | `RateLimitExceededError` | Too many requests (check Retry-After header) |
-| 503 | `MODEL_UNAVAILABLE` | ML model failed to load at startup |
+| 400 | `ImageValidationError` | Bad image (wrong type, corrupt, too small, too large) |
+| 400 | `EMPTY_BATCH` | Batch upload had zero files |
+| 400 | `BATCH_TOO_LARGE` | More files than the endpoint allows |
+| 400 | `INVALID_WEBHOOK_URL` | Webhook URL failed validation |
+| 400 | `INVALID_INPUT` | Malformed form/query input |
+| 401 | *(FastAPI `HTTPException`)* | Missing or invalid API key |
+| 403 | *(FastAPI `HTTPException`)* | API key lacks the required scope |
+| 404 | `NOT_FOUND` | Person, job, or webhook not found / not owned by this key |
+| 422 | *(FastAPI validation)* | Pydantic validation error |
+| 429 | *(FastAPI `HTTPException`)* | Rate limit exceeded — honor `Retry-After` header |
+| 429 | `TOO_MANY_JOBS` | `MAX_ACTIVE_JOBS_PER_KEY` (10) already active |
+| 503 | `MODEL_UNAVAILABLE` | Required model not loaded at startup |
+| 504 | `REQUEST_TIMEOUT` | Request exceeded 60-second wall clock |
+
+Errors raised from `EventAIError` subclasses (`ImageValidationError`, `ModelNotLoadedError`, `AuthenticationError`, `RateLimitExceededError`, `JobNotFoundError`) are translated into the standard envelope by an exception handler in `main.py`. Raw `HTTPException`s from middleware (auth, rate limit) use FastAPI's default `{"detail": ...}` body.
 
 ---
 
 ## Rate Limits
 
-| Tier | Requests/minute | Who |
-|---|---|---|
-| Free | 60 | Default for new API keys |
-| Pro | 300 | Upgraded keys |
-| Internal | 1000 | Backend-to-backend communication |
+Rate limiting is **enforced** on every authenticated endpoint via `verify_api_key → check_rate_limit`. A token bucket per API key is maintained in Redis (Lua script, atomic). If Redis is unavailable the limiter becomes a no-op — convenient in dev, expected always-on in production.
 
-**Note:** The rate limiter code exists (`src/middleware/rate_limit.py`) but is **not yet wired into endpoints** (pending Phase 6.5). Once activated, rate-limited (429) responses will include these headers:
-- `X-RateLimit-Limit`: Maximum requests allowed in the window
-- `X-RateLimit-Remaining`: Requests remaining in current window
-- `X-RateLimit-Reset`: Unix timestamp when the limit resets
-- `Retry-After`: Seconds until the next request is allowed
+| Tier | Max burst | Refill | Effective |
+|---|---|---|---|
+| `free` | 60 | 1/s | ~60/min |
+| `pro` | 300 | 5/s | ~300/min |
+| `internal` | 1000 | ~16.7/s | ~1000/min |
+
+Response headers set by `RateLimitHeadersMiddleware`:
+
+- `X-RateLimit-Limit` — burst size for the tier
+- `X-RateLimit-Remaining` — tokens left after this call
+- `X-RateLimit-Reset` — Unix timestamp when the limiter resets
+
+On 429, the same headers plus `Retry-After` are returned.
+
+Extra backpressure for async batches: a caller with `MAX_ACTIVE_JOBS_PER_KEY` (10) jobs in `pending` or `processing` state gets `429 TOO_MANY_JOBS` on new batch submissions until earlier jobs finish.

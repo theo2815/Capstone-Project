@@ -10,12 +10,16 @@ Most of the "heavy" work (model inference) is already in C++ under the hood via 
 
 ## What Gets Accelerated
 
-| Component | What Python Does | What C++ Does Better | Priority |
+| Component | Function | Observed speedup | Notes |
 |---|---|---|---|
-| Batch cosine similarity | `numpy.dot` for one query is fast, but 1-vs-50K with filtering needs temp arrays | Fused loop: compute distance + threshold + top-K in one pass, no temp arrays | **High** |
-| Batch Laplacian variance | Calls `cv2.Laplacian` in a Python loop for N images (N round-trips to C++) | Single C++ call processes all N images, eliminates per-image Python overhead | Medium |
-| Image preprocessing | Three separate calls: `cv2.resize` + `cv2.cvtColor` + normalize | Single function: resize + color convert + normalize + transpose in one memory pass | Medium |
-| FFT blur metric | `numpy.fft.fft2` is already backed by FFTW | Marginal benefit | Low (skip) |
+| Laplacian variance (single image) | `laplacian_variance` | ~5.4× | Single-pass sum + sum_sq kernel; biggest win |
+| Batch cosine top-K | `batch_cosine_topk` | 1.8–2.8× (N ≤ ~5K) | GIL release + partial_sort; NumPy BLAS wins on very large N |
+| FFT high-frequency ratio | `fft_hf_ratio` | ~1.2× | Radix-2 Cooley-Tukey; ~parity with NumPy FFTPACK |
+| BGR → gray, resize, classifier preprocess | `bgr_to_gray`, `resize_gray`, `classify_preprocess` | neutral to slower | OpenCV/NumPy already use hand-tuned SIMD; kept for the GIL-release benefit inside threaded pipelines |
+
+Numbers are from `benchmarks/bench_cpp_vs_python.py` on MSVC 19.50 / Windows / AVX2 / Python 3.12. They will differ on Linux-glibc with GCC.
+
+**Key non-speed benefit:** every C++ function releases the GIL via `py::gil_scoped_release`, so multiple Python threads can overlap computation. This matters inside the streaming and Celery batch pipelines, which use thread pools for decode + inference.
 
 ## How It Works
 
@@ -106,31 +110,30 @@ The Dockerfile has a build stage that compiles C++ before creating the runtime i
 
 ### Locally (manual)
 ```bash
-# Install build dependencies
+# Option A — via the pyproject extras (uses scikit-build-core)
 pip install -e ".[cpp]"
 
-# This triggers scikit-build-core which:
-# 1. Runs CMake to configure the build
-# 2. Compiles C++ with pybind11
-# 3. Places the compiled module where Python can import it
+# Option B — direct CMake build (helpful on Windows when pip misdetects MSVC)
+python build_cpp.py
 ```
+
+Both paths produce `_eventai_cpp.<tag>.pyd` (Windows) or `.so` (Linux/macOS) at the project root where Python can `import _eventai_cpp`.
 
 ### Requirements
 - **Linux**: GCC 10+ or Clang 12+
-- **Windows**: MSVC (Visual Studio Build Tools)
+- **Windows**: MSVC (Visual Studio Build Tools 2022+) — `build_cpp.py` auto-detects `vcvarsall.bat`
 - **macOS**: Clang (Xcode Command Line Tools)
-- **All**: CMake 3.28+, OpenCV development headers
+- **All**: CMake 3.18+, Ninja (pulled in by the `[cpp]` extra)
 
-## When to Add C++
+OpenCV development headers are **not** required — the extension only uses its own sources plus pybind11's NumPy bindings.
 
-Don't add C++ until Phase 6. Get everything working in pure Python first. Then:
+## When to Add Another C++ Function
 
-1. Run `python scripts/benchmark.py` to establish Python baselines
-2. Implement the C++ versions
-3. Run benchmarks again to measure the improvement
-4. If the improvement is <2x, it's probably not worth the maintenance cost
+The rule: profile first, then decide. New C++ is worth adding only when a pure Python version falls behind on a hot path.
 
-Expected improvements:
-- Batch cosine similarity: **5-10x** on large databases (>10K embeddings)
-- Batch Laplacian: **2-3x** on batch sizes >50 images
-- Fused preprocessing: **2-4x** (eliminates intermediate array copies)
+1. Run `python benchmarks/bench_cpp_vs_python.py` or `python scripts/benchmark.py` to confirm the Python baseline.
+2. Prototype in C++, keeping the NumPy path intact.
+3. Re-run benchmarks.
+4. If the speedup is below ~2× or the new code can't release the GIL, don't merge it — the maintenance cost isn't worth it.
+
+The existing extension shows the ceiling clearly: NumPy-backed BLAS and OpenCV's SIMD paths are very fast, so naive C++ loops lose on pre-processing and large-N matmul-like workloads. Wins come from fusing passes (single-pass Laplacian variance) or from algorithms where NumPy creates large temp arrays (cosine top-K).

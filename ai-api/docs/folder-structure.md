@@ -1,284 +1,330 @@
 # Folder Structure
 
-Every file and folder inside `ai-api/` explained.
+Every file and folder inside `ai-api/` explained. Matches the current codebase.
 
 ```
 ai-api/
 │
-├── pyproject.toml              # Project manifest. Lists all dependencies,
-│                               # Python version, build tools, linter config.
-│                               # This is the "package.json" of Python.
+├── CLAUDE.md                   # Entry point for AI agents / new team members.
+├── pyproject.toml              # Project manifest: deps, Python 3.11–3.14,
+│                               # build tools (setuptools), ruff, mypy, pytest.
+├── Makefile                    # Developer shortcuts (`make dev`, `make test`, etc.).
 │
-├── Makefile                    # Developer shortcuts.
-│                               # "make dev" instead of long uvicorn commands.
+├── Dockerfile                  # Production image (multi-stage, optimized).
+├── Dockerfile.dev              # Development image (with hot-reload).
+├── docker-compose.yml          # 4 services: ai-api, celery-worker, db (pg+pgvector),
+│                               # redis. Default dev config.
+├── docker-compose.prod.yml     # Production overrides.
+├── docker-compose.gpu.yml      # GPU overlay (NVIDIA runtime + USE_GPU=true).
+├── nginx.conf                  # Sample nginx reverse-proxy config.
+├── .dockerignore
 │
-├── Dockerfile                  # Production Docker image (multi-stage, optimized).
-├── Dockerfile.dev              # Development Docker image (with hot-reload).
-├── docker-compose.yml          # Defines 4 services: api, celery, postgres, redis.
-├── docker-compose.gpu.yml      # GPU override for production deployment.
-├── .dockerignore               # Files Docker should ignore when building.
-│
-├── alembic.ini                 # Config for Alembic (database migration tool).
+├── alembic.ini                 # Alembic config (migration tool).
 ├── .env.example                # Template for environment variables.
-├── .gitignore                  # Files git should ignore.
+├── .gitignore
 │
-├── CMakeLists.txt              # CMake config for C++ extension (C++17, pybind11, AVX2).
-├── build_cpp.py                # Build script for C++ extension. Auto-detects MSVC
-│                               # vcvarsall on Windows. Usage: python build_cpp.py
+├── CMakeLists.txt              # C++17 / pybind11 / AVX2 build config.
+├── build_cpp.py                # Manual build script — auto-detects MSVC on Windows.
+│                               # Usage: `python build_cpp.py`
+├── _eventai_cpp.*.pyd/.so     # Compiled C++ extension (gitignored; produced by build).
+├── yolov8n-cls.pt             # Pre-trained YOLOv8 weights used as the base for
+│                               # blur classifier training (gitignored).
+│
+├── gen_api_key.py              # One-off script to generate a new API key.
+├── insert_key.py               # One-off script to insert an API key into the DB.
 │
 │
 ├── src/                        # === ALL APPLICATION CODE LIVES HERE ===
 │   │
-│   ├── __init__.py             # Makes src/ a Python package.
+│   ├── __init__.py
 │   ├── main.py                 # APPLICATION ENTRY POINT.
-│   │                           # Creates the FastAPI app. Defines startup
-│   │                           # (load models, connect DB) and shutdown
-│   │                           # (unload models, close connections).
+│   │                           # Builds the FastAPI app, registers middleware,
+│   │                           # wires the lifespan (DB init, Redis connect,
+│   │                           # model load → shutdown).
+│   │                           # Also mounts /metrics (auth-protected in prod).
 │   │
 │   ├── config.py               # CONFIGURATION.
-│   │                           # Reads environment variables into a typed
-│   │                           # Settings object. Every configurable value
-│   │                           # (thresholds, URLs, limits) is defined here.
-│   │
-│   ├── dependencies.py         # DEPENDENCY INJECTION.
-│   │                           # Functions that FastAPI calls to provide
-│   │                           # shared objects (model registry, settings,
-│   │                           # Redis) to route handlers.
+│   │                           # Pydantic `Settings` class. Every configurable
+│   │                           # value (thresholds, URLs, limits) is defined here.
 │   │
 │   │
 │   ├── api/                    # === LAYER 1: HTTP ENDPOINTS ===
-│   │   │                       # Thin controllers. Receive requests, call
-│   │   │                       # services, return responses. No logic here.
+│   │   │                       # Thin controllers. No business logic here.
 │   │   │
-│   │   ├── v1/                 # Version 1 of the API
-│   │   │   ├── router.py       # Combines all v1 routers into one.
-│   │   │   ├── health.py       # GET /health and GET /health/ready
-│   │   │   ├── blur.py         # POST /blur/detect, POST /blur/detect/batch,
-│   │   │   │                   #   POST /blur/classify, POST /blur/classify/batch
-│   │   │   ├── faces.py        # POST /faces/detect, /enroll, /search, /compare,
-│   │   │   │                   #   /search/batch
-│   │   │   │                   # GET /faces/persons/{id}
-│   │   │   │                   # DELETE /faces/persons/{id}
-│   │   │   ├── bibs.py         # POST /bibs/recognize, POST /bibs/recognize/batch
-│   │   │   ├── jobs.py         # GET /jobs/{id}
-│   │   │   └── webhooks.py     # POST/GET/DELETE /webhooks
-│   │   │
-│   │   └── v2/                 # Future API version (empty placeholder).
-│   │                           # When breaking changes are needed, v2
-│   │                           # routes go here while v1 stays working.
+│   │   └── v1/                 # Version 1 of the API.
+│   │       ├── router.py       # Combines all v1 routers into one.
+│   │       ├── health.py       # GET /health, GET /health/ready
+│   │       ├── blur.py         # Single/stream/batch/mega for detect + classify.
+│   │       ├── faces.py        # detect/enroll/search/compare, persons CRUD,
+│   │       │                   # search-batch, enroll-batch, search-mega.
+│   │       ├── bibs.py         # recognize + batch + mega.
+│   │       ├── jobs.py         # GET /jobs/{id} (with offset/limit pagination).
+│   │       ├── webhooks.py     # POST/GET/DELETE /webhooks.
+│   │       │                   # Basic SSRF check at registration time.
+│   │       ├── batch_utils.py  # Shared helpers: validate_batch_files,
+│   │       │                   # create_batch_job (backpressure), store_blobs_and_get_paths,
+│   │       │                   # batch_accepted_response.
+│   │       └── mega_batch.py   # dispatch_mega_batch — splits 500-image uploads
+│   │                           # into MAX_BATCH_SIZE-sized sub-tasks via Celery chord.
 │   │
 │   │
 │   ├── schemas/                # === PYDANTIC MODELS ===
-│   │   │                       # Define the exact shape of every request
-│   │   │                       # and response. Used for validation, docs,
-│   │   │                       # and type safety.
-│   │   │
-│   │   ├── common.py           # APIResponse envelope (wraps all responses),
-│   │   │                       # HealthResponse, JobStatus enum.
-│   │   ├── blur.py             # BlurDetectionResponse, BlurMetrics,
-│   │   │                       # BlurClassificationResponse, BlurClassProbabilities,
-│   │   │                       # BlurTypeDetectionResponse, BlurType enum.
+│   │   ├── common.py           # APIResponse envelope, ErrorDetail,
+│   │   │                       # HealthResponse, ReadinessResponse.
+│   │   ├── blur.py             # BlurType enum, BlurMetrics, BlurDetectionResponse,
+│   │   │                       # BlurClassProbabilities, BlurClassificationResponse,
+│   │   │                       # BlurTypeDetectionResponse.
 │   │   ├── faces.py            # BoundingBox, FaceDetection, FaceSearchResult,
-│   │   │                       # FaceEnrollResponse, FaceCompareResponse, etc.
-│   │   ├── bibs.py             # BibDetection, BibRecognitionResponse.
-│   │   ├── jobs.py             # JobCreateResponse, JobStatusResponse.
-│   │   └── webhooks.py         # WebhookCreateRequest, WebhookResponse.
+│   │   │                       # FaceDetect/Search/Enroll/Compare responses,
+│   │   │                       # PersonResponse, PersonListResponse.
+│   │   ├── bibs.py             # BibCandidate, BibDetection, BibRecognitionResponse.
+│   │   ├── jobs.py             # JobStatus enum, JobCreateResponse, JobStatusResponse.
+│   │   └── webhooks.py         # ALLOWED_EVENTS, WebhookCreateRequest,
+│   │                           # WebhookResponse, WebhookListResponse.
 │   │
 │   │
 │   ├── services/               # === LAYER 2: BUSINESS LOGIC ===
-│   │   │                       # Contains the rules. Orchestrates ML models
-│   │   │                       # and database operations.
+│   │   │                       # Only blur currently has a dedicated service class.
+│   │   │                       # Face and bib logic lives inline in the API handlers
+│   │   │                       # because orchestration is still thin — introduce a
+│   │   │                       # service class when the rules grow.
 │   │   │
-│   │   ├── image_service.py    # Validates uploaded images: file type, size,
-│   │   │                       # dimensions, magic bytes, EXIF stripping.
-│   │   ├── blur_service.py     # Runs blur detection with optional threshold.
-│   │   ├── face_service.py     # Face detection and embedding extraction.
-│   │   ├── bib_service.py      # Bib detection + OCR pipeline.
-│   │   ├── job_service.py      # Creates and tracks async batch jobs.
-│   │   └── webhook_service.py  # Dispatches webhook callbacks to subscribers.
+│   │   └── blur_service.py     # BlurService — wraps BlurDetector + optional
+│   │                           # BlurClassifier. Used by tests; handlers also
+│   │                           # call the ML layer directly today.
 │   │
 │   │
 │   ├── ml/                     # === LAYER 3: ML MODEL WRAPPERS ===
-│   │   │                       # Each file wraps one AI library. These know
-│   │   │                       # how to run inference but nothing about HTTP
-│   │   │                       # or databases.
+│   │   │                       # Each file wraps one AI library. No HTTP or DB awareness.
 │   │   │
-│   │   ├── registry.py         # MODEL REGISTRY (most important file).
-│   │   │                       # Loads all models once at startup.
-│   │   │                       # Stores them in memory. All requests share
-│   │   │                       # the same model instances.
+│   │   ├── registry.py         # MODEL REGISTRY.
+│   │   │                       # Loads all models in parallel via asyncio.gather
+│   │   │                       # during FastAPI lifespan. Pre-imports torch,
+│   │   │                       # insightface, ultralytics in the main thread to
+│   │   │                       # avoid Windows DLL races. Releases GPU/ONNX resources
+│   │   │                       # on shutdown.
 │   │   │
 │   │   ├── blur/
-│   │   │   ├── detector.py     # BlurDetector class.
-│   │   │   │                   # Method 1: Laplacian variance (cv2.Laplacian).
-│   │   │   │                   # Method 2: FFT spectral analysis (np.fft).
-│   │   │   │                   # Has C++ fast path with Python fallback.
-│   │   │   │                   # Returns: is_blurry + confidence + metrics.
-│   │   │   └── classifier.py   # BlurClassifier. ONNX-based blur/sharp
-│   │   │                       # classification model (YOLOv8n-cls trained
-│   │   │                       # on custom blur dataset, 98.68% accuracy).
+│   │   │   ├── detector.py     # BlurDetector (Laplacian variance + FFT high-
+│   │   │   │                   # frequency ratio, 640px-normalized). `detect_fast`
+│   │   │   │                   # skips FFT + BGR→gray for the hot path. Uses C++
+│   │   │   │                   # `laplacian_variance` / `fft_hf_ratio` when available.
+│   │   │   └── classifier.py   # BlurClassifier (YOLOv8n-cls, 4 classes via ONNX).
+│   │   │                       # Optional — loads only if
+│   │   │                       # models/blur_classifier/blur_classifier.onnx exists.
+│   │   │                       # Uses C++ `classify_preprocess` when available.
 │   │   │
 │   │   ├── faces/
-│   │   │   ├── detector.py     # FaceDetector. Uses RetinaFace via InsightFace.
-│   │   │   │                   # Returns bounding boxes + landmarks.
-│   │   │   ├── embedder.py     # FaceEmbedder. Uses RetinaFace + ArcFace.
-│   │   │   │                   # Returns 512-dim embedding vectors per face.
-│   │   │   └── matcher.py      # Cosine similarity matching. Compares a query
-│   │   │                       # embedding against a database of embeddings.
-│   │   │                       # Has C++ fast path with NumPy fallback.
+│   │   │   ├── embedder.py     # FaceEmbedder — wraps InsightFace `buffalo_l`
+│   │   │   │                   # (RetinaFace + ArcFace). Drops unused genderage +
+│   │   │   │                   # extra landmark sub-models at load (~40% less
+│   │   │   │                   # compute/memory).
+│   │   │   └── matcher.py      # cosine_similarity + find_matches (top-K).
+│   │   │                       # Uses C++ `batch_cosine_topk` when available.
 │   │   │
 │   │   └── bibs/
-│   │       ├── detector.py     # BibDetector. Uses YOLOv8 to find bib regions.
-│   │       └── recognizer.py   # BibRecognizer. Uses PaddleOCR to read numbers
-│   │                           # from cropped bib images.
+│   │       ├── detector.py     # BibDetector — loads a custom YOLOv8n ONNX via
+│   │       │                   # Ultralytics. Refuses non-.onnx paths for safety.
+│   │       └── recognizer.py   # BibRecognizer — PaddleOCR 3.x (PP-OCRv5).
+│   │                           # `recognize_batch` parallelises `predict()` calls
+│   │                           # across an OCR_MAX_WORKERS thread pool. OCR digits
+│   │                           # are cleaned with a regex filter + substitution map
+│   │                           # (O→0, I→1, S→5, etc.).
 │   │
 │   │
-│   ├── cpp/                    # === C++ EXTENSION SOURCE (Phase 6) ===
-│   │   │                       # pybind11 C++ module for performance-critical
-│   │   │                       # paths. Compiled as _eventai_cpp.pyd/.so.
-│   │   │                       # All functions release the GIL for concurrency.
+│   ├── cpp/                    # === C++ EXTENSION SOURCE ===
+│   │   │                       # pybind11 C++ module built as `_eventai_cpp`.
+│   │   │                       # All functions release the GIL.
 │   │   │
-│   │   ├── bindings.cpp        # PYBIND11_MODULE — exposes all C++ functions
-│   │   │                       # and structs to Python.
-│   │   ├── face_ops.h/.cpp     # cosine_similarity, batch_cosine_topk
-│   │   │                       # (partial_sort, AVX2 vectorization).
-│   │   ├── blur_ops.h/.cpp     # laplacian_variance (single-pass),
+│   │   ├── bindings.cpp        # PYBIND11_MODULE — exposes all C++ functions.
+│   │   ├── face_ops.h/.cpp     # cosine_similarity, batch_cosine_topk (partial_sort,
+│   │   │                       # AVX2-friendly).
+│   │   ├── blur_ops.h/.cpp     # laplacian_variance (single-pass sum+sum_sq),
 │   │   │                       # fft_hf_ratio (radix-2 Cooley-Tukey 2D FFT),
 │   │   │                       # batch_blur_metrics.
-│   │   └── preprocess_ops.h/.cpp  # bgr_to_gray, resize_gray (bilinear).
+│   │   └── preprocess_ops.h/.cpp  # bgr_to_gray, resize_gray (bilinear),
+│   │                           # classify_preprocess (fused resize + normalize +
+│   │                           # transpose for YOLOv8-cls input).
 │   │
 │   │
 │   ├── db/                     # === LAYER 4: DATABASE ===
 │   │   │
-│   │   ├── session.py          # Creates the async database connection pool.
-│   │   │                       # Provides get_session() for database access.
-│   │   │                       # Handles init, close, and health check.
+│   │   ├── session.py          # Async SQLAlchemy engine (asyncpg driver).
+│   │   │                       # Exposes init_db, close_db, check_db_health,
+│   │   │                       # get_session_ctx (async context manager).
 │   │   │
-│   │   ├── sync_session.py     # Sync SQLAlchemy engine/session for Celery
-│   │   │                       # workers (can't use asyncpg in Celery).
+│   │   ├── sync_session.py     # Sync engine (psycopg2) for Celery workers.
+│   │   │                       # asyncpg cannot run inside a Celery prefork child.
+│   │   │                       # Exposes init_sync_db, close_sync_db, get_sync_session.
 │   │   │
-│   │   ├── models.py           # DATABASE TABLES defined as Python classes:
-│   │   │                       # - Person (name, metadata)
-│   │   │                       # - FaceEmbedding (512-dim vector via pgvector)
-│   │   │                       # - Job (status, progress, results)
-│   │   │                       # - WebhookSubscription (URL, events)
-│   │   │                       # - APIKey (hashed key, scopes, rate tier)
+│   │   ├── models.py           # DATABASE TABLES:
+│   │   │                       # - Person (id, name, api_key_id, event_id, metadata)
+│   │   │                       # - FaceEmbedding (person_id, Vector(512), image_hash,
+│   │   │                       #     quality_score)
+│   │   │                       # - Job (job_type, status, progress, total/processed,
+│   │   │                       #     result JSONB, api_key_id, timestamps)
+│   │   │                       # - WebhookSubscription (url, events, secret, api_key_id)
+│   │   │                       # - APIKey (key_hash, scopes, rate_tier, active)
 │   │   │
-│   │   ├── repositories/       # CRUD operations for each table:
-│   │   │   ├── face_repo.py    #   Async — create/delete persons, store
-│   │   │   │                   #   embeddings, vector similarity search.
-│   │   │   ├── job_repo.py     #   Async — create/update/complete/fail jobs.
-│   │   │   ├── webhook_repo.py #   Async — manage webhook subscriptions.
-│   │   │   ├── sync_face_repo.py   # Sync — pgvector search for Celery tasks.
-│   │   │   ├── sync_job_repo.py    # Sync — job progress/complete/fail for Celery.
-│   │   │   └── sync_webhook_repo.py # Sync — webhook lookup for Celery.
+│   │   ├── repositories/
+│   │   │   ├── face_repo.py        # Async — persons CRUD, embeddings, batch search.
+│   │   │   ├── job_repo.py         # Async — create/update/complete/fail,
+│   │   │   │                       # count_active_by_key (backpressure).
+│   │   │   ├── webhook_repo.py     # Async — subscription CRUD.
+│   │   │   ├── sync_face_repo.py   # Sync equivalent used by Celery tasks.
+│   │   │   ├── sync_job_repo.py    # Sync — plus reap_stale_jobs, cleanup_old_jobs.
+│   │   │   └── sync_webhook_repo.py # Sync — list_by_event for worker dispatch.
 │   │   │
 │   │   └── migrations/
-│   │       ├── env.py          # Alembic migration runner (async-aware).
-│   │       └── versions/       # Generated migration scripts go here.
+│   │       ├── env.py          # Alembic runner (async-aware).
+│   │       └── versions/       # Migration scripts.
 │   │
 │   │
-│   ├── middleware/              # === CROSS-CUTTING CONCERNS ===
-│   │   │                       # These run on EVERY request before the
-│   │   │                       # route handler executes.
-│   │   │
-│   │   ├── auth.py             # API key authentication.
-│   │   │                       # Extracts X-API-Key header, hashes it,
-│   │   │                       # looks up in Redis cache or database.
-│   │   │                       # Returns key metadata (scopes, rate tier).
-│   │   │
-│   │   ├── rate_limit.py       # Token bucket rate limiting via Redis.
-│   │   │                       # Free: 60/min, Pro: 300/min, Internal: 1000/min.
-│   │   │                       # Returns 429 with Retry-After header.
-│   │   │
-│   │   ├── request_id.py       # Assigns a unique UUID to every request.
-│   │   │                       # Included in logs and responses for tracing.
-│   │   │
-│   │   └── cors.py             # CORS configuration.
-│   │                           # Controls which frontend domains can call the API.
+│   ├── middleware/             # === CROSS-CUTTING CONCERNS ===
+│   │   ├── auth.py             # verify_api_key: SHA-256 hash → Redis cache → DB.
+│   │   │                       # Calls check_rate_limit after auth succeeds.
+│   │   │                       # check_scope helper for per-endpoint scope checks.
+│   │   │                       # invalidate_api_key_cache for key revocation.
+│   │   ├── rate_limit.py       # Token-bucket rate limiter (Redis Lua script).
+│   │   │                       # Free=60/min, Pro=300/min, Internal=1000/min.
+│   │   │                       # Stores rate_info on request.state for the header
+│   │   │                       # middleware in main.py.
+│   │   ├── request_id.py       # Assigns/validates X-Request-ID; puts it on
+│   │   │                       # request.state.request_id.
+│   │   └── cors.py             # CORS setup (allow_methods GET/POST/DELETE;
+│   │                           # exposes X-Request-ID, X-RateLimit-Remaining/Reset).
+│   │
+│   │   (Additional middleware — TimeoutMiddleware, SecurityHeadersMiddleware,
+│   │    RateLimitHeadersMiddleware — is defined inline in main.py because it
+│   │    depends on runtime settings.)
 │   │
 │   │
 │   ├── workers/                # === BACKGROUND TASK PROCESSING ===
-│   │   │                       # For batch operations that take too long
-│   │   │                       # for a synchronous HTTP response.
-│   │   │
-│   │   ├── celery_app.py       # Celery configuration. Connects to Redis
-│   │   │                       # as the message broker.
-│   │   ├── model_loader.py     # Loads ML models in Celery worker processes
-│   │   │                       # via worker_process_init signal (once per process).
-│   │   ├── helpers.py          # Shared task utilities: base64 image decode,
-│   │   │                       # job progress updates, webhook dispatch.
+│   │   ├── celery_app.py       # Celery config. Queues: default, blur, face, bib.
+│   │   │                       # Task time limits (soft 3300s, hard 3600s),
+│   │   │                       # worker_max_tasks_per_child=500,
+│   │   │                       # worker_max_memory_per_child=2GB,
+│   │   │                       # prefetch=4. Beat schedule: reap-stale-jobs (5 min),
+│   │   │                       # cleanup-old-jobs (daily), cleanup-stale-blobs (30 min).
+│   │   ├── model_loader.py     # worker_process_init signal.
+│   │   │                       # Reads WORKER_QUEUES env var to decide which models
+│   │   │                       # to load. Initialises sync DB engine.
+│   │   ├── helpers.py          # Shared utilities:
+│   │   │                       # decode_image_from_path, decode_grays_from_paths
+│   │   │                       # (parallel decode via ThreadPoolExecutor),
+│   │   │                       # update_job_progress (throttled), complete_job,
+│   │   │                       # fail_job, dispatch_webhook_sync.
 │   │   │
 │   │   └── tasks/
-│   │       ├── blur_tasks.py   # Batch blur detection task.
-│   │       ├── face_tasks.py   # Batch face processing (detect + search).
-│   │       ├── bib_tasks.py    # Batch bib recognition task.
-│   │       └── webhook_tasks.py # Delivers webhook callbacks to registered
-│   │                           # URLs with HMAC signature and retries.
+│   │       ├── blur_tasks.py       # blur.detect_batch, blur.classify_batch.
+│   │       │                       # Sub-batches of INFERENCE_SUB_BATCH_SIZE (50).
+│   │       ├── face_tasks.py       # faces.process_batch (detect|search) +
+│   │       │                       # faces.enroll_batch (two-phase: inference, then DB).
+│   │       ├── bib_tasks.py        # bibs.recognize_batch — batch YOLO → batch OCR.
+│   │       ├── webhook_tasks.py    # webhooks.deliver — SSRF DNS resolve + IP-literal
+│   │       │                       # request (TOCTOU-safe). HMAC signature, retry
+│   │       │                       # with exponential backoff.
+│   │       └── maintenance_tasks.py # reap_stale_jobs, cleanup_old_jobs,
+│   │                           # cleanup_stale_blobs, finalize_mega_batch (chord callback).
 │   │
 │   │
 │   └── utils/                  # === SHARED UTILITIES ===
-│       ├── exceptions.py       # Custom error types: ImageValidationError,
-│       │                       # ModelNotLoadedError, AuthenticationError, etc.
-│       │                       # Each has an HTTP status code.
-│       │
-│       ├── image_utils.py      # Standalone image validation function.
-│       │                       # Checks type, size, dimensions, magic bytes.
-│       │
-│       ├── logging.py          # Structured JSON logging via structlog.
-│       │                       # Every log line has request_id, timestamp.
-│       │
-│       └── metrics.py          # Prometheus metrics: request counts,
-│                               # latency histograms, inference times.
+│       ├── exceptions.py       # EventAIError + subclasses (ImageValidationError,
+│       │                       # ModelNotLoadedError, AuthenticationError,
+│       │                       # RateLimitExceededError, JobNotFoundError).
+│       ├── image_utils.py      # validate_and_decode (single image), validate_batch_file,
+│       │                       # downscale_for_inference, get_image_dimensions.
+│       │                       # Content-type allowlist, magic-byte check via PIL,
+│       │                       # EXIF rotation, dimension limits (32–4096 px).
+│       ├── blob_store.py       # store_batch, load_blob, cleanup_batch,
+│       │                       # cleanup_stale_blobs. Atomic write (tmp→rename),
+│       │                       # parallel writes for batch uploads.
+│       ├── crypto.py           # Fernet-based encryption for webhook secrets
+│       │                       # (WEBHOOK_SECRET_KEY). Plaintext fallback if unset.
+│       ├── timeout.py          # run_with_timeout (reusable single-thread executor)
+│       │                       # and run_direct. Used sparingly — Celery's soft/hard
+│       │                       # time limits are the main safety net.
+│       └── logging.py          # setup_logging, get_logger — structlog JSON output
+│                               # with request_id context.
 │
 │
 ├── tests/                      # === TESTS ===
-│   ├── conftest.py             # Shared test fixtures (test client, etc.)
-│   ├── test_blur_detector.py   # Unit tests for BlurDetector.
-│   ├── test_blur_classifier.py # Unit tests for BlurClassifier.
-│   ├── test_blur_endpoint.py   # Integration tests for POST /blur/detect.
-│   ├── test_face_matcher.py    # Unit tests for face matcher.
-│   ├── test_face_endpoints.py  # Integration tests for face endpoints.
-│   ├── test_bib_recognizer.py  # Unit tests for BibRecognizer.
-│   ├── test_bib_endpoint.py    # Integration tests for POST /bibs/recognize.
-│   ├── test_batch_endpoints.py # Integration tests for batch processing.
-│   ├── test_cpp_extension.py   # Tests for C++ extension (numerical parity).
-│   ├── unit/                   # Additional unit tests.
-│   ├── integration/            # Additional integration tests.
-│   ├── e2e/                    # End-to-end tests with real models.
+│   ├── conftest.py             # Shared fixtures.
+│   ├── test_batch_endpoints.py # Cross-cutting batch/mega endpoint tests.
+│   ├── test_blur_detector.py   # BlurDetector unit tests.
+│   ├── test_blur_classifier.py # BlurClassifier unit tests.
+│   ├── test_blur_endpoint.py   # /blur/* API-level tests.
+│   ├── test_face_matcher.py    # Cosine similarity / find_matches tests.
+│   ├── test_face_endpoints.py  # /faces/* API-level tests.
+│   ├── test_bib_recognizer.py  # BibRecognizer unit tests.
+│   ├── test_bib_endpoint.py    # /bibs/* API-level tests.
+│   ├── test_cpp_extension.py   # Numerical parity: C++ ops vs NumPy fallback.
+│   ├── unit/                   # Additional unit-scope tests.
+│   ├── integration/            # Integration-scope tests.
+│   ├── e2e/                    # End-to-end tests against a running stack.
 │   └── fixtures/
-│       ├── images/             # Test images (blurry, sharp, faces, bibs).
-│       └── embeddings/         # Pre-computed test embeddings.
+│       ├── images/
+│       └── embeddings/
 │
 │
-├── benchmarks/                 # === PERFORMANCE BENCHMARKS ===
-│   └── bench_cpp_vs_python.py  # Timing comparisons for C++ vs Python paths.
+├── benchmarks/
+│   └── bench_cpp_vs_python.py  # Timing comparisons for all C++ ops vs Python.
 │
 │
-├── models/                     # === ML MODEL FILES ===
-│   │                           # This folder is GIT-IGNORED (models are huge).
-│   │                           # Models are downloaded at build/start time.
-│   ├── manifest.json           # Lists all required models with sources
-│   │                           # and notes on how to obtain them.
-│   └── blur_classifier/        # Trained blur classifier (Phase 5):
-│       ├── blur_classifier.onnx #   ONNX model — 98.68% accuracy.
-│       └── class_names.json    #   Class labels: ["sharp", "defocused_object_portrait",
-│                               #     "defocused_blurred", "motion_blurred"].
+├── models/                     # === ML MODEL FILES (gitignored) ===
+│   ├── manifest.json           # Lists required models with sources/notes.
+│   ├── blur_classifier/
+│   │   ├── blur_classifier.onnx  # YOLOv8n-cls, 4 classes — 98.68% accuracy.
+│   │   └── class_names.json
+│   ├── bib_detection/
+│   │   └── yolov8n_bib.onnx    # Custom-trained bib detector (Ultralytics).
+│   └── models/
+│       ├── buffalo_l/          # InsightFace RetinaFace + ArcFace ONNX bundle.
+│       └── buffalo_l.zip       # Source bundle.
 │
 │
-├── scripts/                    # === DEVELOPER SCRIPTS ===
-│   ├── download_models.py      # Checks which models are present locally.
-│   ├── seed_db.py              # Creates dev API key and test data.
-│   ├── benchmark.py            # Performance benchmarks (Python vs C++).
-│   ├── prepare_blur_dataset.py # Prepares blur/sharp training dataset.
-│   ├── train_blur_classifier.py # Trains YOLOv8n-cls blur classifier.
-│   ├── export_blur_classifier.py # Exports trained blur model to ONNX.
-│   ├── auto_annotate_face_bib.py # Auto-annotates images using InsightFace +
-│   │                           # PaddleOCR for face+bib detection training.
-│   ├── train_face_bib_detector.py # Trains YOLOv8n combined face+bib detector.
-│   └── export_face_bib_detector.py # Exports trained face+bib model to ONNX
-│                               # at models/bib_detection/yolov8n_bib.onnx.
+├── Training-Images/            # Training datasets (gitignored).
+│
+│
+├── runs/                       # Ultralytics training output (gitignored).
+│   ├── classify/blur_cls/      # Blur classifier training artifacts.
+│   └── detect/                 # Bib detector training artifacts.
+│
+│
+├── scripts/
+│   ├── download_models.py          # Verifies which model files are present.
+│   ├── seed_db.py                  # Creates a development API key.
+│   ├── benchmark.py                # Performance benchmarks.
+│   ├── backup_db.sh                # pg_dump helper.
+│   │
+│   ├── prepare_blur_dataset.py     # Builds train/val splits for the blur classifier.
+│   ├── train_blur_classifier.py    # YOLOv8n-cls fine-tune script.
+│   ├── export_blur_classifier.py   # Exports best.pt → ONNX → models/blur_classifier/.
+│   │
+│   ├── train_bib_detector.py       # Trains the dedicated YOLOv8n bib detector.
+│   ├── export_bib_detector.py      # Exports bib detector to ONNX (requires --force
+│   │                               # to overwrite).
+│   ├── extract_bib_labels.py       # Extracts bib-only labels from combined dataset.
+│   │
+│   ├── auto_annotate_face_bib.py   # Legacy: auto-annotate with InsightFace + PaddleOCR.
+│   ├── train_face_bib_detector.py  # Legacy: combined face+bib YOLO (superseded —
+│   │                               # face detection now uses InsightFace directly
+│   │                               # because the combined model's bib mAP was weak).
+│   └── export_face_bib_detector.py
 │
 │
 └── docs/                       # === DOCUMENTATION (you are here) ===
+    ├── README.md                   # Doc index.
+    ├── ai-system-overview.md       # Current state of all three pipelines.
+    ├── api-reference.md            # Every endpoint + request/response examples.
+    ├── architecture.md             # 4-layer design + request / batch flow.
+    ├── folder-structure.md         # This file.
+    ├── tech-stack.md               # Library choices + rationale.
+    ├── cpp-integration.md          # C++ extension build + fallback pattern.
+    ├── setup-guide.md              # Local dev setup.
+    ├── deployment.md               # Docker, GPU, scaling, health checks.
+    ├── security.md                 # Auth, rate limits, validation, privacy.
+    ├── maintenance-guide.md        # Operator runbook.
+    ├── integration-architecture.md # Responsibility boundary across backends.
+    └── integration-contracts.md    # Per-backend call patterns with code examples.
 ```

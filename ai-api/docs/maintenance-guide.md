@@ -1,6 +1,6 @@
 # EventAI AI-API Maintenance Guide
 
-**Last updated:** 2026-03-26
+**Last updated:** 2026-04-23
 **For:** Agents and operators managing the EventAI AI-API in production
 
 ---
@@ -144,11 +144,13 @@ celery -A src.workers.celery_app inspect reserved
 | Bottleneck | Solution |
 |------------|----------|
 | **API throughput** | Increase `WORKERS` (uvicorn workers). Each worker holds all models in memory (~2GB). |
-| **Batch processing** | Scale Celery workers. Use separate workers per queue: `celery -A src.workers.celery_app worker -Q blur -c 2` |
+| **Batch processing** | Scale Celery workers. Dedicate workers per queue with `WORKER_QUEUES`: `WORKER_QUEUES=blur celery -A src.workers.celery_app worker -Q blur -c 4`. Default-queue workers handle webhooks + maintenance and do not need ML models loaded. |
 | **Face search latency** | Add pgvector HNSW index on `face_embeddings.embedding`. Current: exact search. |
-| **Memory pressure** | Reduce `MAX_INFERENCE_DIMENSION` (default 2048). Lower = less memory per image, slightly lower accuracy. |
-| **DB connections** | Async pool: `pool_size=20, max_overflow=10`. Sync pool: `pool_size=15, max_overflow=10`. Increase if pool exhaustion logged. |
-| **Large event (many persons)** | Partition by `event_id`. Face search already filters by event_id when provided. |
+| **Memory pressure** | Reduce `MAX_INFERENCE_DIMENSION` (default 640). Lower = less memory per image, possibly lower accuracy. |
+| **DB connections** | Async pool and sync pool sizes are configurable in `src/db/session.py` / `src/db/sync_session.py`. Increase if pool exhaustion is logged. |
+| **Large event (many persons)** | Partition by `event_id`. Face search already filters by `event_id` when provided. |
+| **Throughput on desktop** | Use `/blur/detect/stream` or `/blur/classify/stream` for synchronous NDJSON batches of up to 500 — no polling overhead. |
+| **Large uploads** | Use `/.../mega` (up to 500) — server chunks into `MAX_BATCH_SIZE` sub-tasks and merges via Celery chord. |
 
 ### Resource Requirements
 
@@ -174,18 +176,19 @@ celery -A src.workers.celery_app inspect reserved
 | WEBHOOK_SECRET_KEY set | Check `.env`; if unset, webhook secrets stored as plaintext (logged as warning on startup) |
 | CORS origins restricted | Check `ALLOWED_ORIGINS` in `.env`; should NOT be `*` in production |
 | Security headers present | Check response headers: `X-Content-Type-Options`, `X-Frame-Options`, HSTS |
-| SSRF protection on webhooks | Webhook delivery blocks private IPs (10.x, 172.16.x, 192.168.x, 127.x) |
+| SSRF protection on webhooks | Webhook delivery blocks private/internal IPs: `10/8`, `172.16/12`, `192.168/16`, `127/8`, `169.254/16`, `0.0.0.0/8`, plus IPv6 `::1`, `fc00::/7`, `fe80::/10` (see `_BLOCKED_NETWORKS` in `src/workers/tasks/webhook_tasks.py`) |
 
 ### Abuse Vectors and Mitigations
 
 | Vector | Mitigation | Config |
 |--------|------------|--------|
-| **Image bombs** | Pillow decompression bomb limit (16M pixels), max file size, max dimension 4096px | `MAX_FILE_SIZE`, `MAX_DIMENSION` |
-| **Batch flooding** | Max batch size, max active jobs per key, rate limiting | `MAX_BATCH_SIZE=20`, `MAX_ACTIVE_JOBS_PER_KEY=10` |
-| **Inference DoS** | Per-image timeout (120s), request timeout (60s) | `INFERENCE_TIMEOUT`, `TimeoutMiddleware` |
-| **Embedding spam** | Duplicate detection (same person + image hash), min enrollment confidence | `FACE_MIN_ENROLLMENT_CONFIDENCE=0.7` |
-| **Webhook SSRF** | IP-literal check at registration, DNS resolution + private IP block at delivery | Built-in |
-| **API key brute force** | Rate limiting, SHA-256 hashed storage | Rate tiers: free=60/min, pro=300/min |
+| **Image bombs** | Pillow decompression bomb limit (16M pixels, tied to `MAX_DIMENSION`), max file size, max dimension 4096px, downscale before inference | `MAX_FILE_SIZE`, `MAX_INFERENCE_DIMENSION` |
+| **Batch flooding** | Max batch size, max active jobs per key, rate limiting (429) | `MAX_BATCH_SIZE=50`, `MEGA_BATCH_MAX_SIZE=500`, `MAX_ACTIVE_JOBS_PER_KEY=10` |
+| **Inference DoS** | Per-image inference timeout, 60s request timeout, Celery `task_time_limit=3600s` (soft 3300s) | `INFERENCE_TIMEOUT`, `TimeoutMiddleware` |
+| **Embedding spam** | Min enrollment confidence, per-person+hash deduplication in the face repo | `FACE_MIN_ENROLLMENT_CONFIDENCE=0.7` |
+| **Webhook SSRF** | IP-literal rejection at registration, DNS resolve + blocked-IP check at delivery (TOCTOU-safe — request uses resolved IP) | Built-in |
+| **API key brute force** | Rate limiting (token bucket), SHA-256 hashed storage, cache invalidation on revoke | Rate tiers: `free=60/min`, `pro=300/min`, `internal=1000/min` |
+| **Celery queue pressure** | `worker_max_tasks_per_child=500`, `worker_max_memory_per_child=2GB`, prefetch 4 (safe: paths only), `reap_stale_jobs` every 5 min | Celery config |
 
 ### API Key Management
 
@@ -211,11 +214,11 @@ UPDATE api_keys SET active = false WHERE id = 'key-uuid';
 
 | Model | Path | Format | Size | Required |
 |-------|------|--------|------|----------|
-| InsightFace buffalo_l | `models/buffalo_l/` | ONNX (multiple) | ~500MB | Yes |
-| Blur classifier | `models/blur_classifier/blur_classifier.onnx` | ONNX | ~20MB | No (optional) |
+| InsightFace buffalo_l | `models/models/buffalo_l/` (configured via `MODEL_DIR`) | ONNX (multiple) | ~280MB | Yes (required for face endpoints) |
+| Blur classifier | `models/blur_classifier/blur_classifier.onnx` | ONNX | ~5.5MB | No (optional) |
 | Blur class names | `models/blur_classifier/class_names.json` | JSON | <1KB | With classifier |
-| Bib detector (YOLO) | `models/bib_detection/yolov8n_bib.onnx` | ONNX | ~12MB | No (optional) |
-| PaddleOCR | Auto-downloaded by PaddleOCR | Multiple | ~150MB | Yes |
+| Bib detector (YOLO) | `models/bib_detection/yolov8n_bib.onnx` | ONNX | ~12MB | No (optional; full-image OCR fallback) |
+| PaddleOCR PP-OCRv5 | Auto-downloaded by PaddleOCR on first run | Multiple | ~150MB | Yes (required for bib endpoints) |
 
 ### Updating a Model
 
@@ -227,7 +230,7 @@ UPDATE api_keys SET active = false WHERE id = 'key-uuid';
 
 ### Retraining the Blur Classifier
 
-1. Train using YOLOv8 classification (see `docs/training-guide-bib.md` for reference)
+1. Train using YOLOv8 classification via `scripts/train_blur_classifier.py`
 2. Export to ONNX: `model.export(format='onnx')`
 3. Ensure `class_names.json` matches the training class order (alphabetical by default)
 4. The classifier validates class count against model output at load time -- mismatches disable the model
@@ -261,15 +264,24 @@ UPDATE api_keys SET active = false WHERE id = 'key-uuid';
 
 ### Image Storage
 
-Images are **NOT stored on disk or in the database**. The pipeline is:
+Images are **NOT persistently stored on disk or in the database**. Two flows:
 
+**Single / stream endpoints (sync):**
 1. Client uploads image via multipart/form-data
-2. Image is decoded to numpy array in memory
+2. Image is decoded to a numpy array in memory (+ EXIF rotation, downscale)
 3. ML inference runs on the array
 4. Only the results (embeddings, bib numbers, blur scores) are stored
-5. Raw image bytes are discarded after the request
+5. Raw bytes are discarded when the request returns
 
-For batch jobs, images are base64-encoded into the Celery message (stored temporarily in Redis). They are discarded after processing.
+**Batch / mega endpoints (async):**
+1. Client POSTs multiple files
+2. The API atomically writes each image to the **blob store** at `{BLOB_STORE_PATH}/{job_id}/NNNNN.bin` (default `/tmp/eventai-blobs`, shared volume in Docker)
+3. The Celery task receives file paths, not base64 payloads
+4. Worker decodes from paths, runs inference, updates job progress
+5. `complete_job` / `fail_job` removes the job's blob directory
+6. `maintenance.cleanup_stale_blobs` (every 30 min) reaps directories older than 2 hours as a safety net
+
+No image content is ever logged or stored beyond the blob staging directory.
 
 ### Embedding Management
 
@@ -519,19 +531,21 @@ curl -s -I -H "X-API-Key: $API_KEY" $BASE/health | grep -i "x-ratelimit"
 
 ### Task Queues
 
-| Queue | Tasks |
-|-------|-------|
-| `default` | Webhooks, maintenance |
-| `blur` | `blur.detect_batch`, `blur.classify_batch` |
-| `face` | `faces.process_batch`, `faces.enroll_batch` |
-| `bib` | `bibs.recognize_batch` |
+| Queue | Tasks | Workers load |
+|-------|-------|--------------|
+| `default` | `webhooks.deliver`, `maintenance.*`, `finalize_mega_batch` | No ML models needed |
+| `blur` | `blur.detect_batch`, `blur.classify_batch` | BlurDetector + BlurClassifier |
+| `face` | `faces.process_batch`, `faces.enroll_batch` | FaceEmbedder (InsightFace) |
+| `bib` | `bibs.recognize_batch` | BibDetector + BibRecognizer |
 
 ### Celery Beat Schedule
 
 | Task | Interval | Purpose |
 |------|----------|---------|
-| `maintenance.reap_stale_jobs` | 5 minutes | Mark stuck jobs as failed |
-| `maintenance.cleanup_old_jobs` | 24 hours | Delete jobs older than 7 days |
+| `maintenance.reap_stale_jobs` | 5 minutes | Mark stuck pending/processing jobs as failed (age > 65 min) |
+| `maintenance.cleanup_old_jobs` | 24 hours | Delete completed/failed jobs older than `JOB_RETENTION_DAYS` (7) |
+| `maintenance.cleanup_stale_blobs` | 30 minutes | Remove blob staging dirs older than 2 hours |
+| `maintenance.finalize_mega_batch` | on demand | Chord callback that merges mega-batch sub-task results into the parent job |
 
 ### Rate Limit Tiers
 

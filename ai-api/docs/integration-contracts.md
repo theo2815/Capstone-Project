@@ -1,6 +1,6 @@
 # Integration Contracts — Backend-to-ai-api
 
-**Date:** 2026-03-26
+**Date:** 2026-04-23
 **Companion doc:** `integration-architecture.md` (read that first for the full picture)
 **Purpose:** Exact API usage patterns for each backend. Copy-paste ready.
 
@@ -14,11 +14,15 @@ The Desktop Backend uses ai-api for image quality assessment. It calls two endpo
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /api/v1/blur/detect` | Quick blur check (Laplacian + FFT) |
-| `POST /api/v1/blur/classify` | Detailed blur type classification (CNN) |
-| `POST /api/v1/blur/detect/batch` | Batch blur check via Celery |
-| `POST /api/v1/blur/classify/batch` | Batch blur classification via Celery |
-| `GET /api/v1/jobs/{job_id}` | Poll batch job status |
+| `POST /api/v1/blur/detect` | Quick blur check (Laplacian + optional FFT) |
+| `POST /api/v1/blur/detect/stream` | NDJSON streaming check for up to 500 images (no polling) |
+| `POST /api/v1/blur/detect/batch` | Async Celery batch, up to 50 |
+| `POST /api/v1/blur/detect/mega` | Async Celery chord, up to 500 (server splits) |
+| `POST /api/v1/blur/classify` | Detailed blur-type classification (CNN) |
+| `POST /api/v1/blur/classify/stream` | NDJSON streaming classify |
+| `POST /api/v1/blur/classify/batch` | Async batch classify |
+| `POST /api/v1/blur/classify/mega` | Async mega-batch classify |
+| `GET /api/v1/jobs/{job_id}` | Poll batch job status (supports `offset`/`limit`) |
 | `GET /api/v1/health/ready` | Health check before processing |
 
 ### Authentication
@@ -27,7 +31,7 @@ The Desktop Backend uses ai-api for image quality assessment. It calls two endpo
 X-API-Key: sk_desktop_prod_<your_key>
 ```
 
-Scope: `blur:detect`, `blur:classify`
+Scope: `blur:read` (covers both detect and classify endpoints).
 
 ### Flow 1: Single Photo Quality Check
 
@@ -209,19 +213,21 @@ The Web/Mobile Backend uses all ai-api features and manages events, participants
 |----------|---------|
 | `POST /api/v1/blur/detect` | Photo quality gate on upload |
 | `POST /api/v1/blur/classify` | Detailed blur classification |
-| `POST /api/v1/blur/detect/batch` | Batch quality check |
-| `POST /api/v1/blur/classify/batch` | Batch classification |
+| `POST /api/v1/blur/detect/batch` · `/detect/mega` | Async batch / mega-batch quality check |
+| `POST /api/v1/blur/classify/batch` · `/classify/mega` | Async batch / mega-batch classification |
 | `POST /api/v1/faces/enroll` | Register participant face for event |
+| `POST /api/v1/faces/enroll/batch` | Bulk-enroll multiple photos under one person |
 | `POST /api/v1/faces/search` | Find participants in uploaded photo |
-| `POST /api/v1/faces/search/batch` | Batch face search |
-| `POST /api/v1/faces/detect` | Count faces in photo |
+| `POST /api/v1/faces/search/batch` · `/search/mega` | Async batch / mega-batch face search |
+| `POST /api/v1/faces/detect` | Count faces / return bounding boxes |
 | `POST /api/v1/faces/compare` | 1:1 face verification |
+| `GET /api/v1/faces/persons` | Paginated list (scoped by api_key_id + optional event_id) |
 | `GET /api/v1/faces/persons/{id}` | Get enrolled person info |
 | `DELETE /api/v1/faces/persons/{id}` | Remove person (GDPR) |
-| `POST /api/v1/bibs/recognize` | Read bib number from photo |
-| `POST /api/v1/bibs/recognize/batch` | Batch bib reading |
-| `GET /api/v1/jobs/{job_id}` | Poll batch job status |
-| `POST /api/v1/webhooks` | Register webhook for batch completion |
+| `POST /api/v1/bibs/recognize` | Read bib number from photo (`min_chars` override available) |
+| `POST /api/v1/bibs/recognize/batch` · `/recognize/mega` | Async batch / mega-batch |
+| `GET /api/v1/jobs/{job_id}` | Poll batch job status (supports `offset`/`limit`) |
+| `POST /api/v1/webhooks` · `GET` · `DELETE` | Manage webhook subscriptions |
 | `GET /api/v1/health/ready` | Health check |
 
 ### Authentication
@@ -230,7 +236,7 @@ The Web/Mobile Backend uses all ai-api features and manages events, participants
 X-API-Key: sk_webmobile_prod_<your_key>
 ```
 
-Scope: `blur:*`, `faces:*`, `bibs:*`
+Required scopes (actual names used in code): `blur:read`, `faces:read`, `faces:write`, `faces:delete`, `bibs:read`, `jobs:read`, `webhooks:read`, `webhooks:write`. A key with the `*` super-scope passes every check.
 
 ### Flow 1: Event Setup — Enroll Participant Faces
 
@@ -494,16 +500,23 @@ async def remove_participant(participant, event):
 
 ## Error Handling Contract
 
-Both backends must handle these ai-api error scenarios:
+Both backends must handle these ai-api error scenarios. The `Error Code` column shows what appears in the `error.code` field of the standard envelope (or `detail` when the response is a raw FastAPI `HTTPException`).
 
-| HTTP Status | Error Code | Backend Action |
-|------------|-----------|----------------|
-| 200 (success: false) | `LOW_QUALITY` | Flag photo as low quality, ask user for better photo |
-| 400 | `IMAGE_VALIDATION_ERROR` | Reject upload with user-friendly message |
-| 401 | `AuthenticationError` | Log alert — API key may be expired or revoked |
-| 429 | `RateLimitExceededError` | Queue request for retry after `Retry-After` seconds |
-| 503 | `MODEL_UNAVAILABLE` | Show "AI processing temporarily unavailable", queue for retry |
-| 5xx | Any | Retry with exponential backoff (max 3 retries) |
+| HTTP Status | Error Code | Response shape | Backend Action |
+|------------|-----------|---------------|----------------|
+| 200 (success: false) | `LOW_QUALITY` / `NO_FACES` / `NOT_FOUND` / `INVALID_INPUT` / `INVALID_WEBHOOK_URL` / `DELETE_FAILED` | Envelope | Flag, surface user-friendly message, or retry with better input |
+| 400 | `ImageValidationError` (class name) | Envelope | Reject upload with user-friendly message (file type, size, dimensions, corrupt) |
+| 400 | `EMPTY_BATCH` / `BATCH_TOO_LARGE` | Envelope | Recheck client-side batching logic |
+| 401 | `AuthenticationError` (class name) **or** raw `{"detail": "Missing API key"}` | Envelope *or* raw | Log alert — API key may be expired or revoked |
+| 403 | Raw `{"detail": "Insufficient permissions. Required scope: ..."}` | Raw | Request a key with the right scope |
+| 404 | `NOT_FOUND` | Envelope | Fall through to "not found" in the caller |
+| 429 | Raw `{"detail": "Rate limit exceeded. Retry after N seconds."}` | Raw (with `Retry-After` header) | Queue request for retry after `Retry-After` seconds |
+| 429 | `TOO_MANY_JOBS` | Envelope | Wait for earlier batch jobs to finish before submitting more |
+| 503 | `MODEL_UNAVAILABLE` | Envelope | Show "AI processing temporarily unavailable", queue for retry |
+| 504 | `REQUEST_TIMEOUT` | Envelope | Retry with a smaller image or split the request |
+| 5xx | Any | Any | Retry with exponential backoff (max 3 retries) |
+
+**Why the shape varies:** `EventAIError` subclasses (e.g., `ImageValidationError`, `JobNotFoundError`) go through the handler in `src/main.py` and produce the envelope with `error.code = <class_name>`. `HTTPException`s raised inside middleware (auth, rate limit, scope check) use FastAPI's default `{"detail": ...}` body — there is no envelope for those responses.
 
 ### Retry Strategy
 
@@ -595,30 +608,26 @@ BIB_CONFIDENCE_THRESHOLD_DEFAULT=0.7  # Minimum OCR confidence to trust
 
 ```
 Desktop Backend:
-  ✅ blur/detect
-  ✅ blur/classify
-  ✅ blur/detect/batch
-  ✅ blur/classify/batch
+  ✅ blur/detect, blur/detect/stream, blur/detect/batch, blur/detect/mega
+  ✅ blur/classify, blur/classify/stream, blur/classify/batch, blur/classify/mega
   ✅ jobs/{id}
   ✅ health/ready
-  ❌ faces/*        (not used)
-  ❌ bibs/*         (not used)
-  ❌ webhooks       (optional — polling is fine for desktop)
+  ❌ faces/*       (not used)
+  ❌ bibs/*        (not used)
+  ❌ webhooks      (optional — polling is fine for desktop)
 
 Web/Mobile Backend:
-  ✅ blur/detect
-  ✅ blur/classify
-  ✅ blur/detect/batch
-  ✅ blur/classify/batch
-  ✅ faces/enroll    (with event_id!)
-  ✅ faces/search    (with event_id!)
-  ✅ faces/search/batch
+  ✅ blur/detect (+ stream/batch/mega variants)
+  ✅ blur/classify (+ stream/batch/mega variants)
+  ✅ faces/enroll          (with event_id!)
+  ✅ faces/enroll/batch
+  ✅ faces/search          (with event_id!)
+  ✅ faces/search/batch, faces/search/mega
   ✅ faces/detect
   ✅ faces/compare
-  ✅ faces/persons/{id}
-  ✅ bibs/recognize
-  ✅ bibs/recognize/batch
-  ✅ jobs/{id}
-  ✅ webhooks        (recommended for batch workflows)
+  ✅ faces/persons         (list), faces/persons/{id}, DELETE faces/persons/{id}
+  ✅ bibs/recognize, bibs/recognize/batch, bibs/recognize/mega
+  ✅ jobs/{id}             (with offset/limit pagination for large results)
+  ✅ webhooks              (recommended for batch workflows)
   ✅ health/ready
 ```
