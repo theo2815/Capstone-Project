@@ -34,18 +34,13 @@ Checks Redis cache for "apikey:a1b2c3d4..."
 
 ### JWT (future, for mobile/web)
 
-When the mobile app or website needs to call the AI API directly (instead of going through the backend), JWT-based auth will be used:
-- The backend service issues JWTs to authenticated users
-- The AI API validates them using a shared RS256 public key
-- JWTs contain user ID, roles, and rate limit tier
-
-This is configured but not enforced yet (Phase 7).
+When the mobile app or website needs to call the AI API directly (instead of going through the backend), JWT-based auth will be used. `JWT_PUBLIC_KEY` and `JWT_ALGORITHM=RS256` are already in `Settings` but no endpoint currently validates JWTs — only API-key auth is enforced today. The dependency is `PyJWT` with `cryptography`.
 
 ---
 
 ## Rate Limiting
 
-> **Status:** The token bucket rate limiter is fully implemented in `src/middleware/rate_limit.py` but is **not yet wired into any endpoint**. See `phase-plan.md` Phase 6.5 for the activation plan. The description below documents the intended behavior once activated.
+Rate limiting is **enforced** on every authenticated endpoint. `verify_api_key` (`src/middleware/auth.py`) calls `check_rate_limit` (`src/middleware/rate_limit.py`) after successful authentication and stores the result on `request.state.rate_info`. `RateLimitHeadersMiddleware` in `main.py` reads that and attaches the `X-RateLimit-*` headers to every response.
 
 ### How it works
 
@@ -69,18 +64,21 @@ Each API key has a bucket:
 
 ### Response Headers
 
-Rate limit headers are included on **429 rejection responses** (not on every response). Adding headers to all responses is a pending task (Phase 6.5).
+`X-RateLimit-*` headers are attached to **every** authenticated response by `RateLimitHeadersMiddleware`:
 
-On rate-limited responses:
 ```
-HTTP 429 Too Many Requests
-X-RateLimit-Limit: 60
-X-RateLimit-Remaining: 0
-X-RateLimit-Reset: 1708567200   (Unix timestamp)
-Retry-After: 12   (seconds)
+X-RateLimit-Limit: 60              # burst size for the tier
+X-RateLimit-Remaining: 42          # tokens left after this call
+X-RateLimit-Reset: 1708567200      # Unix timestamp when the limiter resets
 ```
 
-> **Note:** The CORS config (`src/middleware/cors.py`) currently exposes `X-RateLimit-Remaining` and `X-RateLimit-Reset` but not `X-RateLimit-Limit`. This will need to be updated when rate limiting is activated.
+On 429 responses these same headers are set, plus `Retry-After: <seconds>`.
+
+> CORS note: `src/middleware/cors.py` currently exposes `X-RateLimit-Remaining` and `X-RateLimit-Reset` to browser clients. `X-RateLimit-Limit` is set on responses but not in the CORS expose list — add it if browsers need to read the per-tier ceiling.
+
+### Extra backpressure for async batches
+
+Each API key is capped at `MAX_ACTIVE_JOBS_PER_KEY` (default 10) concurrent async jobs. Submitting past that returns `429 TOO_MANY_JOBS` until earlier jobs complete.
 
 ### No Redis fallback
 
@@ -100,7 +98,7 @@ Every uploaded image goes through multiple checks before any processing:
 | File size | Maximum 10MB | Prevent memory exhaustion |
 | Magic bytes | Opens file with PIL and calls `.verify()` | A file renamed to .jpg is still detected as non-image |
 | Dimensions | Min 32px, Max 4096px per side | Too small = useless. Too large = memory bomb. |
-| EXIF stripping | Decoded via OpenCV (ignores EXIF) | Privacy: EXIF may contain GPS coordinates, device info |
+| EXIF handling | Pillow applies `ImageOps.exif_transpose` (preserves orientation) then the image is converted to a BGR numpy array which carries no EXIF | Privacy: EXIF metadata (GPS, device info, timestamps) is discarded as soon as the bytes leave Pillow |
 
 ### Face Enrollment Quality Gate
 
@@ -123,8 +121,7 @@ Bib text is cleaned using a strict character filter (`[A-Za-z0-9\-_]`) that pres
 ```
 
 Status codes:
-- 400: Wrong file type, corrupt image, too small
-- 413: File too large
+- 400: Any validation failure (wrong file type, corrupt image, too small, too large). The backing `ImageValidationError` always uses `status_code=400`; there is no separate `413 Payload Too Large` response.
 
 ---
 
@@ -153,7 +150,7 @@ Status codes:
 Controls which websites/apps can call the API from a browser.
 
 ```python
-# Default: only localhost:3000 (your dev frontend)
+# Default (src/config.py):
 ALLOWED_ORIGINS = ["http://localhost:3000"]
 
 # Production example:
@@ -163,6 +160,8 @@ ALLOWED_ORIGINS = ["https://eventai.com", "https://app.eventai.com"]
 **Allowed methods**: GET, POST, DELETE
 **Allowed headers**: X-API-Key, Authorization, Content-Type, X-Request-ID
 **Exposed headers**: X-Request-ID, X-RateLimit-Remaining, X-RateLimit-Reset
+**Credentials**: allowed
+**Max age**: 3600s (preflight cache)
 
 ---
 
@@ -213,15 +212,21 @@ assert hmac.compare_digest(expected, received)
 ## Summary Checklist
 
 - [x] API key authentication (SHA-256 hashed, scoped)
-- [ ] Rate limiting (token bucket via Redis — implemented, not yet wired into endpoints)
-- [x] Input validation (file type, size, dimensions, magic bytes)
-- [x] EXIF stripping (privacy)
-- [x] No image storage (only embeddings and hashes)
+- [x] Rate limiting (token bucket via Redis — enforced on every authenticated endpoint)
+- [x] Per-key concurrent batch job cap (`MAX_ACTIVE_JOBS_PER_KEY`)
+- [x] Input validation (file type, size, dimensions, magic bytes, decompression bomb guard)
+- [x] EXIF rotation applied, EXIF metadata discarded (privacy)
+- [x] No persistent image storage (only embeddings, hashes, and short-lived Celery blob staging)
 - [x] GDPR right-to-erasure endpoint
 - [x] CORS configuration
 - [x] Request ID tracing
-- [x] Webhook HMAC signatures
+- [x] Security response headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy; HSTS in production)
+- [x] Webhook HMAC signatures + SSRF protection (DNS resolve + blocked-network check, TOCTOU-safe). Blocked ranges: `10/8`, `172.16/12`, `192.168/16`, `127/8`, `169.254/16`, `0.0.0.0/8`, `::1/128`, `fc00::/7`, `fe80::/10`.
+- [x] Fernet encryption at rest for webhook secrets (when `WEBHOOK_SECRET_KEY` is set)
 - [x] Structured logging (no sensitive data in logs)
-- [ ] HTTPS enforcement (handled at load balancer level)
-- [ ] JWT authentication (Phase 7)
-- [ ] pip-audit in CI (Phase 7)
+- [x] Production DEBUG guard (server refuses to start with `DEBUG=true` + `ENVIRONMENT=production`)
+- [x] Metrics endpoint authenticated in production
+- [ ] HTTPS enforcement (handled at load balancer / reverse proxy)
+- [ ] JWT authentication for client-direct access (infrastructure ready; no endpoint wired yet)
+- [ ] Celery message signing (requires X.509 PKI setup)
+- [ ] pip-audit in CI

@@ -103,8 +103,9 @@ providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
 ### Celery workers
 - **Scale independently**: Add workers based on queue depth
-- **Each worker loads its own models**: GPU workers can be on different machines
-- **One task at a time** per worker (GPU-bound, `prefetch_multiplier=1`)
+- **Each worker loads its own models**: set `WORKER_QUEUES=blur` (or `face`, `bib`) and start the worker with `-Q blur` to load only what that worker serves. Dev workers without `WORKER_QUEUES` load everything.
+- **Prefetch = 4**: `worker_prefetch_multiplier=4` is safe because task messages carry file paths (blob store), not base64 image bytes.
+- **Time limits**: `task_soft_time_limit=3300s`, `task_time_limit=3600s`. `worker_max_tasks_per_child=500`, `worker_max_memory_per_child=2GB`.
 
 ### Database
 - PostgreSQL scales vertically first (bigger machine)
@@ -141,16 +142,16 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 
 ## Graceful Shutdown
 
-When the server receives SIGTERM (e.g., during deployment):
+When the server receives SIGTERM (e.g., during deployment) the FastAPI lifespan context shuts down in order:
 
-1. Stop accepting new requests
-2. Wait for in-flight requests to complete (up to 30 seconds)
-3. Unload ML models (free GPU memory)
-4. Close Redis connection
-5. Close database connection pool
-6. Process exits cleanly
+1. Stop accepting new requests (uvicorn)
+2. Brief 2-second drain for in-flight requests
+3. `registry.unload_all()` — clears ONNX sessions, InsightFace models, PaddleOCR engine, Ultralytics YOLO models
+4. Close Redis connection (`redis.aclose()`)
+5. Close the database connection pool
+6. Process exits
 
-This is handled by FastAPI's lifespan context manager and Uvicorn's signal handling.
+The 2-second drain is intentionally short — reverse proxies / load balancers are expected to stop routing to the instance before SIGTERM.
 
 ---
 
@@ -162,9 +163,10 @@ Models are loaded at **build time** (in Docker) or **first startup** (local deve
 
 2. **PaddleOCR models**: Downloaded automatically by PaddleOCR on first use. Cached in `~/.paddleocr/`.
 
-3. **YOLOv8 bib detector**: Must be custom-trained on a bib number dataset and placed in `models/bib_detection/yolov8n_bib.onnx`.
+3. **YOLOv8 bib detector**: Custom-trained ONNX ships in the repo at `models/bib_detection/yolov8n_bib.onnx`. Replace it to use a newer model.
+4. **Blur classifier**: Custom-trained ONNX ships in the repo at `models/blur_classifier/blur_classifier.onnx` plus `class_names.json`.
 
-At server startup, the ModelRegistry loads all models into memory in parallel (using `asyncio.gather`). This takes 5-15 seconds depending on the machine. The readiness probe will report `false` until loading completes.
+At server startup, the `ModelRegistry` loads all models in parallel (via `asyncio.gather` + `asyncio.to_thread`). Heavy libraries (`torch`, `insightface`, `ultralytics`) are pre-imported on the main thread first to avoid Windows DLL loading races. This takes 5–15 seconds depending on the machine. The readiness probe returns 503 until loading completes.
 
 ---
 
@@ -172,10 +174,15 @@ At server startup, the ModelRegistry loads all models into memory in parallel (u
 
 | Setting | Development | Staging | Production |
 |---|---|---|---|
-| `DEBUG` | true | false | false |
-| `LOG_LEVEL` | DEBUG | INFO | INFO |
-| `WORKERS` | 1 | 2 | 4 |
-| `USE_GPU` | false | false | true |
-| Swagger UI | Enabled (/docs) | Disabled | Disabled |
-| Auth required | Optional | Required | Required |
-| Rate limits | Disabled (no Redis) | Enabled | Enabled |
+| `DEBUG` | `true` | `false` | `false` (startup aborts if `true` + `ENVIRONMENT=production`) |
+| `ENVIRONMENT` | `development` | `staging` | `production` |
+| `LOG_LEVEL` | `DEBUG` | `INFO` | `INFO` |
+| `WORKERS` | 1–2 | 2 | scale by CPU |
+| `USE_GPU` | `false` | `false` | `true` (needs `[gpu]` extras + CUDA) |
+| Swagger UI / `/redoc` | Enabled | Disabled | Disabled |
+| API-key auth | Bypassable when `DEBUG=true` | Required | Required |
+| `/metrics` | Open (no auth) | Auth required | Auth required |
+| Rate limits | Enforced if Redis is up; no-op otherwise | Enforced | Enforced |
+| `WEBHOOK_SECRET_KEY` | Optional (plaintext fallback) | Set | Set |
+| HSTS header | Off | Off | On (`strict-transport-security`) |
+| `BLOB_STORE_PATH` | `/tmp/eventai-blobs` | Shared volume | Shared volume mounted in API + workers |

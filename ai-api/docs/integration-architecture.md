@@ -1,8 +1,7 @@
 # Integration Architecture — EventAI Platform
 
-**Date:** 2026-03-26
+**Date:** 2026-04-23
 **Status:** Approved design direction
-**Resolves:** ARCH-1 (feature-analysis-report.md)
 
 ---
 
@@ -136,10 +135,10 @@ This is the single source of truth for what each layer owns. If a concern is not
 
 Each backend gets its own API key with appropriate scopes. ai-api isolates data by `api_key_id`.
 
-| Backend | API Key Scope | Rate Tier |
+| Backend | API Key Scopes | Rate Tier |
 |---------|--------------|-----------|
-| Desktop Backend | `blur:detect`, `blur:classify` | Internal (1000 req/min) |
-| Web/Mobile Backend | `blur:*`, `faces:*`, `bibs:*` | Internal (1000 req/min) |
+| Desktop Backend | `blur:read`, `jobs:read` (+ `webhooks:*` if using webhook callbacks) | Internal (1000 req/min) |
+| Web/Mobile Backend | `blur:read`, `faces:read`, `faces:write`, `faces:delete`, `bibs:read`, `jobs:read`, `webhooks:read`, `webhooks:write` — or a single `*` super-scope | Internal (1000 req/min) |
 
 - **Never expose ai-api keys to client apps.** Clients talk to their own backend only.
 - Each API key creates an isolated data space in ai-api (separate face embeddings, separate job history).
@@ -302,19 +301,10 @@ localhost:6379  ← Redis
 
 ---
 
-## What Needs to Change in ai-api
+## What ai-api does NOT own
 
-Based on this architecture, the following changes are needed in ai-api before production:
+(Backend's job — listed here because these come up in design reviews.)
 
-| Change | Priority | Report ID | Description |
-|--------|----------|-----------|-------------|
-| Add `event_id` to face operations | CRITICAL | FA-1 | Add optional `event_id` param to enroll/search/batch-search. Add column to Person model. Filter by it when present. |
-| Return raw confidence always | HIGH | BIB-2 | Already done — just ensure no server-side filtering is added. Document that backends must filter. |
-| Fix dead threshold param in blur detect | MEDIUM | BLUR-3 | Either pass it through to detector or remove the query parameter. |
-| Add duplicate embedding guard | MEDIUM | FA-6 | Check `source_image_hash` + `person_id` before storing. |
-| Add list-persons endpoint | MEDIUM | FA-7 | `GET /faces/persons` scoped by api_key_id (+ event_id). |
-
-Changes that are NOT needed in ai-api (backend's job):
-- Bib-to-participant matching (BIB-1) — backend handles
-- Per-event confidence thresholds (BIB-2) — backend applies
-- Event/participant management — backend owns
+- Bib-to-participant matching — Web/Mobile Backend queries its participants table by the OCR'd number
+- Per-event confidence thresholds — each backend applies its own threshold to the raw confidence ai-api returns
+- Event / participant management — Web/Mobile Backend owns the event and participant records; ai-api only stores `event_id` as an opaque tag for tenant-scoped search

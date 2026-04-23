@@ -10,23 +10,25 @@ EventAI is a REST API that accepts images over HTTP and returns AI analysis resu
 
 ## The 4-Layer Architecture
 
-Every request flows through 4 layers. Each layer has one responsibility and only talks to the layer directly below it.
+Every request flows through up to 4 layers. Each layer has one responsibility and only talks to the layer directly below it.
 
 ```
 HTTP Request from client (mobile app, website, backend service)
     │
     ▼
 ┌──────────────────────────────────────────────────────────┐
-│  API Layer  (src/api/)                                   │
+│  API Layer  (src/api/v1/)                                │
 │  Receives HTTP requests, validates input, returns JSON.  │
-│  No business logic lives here.                           │
+│  Thin handlers — no business logic.                      │
 └──────────────────────┬───────────────────────────────────┘
                        │
                        ▼
 ┌──────────────────────────────────────────────────────────┐
 │  Service Layer  (src/services/)                          │
-│  Contains business rules. Orchestrates ML models and DB. │
-│  "When someone uploads a photo, what should happen?"     │
+│  Business rules. Orchestrates ML models and DB.          │
+│  Today only BlurService exists — face and bib handlers   │
+│  call the ML + repo layers directly while the logic is   │
+│  still thin. Add a service when orchestration grows.     │
 └──────────────────────┬───────────────────────────────────┘
                        │
                        ▼
@@ -39,8 +41,8 @@ HTTP Request from client (mobile app, website, backend service)
                        ▼
 ┌──────────────────────────────────────────────────────────┐
 │  DB Layer  (src/db/)                                     │
-│  Stores and retrieves data. Face embeddings, jobs,       │
-│  webhook subscriptions, API keys.                        │
+│  Stores and retrieves data. Persons + face embeddings,   │
+│  jobs, webhook subscriptions, API keys.                  │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -64,18 +66,22 @@ ML models are large (100MB-500MB each) and take seconds to load. Loading them on
 ```
 Server starts
     │
-    ├── Load BlurDetector into memory                          (required)
-    ├── Load BlurClassifier (YOLOv8n-cls ONNX) into memory    (optional — needs trained model)
-    ├── Load FaceEmbedder (RetinaFace + ArcFace) into memory   (required)
-    ├── Load BibDetector (YOLOv8) into memory                  (optional — needs trained model)
-    ├── Load BibRecognizer (PaddleOCR) into memory             (required)
+    ├── Pre-import torch / insightface / ultralytics    (avoid Windows DLL race)
+    │
+    ├── Load BlurDetector (Laplacian + FFT)             — registered as "blur", required
+    ├── Load BlurClassifier (YOLOv8n-cls ONNX)          — registered as "blur_classifier", optional
+    ├── Load FaceEmbedder (InsightFace buffalo_l)       — registered as "face", required
+    ├── Load BibDetector (YOLOv8n ONNX, Ultralytics)    — registered as "bib_detector", optional
+    ├── Load BibRecognizer (PaddleOCR PP-OCRv5)         — registered as "bib_ocr", required
     │
     ▼
 Server ready to accept requests (models stay in memory)
     │
     ▼
-Server stops → models unloaded, memory freed
+Server stops → registry.unload_all() frees ONNX sessions + engines
 ```
+
+`required` models count toward `models_loaded` in the readiness probe. `optional` models are reported as unavailable in the endpoint response (`503 MODEL_UNAVAILABLE`) if they fail to load, but the server stays up.
 
 ### 2. Async everywhere
 
@@ -96,27 +102,42 @@ except ImportError:
     _HAS_CPP = False  # Falls back to NumPy
 ```
 
-### 4. Background task processing
+### 4. Background task processing (blob-store, not base64)
 
-For batch operations (processing 100+ images), the API doesn't block:
+For batch operations the API never blocks the request and never serialises image bytes onto the Celery queue:
 
 ```
-Client sends 100 images
+Client POSTs N images (multipart)
     │
     ▼
-API creates a Job record in DB, queues tasks to Celery via Redis
+API validates size + count, applies per-key backpressure
+(MAX_ACTIVE_JOBS_PER_KEY; 429 if exceeded)
     │
     ▼
-Returns immediately: { "job_id": "abc-123", "status": "pending" }
+API creates Job row, writes image bytes to
+{BLOB_STORE_PATH}/{job_id}/NNNNN.bin (atomic tmp→rename)
     │
     ▼
-Celery worker picks up tasks, processes images one by one
+Celery task dispatched with (job_id, [file_paths])
     │
     ▼
-Client polls GET /api/v1/jobs/abc-123 to check progress
-    OR
-Client receives a webhook callback when the job completes
+Returns 202: { "job_id": "...", "poll_url": "/jobs/..." }
+    │
+    ▼
+Worker: parallel decode from paths → sub-batched inference
+       → update_job_progress (throttled) → complete_job
+       → cleanup_batch removes blob dir → webhook dispatch
+    │
+    ▼
+Client polls GET /api/v1/jobs/{id}?offset=..&limit=..
+OR receives a webhook (job.completed / job.failed)
 ```
+
+Three batch modes exist per pipeline (see `api-reference.md`):
+
+- `.../batch` — `MAX_BATCH_SIZE` (50) — single Celery task
+- `.../mega`  — `MEGA_BATCH_MAX_SIZE` (500) — Celery chord, auto-chunked, merged by `finalize_mega_batch`
+- `.../stream` (blur only) — `STREAM_BATCH_MAX_SIZE` (500) — synchronous NDJSON stream; no Celery
 
 ## Request Flow (complete example)
 
@@ -125,34 +146,36 @@ Here's what happens when a client calls `POST /api/v1/blur/detect`:
 ```
 1. Client sends HTTP POST with an image file
    │
-2. RequestIDMiddleware assigns a UUID (e.g., "req-abc-123")
+2. SecurityHeadersMiddleware adds X-Content-Type-Options/X-Frame-Options/
+   Referrer-Policy (+ HSTS in production) — pure ASGI wrapper
    │
-3. auth.py extracts X-API-Key header
-   ├── Hashes the key with SHA-256
-   ├── Checks Redis cache for the hash
-   ├── If not cached, checks PostgreSQL api_keys table
-   ├── Returns key metadata (scopes, rate tier)
+3. CORSMiddleware validates origin
    │
-4. The route handler in blur.py runs:
-   ├── Calls validate_and_decode() on the uploaded file
-   │   ├── Checks content type (JPEG/PNG/WebP only)
-   │   ├── Checks file size (10MB max)
-   │   ├── Verifies image magic bytes (not just the header)
-   │   ├── Checks dimensions (32px min, 4096px max)
-   │   └── Strips EXIF data, decodes to numpy array
+4. RequestIDMiddleware assigns / validates X-Request-ID → request.state
    │
-   ├── Gets the BlurDetector from the model registry
+5. TimeoutMiddleware starts a 60s wall-clock timer (504 if exceeded)
    │
-   ├── Calls detector.detect(image)
-   │   ├── Converts to grayscale
-   │   ├── Applies Laplacian filter, computes variance
-   │   ├── Runs FFT, computes high-frequency ratio
-   │   └── Returns: { is_blurry, confidence, metrics }
+6. verify_api_key (route dep) extracts X-API-Key
+   ├── SHA-256 hashes the header
+   ├── Checks Redis cache for "apikey:<hash>"
+   ├── Falls back to the api_keys table on cache miss
+   ├── Enforces rate limit (token bucket in Redis, per tier)
+   └── Stores rate_info on request.state
    │
-   ├── Wraps result in BlurDetectionResponse (Pydantic schema)
-   └── Wraps that in APIResponse envelope
-       │
-5. Client receives JSON response
+7. check_scope("blur:read", key_meta) — 403 if key lacks the scope
+   │
+8. Route handler:
+   ├── validate_and_decode() — content type, 10MB cap, PIL magic check,
+   │                          EXIF rotate, 32–4096 px bounds, BGR ndarray
+   │                          (downscaled to MAX_INFERENCE_DIMENSION)
+   ├── registry.get("blur") — BlurDetector
+   ├── asyncio.to_thread(detector.detect, image) — runs Laplacian (+ FFT)
+   │   off the event loop; uses _eventai_cpp when present
+   └── Wraps result in BlurDetectionResponse → APIResponse envelope
+   │
+9. RateLimitHeadersMiddleware attaches X-RateLimit-*
+   │
+10. Client receives JSON response with X-Request-ID header
 ```
 
 ## Infrastructure Diagram
