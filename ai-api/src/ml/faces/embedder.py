@@ -33,7 +33,7 @@ class FaceEmbedder:
         self.app.prepare(ctx_id=ctx_id, det_size=(det_size, det_size))
 
         # Keep only detection and recognition models — drop genderage and
-        # extra landmark models that are computed but never used by EventAI.
+        # extra landmark models that are computed but never used by QuickPitik.
         # Saves ~40% compute per inference call and ~40% memory.
         _needed = {"detection", "recognition"}
         if hasattr(self.app, "models") and isinstance(self.app.models, dict):

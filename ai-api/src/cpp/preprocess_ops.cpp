@@ -4,7 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace eventai {
+namespace quickpitik {
 
 py::array_t<uint8_t> bgr_to_gray(py::array_t<uint8_t> bgr) {
     auto buf = bgr.unchecked<3>();
@@ -166,4 +166,4 @@ py::array_t<float> classify_preprocess(py::array_t<uint8_t> bgr,
     return result;
 }
 
-}  // namespace eventai
+}  // namespace quickpitik

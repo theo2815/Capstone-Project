@@ -1,5 +1,5 @@
-const ACCESS_TOKEN_KEY = "eventai_access_token";
-const REFRESH_TOKEN_KEY = "eventai_refresh_token";
+const ACCESS_TOKEN_KEY = "quickpitik_access_token";
+const REFRESH_TOKEN_KEY = "quickpitik_refresh_token";
 
 export function getAccessToken(): string | null {
   if (typeof window === "undefined") return null;

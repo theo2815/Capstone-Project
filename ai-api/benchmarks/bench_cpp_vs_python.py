@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-# Ensure the project root is on sys.path so _eventai_cpp can be found.
+# Ensure the project root is on sys.path so _quickpitik_cpp can be found.
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 
 try:
-    import _eventai_cpp as cpp
+    import _quickpitik_cpp as cpp
 
     HAS_CPP = True
 except ImportError:
@@ -168,7 +168,7 @@ def bench_preprocess():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("EventAI C++ Extension Benchmarks")
+    print("QuickPitik C++ Extension Benchmarks")
     if HAS_CPP:
         print(f"Extension version: {cpp.__version__}")
     print("=" * 60)

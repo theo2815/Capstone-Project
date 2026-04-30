@@ -1,6 +1,5 @@
-# EventAI — Project Vision
+# QuickPitik — Project Vision
 
-**Date:** 2026-03-26
 **Type:** Capstone Project / Startup
 **Location:** Cebu, Philippines
 **Target Market:** Marathon and running event photography
@@ -49,7 +48,7 @@ Event participants also struggle:
 
 ### Our Advantage
 
-Neither competitor offers the complete pipeline. FindMyShots has the search but not the upload. Zno Instant has the upload but not the search. **EventAI combines both into one platform.**
+Neither competitor offers the complete pipeline. FindMyShots has the search but not the upload. Zno Instant has the upload but not the search. **QuickPitik combines both into one platform.**
 
 ---
 
@@ -141,7 +140,7 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
 
 ```
 1. Photographer arrives at marathon venue
-2. Opens EventAI mobile app → Connects camera
+2. Opens QuickPitik mobile app → Connects camera
 3. Race starts → Photographer shoots
 4. Every photo auto-uploads to cloud in real-time
 5. ai-api runs blur detection on each upload
@@ -157,11 +156,11 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
 
 ```
 1. Photographer returns home with SD card (if not using mobile upload)
-2. Opens EventAI desktop app
+2. Opens QuickPitik desktop app
 3. Imports 10,000 photos from SD card
 4. Desktop app auto-detects and separates 800 blurry images
 5. Desktop app sorts remaining 9,200 photos into 19 folders of 500
-6. Photographer uploads sorted folders to EventAI website
+6. Photographer uploads sorted folders to QuickPitik website
 7. Total time: ~5-10 minutes (vs 1-2 hours manual)
 ```
 
@@ -169,7 +168,7 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
 
 ```
 1. Runner finishes marathon
-2. Opens EventAI app or website
+2. Opens QuickPitik app or website
 3. Searches for "Cebu Marathon 2026"
 4. Taps "Find My Photos"
 5. Option A: Takes a selfie → face recognition finds all matching photos
@@ -182,7 +181,7 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
 ### Journey 4: Admin Creates Public Event Gallery
 
 ```
-1. Admin logs in to EventAI admin panel
+1. Admin logs in to QuickPitik admin panel
 2. Creates a new event (e.g., "Cebu Marathon 2026") as a public gallery
 3. Configures event settings (photo pricing, blur threshold, etc.)
 4. Assigns photographers to the event
@@ -366,7 +365,7 @@ See `ai-api/docs/integration-architecture.md` and `ai-api/docs/integration-contr
 
 ## Summary
 
-EventAI creates a complete ecosystem for marathon photography in Cebu by combining:
+QuickPitik creates a complete ecosystem for marathon photography in Cebu by combining:
 
 | Problem | Solution |
 |---------|----------|

@@ -1,4 +1,4 @@
-# Integration Architecture — EventAI Platform
+# Integration Architecture — QuickPitik Platform
 
 **Date:** 2026-04-23
 **Status:** Approved design direction
@@ -7,13 +7,13 @@
 
 ## System Overview
 
-EventAI is a **multi-product platform** that serves three client applications through a shared AI microservice:
+QuickPitik is a **multi-product platform** that serves three client applications through a shared AI microservice:
 
 | Product | Platform | Features Used |
 |---------|----------|---------------|
-| EventAI Desktop | Electron (already built) | Blur detection + classification |
-| EventAI Web | Next.js (Vercel) | Blur + Face search + Bib recognition |
-| EventAI Mobile | Kotlin (Android first, iOS planned) | Blur + Face search + Bib recognition |
+| QuickPitik Desktop | Electron (already built) | Blur detection + classification |
+| QuickPitik Web | Next.js (Vercel) | Blur + Face search + Bib recognition |
+| QuickPitik Mobile | Kotlin (Android first, iOS planned) | Blur + Face search + Bib recognition |
 
 Each product has its **own backend**. All backends share a **single ai-api instance** for ML inference.
 

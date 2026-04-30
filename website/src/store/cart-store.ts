@@ -27,6 +27,6 @@ export const useCartStore = create<CartState>()(
       clear: () => set({ items: [] }),
       total: () => get().items.reduce((sum, item) => sum + item.price, 0),
     }),
-    { name: "eventai-cart" },
+    { name: "quickpitik-cart" },
   ),
 );

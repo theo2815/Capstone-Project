@@ -87,7 +87,7 @@ Check if a single image is blurry (Laplacian/FFT).
 **Example:**
 ```bash
 curl -X POST http://localhost:8000/api/v1/blur/detect \
-  -H "X-API-Key: sk_dev_eventai_test_key_12345" \
+  -H "X-API-Key: sk_dev_quickpitik_test_key_12345" \
   -F "file=@photo.jpg" \
   -G -d "threshold=100" -d "include_metrics=true"
 ```
@@ -557,7 +557,7 @@ Delivered as `POST <your url>` with `Content-Type: application/json`. The body f
 (`job.failed` replaces `result_count` with `error`.) If a `secret` was registered, the request includes:
 
 ```
-X-EventAI-Signature: sha256=<HMAC-SHA256(secret, raw body)>
+X-QuickPitik-Signature: sha256=<HMAC-SHA256(secret, raw body)>
 ```
 
 Verify with `hmac.compare_digest`. Delivery retries up to 3 times with exponential backoff on HTTP errors.
@@ -590,7 +590,7 @@ Prometheus text format. In `DEBUG=true` mode the endpoint is open. In production
 | 503 | `MODEL_UNAVAILABLE` | Required model not loaded at startup |
 | 504 | `REQUEST_TIMEOUT` | Request exceeded 60-second wall clock |
 
-Errors raised from `EventAIError` subclasses (`ImageValidationError`, `ModelNotLoadedError`, `AuthenticationError`, `RateLimitExceededError`, `JobNotFoundError`) are translated into the standard envelope by an exception handler in `main.py`. Raw `HTTPException`s from middleware (auth, rate limit) use FastAPI's default `{"detail": ...}` body.
+Errors raised from `QuickPitikError` subclasses (`ImageValidationError`, `ModelNotLoadedError`, `AuthenticationError`, `RateLimitExceededError`, `JobNotFoundError`) are translated into the standard envelope by an exception handler in `main.py`. Raw `HTTPException`s from middleware (auth, rate limit) use FastAPI's default `{"detail": ...}` body.
 
 ---
 

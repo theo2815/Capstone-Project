@@ -39,7 +39,7 @@ def app():
         test_app = create_app()
         # Inject settings for test
         test_app.state.settings = MagicMock(
-            APP_NAME="EventAI Test",
+            APP_NAME="QuickPitik Test",
             APP_VERSION="1.0.0-test",
             DEBUG=True,
             ENVIRONMENT="development",

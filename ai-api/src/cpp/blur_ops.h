@@ -8,7 +8,7 @@
 
 namespace py = pybind11;
 
-namespace eventai {
+namespace quickpitik {
 
 struct BlurMetrics {
     double laplacian_var;
@@ -27,4 +27,4 @@ double fft_hf_ratio(py::array_t<uint8_t> gray);
 std::vector<BlurMetrics> batch_blur_metrics(
     const std::vector<py::array_t<uint8_t>>& images);
 
-}  // namespace eventai
+}  // namespace quickpitik

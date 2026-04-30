@@ -4,7 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace eventai {
+namespace quickpitik {
 
 float cosine_similarity(py::array_t<float> a, py::array_t<float> b) {
     auto buf_a = a.unchecked<1>();
@@ -99,4 +99,4 @@ TopKResult batch_cosine_topk(py::array_t<float> query,
     return result;
 }
 
-}  // namespace eventai
+}  // namespace quickpitik

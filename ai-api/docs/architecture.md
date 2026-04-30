@@ -2,7 +2,7 @@
 
 ## Overview
 
-EventAI is a REST API that accepts images over HTTP and returns AI analysis results. It supports three computer vision features:
+QuickPitik is a REST API that accepts images over HTTP and returns AI analysis results. It supports three computer vision features:
 
 1. **Blur Detection** - Determines if an image is blurry
 2. **Face Recognition** - Detects, enrolls, and matches faces
@@ -96,7 +96,7 @@ Performance-critical code (batch cosine similarity, batch image preprocessing) c
 
 ```python
 try:
-    from _eventai_cpp import batch_cosine_topk  # Fast C++ path
+    from _quickpitik_cpp import batch_cosine_topk  # Fast C++ path
     _HAS_CPP = True
 except ImportError:
     _HAS_CPP = False  # Falls back to NumPy
@@ -170,7 +170,7 @@ Here's what happens when a client calls `POST /api/v1/blur/detect`:
    │                          (downscaled to MAX_INFERENCE_DIMENSION)
    ├── registry.get("blur") — BlurDetector
    ├── asyncio.to_thread(detector.detect, image) — runs Laplacian (+ FFT)
-   │   off the event loop; uses _eventai_cpp when present
+   │   off the event loop; uses _quickpitik_cpp when present
    └── Wraps result in BlurDetectionResponse → APIResponse envelope
    │
 9. RateLimitHeadersMiddleware attaches X-RateLimit-*

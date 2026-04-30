@@ -9,7 +9,7 @@ export async function generateMetadata({
 }: EventDetailPageProps): Promise<Metadata> {
   const { slug } = await params;
   return {
-    title: `${slug} | EventAI`,
+    title: `${slug} | QuickPitik`,
   };
 }
 

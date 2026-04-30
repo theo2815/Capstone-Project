@@ -97,7 +97,7 @@ def deliver_webhook(
         signature = hmac.new(
             secret.encode(), body.encode(), hashlib.sha256
         ).hexdigest()
-        headers["X-EventAI-Signature"] = f"sha256={signature}"
+        headers["X-QuickPitik-Signature"] = f"sha256={signature}"
 
     # Replace hostname with resolved IP to prevent DNS rebinding TOCTOU
     target_url = url.replace(hostname, resolved_ip, 1)

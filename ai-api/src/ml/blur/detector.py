@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 
 try:
-    from _eventai_cpp import laplacian_variance as _cpp_laplacian_var
-    from _eventai_cpp import fft_hf_ratio as _cpp_hf_ratio
+    from _quickpitik_cpp import laplacian_variance as _cpp_laplacian_var
+    from _quickpitik_cpp import fft_hf_ratio as _cpp_hf_ratio
 
     _HAS_CPP = True
 except ImportError:

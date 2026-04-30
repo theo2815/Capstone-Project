@@ -9,7 +9,7 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-namespace eventai {
+namespace quickpitik {
 
 // ---------- Laplacian Variance ----------
 
@@ -206,4 +206,4 @@ std::vector<BlurMetrics> batch_blur_metrics(
     return results;
 }
 
-}  // namespace eventai
+}  // namespace quickpitik

@@ -1,6 +1,6 @@
 # Desktop App - Blur Detection API Integration Guide
 
-This guide explains how to connect the desktop (Electron) app to the EventAI blur detection API using your own API key.
+This guide explains how to connect the desktop (Electron) app to the QuickPitik blur detection API using your own API key.
 
 ## Prerequisites
 
@@ -43,7 +43,7 @@ VALUES ('<uuid>', '<sha256_hash>', 'Desktop App', '["*"]', 'pro', true);
 If running PostgreSQL via Docker Compose:
 
 ```bash
-docker compose exec db psql -U postgres -d eventai -c "<the SQL from step 1>"
+docker compose exec db psql -U postgres -d quickpitik -c "<the SQL from step 1>"
 ```
 
 Or run the helper script if one was already generated:

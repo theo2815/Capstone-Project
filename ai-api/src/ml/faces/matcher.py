@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 try:
-    from _eventai_cpp import batch_cosine_topk as _cpp_topk
+    from _quickpitik_cpp import batch_cosine_topk as _cpp_topk
 
     _HAS_CPP = True
 except ImportError:

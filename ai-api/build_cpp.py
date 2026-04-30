@@ -1,4 +1,4 @@
-"""Build script for the _eventai_cpp C++ extension.
+"""Build script for the _quickpitik_cpp C++ extension.
 
 Usage:
     python build_cpp.py          # Build the extension
@@ -21,7 +21,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 BUILD_DIR = PROJECT_ROOT / "build" / "cpp"
 EXT_SUFFIX = sysconfig.get_config_var("EXT_SUFFIX") or ".pyd"
-MODULE_NAME = f"_eventai_cpp{EXT_SUFFIX}"
+MODULE_NAME = f"_quickpitik_cpp{EXT_SUFFIX}"
 
 
 def find_vcvarsall() -> str | None:
@@ -121,12 +121,12 @@ def build() -> None:
     dest = PROJECT_ROOT / MODULE_NAME
     shutil.copy2(artifact, dest)
     print(f"\nCopied {artifact.name} -> {dest}")
-    print(f"\nVerify: python -c \"import _eventai_cpp; print(_eventai_cpp.__version__)\"")
+    print(f"\nVerify: python -c \"import _quickpitik_cpp; print(_quickpitik_cpp.__version__)\"")
 
 
 def _find_artifact() -> Path | None:
     """Search the build directory for the compiled extension."""
-    for path in BUILD_DIR.rglob(f"_eventai_cpp*"):
+    for path in BUILD_DIR.rglob(f"_quickpitik_cpp*"):
         if path.suffix in (".pyd", ".so"):
             return path
     return None

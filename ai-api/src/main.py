@@ -13,7 +13,7 @@ from src.db.session import close_db, init_db
 from src.middleware.cors import setup_cors
 from src.middleware.request_id import RequestIDMiddleware
 from src.ml.registry import ModelRegistry
-from src.utils.exceptions import EventAIError
+from src.utils.exceptions import QuickPitikError
 from src.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -166,8 +166,8 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
 
     # Exception handlers
-    @app.exception_handler(EventAIError)
-    async def eventai_error_handler(request: Request, exc: EventAIError):
+    @app.exception_handler(QuickPitikError)
+    async def quickpitik_error_handler(request: Request, exc: QuickPitikError):
         return JSONResponse(
             status_code=exc.status_code,
             content={

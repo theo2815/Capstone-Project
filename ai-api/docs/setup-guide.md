@@ -5,7 +5,7 @@
 - **Python 3.11 – 3.14** (see `pyproject.toml`: `requires-python = ">=3.11,<3.15"`)
 - **Docker Desktop** (for PostgreSQL and Redis)
 - **Git**
-- **(Optional) C++ toolchain** — only needed if you want to build the `_eventai_cpp` extension locally: GCC 10+/Clang 12+ on Linux, MSVC (Visual Studio Build Tools) on Windows, Xcode CLT on macOS. The app runs fine with the NumPy fallback if the extension isn't built.
+- **(Optional) C++ toolchain** — only needed if you want to build the `_quickpitik_cpp` extension locally: GCC 10+/Clang 12+ on Linux, MSVC (Visual Studio Build Tools) on Windows, Xcode CLT on macOS. The app runs fine with the NumPy fallback if the extension isn't built.
 
 ## Quick Start
 
@@ -149,7 +149,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 |---|---|---|
 | `DEBUG` | `false` | Enable debug mode (opens Swagger, relaxes auth in dev) |
 | `ENVIRONMENT` | `development` | Set to `production` in prod. Startup rejects `DEBUG=true` + `production`. |
-| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/eventai` | PostgreSQL connection string |
+| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/quickpitik` | PostgreSQL connection string |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
 | `MODEL_DIR` | `./models` | Root directory the registry looks in for model files |
 | `USE_GPU` | `false` | Enable GPU inference (needs `[gpu]` extras + CUDA runtime) |
@@ -169,7 +169,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `MAX_INFERENCE_DIMENSION` | `640` | Downscale images before inference to this max side |
 | `INFERENCE_SUB_BATCH_SIZE` | `50` | Sub-batch size inside Celery batch tasks |
 | `ONNX_INTRA_OP_THREADS` | `6` | ONNX intra-op thread count |
-| `BLOB_STORE_PATH` | `/tmp/eventai-blobs` | Shared volume for batch image staging |
+| `BLOB_STORE_PATH` | `/tmp/quickpitik-blobs` | Shared volume for batch image staging |
 | `ALLOWED_ORIGINS` | `["http://localhost:3000"]` | CORS allowed origins |
 | `WEBHOOK_SECRET_KEY` | (empty) | Fernet key for webhook-secret encryption at rest |
 | `LOG_LEVEL` | `INFO` | Logging level |

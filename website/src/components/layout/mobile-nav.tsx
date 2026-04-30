@@ -17,37 +17,37 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
 
   return (
     <div className="fixed inset-0 z-50 md:hidden">
-      <div className="fixed inset-0 bg-charcoal/50" onClick={onClose} aria-hidden />
-      <div className="fixed inset-y-0 right-0 w-full max-w-xs bg-surface p-6 shadow-xl">
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-hidden />
+      <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-charcoal-deep p-6 shadow-2xl animate-slide-in-right">
         <div className="flex items-center justify-between">
-          <Link href={ROUTES.HOME} onClick={onClose} className="flex items-center gap-2">
+          <Link href={ROUTES.HOME} onClick={onClose} className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
               <Camera className="h-4 w-4 text-white" />
             </div>
-            <span className="text-lg font-bold text-charcoal">Quick Pitik</span>
+            <span className="text-lg font-bold text-white">Quick Pitik</span>
           </Link>
-          <button onClick={onClose}>
-            <X className="h-6 w-6 text-charcoal" />
+          <button onClick={onClose} aria-label="Close menu">
+            <X className="h-5 w-5 text-cool-gray hover:text-white transition-colors" />
           </button>
         </div>
 
-        <nav className="mt-8 flex flex-col gap-4">
+        <nav className="mt-10 flex flex-col gap-1 stagger-children">
           <Link
             href={ROUTES.EVENTS}
             onClick={onClose}
-            className="text-base font-medium text-charcoal hover:text-primary transition-colors"
+            className="rounded-lg px-3 py-3 text-[15px] font-medium text-cool-gray hover:bg-white/5 hover:text-white transition-colors"
           >
             Events
           </Link>
           <Link
             href="/#how-it-works"
             onClick={onClose}
-            className="text-base font-medium text-charcoal hover:text-primary transition-colors"
+            className="rounded-lg px-3 py-3 text-[15px] font-medium text-cool-gray hover:bg-white/5 hover:text-white transition-colors"
           >
             How It Works
           </Link>
 
-          <div className="my-2 border-t border-border" />
+          <div className="my-3 border-t border-white/[0.06]" />
 
           {isAuthenticated ? (
             <>
@@ -55,7 +55,7 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
                 <Link
                   href={ROUTES.DASHBOARD}
                   onClick={onClose}
-                  className="text-base font-medium text-charcoal hover:text-primary transition-colors"
+                  className="rounded-lg px-3 py-3 text-[15px] font-medium text-cool-gray hover:bg-white/5 hover:text-white transition-colors"
                 >
                   Dashboard
                 </Link>
@@ -64,7 +64,7 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
                 <Link
                   href={ROUTES.ADMIN}
                   onClick={onClose}
-                  className="text-base font-medium text-charcoal hover:text-primary transition-colors"
+                  className="rounded-lg px-3 py-3 text-[15px] font-medium text-cool-gray hover:bg-white/5 hover:text-white transition-colors"
                 >
                   Admin
                 </Link>
@@ -72,21 +72,21 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
               <Link
                 href={ROUTES.CART}
                 onClick={onClose}
-                className="text-base font-medium text-charcoal hover:text-primary transition-colors"
+                className="rounded-lg px-3 py-3 text-[15px] font-medium text-cool-gray hover:bg-white/5 hover:text-white transition-colors"
               >
                 Cart
               </Link>
               <Link
                 href={ROUTES.ORDERS}
                 onClick={onClose}
-                className="text-base font-medium text-charcoal hover:text-primary transition-colors"
+                className="rounded-lg px-3 py-3 text-[15px] font-medium text-cool-gray hover:bg-white/5 hover:text-white transition-colors"
               >
                 Orders
               </Link>
               <Link
                 href={ROUTES.PROFILE}
                 onClick={onClose}
-                className="text-base font-medium text-charcoal hover:text-primary transition-colors"
+                className="rounded-lg px-3 py-3 text-[15px] font-medium text-cool-gray hover:bg-white/5 hover:text-white transition-colors"
               >
                 Profile
               </Link>
@@ -95,7 +95,7 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
                   logout();
                   onClose();
                 }}
-                className="text-left text-base font-medium text-charcoal hover:text-primary transition-colors"
+                className="rounded-lg px-3 py-3 text-left text-[15px] font-medium text-cool-gray-dark hover:bg-white/5 hover:text-white transition-colors"
               >
                 Logout
               </button>
@@ -105,14 +105,14 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
               <Link
                 href={ROUTES.LOGIN}
                 onClick={onClose}
-                className="text-base font-medium text-charcoal hover:text-primary transition-colors"
+                className="rounded-lg px-3 py-3 text-[15px] font-medium text-cool-gray hover:bg-white/5 hover:text-white transition-colors"
               >
                 Log In
               </Link>
               <Link
                 href={ROUTES.REGISTER}
                 onClick={onClose}
-                className="mt-2 block rounded-lg bg-primary px-4 py-2.5 text-center text-base font-medium text-white hover:bg-primary-hover transition-colors"
+                className="mt-3 block rounded-lg bg-primary px-4 py-3 text-center text-[15px] font-semibold text-white hover:bg-teal-light transition-colors"
               >
                 Sign Up
               </Link>

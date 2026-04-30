@@ -154,7 +154,7 @@ Controls which websites/apps can call the API from a browser.
 ALLOWED_ORIGINS = ["http://localhost:3000"]
 
 # Production example:
-ALLOWED_ORIGINS = ["https://eventai.com", "https://app.eventai.com"]
+ALLOWED_ORIGINS = ["https://quickpitik.com", "https://app.quickpitik.com"]
 ```
 
 **Allowed methods**: GET, POST, DELETE
@@ -188,14 +188,14 @@ When delivering webhook callbacks, if the subscriber provided a secret:
 Body: {"event": "job.completed", "job_id": "abc-123", ...}
 Secret: "my_webhook_secret"
 
-X-EventAI-Signature: sha256=<HMAC-SHA256(secret, body)>
+X-QuickPitik-Signature: sha256=<HMAC-SHA256(secret, body)>
 ```
 
 The subscriber should verify the signature before trusting the payload:
 ```python
 import hmac, hashlib
 expected = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
-received = request.headers["X-EventAI-Signature"].removeprefix("sha256=")
+received = request.headers["X-QuickPitik-Signature"].removeprefix("sha256=")
 assert hmac.compare_digest(expected, received)
 ```
 

@@ -1,4 +1,4 @@
-# EventAI - AI API
+# QuickPitik - AI API
 
 ## Project Overview
 
@@ -76,13 +76,13 @@ Any code that uses the C++ extension must use the try/except import pattern:
 
 ```python
 try:
-    from _eventai_cpp import some_function
+    from _quickpitik_cpp import some_function
     _HAS_CPP = True
 except ImportError:
     _HAS_CPP = False
 ```
 
-Then branch on `_HAS_CPP`. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_eventai_cpp` (see `src/cpp/bindings.cpp`): `cosine_similarity`, `batch_cosine_topk`, `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports `TopKResult` and `BlurMetrics` result structs.
+Then branch on `_HAS_CPP`. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_quickpitik_cpp` (see `src/cpp/bindings.cpp`): `cosine_similarity`, `batch_cosine_topk`, `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports `TopKResult` and `BlurMetrics` result structs.
 
 ### Database Access
 
@@ -109,7 +109,7 @@ Image bytes are never put on the Celery message queue. The pattern is:
 
 1. API handler validates uploads with `validate_batch_files` (raw bytes, in-memory).
 2. `create_batch_job` creates the job row and applies backpressure (`MAX_ACTIVE_JOBS_PER_KEY`, default 10 → 429 when exceeded).
-3. `store_blobs_and_get_paths` atomically writes each image to `{BLOB_STORE_PATH}/{job_id}/NNNNN.bin` (default `/tmp/eventai-blobs`).
+3. `store_blobs_and_get_paths` atomically writes each image to `{BLOB_STORE_PATH}/{job_id}/NNNNN.bin` (default `/tmp/quickpitik-blobs`).
 4. Celery task receives `(job_id, image_paths, ...)` — small payload.
 5. Worker decodes from paths in parallel, runs inference in sub-batches of `INFERENCE_SUB_BATCH_SIZE` (50).
 6. `complete_job` / `fail_job` updates the DB, deletes the blob directory, and fires any webhook subscriptions for `job.completed` / `job.failed`.
@@ -145,7 +145,7 @@ For client-side pagination of large result sets, `GET /jobs/{id}` supports `offs
 - All route handlers are `async`. CPU-bound ML inference runs via `asyncio.to_thread()` when called from async context.
 - API endpoints are versioned: `/api/v1/...`. Future breaking changes go in `src/api/v2/` (not yet created).
 - Logging: use `from src.utils.logging import get_logger; logger = get_logger(__name__)`. Always structured (key=value), never f-string log messages.
-- Exceptions: use custom types from `src/utils/exceptions.py` (`EventAIError` and subclasses). The `EventAIError` handler in `main.py` turns them into the standard error envelope.
+- Exceptions: use custom types from `src/utils/exceptions.py` (`QuickPitikError` and subclasses). The `QuickPitikError` handler in `main.py` turns them into the standard error envelope.
 - Image validation: always call `validate_and_decode()` from `src/utils/image_utils.py` before processing uploads. Never trust Content-Type headers alone.
 - Database: use `UUID` primary keys everywhere. Timestamps use `DateTime(timezone=True)`.
 - Environment config: never hardcode values. Add to `src/config.py` and read from env vars.
@@ -302,6 +302,6 @@ Training images live in `Training-Images/` (gitignored). Model artifacts live in
 | PostgreSQL 16 + pgvector | Jobs, webhook subscriptions, persons, face embeddings, API keys | All features |
 | Redis 7 | Celery broker/backend, rate limiting, API key cache | All features (rate limiting and caching degrade gracefully if absent) |
 | Celery worker | Async task execution | Batch / mega endpoints and webhooks |
-| Blob store volume | `BLOB_STORE_PATH` (default `/tmp/eventai-blobs`) — shared between API and workers | Batch / mega endpoints |
+| Blob store volume | `BLOB_STORE_PATH` (default `/tmp/quickpitik-blobs`) — shared between API and workers | Batch / mega endpoints |
 
 Start infra: `docker compose up db redis -d`

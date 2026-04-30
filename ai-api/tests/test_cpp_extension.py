@@ -1,4 +1,4 @@
-"""Tests for the _eventai_cpp C++ extension module.
+"""Tests for the _quickpitik_cpp C++ extension module.
 
 Skipped automatically if the extension is not built.
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-cpp = pytest.importorskip("_eventai_cpp", reason="C++ extension not built")
+cpp = pytest.importorskip("_quickpitik_cpp", reason="C++ extension not built")
 
 
 # ──────────────────────────────────────────────────────────────

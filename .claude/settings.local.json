@@ -37,7 +37,7 @@
       "Bash(pip install:*)",
       "Bash(docker ps:*)",
       "Bash(docker exec:*)",
-      "Bash(PGPASSWORD=postgres psql -h localhost -U postgres -d eventai -c \"SELECT 1\" 2>&1)",
+      "Bash(PGPASSWORD=postgres psql -h localhost -U postgres -d quickpitik -c \"SELECT 1\" 2>&1)",
       "Bash(cd /c/Users/\"Theo Cedric Chan\"/documents/\"Start up project\"/capstone-project)",
       "Bash(find /c/Users/Theo Cedric Chan/documents/Start up project/capstone-project -name *.pt -o -name *.onnx -o -name *.pth)",
       "Bash(find /c/Users/Theo Cedric Chan/documents/Start up project/capstone-project -path */.venv -prune -o \\\\\\(-name *.pt -o -name *.onnx -o -name *.pth \\\\\\) -type f -print)",
@@ -49,7 +49,26 @@
       "Bash(npm view:*)",
       "Bash(npx create-next-app@15 website --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --use-npm --no-turbopack)",
       "Bash(npm install:*)",
-      "Bash(npx next:*)"
+      "Bash(npx next:*)",
+      "Bash(git check-ignore *)",
+      "Bash(grep -i \"^models$\")",
+      "Bash(git restore *)",
+      "Bash(docker compose *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8765/health)",
+      "Bash(curl -s http://127.0.0.1:8765/openapi.json)",
+      "Bash(curl -s http://127.0.0.1:8765/api/v1/health)",
+      "Bash(curl -s http://127.0.0.1:8765/api/v1/health/ready)",
+      "Bash(curl -s -H \"X-API-Key: sk_test_7a6ea52ba1022eb85d904364cf51e41a\" http://127.0.0.1:8765/api/v1/health/ready)",
+      "Bash(taskkill //F //FI \"WINDOWTITLE eq uvicorn*\")",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs -r kill)",
+      "Bash(powershell -Command 'Get-NetTCPConnection -LocalPort 8765 -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force }')",
+      "Bash(curl -s -o /dev/null -w \"after kill: %{http_code}\\\\n\" --max-time 2 http://127.0.0.1:8765/api/v1/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" --max-time 2 http://127.0.0.1:8765/api/v1/health)",
+      "Bash(powershell -Command 'Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in 8000,8765,6379,5432 } | Select-Object LocalPort, OwningProcess | Format-Table -AutoSize')",
+      "Bash(npm run *)",
+      "Bash(curl *)",
+      "Bash(npx tsc *)"
     ]
   }
 }

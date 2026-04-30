@@ -1,175 +1,228 @@
-# CLAUDE.md
+# CLAUDE.md — QuickPitik (Root)
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Global rulebook for AI agents and contributors working in the `capstone-project` monorepo. This file is the **single source of truth for project-wide rules**. Module-specific details live in per-module `CLAUDE.md` files and the repository docs.
 
-## Project Overview
+---
 
-**EventAI** — a marathon photography ecosystem with AI-powered blur detection, face recognition, and bib number OCR. The monorepo has four planned products; only `ai-api` is built so far.
+## Project Vision
 
-| Product | Stack | Status |
-|---------|-------|--------|
-| `ai-api/` | FastAPI + Celery (Python 3.12) | Phases 1-6 complete |
-| `backend/` | Spring Boot (Java) | Not started |
-| `website/` | Next.js | Not started |
-| `mobile/` | Kotlin (Android) | Not started |
+**QuickPitik** is a marathon photography ecosystem for Cebu, Philippines. It combines a **Camera → Mobile → Cloud → Marketplace** pipeline with AI-powered quality filtering and search to solve two problems simultaneously:
 
-## Build & Run Commands (ai-api)
+- **Photographers** can't upload in real time, manually sort thousands of photos (1–2 hrs), and have no blur-culling tool.
+- **Runners** can't find their own photos in a sea of thousands and have no local platform to buy them.
 
-All commands run from `ai-api/`.
+QuickPitik delivers: real-time camera tethering, AI blur detection, face recognition + bib-number search for runners, and a marketplace. Four products serve these flows: a mobile app, a website, an already-built Electron desktop app, and a shared AI inference service (`ai-api`). Full details live in `docs/project-vision.md`.
 
-```bash
-# Setup
-pip install -e ".[dev]"
-docker compose up db redis -d
-alembic upgrade head
-python scripts/seed_db.py        # creates test API key
+**North-star outcomes**
+- Photographers: post-event sort time from 1–2 hours → 5–10 seconds.
+- Runners: photos appear within minutes and are searchable by selfie or bib number.
 
-# Dev server + worker
-make dev                          # FastAPI on :8000 with reload
-make celery                       # Celery worker (concurrency=2)
+---
 
-# Testing
-make test                         # pytest tests/ -v --tb=short
-make test-cov                     # + coverage HTML report
-pytest tests/unit/test_blur_detector.py -v   # single test file
+## Monorepo Layout
 
-# Lint & format
-make lint                         # ruff check + mypy
-make format                       # ruff auto-format + fix
+| Product | Stack | Status | Module CLAUDE.md |
+|---------|-------|--------|------------------|
+| `ai-api/` | FastAPI + Celery (Python 3.11+) | Phases 1–6 complete; hardening in progress | `ai-api/CLAUDE.md` |
+| `backend/` | Spring Boot (Java) | Not started | `backend/CLAUDE.md` (stub) |
+| `website/` | Next.js on Vercel | UI scaffolding in progress | `website/CLAUDE.md` (stub) |
+| `mobile/` | Kotlin (Android first) | Not started | `mobile/CLAUDE.md` (stub) |
+| `desktop/` | Electron | Already built (lives at `C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos`) | `desktop/CLAUDE.md` (stub) |
 
-# Database migrations
-make migrate                      # alembic upgrade head
-make migration msg="description"  # create new migration
+Repository-level docs are in `docs/`:
+- `docs/project-vision.md` — authoritative vision, user journeys, feature matrix
+- `docs/IMPLEMENTATION_PLAN.md` — phased roadmap across all modules
+- `docs/api-keys.md` — **sensitive, gitignored** — API keys for desktop + backend
+- `docs/desktop-blur-detection-integration-guide.md` — Electron → ai-api integration
 
-# Docker (full stack)
-make docker-up                    # build & start all services
-make docker-down
-make docker-gpu                   # with GPU support
-```
+---
 
-## CI Pipeline (GitLab)
-
-Defined in `ai-api/.gitlab-ci.yml`. Stages: `test` then `build`.
-- **lint**: `ruff check src/ tests/`
-- **typecheck**: `mypy src/` (allowed to fail)
-- **unit-tests**: `pytest tests/unit/` with 50% coverage minimum
-- **build-image**: Docker build + push (main branch only)
-
-## Architecture (ai-api)
-
-**4-layer separation — never skip layers:**
+## Module Boundaries (who talks to whom)
 
 ```
-src/api/v1/    → HTTP controllers (thin, no business logic)
-src/services/  → Business logic, orchestration
-src/ml/        → ML model wrappers (no HTTP, no DB awareness)
-src/db/        → Models, repositories, session management
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  Mobile App  │  │   Website    │  │  Desktop App │
+│  (Kotlin)    │  │  (Next.js)   │  │  (Electron)  │
+└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
+       │                 │                 │
+       ▼                 ▼                 ▼
+┌────────────────────────────┐  ┌──────────────────┐
+│  Spring Boot Backend       │  │  Desktop Backend │
+│  (users, events, payments) │  │  (own DB)        │
+└────────────┬───────────────┘  └────────┬─────────┘
+             │                           │
+             ▼                           ▼
+┌──────────────────────────────────────────────────┐
+│  ai-api  (blur / face / bib / batch)             │
+└──────────────────────────────────────────────────┘
 ```
 
-Import rules:
-- `api/` calls `services/`, services call `ml/` and `db/`
-- Never import `db/` directly from `api/`
-- `ml/` modules must never import from `api/`, `services/`, or `db/`
-- `schemas/` (Pydantic models) are shared across layers
+**Hard rules:**
 
-### Model Registry (Singleton)
+1. **Mobile and website NEVER call `ai-api` directly.** They call the Spring Boot backend; the backend holds the `ai-api` key and proxies inference.
+2. **Desktop app is the one exception** — it calls `ai-api` directly with its own restricted API key (scopes: `blur:read`, `jobs:read`).
+3. **Each backend owns its own domain data.** `ai-api` is stateless about events/users/participants — it only stores face embeddings tagged with `api_key_id` + `event_id`.
+4. **Confidence thresholds are a backend concern.** `ai-api` returns raw scores; each backend applies its own per-event threshold.
+5. **Event isolation must always be enforced.** Any `faces/enroll` or `faces/search` call MUST pass `event_id` — this is how cross-event data leakage is prevented.
 
-All ML models load once at startup via `src/ml/registry.py` → `app.state.model_registry`. Never instantiate models in route handlers.
+Full integration contracts: `ai-api/docs/integration-architecture.md`, `ai-api/docs/integration-contracts.md`.
 
-```python
-registry = request.app.state.model_registry
-detector = registry.get("blur")
+---
+
+## Global Rules
+
+These apply across every module. Module-specific rules (Python layering, Spring package conventions, React file structure) live in each module's own `CLAUDE.md`.
+
+### Documentation
+- Canonical, versioned docs live in `docs/` (repo-wide) and `<module>/docs/` (module-specific). Keep terse and accurate.
+- Exploratory thinking, ADRs-in-progress, daily logs, and learning notes live in the Obsidian vault (see below).
+- When a vault note stabilizes into canonical knowledge, **promote it** into the appropriate `docs/` location and leave a stub in the vault linking to the repo path.
+- Never add `*.md` files to the repo unless explicitly requested or clearly required.
+
+### Secrets & Configuration
+- `.env` files, API keys, `WEBHOOK_SECRET_KEY`, and `docs/api-keys.md` are **gitignored**. Never commit them.
+- Never hardcode URLs, thresholds, or secrets — read from env / module config.
+- Treat the values in `docs/api-keys.md` as production-like credentials even in dev.
+
+### Git & Commits
+- Create NEW commits; never amend published commits without explicit user instruction.
+- Never use `--no-verify` or bypass signing unless the user asks.
+- Never force-push `main`.
+- Stage specific files; avoid `git add -A`.
+
+### Cross-module changes
+- Changes that span `ai-api` ↔ backend ↔ client require explicit coordination — update the integration docs in the same commit.
+- Breaking API changes go under a new version prefix (`/api/v2/...`); existing clients must not be silently broken.
+
+### AI agent behavior
+- Always consult the Obsidian vault rules below before starting non-trivial work.
+- Prefer editing existing files over creating new ones.
+- Task tracking: use the task system for multi-step work; promote completed decisions/logs into the vault.
+
+---
+
+## Architectural Principles
+
+1. **`ai-api` is an internal service.** Never expose it to end-user apps directly.
+2. **One API key per backend, per environment.** `api_key_id` is the tenant boundary in `ai-api`.
+3. **Scopes are least-privilege.** Desktop gets `blur:read` + `jobs:read` only. Spring Boot gets the full scope set.
+4. **Async batch = blob-store, not base64.** Image bytes never go on the Celery queue; workers read from `BLOB_STORE_PATH`.
+5. **Webhooks are HMAC-signed.** Consumers must verify `X-QuickPitik-Signature`.
+6. **Photos are private by default.** Runners only see their own matched photos; public galleries are opt-in per event.
+7. **Scaling path is known, not premature.** Start with pgvector on RDS + direct S3. Migrate to Qdrant or add CloudFront only when metrics demand it (see `docs/project-vision.md#scaling-path`).
+
+---
+
+## Custom Skills
+
+Project-specific skills live in the Obsidian vault under `Claude Skills/`. Agents MUST consult these skills when their trigger conditions match — they encode the user's standards and override default behavior.
+
+| Skill | Path | When to apply |
+|-------|------|---------------|
+| **Frontend Design** | `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Claude Skills\Frontend Design.md` | Any task that creates, redesigns, or polishes a UI/UX — components, pages, layouts, styling, animations, design systems. Applies across `website/`, `mobile/`, and `desktop/` modules. |
+
+### How to use a skill
+
+1. **Detect the trigger.** Before starting UI/UX work (new component, page redesign, visual refactor, styling pass), recognize that the Frontend Design skill applies.
+2. **Read the skill file in full** before producing any design or code. Do not rely on summaries or memory — the skill encodes specific aesthetic principles and prohibitions.
+3. **Apply the skill's guidance throughout the task** — design thinking, typography, color, motion, composition, backgrounds. Commit to a clear aesthetic direction; avoid the "generic AI aesthetic" patterns the skill explicitly forbids (Inter/Roboto/system fonts, purple-gradient-on-white, predictable layouts).
+4. **Honor the skill over defaults.** If a default approach (e.g., "use Tailwind defaults", "use shadcn/ui as-is") conflicts with the skill, the skill wins.
+
+If the user asks for a UI change and the skill is not consulted, the work is incomplete. Re-read the skill at the start of each UI/UX task — do not assume prior context carries over.
+
+---
+
+## External Working Directories
+
+Some code referenced by this project lives outside the monorepo. Treat each as a separate environment.
+
+| Path | Project | Access rule |
+|------|---------|-------------|
+| `C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos` | Desktop app (Electron) | **Only access when explicitly requested by the user.** Do NOT assume or automatically modify files. Treat as a separate environment outside the main repo. |
+
+If the user asks you to work in BatchMyPhotos, change directory and work there as normal. Do not pre-emptively read or edit files in that path based on monorepo activity.
+
+---
+
+## Obsidian Vault — The Second Brain
+
+The Obsidian vault is the **primary external knowledge system** for this project — session memory, tasks, decisions, and module-specific working notes that don't belong in the repo.
+
+**Vault path:**
+
+```
+C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault
 ```
 
-### Async Pattern
+**The vault has its own `CLAUDE.md` — read it at the start of every non-trivial session.** It owns the second-brain ritual, sync rules (`tasks.md`, `decisions.md`, `index.md`, `VAULT-INDEX.md`, `notes/`), naming conventions, and folder layout. This repo CLAUDE.md does not duplicate that — go to the source.
 
-FastAPI handlers are `async`. CPU-bound ML inference runs via `asyncio.to_thread()`. Celery workers use sync DB sessions (`src/db/sync_session.py`) because asyncpg cannot run inside Celery.
+### Session start ritual (MANDATORY)
 
-### API Response Envelope
+At the start of every session, before doing any other work, the agent MUST:
 
-Every endpoint returns `src/schemas/common.APIResponse`:
-```python
-return APIResponse(success=True, request_id=..., data=result.model_dump())
+1. **Read the vault first.** Open the vault `CLAUDE.md` and `VAULT-INDEX.md` to load the current second-brain state (module status, open tasks, recent decisions).
+2. **Ask the user which module(s) to work on.** Present the choices and let the user pick **one or more**:
+   - `ai-api`
+   - `backend`
+   - `website`
+   - `mobile`
+   - `desktop`
+3. **After the user selects**, read that module's `tasks.md` (and `index.md` / `decisions.md` if relevant) from the vault and **show the tasks** for the chosen module(s). If the user picked multiple, group the tasks per module.
+4. Only after the user confirms which task(s) to tackle should the agent begin implementation work.
+
+Do not skip this ritual. Do not start editing code, planning, or searching the repo before the vault has been read and the user has chosen a module + task.
+
+**Quick orientation (canonical source: vault's `CLAUDE.md` + `VAULT-INDEX.md`):**
+
+```
+QuickPitik Vault/
+├── CLAUDE.md            (vault rules + session ritual — READ FIRST)
+├── VAULT-INDEX.md       (status dashboard + module map)
+├── _templates/          (decision-log, daily-note, feature-doc)
+├── _project/            (cross-cutting: vision/, architecture/, decisions.md)
+├── ai-api/   { index, tasks, decisions, notes/ }
+├── backend/  { index, tasks, decisions, notes/ }
+├── website/  { index, tasks, decisions }
+├── mobile/   { index, tasks, decisions }
+└── desktop/  { index, tasks, decisions }
 ```
 
-### C++ Extensions (Optional)
+**Vault vs. repo docs:**
+- **Repo** (`docs/`, `<module>/docs/`): canonical, versioned, audience-facing. Terse and accurate.
+- **Vault**: working memory, exploration, decisions-in-progress, learning notes. Private.
+- When a vault note stabilizes, **promote** it to the repo and leave a stub in the vault pointing to the repo path.
 
-pybind11 extensions in `src/cpp/`. Always use the try/except fallback pattern:
-```python
-try:
-    from _eventai_cpp import some_function
-    _HAS_CPP = True
-except ImportError:
-    _HAS_CPP = False
-```
-Pure Python/NumPy fallback must always exist.
+---
 
-### Batch Processing Pattern
+## Where to Find Specifics
 
-All batch endpoints: accept multipart files → create Job in DB → base64-encode and queue Celery task → return 202 with `job_id` → poll `GET /api/v1/jobs/{job_id}` → webhook on completion.
+| I want to know... | Read |
+|---|---|
+| The product vision and user journeys | `docs/project-vision.md` |
+| Phased implementation roadmap | `docs/IMPLEMENTATION_PLAN.md` |
+| ai-api architecture, endpoints, conventions | `ai-api/CLAUDE.md` and `ai-api/docs/` |
+| How backends integrate with ai-api | `ai-api/docs/integration-architecture.md`, `ai-api/docs/integration-contracts.md` |
+| API keys and how each client authenticates | `docs/api-keys.md` (gitignored) |
+| Desktop → ai-api specifics | `docs/desktop-blur-detection-integration-guide.md` |
+| Working notes, decisions, module status | Obsidian vault — start at `CLAUDE.md` and `VAULT-INDEX.md` |
 
-## Key Conventions
+---
 
-- Python 3.11+ features allowed (`type | None`, `list[str]`, `match`)
-- `from __future__ import annotations` at the top of every module
-- Logging: `from src.utils.logging import get_logger; logger = get_logger(__name__)` — structured key=value, never f-strings in log messages
-- Exceptions: use custom types from `src/utils/exceptions.py`, never raw `HTTPException` in services/ml layers
-- Image uploads: always call `validate_and_decode()` from `src/utils/image_utils.py`
-- Database: UUID primary keys, `DateTime(timezone=True)` timestamps
-- Auth: `Depends(verify_api_key)` on all endpoints except health; debug mode bypasses
-- Config: never hardcode values — add to `src/config.py` Settings class and `.env.example`
-- Ruff: line length 100, target Python 3.11
-- Tests: `tests/unit/`, `tests/integration/`, `tests/e2e/`; `asyncio_mode = "auto"` in pyproject.toml
+## User & Environment Context
 
-## Things to Avoid
+- **User:** theocedric.chan@cit.edu — CIT-U capstone student, Cebu, Philippines.
+- **Today's date:** see `currentDate` in the conversation context; convert relative dates to absolute before saving to memory or vault.
+- **Platform:** Windows 11, bash shell available, PowerShell available.
+- **Target market:** Marathon and running-event photography in Cebu (Philippines-first, regional expansion later).
 
-- Loading ML models inside request handlers (use the registry)
-- Storing uploaded images to disk or DB (process in memory, discard)
-- Logging image data or embeddings (log only request IDs, endpoints, timings)
-- Synchronous DB calls in FastAPI handlers (Celery workers are the exception — they must use sync sessions)
-- Cross-layer imports that skip the layering (e.g., `api/` → `db/`)
-- Adding dependencies without justification
+---
 
-## Where to Put New Code
+## Goal
 
-| Adding... | Location |
-|-----------|----------|
-| API endpoint | `src/api/v1/<feature>.py`, register in `src/api/v1/router.py` |
-| Request/response model | `src/schemas/<feature>.py` |
-| Business logic | `src/services/<feature>_service.py` |
-| ML model wrapper | `src/ml/<feature>/` |
-| Database table | `src/db/models.py`, then create Alembic migration |
-| Repository (CRUD) | `src/db/repositories/<feature>_repo.py` |
-| Celery task | `src/workers/tasks/<feature>_tasks.py` |
-| Middleware | `src/middleware/<name>.py`, register in `src/main.py` |
-| Config variable | `src/config.py` Settings class + `.env.example` |
+This `CLAUDE.md` is the **central control system** for the project. The Obsidian vault is the **second brain** for continuity, decisions, and knowledge. Together they let any agent:
 
-## ML Training Pipelines
+- Resume work seamlessly across sessions.
+- Follow consistent architecture and module boundaries.
+- Stay aligned with the project vision without re-deriving it each time.
 
-```bash
-# Blur classifier
-python scripts/prepare_blur_dataset.py
-python scripts/train_blur_classifier.py
-python scripts/export_blur_classifier.py
-
-# Face + bib detector
-python scripts/auto_annotate_face_bib.py
-python scripts/train_face_bib_detector.py
-python scripts/export_face_bib_detector.py
-```
-
-Training images in `Training-Images/` (gitignored). Model artifacts in `models/` (gitignored except manifests). See `ai-api/docs/` for detailed training guides.
-
-## Infrastructure
-
-| Service | Purpose |
-|---------|---------|
-| PostgreSQL 16 + pgvector | Jobs, webhooks, face embeddings (cosine search via `<=>`) |
-| Redis 7.4 | Celery broker/backend, rate limiting, API key cache |
-| Celery worker | Async batch processing (queues: default, blur, face, bib) |
-
-Start infra: `docker compose up db redis -d`
-
-## Detailed ai-api Docs
-
-The `ai-api/docs/CLAUDE.md` file has more granular guidance including API endpoint details, ML feature specifics, and the full file location reference. The `ai-api/docs/` directory contains architecture docs, API reference, deployment guides, and training plans.
+If something here conflicts with a module-specific `CLAUDE.md`, the module's rules win for that module. If something conflicts with `docs/project-vision.md`, update one of them — they must agree.

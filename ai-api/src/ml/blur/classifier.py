@@ -11,7 +11,7 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 try:
-    from _eventai_cpp import classify_preprocess as _cpp_classify_preprocess
+    from _quickpitik_cpp import classify_preprocess as _cpp_classify_preprocess
     _HAS_CPP_PREPROCESS = True
 except ImportError:
     _HAS_CPP_PREPROCESS = False

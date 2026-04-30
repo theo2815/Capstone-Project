@@ -1,6 +1,6 @@
 # AI System Overview
 
-Current state of the three ML pipelines in the EventAI `ai-api` service. All three are trained, exported, and wired into the API.
+Current state of the three ML pipelines in the QuickPitik `ai-api` service. All three are trained, exported, and wired into the API.
 
 ## Status Summary
 
@@ -62,7 +62,7 @@ If the ONNX detector is missing, the endpoint falls back to running PaddleOCR on
 |---|---|
 | Async batch | Celery + Redis broker. Image bytes are written to `BLOB_STORE_PATH` and workers get file paths (not base64). `.../batch` → 202 + `job_id`; `.../mega` fans out via Celery chord and merges via `finalize_mega_batch`. |
 | DB | PostgreSQL 16 + pgvector (jobs, webhooks, persons, API keys, face embeddings). Async engine (asyncpg) for the API; sync engine (psycopg2) for Celery workers. |
-| C++ acceleration | pybind11 module `_eventai_cpp` (`src/cpp/`). Measured wins: Laplacian variance ~5×, cosine top-K ~1.8–2.8× for small/medium databases. All ops release the GIL. Pure-Python fallback always available. |
+| C++ acceleration | pybind11 module `_quickpitik_cpp` (`src/cpp/`). Measured wins: Laplacian variance ~5×, cosine top-K ~1.8–2.8× for small/medium databases. All ops release the GIL. Pure-Python fallback always available. |
 | Auth + rate limits | `X-API-Key` header (SHA-256 hashed, cached in Redis). Token-bucket rate limiter wired into every endpoint via `verify_api_key`. Tiers: free=60/min, pro=300/min, internal=1000/min. Per-key concurrent-job cap (`MAX_ACTIVE_JOBS_PER_KEY=10`). |
 | Observability | structlog JSON logs with request_id context. Prometheus metrics auto-instrumented via `prometheus-fastapi-instrumentator`, exposed at `/metrics` (auth-protected in production, open when `DEBUG=true`). |
 

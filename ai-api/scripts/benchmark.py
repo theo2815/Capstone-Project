@@ -50,7 +50,7 @@ if __name__ == "__main__":
     import sys
 
     print("=" * 60)
-    print("EventAI Performance Benchmark")
+    print("QuickPitik Performance Benchmark")
     print("=" * 60)
 
     if len(sys.argv) > 1:

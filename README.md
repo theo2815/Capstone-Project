@@ -1,4 +1,4 @@
-# EventAI
+# QuickPitik
 
 A complete ecosystem for marathon photography — combining real-time photo uploading, AI-powered blur detection, face and bib number search, and an online marketplace for runners to find and purchase their event photos.
 

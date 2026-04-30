@@ -9,7 +9,7 @@ export async function generateMetadata({
 }: GalleryPageProps): Promise<Metadata> {
   const { slug } = await params;
   return {
-    title: `Gallery - ${slug} | EventAI`,
+    title: `Gallery - ${slug} | QuickPitik`,
   };
 }
 
