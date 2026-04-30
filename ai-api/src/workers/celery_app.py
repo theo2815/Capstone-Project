@@ -10,7 +10,7 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 celery_app = Celery(
-    "eventai",
+    "quickpitik",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
 )

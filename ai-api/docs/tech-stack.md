@@ -1,6 +1,6 @@
 # Tech Stack
 
-Every library, framework, and tool used in EventAI, with explanations of why each was chosen.
+Every library, framework, and tool used in QuickPitik, with explanations of why each was chosen.
 
 ---
 
@@ -51,7 +51,7 @@ Two models cooperate:
 - **Laplacian/FFT detector (`src/ml/blur/detector.py`)** — no external model, just OpenCV + NumPy. Computes Laplacian variance (edge energy; blurry images have fewer edges → lower variance) and an optional FFT high-frequency ratio. Normalized to a 640-pixel linear reference so results are resolution-independent. Fast enough to call on every upload.
 - **YOLOv8n-cls classifier (`src/ml/blur/classifier.py`)** — custom-trained 4-class ONNX model (`sharp`, `defocused_object_portrait`, `defocused_blurred`, `motion_blurred`). Achieved 98.68% top-1 accuracy (100% on the sharp class). Loaded only if the ONNX file is present; used by `POST /blur/classify` and its streaming/batch/mega variants.
 
-Both paths accept an optional C++ fast path (`laplacian_variance`, `fft_hf_ratio`, `classify_preprocess`) from the `_eventai_cpp` extension, falling back to pure NumPy/OpenCV when the extension isn't compiled.
+Both paths accept an optional C++ fast path (`laplacian_variance`, `fft_hf_ratio`, `classify_preprocess`) from the `_quickpitik_cpp` extension, falling back to pure NumPy/OpenCV when the extension isn't compiled.
 
 ### Face Recognition: InsightFace (RetinaFace + ArcFace)
 
@@ -183,4 +183,4 @@ Both paths accept an optional C++ fast path (`laplacian_variance`, `fft_hf_ratio
 - **What it is**: Build system for compiling the extension.
 - **Why chosen**: CMake is the standard C++ build system. scikit-build-core integrates CMake with Python's `pip install` workflow; Ninja is the fast generator. `pip install -e ".[cpp]"` compiles the extension; `python build_cpp.py` runs a direct CMake build (handy on Windows when `pip` misdetects MSVC).
 
-The compiled artifact (`_eventai_cpp.cp<ver>-<platform>.pyd` on Windows, `.so` on Linux) lives at the project root so Python can `import _eventai_cpp` without path tricks. See `docs/cpp-integration.md` for benchmarks and the fallback pattern.
+The compiled artifact (`_quickpitik_cpp.cp<ver>-<platform>.pyd` on Windows, `.so` on Linux) lives at the project root so Python can `import _quickpitik_cpp` without path tricks. See `docs/cpp-integration.md` for benchmarks and the fallback pattern.

@@ -1,4 +1,4 @@
-# EventAI - AI API Documentation
+# QuickPitik - AI API Documentation
 
 This folder contains all documentation for the ai-api microservice.
 

@@ -3,6 +3,8 @@ export const API_BASE_URL =
 
 export const ROUTES = {
   HOME: "/",
+  RUNNERS: "/runners",
+  PHOTOGRAPHERS: "/photographers",
   LOGIN: "/login",
   REGISTER: "/register",
   FORGOT_PASSWORD: "/forgot-password",

@@ -26,7 +26,7 @@ ai-api/
 ├── CMakeLists.txt              # C++17 / pybind11 / AVX2 build config.
 ├── build_cpp.py                # Manual build script — auto-detects MSVC on Windows.
 │                               # Usage: `python build_cpp.py`
-├── _eventai_cpp.*.pyd/.so     # Compiled C++ extension (gitignored; produced by build).
+├── _quickpitik_cpp.*.pyd/.so     # Compiled C++ extension (gitignored; produced by build).
 ├── yolov8n-cls.pt             # Pre-trained YOLOv8 weights used as the base for
 │                               # blur classifier training (gitignored).
 │
@@ -133,7 +133,7 @@ ai-api/
 │   │
 │   │
 │   ├── cpp/                    # === C++ EXTENSION SOURCE ===
-│   │   │                       # pybind11 C++ module built as `_eventai_cpp`.
+│   │   │                       # pybind11 C++ module built as `_quickpitik_cpp`.
 │   │   │                       # All functions release the GIL.
 │   │   │
 │   │   ├── bindings.cpp        # PYBIND11_MODULE — exposes all C++ functions.
@@ -229,7 +229,7 @@ ai-api/
 │   │
 │   │
 │   └── utils/                  # === SHARED UTILITIES ===
-│       ├── exceptions.py       # EventAIError + subclasses (ImageValidationError,
+│       ├── exceptions.py       # QuickPitikError + subclasses (ImageValidationError,
 │       │                       # ModelNotLoadedError, AuthenticationError,
 │       │                       # RateLimitExceededError, JobNotFoundError).
 │       ├── image_utils.py      # validate_and_decode (single image), validate_batch_file,

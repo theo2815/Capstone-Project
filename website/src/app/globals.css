@@ -1,35 +1,59 @@
 @import "tailwindcss";
 
-/* ── EventAI Design Tokens ── */
+/* ── QuickPitik Design Tokens — Quiet Studio (locked 2026-05-01) ── */
 
 :root {
-  /* Core palette */
-  --charcoal: #3D3D3D;
+  /* Legacy palette (kept so unredesigned pages still render) */
+  --charcoal: #2B2B2B;
   --cool-gray: #CBCBCB;
   --warm-white: #F8F7F4;
   --steel-blue: #6D8196;
   --teal: #2A7B88;
 
+  /* Quiet Studio palette */
+  --bone: #F8F5EE;
+  --bone-deep: #EFEAE0;
+  --ink: #111111;
+  --ink-soft: #2A2A28;
+  --fresh: #2D9E5E;
+  --fresh-deep: #237A48;
+  --slate: #475569;
+  --slate-soft: #94A3B8;
+  --line: #E5E2D9;
+  --surface: #FFFFFF;
+
   /* Semantic */
-  --background: var(--warm-white);
-  --foreground: var(--charcoal);
-  --muted: var(--cool-gray);
-  --accent: var(--steel-blue);
-  --primary: var(--teal);
-  --success: #3A8A5C;
-  --error: #C4453C;
-  --warning: #D4913A;
+  --background: var(--bone);
+  --foreground: var(--ink);
+  --muted: var(--slate-soft);
+  --accent: var(--fresh);
+  --primary: var(--fresh);
+  --success: var(--fresh);
+  --error: #DC2626;
+  --warning: #D97706;
 }
 
 @theme inline {
-  /* Core palette */
+  /* Legacy palette */
   --color-charcoal: var(--charcoal);
   --color-cool-gray: var(--cool-gray);
   --color-warm-white: var(--warm-white);
   --color-steel-blue: var(--steel-blue);
   --color-teal: var(--teal);
 
-  /* Semantic colors */
+  /* Quiet Studio palette */
+  --color-bone: var(--bone);
+  --color-bone-deep: var(--bone-deep);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-fresh: var(--fresh);
+  --color-fresh-deep: var(--fresh-deep);
+  --color-slate: var(--slate);
+  --color-slate-soft: var(--slate-soft);
+  --color-line: var(--line);
+  --color-surface: var(--surface);
+
+  /* Semantic */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
@@ -39,28 +63,155 @@
   --color-error: var(--error);
   --color-warning: var(--warning);
 
-  /* Derived shades */
+  /* Derived shades (legacy — for unredesigned pages only) */
   --color-charcoal-light: #5A5A5A;
+  --color-charcoal-deep: #1A1A1A;
   --color-cool-gray-light: #E8E8E8;
   --color-cool-gray-dark: #9A9A9A;
   --color-steel-blue-light: #8FA0B0;
   --color-steel-blue-dark: #536476;
   --color-teal-light: #3A9BA8;
   --color-teal-dark: #1F5F6A;
-  --color-primary-hover: var(--color-teal-dark);
-
-  /* Surface & border */
-  --color-surface: #FFFFFF;
-  --color-border: #E2E1DE;
+  --color-primary-hover: var(--fresh-deep);
+  --color-border: var(--line);
   --color-border-strong: var(--cool-gray);
 
   /* Fonts */
-  --font-sans: var(--font-geist-sans);
+  --font-display: var(--font-bricolage);
+  --font-sans: var(--font-funnel);
   --font-mono: var(--font-geist-mono);
+
+  /* Animations */
+  --animate-fade-up: fade-up 0.7s ease-out both;
+  --animate-fade-in: fade-in 0.6s ease-out both;
+  --animate-breathe: breathe 4s ease-in-out infinite;
+  --animate-draw-line: draw-line 1.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-count-up: count-up 0.8s ease-out both;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.015); }
+}
+
+@keyframes draw-line {
+  from { stroke-dashoffset: var(--dash, 600); }
+  to   { stroke-dashoffset: 0; }
+}
+
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+}
+
+/* ── Nav link hover underline ── */
+.nav-link {
+  position: relative;
+}
+.nav-link::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 0;
+  height: 1.5px;
+  background: currentColor;
+  transition: width 0.3s ease;
+}
+.nav-link:hover::after {
+  width: 100%;
+}
+
+/* ── Stagger children fade-up ── */
+.stagger-children > * {
+  opacity: 0;
+  animation: fade-up 0.7s ease-out forwards;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger-children > *:nth-child(2) { animation-delay: 0.15s; }
+.stagger-children > *:nth-child(3) { animation-delay: 0.25s; }
+.stagger-children > *:nth-child(4) { animation-delay: 0.35s; }
+.stagger-children > *:nth-child(5) { animation-delay: 0.45s; }
+.stagger-children > *:nth-child(6) { animation-delay: 0.55s; }
+
+/* ── Card hover glow (legacy — for unredesigned pages only) ── */
+.card-glow {
+  transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+}
+.card-glow:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px rgba(42, 123, 136, 0.08);
+  border-color: var(--teal);
+}
+
+/* ── Grain texture overlay (optional, sparingly used) ── */
+.grain {
+  position: relative;
+}
+.grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  z-index: 0;
+}
+.grain > * { position: relative; z-index: 1; }
+
+/* ── Tabular numerals ── */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ── Idle breathing (splash chooser cards) ── */
+.breathe {
+  animation: breathe 4s ease-in-out infinite;
+}
+
+/* ── Drawn-line SVG path ── */
+.draw-line {
+  stroke-dasharray: var(--dash, 600);
+  stroke-dashoffset: var(--dash, 600);
+  animation: draw-line 1.4s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards;
+}
+
+/* ── Scroll-snap (mobile only — desktop scrolls naturally) ── */
+.snap-y-mobile {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 768px) {
+  .snap-y-mobile {
+    scroll-snap-type: y mandatory;
+  }
+  .snap-section {
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+  }
 }

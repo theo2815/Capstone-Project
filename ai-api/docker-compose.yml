@@ -6,8 +6,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/eventai
-      - REDIS_URL=redis://:eventai_redis_pass@redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/quickpitik
+      - REDIS_URL=redis://:quickpitik_redis_pass@redis:6379/0
       - MODEL_DIR=/app/models
       - LOG_LEVEL=DEBUG
       - DEBUG=true
@@ -42,8 +42,8 @@ services:
       dockerfile: Dockerfile.dev
     command: celery -A src.workers.celery_app worker --loglevel=info --concurrency=2 -Q default,blur,face,bib
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/eventai
-      - REDIS_URL=redis://:eventai_redis_pass@redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/quickpitik
+      - REDIS_URL=redis://:quickpitik_redis_pass@redis:6379/0
       - MODEL_DIR=/app/models
     volumes:
       - ./src:/app/src
@@ -58,7 +58,7 @@ services:
   db:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_DB: eventai
+      POSTGRES_DB: quickpitik
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
@@ -77,11 +77,11 @@ services:
 
   redis:
     image: redis:7.4-alpine
-    command: redis-server --requirepass eventai_redis_pass --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --requirepass quickpitik_redis_pass --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "eventai_redis_pass", "ping"]
+      test: ["CMD", "redis-cli", "-a", "quickpitik_redis_pass", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5

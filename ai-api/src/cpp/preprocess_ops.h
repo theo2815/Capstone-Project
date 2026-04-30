@@ -5,7 +5,7 @@
 
 namespace py = pybind11;
 
-namespace eventai {
+namespace quickpitik {
 
 // Convert BGR (H, W, 3) uint8 image to grayscale (H, W) uint8.
 // Uses luminance weights: 0.114 * B + 0.587 * G + 0.299 * R.
@@ -21,4 +21,4 @@ py::array_t<uint8_t> resize_gray(py::array_t<uint8_t> gray, int new_h,
 py::array_t<float> classify_preprocess(py::array_t<uint8_t> bgr,
                                         int target_size);
 
-}  // namespace eventai
+}  // namespace quickpitik

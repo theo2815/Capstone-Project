@@ -13,7 +13,7 @@ async def seed() -> None:
 
     async for session in get_session():
         # Create a development API key
-        dev_key = "sk_dev_eventai_test_key_12345"
+        dev_key = "sk_dev_quickpitik_test_key_12345"
         key_hash = hashlib.sha256(dev_key.encode()).hexdigest()
 
         existing = await session.execute(

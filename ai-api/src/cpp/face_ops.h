@@ -9,7 +9,7 @@
 
 namespace py = pybind11;
 
-namespace eventai {
+namespace quickpitik {
 
 struct TopKResult {
     std::vector<int64_t> indices;
@@ -24,4 +24,4 @@ TopKResult batch_cosine_topk(py::array_t<float> query,
                              py::array_t<float> database, float threshold,
                              int top_k);
 
-}  // namespace eventai
+}  // namespace quickpitik

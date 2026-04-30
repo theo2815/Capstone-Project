@@ -6,7 +6,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/eventai
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/quickpitik
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - MODEL_DIR=/app/models
       - BLOB_STORE_PATH=/data/blobs
@@ -46,7 +46,7 @@ services:
       dockerfile: Dockerfile
     command: celery -A src.workers.celery_app worker --loglevel=info --concurrency=4 -Q blur -n blur@%h
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/eventai
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/quickpitik
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - MODEL_DIR=/app/models
       - BLOB_STORE_PATH=/data/blobs
@@ -71,7 +71,7 @@ services:
       dockerfile: Dockerfile
     command: celery -A src.workers.celery_app worker --loglevel=info --concurrency=2 -Q face -n face@%h
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/eventai
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/quickpitik
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - MODEL_DIR=/app/models
       - BLOB_STORE_PATH=/data/blobs
@@ -93,7 +93,7 @@ services:
       dockerfile: Dockerfile
     command: celery -A src.workers.celery_app worker --loglevel=info --concurrency=2 -Q bib -n bib@%h
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/eventai
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/quickpitik
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - MODEL_DIR=/app/models
       - BLOB_STORE_PATH=/data/blobs
@@ -116,7 +116,7 @@ services:
       dockerfile: Dockerfile
     command: celery -A src.workers.celery_app worker --loglevel=info --concurrency=2 -Q default -n default@%h
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/eventai
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/quickpitik
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - MODEL_DIR=/app/models
       - BLOB_STORE_PATH=/data/blobs
@@ -149,7 +149,7 @@ services:
       -c max_parallel_workers=4
       -c max_wal_size=1GB
     environment:
-      POSTGRES_DB: eventai
+      POSTGRES_DB: quickpitik
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:

@@ -185,4 +185,4 @@ At server startup, the `ModelRegistry` loads all models in parallel (via `asynci
 | Rate limits | Enforced if Redis is up; no-op otherwise | Enforced | Enforced |
 | `WEBHOOK_SECRET_KEY` | Optional (plaintext fallback) | Set | Set |
 | HSTS header | Off | Off | On (`strict-transport-security`) |
-| `BLOB_STORE_PATH` | `/tmp/eventai-blobs` | Shared volume | Shared volume mounted in API + workers |
+| `BLOB_STORE_PATH` | `/tmp/quickpitik-blobs` | Shared volume | Shared volume mounted in API + workers |

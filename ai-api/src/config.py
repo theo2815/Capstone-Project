@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Application
-    APP_NAME: str = "EventAI API"
+    APP_NAME: str = "QuickPitik API"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     MAX_REQUEST_BODY: int = 500 * 1024 * 1024  # 500 MB (covers stream batch of 500 images)
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/eventai"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/quickpitik"
 
     # Redis (use redis://:password@host:port/db for authenticated instances)
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     JOB_RETENTION_DAYS: int = 7  # Auto-delete completed/failed jobs older than this
 
     # Blob store — images written to shared volume instead of base64-in-Redis
-    BLOB_STORE_PATH: str = "/tmp/eventai-blobs"
+    BLOB_STORE_PATH: str = "/tmp/quickpitik-blobs"
 
     # Image preprocessing — downscale large images before inference
     # Models resize internally to 640x640 so images beyond this are wasted memory

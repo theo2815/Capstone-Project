@@ -516,7 +516,7 @@ Both backends must handle these ai-api error scenarios. The `Error Code` column 
 | 504 | `REQUEST_TIMEOUT` | Envelope | Retry with a smaller image or split the request |
 | 5xx | Any | Any | Retry with exponential backoff (max 3 retries) |
 
-**Why the shape varies:** `EventAIError` subclasses (e.g., `ImageValidationError`, `JobNotFoundError`) go through the handler in `src/main.py` and produce the envelope with `error.code = <class_name>`. `HTTPException`s raised inside middleware (auth, rate limit, scope check) use FastAPI's default `{"detail": ...}` body — there is no envelope for those responses.
+**Why the shape varies:** `QuickPitikError` subclasses (e.g., `ImageValidationError`, `JobNotFoundError`) go through the handler in `src/main.py` and produce the envelope with `error.code = <class_name>`. `HTTPException`s raised inside middleware (auth, rate limit, scope check) use FastAPI's default `{"detail": ...}` body — there is no envelope for those responses.
 
 ### Retry Strategy
 

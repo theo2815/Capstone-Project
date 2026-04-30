@@ -1,4 +1,4 @@
-# EventAI — Implementation Plan
+# QuickPitik — Implementation Plan
 
 **Date:** 2026-04-09
 **Author:** Development Team
@@ -51,8 +51,8 @@ The backend is the **single public API** for both website and mobile app. It han
 backend/
 ├── src/
 │   └── main/
-│       ├── java/com/eventai/
-│       │   ├── EventAiApplication.java          # Spring Boot entry point
+│       ├── java/com/quickpitik/
+│       │   ├── QuickPitikApplication.java       # Spring Boot entry point
 │       │   │
 │       │   ├── config/                          # Configuration classes
 │       │   │   ├── SecurityConfig.java          # Spring Security + JWT
@@ -142,7 +142,7 @@ backend/
 │               ├── V4__create_photos.sql
 │               └── V5__create_orders.sql
 │
-├── src/test/java/com/eventai/                   # Tests mirror src structure
+├── src/test/java/com/quickpitik/                   # Tests mirror src structure
 │   ├── controller/
 │   ├── service/
 │   └── repository/
@@ -508,7 +508,7 @@ Mobile App                          Backend (Spring Boot)               AWS S3
 **S3 Bucket Structure:**
 
 ```
-eventai-photos/
+quickpitik-photos/
 ├── events/
 │   └── {event_id}/
 │       ├── originals/       # Full-resolution (private, download after purchase)
@@ -553,7 +553,7 @@ Use Spring WebSocket (STOMP over SockJS) for:
 | Authorization | Role-based: Admin, Photographer, Runner. Spring Security `@PreAuthorize`. |
 | API key for ai-api | Stored in env vars, never exposed to clients. Backend-to-ai-api only. |
 | Input validation | Bean Validation (`@Valid`) on all DTOs. Image validation (type, size, dimensions). |
-| CORS | Allow only `https://eventai.ph` (production), `http://localhost:3000` (dev). |
+| CORS | Allow only `https://quickpitik.ph` (production), `http://localhost:3000` (dev). |
 | Rate limiting | Spring Boot rate limiter on public endpoints (login, search). |
 | File uploads | Max 10MB per image. Accept only JPEG/PNG/WebP. Validate magic bytes, not just extension. |
 | S3 access | Presigned URLs for downloads (expire in 1 hour). Originals never publicly accessible. |
@@ -572,8 +572,8 @@ Android-first using Kotlin. Two distinct user flows: Photographer (camera upload
 mobile/
 ├── app/
 │   └── src/main/
-│       ├── java/com/eventai/app/
-│       │   ├── EventAiApp.kt                    # Application class (DI setup)
+│       ├── java/com/quickpitik/app/
+│       │   ├── QuickPitikApp.kt                 # Application class (DI setup)
 │       │   │
 │       │   ├── di/                              # Dependency Injection (Hilt)
 │       │   │   ├── AppModule.kt
@@ -1013,7 +1013,7 @@ website/
 
 ```typescript
 // lib/api.ts — Fetch wrapper
-const API_BASE = process.env.NEXT_PUBLIC_API_URL; // e.g., https://api.eventai.ph/api/v1
+const API_BASE = process.env.NEXT_PUBLIC_API_URL; // e.g., https://api.quickpitik.ph/api/v1
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getAccessToken();
@@ -1431,12 +1431,12 @@ npm run dev        # Next.js on :3000
 
 ```bash
 # backend/.env
-DATABASE_URL=jdbc:postgresql://localhost:5432/eventai_backend
+DATABASE_URL=jdbc:postgresql://localhost:5432/quickpitik_backend
 REDIS_URL=redis://localhost:6379/1
 AI_API_URL=http://localhost:8000
 AI_API_KEY=sk_webmobile_dev_xxxxx
 JWT_SECRET=dev-secret-change-in-prod
-S3_BUCKET=eventai-photos-dev
+S3_BUCKET=quickpitik-photos-dev
 S3_REGION=ap-southeast-1
 PAYMENT_SECRET_KEY=pk_test_xxxxx
 

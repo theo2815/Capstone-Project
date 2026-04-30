@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# INFRA-11: Database backup script for EventAI.
+# INFRA-11: Database backup script for QuickPitik.
 #
 # Usage:
 #   ./scripts/backup_db.sh                      # backup to ./backups/
@@ -19,10 +19,10 @@ RETENTION="${BACKUP_RETENTION:-7}"
 PGHOST="${PGHOST:-localhost}"
 PGPORT="${PGPORT:-5432}"
 PGUSER="${PGUSER:-postgres}"
-PGDATABASE="${PGDATABASE:-eventai}"
+PGDATABASE="${PGDATABASE:-quickpitik}"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-FILENAME="eventai_${TIMESTAMP}.sql.gz"
+FILENAME="quickpitik_${TIMESTAMP}.sql.gz"
 
 mkdir -p "$BACKUP_DIR"
 
@@ -42,11 +42,11 @@ SIZE=$(du -h "${BACKUP_DIR}/${FILENAME}" | cut -f1)
 echo "[backup] Saved ${BACKUP_DIR}/${FILENAME} (${SIZE})"
 
 # Rotate old backups — keep only the N most recent
-BACKUP_COUNT=$(ls -1 "${BACKUP_DIR}"/eventai_*.sql.gz 2>/dev/null | wc -l)
+BACKUP_COUNT=$(ls -1 "${BACKUP_DIR}"/quickpitik_*.sql.gz 2>/dev/null | wc -l)
 if [ "$BACKUP_COUNT" -gt "$RETENTION" ]; then
     DELETE_COUNT=$((BACKUP_COUNT - RETENTION))
     echo "[backup] Rotating: removing ${DELETE_COUNT} old backup(s) (keeping ${RETENTION})"
-    ls -1t "${BACKUP_DIR}"/eventai_*.sql.gz | tail -n "$DELETE_COUNT" | xargs rm -f
+    ls -1t "${BACKUP_DIR}"/quickpitik_*.sql.gz | tail -n "$DELETE_COUNT" | xargs rm -f
 fi
 
 echo "[backup] Done. ${BACKUP_COUNT} backup(s) in ${BACKUP_DIR}"

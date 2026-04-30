@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Events | EventAI",
+  title: "Events | QuickPitik",
   description: "Browse marathon and running events with AI-powered photo search.",
 };
 

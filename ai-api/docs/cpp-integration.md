@@ -80,7 +80,7 @@ Every Python file that uses C++ has this pattern:
 
 ```python
 try:
-    from _eventai_cpp import batch_cosine_topk
+    from _quickpitik_cpp import batch_cosine_topk
     _HAS_CPP = True
 except ImportError:
     _HAS_CPP = False
@@ -117,7 +117,7 @@ pip install -e ".[cpp]"
 python build_cpp.py
 ```
 
-Both paths produce `_eventai_cpp.<tag>.pyd` (Windows) or `.so` (Linux/macOS) at the project root where Python can `import _eventai_cpp`.
+Both paths produce `_quickpitik_cpp.<tag>.pyd` (Windows) or `.so` (Linux/macOS) at the project root where Python can `import _quickpitik_cpp`.
 
 ### Requirements
 - **Linux**: GCC 10+ or Clang 12+

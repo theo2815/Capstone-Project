@@ -3,9 +3,9 @@ requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "eventai-api"
+name = "quickpitik-api"
 version = "1.0.0"
-description = "EventAI - Modular AI API for Blur Detection, Face Recognition, and Bib Number OCR"
+description = "QuickPitik - Modular AI API for Blur Detection, Face Recognition, and Bib Number OCR"
 requires-python = ">=3.11,<3.15"
 license = {text = "Proprietary"}
 

@@ -1,13 +1,13 @@
-# EventAI AI-API Maintenance Guide
+# QuickPitik AI-API Maintenance Guide
 
 **Last updated:** 2026-04-23
-**For:** Agents and operators managing the EventAI AI-API in production
+**For:** Agents and operators managing the QuickPitik AI-API in production
 
 ---
 
 ## 1. System Overview
 
-EventAI AI-API is a FastAPI-based computer vision service for marathon/running event photography. It provides three ML pipelines:
+QuickPitik AI-API is a FastAPI-based computer vision service for marathon/running event photography. It provides three ML pipelines:
 
 | Pipeline | Purpose | Models Used | Endpoint Prefix |
 |----------|---------|-------------|-----------------|
@@ -275,7 +275,7 @@ Images are **NOT persistently stored on disk or in the database**. Two flows:
 
 **Batch / mega endpoints (async):**
 1. Client POSTs multiple files
-2. The API atomically writes each image to the **blob store** at `{BLOB_STORE_PATH}/{job_id}/NNNNN.bin` (default `/tmp/eventai-blobs`, shared volume in Docker)
+2. The API atomically writes each image to the **blob store** at `{BLOB_STORE_PATH}/{job_id}/NNNNN.bin` (default `/tmp/quickpitik-blobs`, shared volume in Docker)
 3. The Celery task receives file paths, not base64 payloads
 4. Worker decodes from paths, runs inference, updates job progress
 5. `complete_job` / `fail_job` removes the job's blob directory
@@ -298,7 +298,7 @@ LEFT JOIN face_embeddings fe ON p.id = fe.person_id
 WHERE fe.id IS NULL;
 
 -- Database size check
-SELECT pg_size_pretty(pg_database_size('eventai'));
+SELECT pg_size_pretty(pg_database_size('quickpitik'));
 
 -- Embeddings table size
 SELECT pg_size_pretty(pg_total_relation_size('face_embeddings'));
@@ -406,10 +406,10 @@ docker compose up -d ai-api celery-worker
 docker compose exec db pg_isready
 
 # Check active connections (pool exhaustion)
-docker compose exec db psql -U postgres -d eventai -c "SELECT count(*) FROM pg_stat_activity WHERE datname='eventai';"
+docker compose exec db psql -U postgres -d quickpitik -c "SELECT count(*) FROM pg_stat_activity WHERE datname='quickpitik';"
 
 # Kill idle connections if pool is exhausted
-docker compose exec db psql -U postgres -d eventai -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='eventai' AND state='idle' AND state_change < NOW() - INTERVAL '10 minutes';"
+docker compose exec db psql -U postgres -d quickpitik -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='quickpitik' AND state='idle' AND state_change < NOW() - INTERVAL '10 minutes';"
 ```
 
 ### Celery Worker Recovery
