@@ -24,7 +24,7 @@ QuickPitik delivers: real-time camera tethering, AI blur detection, face recogni
 | Product | Stack | Status | Module CLAUDE.md |
 |---------|-------|--------|------------------|
 | `ai-api/` | FastAPI + Celery (Python 3.11+) | Phases 1–6 complete; hardening in progress | `ai-api/CLAUDE.md` |
-| `backend/` | Spring Boot (Java) | Not started | `backend/CLAUDE.md` (stub) |
+| `backend/` | Spring Boot (Kotlin) | Not started | `backend/CLAUDE.md` (stub) |
 | `website/` | Next.js on Vercel | UI scaffolding in progress | `website/CLAUDE.md` (stub) |
 | `mobile/` | Kotlin (Android first) | Not started | `mobile/CLAUDE.md` (stub) |
 | `desktop/` | Electron | Already built (lives at `C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos`) | `desktop/CLAUDE.md` (stub) |
@@ -120,6 +120,7 @@ Project-specific skills live in the Obsidian vault under `Claude Skills/`. Agent
 | Skill | Path | When to apply |
 |-------|------|---------------|
 | **Frontend Design** | `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Claude Skills\Frontend Design.md` | Any task that creates, redesigns, or polishes a UI/UX — components, pages, layouts, styling, animations, design systems. Applies across `website/`, `mobile/`, and `desktop/` modules. |
+| **Documentation** | **Skill (rulebook):** `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Claude Skills\Document Skill.md`<br>**Second Brain (runtime state):** `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Documentation for capstone paper\` | Any task that writes, drafts, updates, or asks about **the capstone paper** or any of its component documents — **SRS, SDD, SPMP**, plus future paper docs (test plan, user manual, defense materials). Also covers general project documentation: GitHub README, setup/install guides, module `CLAUDE.md` files, architecture docs, API/integration contracts, ADRs (decision logs), vault learning notes, traceability matrices. **Triggers** on phrases like "my paper", "capstone paper", "the SRS / SDD / SPMP", "draft the README", "document this feature", "ADR", "IEEE 830 / 1016 / 1058", "use case description", "functional requirements", "setup guide", "traceability matrix". **Mandatory protocol:** read the skill file in full (rulebook), then read the Second Brain entry points (`DASHBOARD.md`, `AGENT-GUIDE.md`, the relevant `<doc>/README.md` tracker, and the `_knowledge-base/` entries the section depends on) — see the dedicated ritual below. |
 
 ### How to use a skill
 
@@ -129,6 +130,23 @@ Project-specific skills live in the Obsidian vault under `Claude Skills/`. Agent
 4. **Honor the skill over defaults.** If a default approach (e.g., "use Tailwind defaults", "use shadcn/ui as-is") conflicts with the skill, the skill wins.
 
 If the user asks for a UI change and the skill is not consulted, the work is incomplete. Re-read the skill at the start of each UI/UX task — do not assume prior context carries over.
+
+### Capstone Paper Documentation Ritual (MANDATORY)
+
+When the user asks about **writing the capstone paper** or any of its component documents (**SRS / SDD / SPMP** or future paper docs), the agent MUST follow this exact sequence before drafting, restructuring, or summarizing anything:
+
+1. **Read the Documentation Skill in full** — `Claude Skills\Document Skill.md`. It is the rulebook: templates, voice, source-of-truth hierarchy, quality checks.
+2. **Read the Second Brain dashboard** — `Documentation for capstone paper\DASHBOARD.md`. Shows current status across SRS / SDD / SPMP / any future docs.
+3. **Read the agent guide** — `Documentation for capstone paper\AGENT-GUIDE.md`. Owns the status lifecycle (`not-started → in-progress → review → done`), frontmatter contract, and update workflow.
+4. **Read the relevant document tracker** — `Documentation for capstone paper\<doc>\README.md` (e.g., `srs\README.md`). Shows section-level status, blockers, adviser feedback log, and the section's `depends-on` files.
+5. **Read the relevant `_knowledge-base/` entries** for the section being touched. The KB holds canonical facts (features, performance targets, stakeholders, references, glossary, tech stack, system architecture, workflows) — never duplicate or contradict them.
+6. **Open the section file** — read its frontmatter (status, depends-on, traces-to) and existing content before editing.
+7. **After making changes**, update: section frontmatter (`status`, `last-updated`), the document's `README.md` tracker row, and the root `DASHBOARD.md` progress count.
+8. **Tell the user** what changed and where (which file, which status transition).
+
+Do not skip steps. Do not bypass the Second Brain — drift between documents is the failure mode this system prevents.
+
+Trigger phrases that activate this ritual include: "my paper", "capstone paper", "write the paper", "the SRS", "the SDD", "the SPMP", "section X.Y", "draft section", "use case description", "traceability matrix", "non-functional requirements", "IEEE 830 / 1016 / 1058", "what's the status of [doc]", "what's left on the SRS", and similar.
 
 ---
 

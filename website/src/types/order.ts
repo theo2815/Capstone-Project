@@ -5,6 +5,11 @@ export interface CartItem {
   eventId: string;
   thumbnailUrl: string;
   price: number;
+  bib?: string | null;
+  eventName?: string;
+  eventSlug?: string;
+  tone?: number;
+  time?: string;
 }
 
 export interface Order {

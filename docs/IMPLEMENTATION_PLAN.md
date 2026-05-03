@@ -51,61 +51,61 @@ The backend is the **single public API** for both website and mobile app. It han
 backend/
 ├── src/
 │   └── main/
-│       ├── java/com/quickpitik/
-│       │   ├── QuickPitikApplication.java       # Spring Boot entry point
+│       ├── kotlin/com/quickpitik/
+│       │   ├── QuickPitikApplication.kt       # Spring Boot entry point
 │       │   │
 │       │   ├── config/                          # Configuration classes
-│       │   │   ├── SecurityConfig.java          # Spring Security + JWT
-│       │   │   ├── CorsConfig.java              # CORS for web + mobile
-│       │   │   ├── S3Config.java                # AWS S3 client bean
-│       │   │   ├── AiApiConfig.java             # ai-api connection settings
-│       │   │   ├── WebSocketConfig.java         # Real-time notifications
-│       │   │   └── AsyncConfig.java             # Thread pool for async tasks
+│       │   │   ├── SecurityConfig.kt          # Spring Security + JWT
+│       │   │   ├── CorsConfig.kt              # CORS for web + mobile
+│       │   │   ├── S3Config.kt                # AWS S3 client bean
+│       │   │   ├── AiApiConfig.kt             # ai-api connection settings
+│       │   │   ├── WebSocketConfig.kt         # Real-time notifications
+│       │   │   └── AsyncConfig.kt             # Thread pool for async tasks
 │       │   │
 │       │   ├── controller/                      # REST controllers (thin)
-│       │   │   ├── AuthController.java
-│       │   │   ├── UserController.java
-│       │   │   ├── EventController.java
-│       │   │   ├── ParticipantController.java
-│       │   │   ├── PhotoController.java
-│       │   │   ├── SearchController.java
-│       │   │   ├── OrderController.java
-│       │   │   ├── WebhookReceiverController.java
-│       │   │   ├── AdminController.java
-│       │   │   └── HealthController.java
+│       │   │   ├── AuthController.kt
+│       │   │   ├── UserController.kt
+│       │   │   ├── EventController.kt
+│       │   │   ├── ParticipantController.kt
+│       │   │   ├── PhotoController.kt
+│       │   │   ├── SearchController.kt
+│       │   │   ├── OrderController.kt
+│       │   │   ├── WebhookReceiverController.kt
+│       │   │   ├── AdminController.kt
+│       │   │   └── HealthController.kt
 │       │   │
 │       │   ├── service/                         # Business logic
-│       │   │   ├── AuthService.java
-│       │   │   ├── UserService.java
-│       │   │   ├── EventService.java
-│       │   │   ├── ParticipantService.java
-│       │   │   ├── PhotoService.java
-│       │   │   ├── PhotoProcessingService.java  # Orchestrates ai-api calls
-│       │   │   ├── SearchService.java           # Face + bib search for runners
-│       │   │   ├── OrderService.java
-│       │   │   ├── PaymentService.java
-│       │   │   ├── NotificationService.java
-│       │   │   ├── StorageService.java          # S3 upload/download
-│       │   │   └── AiApiClient.java             # HTTP client to ai-api
+│       │   │   ├── AuthService.kt
+│       │   │   ├── UserService.kt
+│       │   │   ├── EventService.kt
+│       │   │   ├── ParticipantService.kt
+│       │   │   ├── PhotoService.kt
+│       │   │   ├── PhotoProcessingService.kt  # Orchestrates ai-api calls
+│       │   │   ├── SearchService.kt           # Face + bib search for runners
+│       │   │   ├── OrderService.kt
+│       │   │   ├── PaymentService.kt
+│       │   │   ├── NotificationService.kt
+│       │   │   ├── StorageService.kt          # S3 upload/download
+│       │   │   └── AiApiClient.kt             # HTTP client to ai-api
 │       │   │
 │       │   ├── repository/                      # Spring Data JPA repositories
-│       │   │   ├── UserRepository.java
-│       │   │   ├── EventRepository.java
-│       │   │   ├── ParticipantRepository.java
-│       │   │   ├── PhotoRepository.java
-│       │   │   ├── PhotoTagRepository.java
-│       │   │   ├── OrderRepository.java
-│       │   │   └── RefreshTokenRepository.java
+│       │   │   ├── UserRepository.kt
+│       │   │   ├── EventRepository.kt
+│       │   │   ├── ParticipantRepository.kt
+│       │   │   ├── PhotoRepository.kt
+│       │   │   ├── PhotoTagRepository.kt
+│       │   │   ├── OrderRepository.kt
+│       │   │   └── RefreshTokenRepository.kt
 │       │   │
 │       │   ├── model/                           # JPA entities
-│       │   │   ├── User.java
-│       │   │   ├── Event.java
-│       │   │   ├── Participant.java
-│       │   │   ├── Photo.java
-│       │   │   ├── PhotoTag.java
-│       │   │   ├── Order.java
-│       │   │   ├── OrderItem.java
-│       │   │   └── RefreshToken.java
+│       │   │   ├── User.kt
+│       │   │   ├── Event.kt
+│       │   │   ├── Participant.kt
+│       │   │   ├── Photo.kt
+│       │   │   ├── PhotoTag.kt
+│       │   │   ├── Order.kt
+│       │   │   ├── OrderItem.kt
+│       │   │   └── RefreshToken.kt
 │       │   │
 │       │   ├── dto/                             # Request/response DTOs
 │       │   │   ├── auth/
@@ -114,22 +114,22 @@ backend/
 │       │   │   ├── search/
 │       │   │   ├── order/
 │       │   │   └── common/
-│       │   │       └── ApiResponse.java         # Standard response envelope
+│       │   │       └── ApiResponse.kt         # Standard response envelope
 │       │   │
 │       │   ├── exception/                       # Custom exceptions + handler
-│       │   │   ├── GlobalExceptionHandler.java
-│       │   │   ├── ResourceNotFoundException.java
-│       │   │   ├── UnauthorizedException.java
-│       │   │   └── AiApiUnavailableException.java
+│       │   │   ├── GlobalExceptionHandler.kt
+│       │   │   ├── ResourceNotFoundException.kt
+│       │   │   ├── UnauthorizedException.kt
+│       │   │   └── AiApiUnavailableException.kt
 │       │   │
 │       │   ├── security/                        # JWT + role-based access
-│       │   │   ├── JwtTokenProvider.java
-│       │   │   ├── JwtAuthenticationFilter.java
-│       │   │   └── UserPrincipal.java
+│       │   │   ├── JwtTokenProvider.kt
+│       │   │   ├── JwtAuthenticationFilter.kt
+│       │   │   └── UserPrincipal.kt
 │       │   │
 │       │   └── util/                            # Utilities
-│       │       ├── ImageValidator.java
-│       │       └── SlugGenerator.java
+│       │       ├── ImageValidator.kt
+│       │       └── SlugGenerator.kt
 │       │
 │       └── resources/
 │           ├── application.yml                  # Main config
@@ -142,12 +142,12 @@ backend/
 │               ├── V4__create_photos.sql
 │               └── V5__create_orders.sql
 │
-├── src/test/java/com/quickpitik/                   # Tests mirror src structure
+├── src/test/kotlin/com/quickpitik/                 # Tests mirror src structure
 │   ├── controller/
 │   ├── service/
 │   └── repository/
 │
-├── build.gradle                                 # Dependencies
+├── build.gradle.kts                             # Dependencies (Kotlin DSL)
 ├── Dockerfile
 ├── docker-compose.yml                           # Backend + its PostgreSQL
 └── .env.example
@@ -413,7 +413,7 @@ CREATE TABLE order_items (
 
 ### 2.5 Integration with ai-api
 
-The backend talks to ai-api via HTTP. Key integration class: `AiApiClient.java`.
+The backend talks to ai-api via HTTP. Key integration class: `AiApiClient.kt`.
 
 #### AiApiClient Design
 
@@ -1192,7 +1192,7 @@ Download:
 ### Phase 5: AI Integration (Weeks 6-8)
 
 **What to build:**
-- `AiApiClient.java` — HTTP client with retry logic
+- `AiApiClient.kt` — HTTP client with retry logic
 - Health check integration (periodic ai-api health polling)
 - Photo processing pipeline: blur → face → bib → merge tags
 - Webhook receiver for batch job completion
@@ -1527,30 +1527,40 @@ main                    ← production-ready, deployed
 
 ### Backend (Spring Boot)
 
-```groovy
-// build.gradle
+```kotlin
+// build.gradle.kts
+plugins {
+    kotlin("jvm") version "1.9.25"
+    kotlin("plugin.spring") version "1.9.25"
+    kotlin("plugin.jpa") version "1.9.25"
+    id("org.springframework.boot") version "3.3.x"
+    id("io.spring.dependency-management") version "1.1.x"
+}
+
 dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    implementation 'org.springframework.boot:spring-boot-starter-security'
-    implementation 'org.springframework.boot:spring-boot-starter-validation'
-    implementation 'org.springframework.boot:spring-boot-starter-websocket'
-    implementation 'org.flywaydb:flyway-core'
-    implementation 'org.postgresql:postgresql'
-    implementation 'io.jsonwebtoken:jjwt-api:0.12.5'
-    implementation 'software.amazon.awssdk:s3:2.25.0'
-    implementation 'com.google.firebase:firebase-admin:9.2.0'
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+    implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-validation")
+    implementation("org.springframework.boot:spring-boot-starter-websocket")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+    implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation("org.flywaydb:flyway-core")
+    implementation("org.postgresql:postgresql")
+    implementation("io.jsonwebtoken:jjwt-api:0.12.5")
+    implementation("software.amazon.awssdk:s3:2.25.0")
+    implementation("com.google.firebase:firebase-admin:9.2.0")
     // Image processing
-    implementation 'net.coobird:thumbnailator:0.4.20'
-    // Payment (PayMongo)
-    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation("net.coobird:thumbnailator:0.4.20")
+    // Payment (PayMongo) — Ktor client is a more idiomatic choice in Kotlin
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.5'
-    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.5'
+    runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.5")
+    runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.5")
 
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-    testImplementation 'org.testcontainers:postgresql:1.19.7'
-    testImplementation 'com.github.tomakehurst:wiremock-jre8:3.0.1'
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.testcontainers:postgresql:1.19.7")
+    testImplementation("com.github.tomakehurst:wiremock-jre8:3.0.1")
 }
 ```
 

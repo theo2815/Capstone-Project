@@ -9,7 +9,7 @@ A complete ecosystem for marathon photography — combining real-time photo uplo
 | **Mobile App** | Kotlin (Android first, iOS planned) | Not started |
 | **Website** | Next.js (Vercel) | Not started |
 | **Desktop App** | Electron | Built |
-| **Web/Mobile Backend** | Spring Boot (Java) | Not started |
+| **Web/Mobile Backend** | Spring Boot (Kotlin) | Not started |
 | **AI Services (ai-api)** | FastAPI + Celery (Python) | Phases 1-6 complete |
 
 ## Project Structure
@@ -35,7 +35,7 @@ Capstone-Project/
 
 | Category | Technology | Hosting |
 |---|---|---|
-| Web/Mobile Backend | Spring Boot (Java) | AWS EC2 |
+| Web/Mobile Backend | Spring Boot (Kotlin) | AWS EC2 |
 | AI Services | FastAPI + Celery (Python) | AWS EC2 |
 | Database | PostgreSQL 16 + pgvector | AWS RDS |
 | Object Storage | AWS S3 (CloudFront CDN planned) | AWS |
