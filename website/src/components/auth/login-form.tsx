@@ -4,8 +4,6 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ROUTES } from "@/lib/constants";
 import { ApiError } from "@/lib/api";
 
@@ -35,53 +33,106 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <h1 className="text-2xl font-bold text-gray-900">Sign In</h1>
+    <form onSubmit={handleSubmit} className="stagger-children space-y-7">
+      <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+        Log in
+      </p>
+
+      <h1 className="font-display text-5xl md:text-6xl font-medium tracking-tight leading-[1.0]">
+        Welcome
+        <br />
+        <span className="text-fresh">back.</span>
+      </h1>
+
+      <p className="font-sans text-base text-ink-soft">
+        Continue to your photos.
+      </p>
+
+      <div className="space-y-6 pt-2">
+        <FieldBlock>
+          <label
+            htmlFor="email"
+            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+          >
+            Email
+          </label>
+          <input
+            id="email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+            autoComplete="email"
+            required
+            aria-invalid={!!error}
+            className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
+          />
+        </FieldBlock>
+
+        <FieldBlock>
+          <label
+            htmlFor="password"
+            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+          >
+            Password
+          </label>
+          <input
+            id="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Your password"
+            autoComplete="current-password"
+            required
+            aria-invalid={!!error}
+            className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
+          />
+        </FieldBlock>
+      </div>
 
       {error && (
-        <p className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
+        <p
+          role="alert"
+          className="font-mono uppercase tracking-[0.15em] text-[11px] text-error"
+        >
           {error}
         </p>
       )}
 
-      <Input
-        id="email"
-        label="Email"
-        type="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        placeholder="you@example.com"
-        required
-      />
-      <Input
-        id="password"
-        label="Password"
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        placeholder="Your password"
-        required
-      />
-
-      <div className="flex items-center justify-between">
-        <Link
-          href={ROUTES.FORGOT_PASSWORD}
-          className="text-sm text-blue-600 hover:underline"
+      <div className="space-y-4 pt-2">
+        <button
+          type="submit"
+          disabled={isLoading}
+          className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Forgot password?
-        </Link>
+          {isLoading ? "Logging in…" : "Log in →"}
+        </button>
+
+        <div className="text-center">
+          <Link
+            href={ROUTES.FORGOT_PASSWORD}
+            className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors"
+          >
+            Forgot password?
+          </Link>
+        </div>
       </div>
 
-      <Button type="submit" isLoading={isLoading} className="w-full">
-        Sign In
-      </Button>
-
-      <p className="text-center text-sm text-gray-600">
-        Don&apos;t have an account?{" "}
-        <Link href={ROUTES.REGISTER} className="text-blue-600 hover:underline">
-          Sign Up
-        </Link>
-      </p>
+      <div className="border-t border-line pt-6">
+        <p className="text-center font-mono uppercase tracking-[0.2em] text-[10px] text-slate">
+          New here?{" "}
+          <Link
+            href={ROUTES.REGISTER}
+            className="text-ink hover:text-fresh transition-colors"
+          >
+            Create account →
+          </Link>
+        </p>
+      </div>
     </form>
   );
+}
+
+function FieldBlock({ children }: { children: React.ReactNode }) {
+  return <div className="flex flex-col gap-2">{children}</div>;
 }

@@ -1,0 +1,409 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useCartStore } from "@/store/cart-store";
+import { ROUTES } from "@/lib/constants";
+import { cn } from "@/lib/utils";
+import type { CartItem } from "@/types/order";
+import {
+  PhotoPreviewCard,
+  type PhotoPreviewItem,
+} from "@/components/photos/photo-preview-card";
+
+const TONE_COLORS = [
+  "var(--ink)",
+  "var(--ink-soft)",
+  "var(--slate)",
+  "var(--slate-soft)",
+];
+
+interface CartModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onContinueToCheckout?: () => void;
+}
+
+function cartItemToPreview(item: CartItem): PhotoPreviewItem {
+  return {
+    id: item.photoId,
+    bib: item.bib ?? null,
+    time: item.time ?? "—",
+    tone: item.tone ?? 0,
+    price: item.price,
+    imageUrl: item.thumbnailUrl || null,
+  };
+}
+
+export function CartModal({
+  isOpen,
+  onClose,
+  onContinueToCheckout,
+}: CartModalProps) {
+  const items = useCartStore((s) => s.items);
+  const removeItem = useCartStore((s) => s.removeItem);
+  const clear = useCartStore((s) => s.clear);
+  const total = useCartStore((s) => s.total());
+
+  const pathname = usePathname() ?? "";
+  const router = useRouter();
+
+  const uniqueEvents = useMemo(() => {
+    const map = new Map<string, { slug?: string; name?: string }>();
+    for (const it of items) {
+      if (!map.has(it.eventId)) {
+        map.set(it.eventId, { slug: it.eventSlug, name: it.eventName });
+      }
+    }
+    return Array.from(map.entries()).map(([eventId, v]) => ({
+      eventId,
+      slug: v.slug,
+      name: v.name,
+    }));
+  }, [items]);
+
+  const currentEventSlug = useMemo(() => {
+    const m = pathname.match(/^\/events\/([^/?]+)/);
+    return m ? m[1] : null;
+  }, [pathname]);
+
+  const isOnEventsList = pathname === ROUTES.EVENTS;
+  const isOnAnyCartEvent =
+    currentEventSlug !== null &&
+    uniqueEvents.some((e) => e.slug === currentEventSlug);
+
+  const browseTarget = useMemo<{
+    label: string;
+    href: string | null;
+  }>(() => {
+    if (isOnEventsList || isOnAnyCartEvent) {
+      return { label: "Keep browsing", href: null };
+    }
+    if (uniqueEvents.length === 1 && uniqueEvents[0].slug) {
+      const e = uniqueEvents[0];
+      const labelName = e.name ?? "this event";
+      return {
+        label: `Continue · ${labelName}`,
+        href: `${ROUTES.EVENTS}/${e.slug}?browse=1`,
+      };
+    }
+    return { label: "Browse events", href: ROUTES.EVENTS };
+  }, [isOnEventsList, isOnAnyCartEvent, uniqueEvents]);
+
+  const handleKeepBrowsing = () => {
+    if (browseTarget.href) {
+      router.push(browseTarget.href);
+    }
+    onClose();
+  };
+
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const previewIndexRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    previewIndexRef.current = previewIndex;
+  }, [previewIndex]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setPreviewIndex(null);
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && previewIndexRef.current === null) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (previewIndex !== null && previewIndex >= items.length) {
+      setPreviewIndex(items.length === 0 ? null : items.length - 1);
+    }
+  }, [items.length, previewIndex]);
+
+  if (!isOpen) return null;
+
+  const itemCount = items.length;
+  const previewItem =
+    previewIndex !== null ? items[previewIndex] ?? null : null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Your cart"
+      className="fixed inset-0 z-50"
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close cart"
+        className="absolute inset-0 bg-ink/50 backdrop-blur-sm cursor-default"
+        style={{ animation: "fade-in 0.25s ease-out both" }}
+      />
+
+      <aside
+        className="absolute top-0 right-0 h-full w-full sm:max-w-md flex flex-col bg-bone shadow-[-30px_0_80px_-20px_rgba(0,0,0,0.45)]"
+        style={{ animation: "slide-in-right 0.35s ease-out both" }}
+      >
+        <header className="flex items-start justify-between gap-3 px-6 md:px-7 pt-6 pb-5 border-b border-line">
+          <div>
+            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-1.5">
+              Your cart
+            </p>
+            <p className="font-display text-2xl md:text-3xl font-medium text-ink tracking-tight leading-tight">
+              {itemCount === 0
+                ? "Empty for now."
+                : itemCount === 1
+                  ? "1 photo."
+                  : `${itemCount} photos.`}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close cart"
+            className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              className="size-3.5"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M3 3 L13 13 M13 3 L3 13"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        </header>
+
+        {itemCount === 0 ? (
+          <EmptyCart onClose={onClose} />
+        ) : (
+          <>
+            <ul className="flex-1 overflow-y-auto divide-y divide-line">
+              {items.map((item, i) => (
+                <CartRow
+                  key={item.photoId}
+                  item={item}
+                  index={i}
+                  onPreview={() => setPreviewIndex(i)}
+                  onRemove={() => removeItem(item.photoId)}
+                />
+              ))}
+            </ul>
+
+            <footer className="border-t border-line bg-bone-deep px-6 md:px-7 py-5 md:py-6">
+              <div className="flex items-baseline justify-between gap-3 mb-4">
+                <span className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+                  Subtotal
+                </span>
+                <span className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight tnum">
+                  ₱{total.toLocaleString()}
+                </span>
+              </div>
+              <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft mb-5">
+                Watermarked previews are free. Pay once, download forever.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onContinueToCheckout) {
+                    onContinueToCheckout();
+                  } else {
+                    onClose();
+                  }
+                }}
+                className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep"
+              >
+                Continue to checkout →
+              </button>
+              <div className="mt-4 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={handleKeepBrowsing}
+                  className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink transition-colors max-w-[60%] text-left truncate"
+                  title={browseTarget.label}
+                >
+                  ← {browseTarget.label}
+                </button>
+                <button
+                  type="button"
+                  onClick={clear}
+                  className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft hover:text-fresh transition-colors shrink-0"
+                >
+                  Clear cart
+                </button>
+              </div>
+            </footer>
+          </>
+        )}
+      </aside>
+
+      {previewItem && previewIndex !== null && (
+        <PhotoPreviewCard
+          photo={cartItemToPreview(previewItem)}
+          eventName={previewItem.eventName ?? "QuickPitik"}
+          index={previewIndex + 1}
+          total={items.length}
+          inCart
+          onClose={() => setPreviewIndex(null)}
+          onPrev={
+            previewIndex > 0 ? () => setPreviewIndex(previewIndex - 1) : undefined
+          }
+          onNext={
+            previewIndex < items.length - 1
+              ? () => setPreviewIndex(previewIndex + 1)
+              : undefined
+          }
+          onToggleCart={() => {
+            removeItem(previewItem.photoId);
+            setPreviewIndex(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function CartRow({
+  item,
+  index,
+  onPreview,
+  onRemove,
+}: {
+  item: CartItem;
+  index: number;
+  onPreview: () => void;
+  onRemove: () => void;
+}) {
+  const tone = item.tone ?? 0;
+  const colorIdx = tone % TONE_COLORS.length;
+
+  return (
+    <li
+      className="relative px-6 md:px-7 py-5"
+      style={{
+        animation: `fade-up 0.4s ${Math.min(index * 0.04, 0.4)}s both`,
+        opacity: 0,
+      }}
+    >
+      <button
+        type="button"
+        onClick={onPreview}
+        aria-label={`Preview ${item.bib ?? "untagged photo"} from ${item.eventName ?? "QuickPitik"}`}
+        aria-haspopup="dialog"
+        className="group flex items-start gap-4 w-full text-left rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+      >
+        <div
+          className="relative size-20 shrink-0 rounded-md overflow-hidden transition-transform duration-200 group-hover:-translate-y-0.5"
+          style={{ backgroundColor: TONE_COLORS[colorIdx] }}
+          aria-hidden="true"
+        >
+          {item.thumbnailUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={item.thumbnailUrl}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover"
+              draggable={false}
+            />
+          ) : (
+            <span className="absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.2em] text-[8px] text-bone/40 rotate-[-18deg]">
+              QuickPitik
+            </span>
+          )}
+          <span className="absolute inset-0 bg-ink/0 group-hover:bg-ink/25 transition-colors duration-200 flex items-center justify-center">
+            <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-bone/0 group-hover:text-bone/95 transition-colors duration-200">
+              View
+            </span>
+          </span>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate truncate">
+            {item.eventName ?? "QuickPitik"}
+          </p>
+          <p className="mt-1 font-display text-lg font-medium text-ink tracking-tight tnum truncate group-hover:text-fresh transition-colors">
+            {item.bib ?? "Untagged"}
+          </p>
+          {item.time ? (
+            <p className="mt-1 font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft tnum">
+              {item.time}
+            </p>
+          ) : null}
+        </div>
+
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <span className="font-mono text-sm text-ink tnum">
+            ₱{item.price.toLocaleString()}
+          </span>
+        </div>
+      </button>
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        aria-label={`Remove ${item.bib ?? "untagged photo"} from cart`}
+        className="absolute right-6 md:right-7 bottom-5 inline-flex items-center gap-1 font-mono uppercase tracking-[0.25em] text-[9px] text-slate-soft hover:text-fresh transition-colors focus:outline-none focus-visible:text-fresh"
+      >
+        <span aria-hidden="true">✕</span>
+        <span>Remove</span>
+      </button>
+    </li>
+  );
+}
+
+function EmptyCart({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center px-8 py-12 text-center">
+      <div
+        className="size-16 rounded-full border border-line flex items-center justify-center mb-6 text-slate"
+        aria-hidden="true"
+      >
+        <svg viewBox="0 0 24 24" className="size-7" fill="none">
+          <path
+            d="M3.5 4 H6 L8.5 16 H19 L21 8 H7.2"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <circle cx="9.5" cy="20" r="1.2" fill="currentColor" />
+          <circle cx="17" cy="20" r="1.2" fill="currentColor" />
+        </svg>
+      </div>
+      <p className="font-display text-xl font-medium text-ink mb-2">
+        Nothing here yet.
+      </p>
+      <p className="font-sans text-sm text-ink-soft max-w-xs mb-7">
+        Open an event, search by bib or selfie, then add the photos you want to
+        keep.
+      </p>
+      <Link
+        href={ROUTES.EVENTS}
+        onClick={onClose}
+        className={cn(
+          "inline-flex items-center bg-ink hover:bg-ink-soft text-bone px-6 py-3 rounded-full",
+          "font-mono uppercase tracking-[0.2em] text-xs transition-colors",
+        )}
+      >
+        Browse events →
+      </Link>
+    </div>
+  );
+}

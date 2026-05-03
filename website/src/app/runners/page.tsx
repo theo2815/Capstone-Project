@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { ROUTES } from "@/lib/constants";
+import { SiteHeader } from "@/components/layout/site-header";
 
 export const metadata: Metadata = {
   title: "QuickPitik — Find your race photos",
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
 export default function RunnersPage() {
   return (
     <main className="snap-y-mobile bg-bone text-ink relative">
-      <TopNav />
+      <SiteHeader />
 
       <Hero />
 
@@ -48,53 +49,6 @@ export default function RunnersPage() {
 
       <MobileStickyCta />
     </main>
-  );
-}
-
-function TopNav() {
-  return (
-    <header className="sticky top-0 z-30 bg-bone/85 backdrop-blur-md border-b border-line">
-      <div className="px-6 md:px-10 py-4 flex items-center justify-between max-w-7xl mx-auto">
-        <Link
-          href={ROUTES.HOME}
-          className="flex items-center gap-2 text-ink"
-          aria-label="Back to QuickPitik home"
-        >
-          <svg
-            className="size-6"
-            viewBox="0 0 28 28"
-            fill="none"
-            aria-hidden="true"
-          >
-            <circle
-              cx="14"
-              cy="14"
-              r="13"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            />
-            <circle cx="14" cy="14" r="5" className="fill-fresh" />
-          </svg>
-          <span className="font-display text-base font-semibold tracking-tight">
-            QuickPitik
-          </span>
-        </Link>
-        <nav className="flex items-center gap-6 md:gap-8">
-          <Link
-            href={ROUTES.EVENTS}
-            className="hidden md:inline font-mono uppercase tracking-[0.25em] text-xs text-slate hover:text-ink transition-colors"
-          >
-            Events
-          </Link>
-          <Link
-            href={ROUTES.LOGIN}
-            className="font-mono uppercase tracking-[0.25em] text-xs text-ink hover:text-fresh transition-colors"
-          >
-            Sign in
-          </Link>
-        </nav>
-      </div>
-    </header>
   );
 }
 

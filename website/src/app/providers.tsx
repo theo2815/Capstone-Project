@@ -1,8 +1,9 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { Suspense, useState, type ReactNode } from "react";
 import { ToastContainer } from "@/components/ui/toast";
+import { FloatingCart } from "@/components/cart/floating-cart";
 
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -21,6 +22,9 @@ export function Providers({ children }: { children: ReactNode }) {
     <QueryClientProvider client={queryClient}>
       {children}
       <ToastContainer />
+      <Suspense fallback={null}>
+        <FloatingCart />
+      </Suspense>
     </QueryClientProvider>
   );
 }

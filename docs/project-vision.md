@@ -228,7 +228,7 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
 | **Mobile App** | Kotlin (Android first, iOS planned) | Google Play Store |
 | **Website** | Next.js | Vercel |
 | **Desktop App** | Electron (already built) | Direct download |
-| **Web/Mobile Backend** | Spring Boot (Java) | AWS EC2 |
+| **Web/Mobile Backend** | Spring Boot (Kotlin) | AWS EC2 |
 | **Desktop Backend** | (own backend, own database) | TBD |
 | **AI Services (ai-api)** | FastAPI + Celery (Python) — already built | AWS EC2 |
 | **Database** | PostgreSQL + pgvector | AWS RDS |

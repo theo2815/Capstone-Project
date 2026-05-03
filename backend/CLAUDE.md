@@ -1,4 +1,4 @@
-# CLAUDE.md — Backend (Spring Boot)
+# CLAUDE.md — Backend (Kotlin + Spring Boot)
 
 **Status:** Not started. This folder is empty; scaffolding pending.
 
@@ -12,7 +12,9 @@ See root `CLAUDE.md` for monorepo-wide rules and `docs/project-vision.md` for pr
 
 | Concern | Choice |
 |---------|--------|
-| Framework | Spring Boot (Java) |
+| Language | Kotlin (JVM 17+) |
+| Framework | Spring Boot 3.x |
+| Build | Gradle (Kotlin DSL — `build.gradle.kts`) |
 | Auth | JWT bearer tokens |
 | DB | PostgreSQL 16 (shared RDS instance with `ai-api`; separate schema) |
 | Storage | AWS S3 |
@@ -40,16 +42,18 @@ See root `CLAUDE.md` for monorepo-wide rules and `docs/project-vision.md` for pr
 
 ```
 backend/
-├── src/main/java/com/quickpitik/
-│   ├── QuickPitikApplication.java
+├── src/main/kotlin/com/quickpitik/
+│   ├── QuickPitikApplication.kt
 │   ├── config/          (SecurityConfig, CorsConfig, AiApiConfig, S3Config)
 │   ├── controller/      (Auth, User, Event, Participant, Photo, Search, Order)
 │   ├── service/         (per-domain services; AiApiClient wraps ai-api calls)
 │   ├── repository/      (Spring Data JPA)
-│   ├── model/           (entities)
+│   ├── model/           (entities — Kotlin data classes for DTOs, JPA entities for persistence)
 │   └── dto/
-└── src/test/...
+└── src/test/kotlin/...
 ```
+
+> Use the `kotlin-spring` and `kotlin-jpa` Gradle plugins so Spring/JPA can subclass `final` Kotlin classes without forcing `open` everywhere.
 
 Flesh this file out as the backend comes online — replace stubs with real conventions, build commands, and gotchas.
 

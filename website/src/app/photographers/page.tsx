@@ -1,6 +1,9 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { ROUTES } from "@/lib/constants";
+import { SiteHeader } from "@/components/layout/site-header";
+
+const REGISTER_AS_PHOTOGRAPHER = `${ROUTES.REGISTER}?role=PHOTOGRAPHER`;
 
 export const metadata: Metadata = {
   title: "QuickPitik — Sell your race photos",
@@ -13,7 +16,7 @@ const BATCH_MY_PHOTOS_URL = "https://www.batchmyphotos.com/";
 export default function PhotographersPage() {
   return (
     <main className="snap-y-mobile bg-bone text-ink relative">
-      <TopNav />
+      <SiteHeader />
 
       <Hero />
 
@@ -104,53 +107,6 @@ export default function PhotographersPage() {
 
       <MobileStickyCta />
     </main>
-  );
-}
-
-function TopNav() {
-  return (
-    <header className="sticky top-0 z-30 bg-bone/85 backdrop-blur-md border-b border-line">
-      <div className="px-6 md:px-10 py-4 flex items-center justify-between max-w-7xl mx-auto">
-        <Link
-          href={ROUTES.HOME}
-          className="flex items-center gap-2 text-ink"
-          aria-label="Back to QuickPitik home"
-        >
-          <svg
-            className="size-6"
-            viewBox="0 0 28 28"
-            fill="none"
-            aria-hidden="true"
-          >
-            <circle
-              cx="14"
-              cy="14"
-              r="13"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            />
-            <circle cx="14" cy="14" r="5" className="fill-fresh" />
-          </svg>
-          <span className="font-display text-base font-semibold tracking-tight">
-            QuickPitik
-          </span>
-        </Link>
-        <nav className="flex items-center gap-6 md:gap-8">
-          <Link
-            href={ROUTES.EVENTS}
-            className="hidden md:inline font-mono uppercase tracking-[0.25em] text-xs text-slate hover:text-ink transition-colors"
-          >
-            Events
-          </Link>
-          <Link
-            href={ROUTES.LOGIN}
-            className="font-mono uppercase tracking-[0.25em] text-xs text-ink hover:text-fresh transition-colors"
-          >
-            Sign in
-          </Link>
-        </nav>
-      </div>
-    </header>
   );
 }
 
@@ -844,7 +800,7 @@ function FinalCta() {
         </p>
         <div className="mt-10 flex flex-col md:flex-row items-center justify-center gap-4">
           <Link
-            href={ROUTES.REGISTER}
+            href={REGISTER_AS_PHOTOGRAPHER}
             className="w-full md:w-auto bg-fresh hover:bg-fresh-deep text-bone px-8 py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
           >
             Start selling →
@@ -878,7 +834,7 @@ function MobileStickyCta() {
   return (
     <div className="md:hidden fixed bottom-0 inset-x-0 px-4 py-3 bg-bone/95 backdrop-blur-md border-t border-line z-40">
       <Link
-        href={ROUTES.REGISTER}
+        href={REGISTER_AS_PHOTOGRAPHER}
         className="block w-full bg-fresh active:bg-fresh-deep text-bone text-center py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-xs"
       >
         Start selling →
