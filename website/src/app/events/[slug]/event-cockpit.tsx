@@ -4,11 +4,14 @@ import {
   useState,
   useMemo,
   useEffect,
+  useRef,
   type FormEvent,
+  type RefObject,
 } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useCartStore } from "@/store/cart-store";
+import { useUiStore } from "@/store/ui-store";
 import { cn } from "@/lib/utils";
 import type { EventDetail } from "@/types/event";
 import { type MockPhoto } from "./mock-photos";
@@ -220,6 +223,7 @@ function BibPanel({
   onSwitchToSelfie,
   photoCount,
   eventPhotoCount,
+  inputRef,
 }: {
   bibInput: string;
   onBibChange: (v: string) => void;
@@ -227,6 +231,7 @@ function BibPanel({
   onSwitchToSelfie: () => void;
   photoCount: number;
   eventPhotoCount: number;
+  inputRef?: RefObject<HTMLInputElement | null>;
 }) {
   return (
     <form onSubmit={onSubmit} className="mt-8">
@@ -236,6 +241,7 @@ function BibPanel({
       <label className="block">
         <span className="sr-only">Bib number</span>
         <input
+          ref={inputRef}
           type="text"
           name="bib"
           inputMode="text"
@@ -243,7 +249,7 @@ function BibPanel({
           autoCapitalize="characters"
           value={bibInput}
           onChange={(e) => onBibChange(e.target.value)}
-          placeholder="B-0000"
+          placeholder="B-4082"
           className="block w-full border-b border-line bg-transparent focus:border-fresh outline-none font-mono tracking-[0.25em] text-lg py-3 placeholder:text-slate-soft text-ink"
         />
       </label>
@@ -331,7 +337,7 @@ function DimWall() {
           );
         })}
       </div>
-      <div className="absolute inset-0 bg-gradient-to-b from-bone/0 via-bone/40 to-bone pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-b from-bone/0 via-bone/55 via-[55%] to-bone pointer-events-none" />
     </div>
   );
 }
@@ -389,7 +395,7 @@ function AboutStrip({ event }: { event: EventDetail }) {
               Pricing
             </p>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-              <span className="font-display text-3xl md:text-4xl font-medium text-fresh tracking-tight tnum">
+              <span className="font-display text-5xl md:text-6xl font-medium text-fresh tracking-tight tnum">
                 ₱{event.pricePerPhoto}
               </span>
               <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate">
@@ -497,6 +503,8 @@ function EmptyResult({
   bib: string;
   onClear: () => void;
 }) {
+  const { title, body, showNotify } = emptyResultCopy(event.status, bib);
+
   return (
     <div className="px-6 md:px-10 py-16 md:py-24">
       <div className="max-w-2xl mx-auto rounded-2xl bg-bone-deep border border-line p-8 md:p-12">
@@ -504,14 +512,12 @@ function EmptyResult({
           BIB {bib} · {event.name}
         </p>
         <p className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight leading-tight">
-          No photos yet.
+          {title}
         </p>
         <p className="mt-4 font-sans text-base md:text-lg text-ink-soft max-w-md">
-          {event.status === "ACTIVE"
-            ? "Photographers are still uploading. Check back in a few minutes, or leave your email and we'll ping you when this bib lands."
-            : "We couldn't find a photo with this bib. Double-check the number, or clear the filter to skim the wall."}
+          {body}
         </p>
-        <NotifyForm bib={bib} />
+        {showNotify && <NotifyForm bib={bib} />}
         <button
           type="button"
           onClick={onClear}
@@ -522,6 +528,37 @@ function EmptyResult({
       </div>
     </div>
   );
+}
+
+function emptyResultCopy(
+  status: EventDetail["status"],
+  bib: string,
+): { title: string; body: string; showNotify: boolean } {
+  switch (status) {
+    case "DRAFT":
+    case "ACTIVE":
+      return {
+        title: "Still uploading.",
+        body: `Photographers are still working through this race. Drop your email and we'll ping you the moment ${bib} appears.`,
+        showNotify: true,
+      };
+    case "COMPLETED":
+      return {
+        title: "Bib not found.",
+        body: `All photos for this race have been uploaded — ${bib} isn't in there. Double-check the number, or skim the wall.`,
+        showNotify: false,
+      };
+    case "ARCHIVED":
+      return {
+        title: "This race has wrapped.",
+        body: `Photos for ${bib} never landed in this archive. The wall's still here if you want to skim.`,
+        showNotify: false,
+      };
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
 }
 
 function NotifyForm({ bib }: { bib: string }) {
@@ -609,7 +646,7 @@ function BrowseMode({
     previewIndex !== null ? visible[previewIndex] ?? null : null;
 
   return (
-    <section className="bg-bone min-h-[60vh]">
+    <section className="bg-bone min-h-screen flex flex-col">
       <header className="px-6 md:px-10 pt-8 md:pt-12 pb-8 md:pb-10">
         <div className="max-w-7xl mx-auto">
           <button
@@ -638,7 +675,7 @@ function BrowseMode({
                 <>
                   We found{" "}
                   <span
-                    key={`count-${cleanedQuery}-${visible.length}`}
+                    key={cleanedQuery}
                     className="text-fresh tnum"
                     style={{
                       animation: "count-up 0.6s 0.05s both",
@@ -707,28 +744,25 @@ function BrowseMode({
         </div>
       </div>
 
-      {isFiltered && visible.length === 0 ? (
-        <EmptyResult event={event} bib={bibFilter} onClear={onClearBib} />
-      ) : (
-        <div
-          className={cn(
-            "px-6 md:px-10 py-10 md:py-14",
-            showBuyAll ? "pb-32" : "pb-20",
-          )}
-        >
-          <div className="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense auto-rows-fr">
-            {visible.map((p, i) => (
-              <PhotoTile
-                key={p.id}
-                photo={p}
-                index={i}
-                wide={p.span === "wide"}
-                onOpen={() => setPreviewIndex(i)}
-              />
-            ))}
+      <div className="flex-1 flex flex-col">
+        {isFiltered && visible.length === 0 ? (
+          <EmptyResult event={event} bib={bibFilter} onClear={onClearBib} />
+        ) : (
+          <div className="px-6 md:px-10 py-10 md:py-14 pb-20">
+            <div className="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
+              {visible.map((p, i) => (
+                <PhotoTile
+                  key={p.id}
+                  event={event}
+                  photo={p}
+                  index={i}
+                  onOpen={() => setPreviewIndex(i)}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {showBuyAll && <BuyAllBar event={event} photos={visible} total={total} />}
 
@@ -788,6 +822,9 @@ function PhotoPreviewMount({
   const inCart = useCartStore((s) =>
     s.items.some((i) => i.photoId === photo.id),
   );
+  const openCart = useUiStore((s) => s.openCart);
+  const openCheckout = useUiStore((s) => s.openCheckout);
+  const startExpressCheckout = useUiStore((s) => s.startExpressCheckout);
 
   const handleToggle = () => {
     if (inCart) {
@@ -807,6 +844,34 @@ function PhotoPreviewMount({
     }
   };
 
+  const handleBuyNow = () => {
+    onClose();
+    if (inCart) {
+      openCheckout();
+      return;
+    }
+    // Flag the next count-increase so FloatingCart opens checkout instead of
+    // dismissing modals. Then add; FloatingCart's effect consumes the flag
+    // and routes to checkout.
+    startExpressCheckout();
+    addItem({
+      photoId: photo.id,
+      eventId: event.id,
+      thumbnailUrl: "",
+      price: photo.price,
+      bib: photo.bib,
+      eventName: event.name,
+      eventSlug: event.slug,
+      tone: photo.tone,
+      time: photo.time,
+    });
+  };
+
+  const handleViewCart = () => {
+    onClose();
+    openCart();
+  };
+
   return (
     <PhotoPreviewCard
       photo={photo}
@@ -818,6 +883,8 @@ function PhotoPreviewMount({
       onPrev={onPrev}
       onNext={onNext}
       onToggleCart={handleToggle}
+      onBuyNow={handleBuyNow}
+      onViewCart={handleViewCart}
     />
   );
 }
@@ -837,19 +904,65 @@ function SearchModal({
 }) {
   const [bibInput, setBibInput] = useState("");
   const [panelMode, setPanelMode] = useState<PanelMode>("bib");
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const bibInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+
+    const focusables = () =>
+      dialogRef.current
+        ? Array.from(
+            dialogRef.current.querySelectorAll<HTMLElement>(
+              'button:not([tabindex="-1"]):not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+            ),
+          ).filter((el) => !el.hasAttribute("disabled"))
+        : [];
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key === "Tab") {
+        const items = focusables();
+        if (items.length === 0) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        const active = document.activeElement;
+        if (e.shiftKey) {
+          if (active === first || !dialogRef.current?.contains(active)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (active === last || !dialogRef.current?.contains(active)) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
     };
+
     document.addEventListener("keydown", onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
+      previouslyFocused?.focus();
     };
   }, [onClose]);
+
+  useEffect(() => {
+    if (panelMode === "bib") {
+      bibInputRef.current?.focus();
+    }
+  }, [panelMode]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -860,6 +973,7 @@ function SearchModal({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Find your photos"
@@ -869,6 +983,7 @@ function SearchModal({
         type="button"
         onClick={onClose}
         aria-label="Close search"
+        tabIndex={-1}
         className="absolute inset-0 bg-ink/35 backdrop-blur-sm cursor-default"
         style={{ animation: "fade-in 0.2s ease-out both" }}
       />
@@ -914,6 +1029,7 @@ function SearchModal({
               onSwitchToSelfie={() => setPanelMode("selfie")}
               photoCount={photos.length}
               eventPhotoCount={event.photoCount}
+              inputRef={bibInputRef}
             />
           ) : (
             <SelfiePendingPanel
@@ -929,88 +1045,177 @@ function SearchModal({
 /* ─────────────── PHOTO TILE ─────────────── */
 
 function PhotoTile({
+  event,
   photo,
   index,
-  wide = false,
   onOpen,
 }: {
+  event: EventDetail;
   photo: MockPhoto;
   index: number;
-  wide?: boolean;
   onOpen: () => void;
 }) {
   const inCart = useCartStore((s) =>
     s.items.some((i) => i.photoId === photo.id),
   );
+  const addItem = useCartStore((s) => s.addItem);
+  const removeItem = useCartStore((s) => s.removeItem);
+  const startExpressCheckout = useUiStore((s) => s.startExpressCheckout);
+  const openCheckout = useUiStore((s) => s.openCheckout);
 
+  const wide = photo.span === "wide";
   const colorIdx = photo.tone % TONE_COLORS.length;
   const opacity = 0.7 + (index % 3) * 0.1;
+  const hasImage = Boolean(photo.imageUrl);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageLoaded(false);
+    setImageFailed(false);
+  }, [photo.id, photo.imageUrl]);
+
+  const handleToggleCart = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (inCart) {
+      removeItem(photo.id);
+    } else {
+      addItem({
+        photoId: photo.id,
+        eventId: event.id,
+        thumbnailUrl: "",
+        price: photo.price,
+        bib: photo.bib,
+        eventName: event.name,
+        eventSlug: event.slug,
+        tone: photo.tone,
+        time: photo.time,
+      });
+    }
+  };
+
+  const handleBuyNow = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (inCart) {
+      openCheckout();
+      return;
+    }
+    startExpressCheckout();
+    addItem({
+      photoId: photo.id,
+      eventId: event.id,
+      thumbnailUrl: "",
+      price: photo.price,
+      bib: photo.bib,
+      eventName: event.name,
+      eventSlug: event.slug,
+      tone: photo.tone,
+      time: photo.time,
+    });
+  };
+
+  const fadeRule =
+    "opacity-100 md:opacity-60 md:group-hover:opacity-100";
 
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-haspopup="dialog"
-      aria-label={
-        photo.bib
-          ? `Open preview of photo ${photo.bib}`
-          : "Open preview of untagged crowd photo"
-      }
-      className={cn(
-        "group block text-left rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
-        wide && "md:col-span-2",
-      )}
+    <div
+      className={cn("group relative", wide ? "row-span-1" : "row-span-2")}
       style={{
         animation: `fade-up 0.55s ${Math.min(index * 0.025, 0.6)}s both`,
         opacity: 0,
       }}
     >
-      <div
-        className={cn(
-          "relative overflow-hidden rounded-xl transition-transform duration-300 group-hover:-translate-y-[2px]",
-          wide ? "aspect-[16/10]" : "aspect-[3/4]",
-        )}
-        style={{
-          backgroundColor: TONE_COLORS[colorIdx],
-          opacity,
-        }}
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-haspopup="dialog"
+        aria-label={
+          photo.bib
+            ? `Open preview of photo ${photo.bib}`
+            : "Open preview of untagged crowd photo"
+        }
+        className="block w-full h-full text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
       >
-        {inCart && (
+        <div
+          className="relative overflow-hidden rounded-xl h-full transition-transform duration-300 group-hover:-translate-y-[2px]"
+          style={{
+            backgroundColor: TONE_COLORS[colorIdx],
+            opacity,
+          }}
+        >
+          {hasImage && !imageFailed && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={photo.imageUrl ?? ""}
+              alt={
+                photo.alt ??
+                (photo.bib
+                  ? `Race photo of bib ${photo.bib}`
+                  : "Untagged race photo")
+              }
+              onLoad={() => setImageLoaded(true)}
+              onError={() => setImageFailed(true)}
+              className={cn(
+                "absolute inset-0 w-full h-full object-cover transition-opacity duration-500",
+                imageLoaded ? "opacity-100" : "opacity-0",
+              )}
+              draggable={false}
+            />
+          )}
           <span
-            className="absolute top-3 right-3 size-2 rounded-full bg-fresh"
             aria-hidden="true"
-          />
-        )}
-        <span className="absolute bottom-2 left-3 font-mono uppercase tracking-[0.3em] text-[9px] text-bone/45 tnum">
-          {photo.time}
-        </span>
-        <span
-          aria-hidden="true"
-          className="absolute inset-0 flex items-center justify-center bg-ink/0 group-hover:bg-ink/30 transition-colors duration-300"
-        >
-          <span className="font-mono uppercase tracking-[0.3em] text-[10px] text-bone/0 group-hover:text-bone/95 transition-colors duration-300">
-            View →
+            className="absolute inset-0 flex items-center justify-center bg-ink/0 group-hover:bg-ink/30 transition-colors duration-300"
+          >
+            <span className="font-mono uppercase tracking-[0.3em] text-[10px] text-bone/0 group-hover:text-bone/95 transition-colors duration-300">
+              View →
+            </span>
           </span>
-        </span>
-      </div>
-      <div className="mt-2.5 flex items-baseline justify-between gap-2">
-        <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate truncate">
-          {photo.bib ? (
-            <span className="tnum">{photo.bib}</span>
-          ) : (
-            <span className="text-slate-soft">Untagged</span>
-          )}
-        </span>
-        <span
+        </div>
+      </button>
+      <div className="absolute bottom-3 right-3 flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={handleToggleCart}
+          aria-pressed={inCart}
+          aria-label={
+            inCart
+              ? `Remove ${photo.bib ?? "untagged photo"} from cart`
+              : `Add ${photo.bib ?? "untagged photo"} to cart`
+          }
           className={cn(
-            "font-mono uppercase tracking-[0.25em] text-[10px] tnum shrink-0 transition-colors",
-            inCart ? "text-fresh" : "text-slate-soft group-hover:text-ink",
+            "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full font-mono uppercase tracking-[0.2em] text-[9px] whitespace-nowrap",
+            "shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)]",
+            "transition-all duration-200",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+            inCart
+              ? "bg-fresh text-bone hover:bg-fresh-deep"
+              : cn(
+                  "bg-bone/90 backdrop-blur-sm text-ink hover:bg-bone hover:scale-105",
+                  fadeRule,
+                ),
           )}
         >
-          {inCart ? "In cart" : `₱${photo.price}`}
-        </span>
+          <span aria-hidden="true">{inCart ? "✓" : "+"}</span>
+          <span>cart</span>
+        </button>
+        <button
+          type="button"
+          onClick={handleBuyNow}
+          aria-label={`Buy ${photo.bib ?? "untagged photo"} now for ₱${photo.price}`}
+          className={cn(
+            "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full font-mono uppercase tracking-[0.2em] text-[9px] whitespace-nowrap",
+            "shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)]",
+            "transition-all duration-200",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+            "bg-bone/90 backdrop-blur-sm text-ink hover:bg-fresh hover:text-bone hover:scale-105",
+            fadeRule,
+          )}
+        >
+          <span>buy</span>
+          <span aria-hidden="true">→</span>
+        </button>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -1018,7 +1223,7 @@ function PhotoTile({
 
 function Footer() {
   return (
-    <footer className="px-6 md:px-10 py-8 pb-24 md:pb-12 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-bone">
+    <footer className="px-6 md:px-10 py-8 pb-24 md:pb-20 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-bone">
       <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
         QuickPitik · Cebu, Philippines
       </p>

@@ -832,7 +832,10 @@ function Footer() {
 
 function MobileStickyCta() {
   return (
-    <div className="md:hidden fixed bottom-0 inset-x-0 px-4 py-3 bg-bone/95 backdrop-blur-md border-t border-line z-40">
+    <div
+      className="md:hidden fixed bottom-0 inset-x-0 px-4 pt-3 bg-bone/95 backdrop-blur-md border-t border-line z-40"
+      style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
+    >
       <Link
         href={REGISTER_AS_PHOTOGRAPHER}
         className="block w-full bg-fresh active:bg-fresh-deep text-bone text-center py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-xs"

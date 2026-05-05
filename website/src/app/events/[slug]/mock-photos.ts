@@ -8,6 +8,8 @@ export interface MockPhoto {
   tone: number;
   span: "default" | "wide";
   price: number;
+  imageUrl?: string | null;
+  alt?: string;
 }
 
 export const DEMO_BIB = "B-4082";

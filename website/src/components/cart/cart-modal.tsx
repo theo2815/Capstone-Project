@@ -101,13 +101,35 @@ export function CartModal({
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const previewIndexRef = useRef<number | null>(null);
 
+  // Three-state render machine: keeps the drawer mounted during the slide-out
+  // exit animation so close paths (X, backdrop, Esc, checkout-handoff) feel
+  // smooth instead of snapping. EXIT_MS must match the keyframe duration.
+  const EXIT_MS = 350;
+  const [renderState, setRenderState] = useState<"hidden" | "open" | "closing">(
+    isOpen ? "open" : "hidden",
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      setRenderState("open");
+      return;
+    }
+    setRenderState((prev) => (prev === "open" ? "closing" : "hidden"));
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (renderState !== "closing") return;
+    const t = setTimeout(() => setRenderState("hidden"), EXIT_MS);
+    return () => clearTimeout(t);
+  }, [renderState]);
+
   useEffect(() => {
     previewIndexRef.current = previewIndex;
   }, [previewIndex]);
 
   useEffect(() => {
-    if (!isOpen) {
-      setPreviewIndex(null);
+    if (renderState !== "open") {
+      if (renderState === "hidden") setPreviewIndex(null);
       return;
     }
     const onKey = (e: KeyboardEvent) => {
@@ -120,7 +142,7 @@ export function CartModal({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
     };
-  }, [isOpen, onClose]);
+  }, [renderState, onClose]);
 
   useEffect(() => {
     if (previewIndex !== null && previewIndex >= items.length) {
@@ -128,7 +150,8 @@ export function CartModal({
     }
   }, [items.length, previewIndex]);
 
-  if (!isOpen) return null;
+  if (renderState === "hidden") return null;
+  const isClosing = renderState === "closing";
 
   const itemCount = items.length;
   const previewItem =
@@ -139,19 +162,32 @@ export function CartModal({
       role="dialog"
       aria-modal="true"
       aria-label="Your cart"
-      className="fixed inset-0 z-50"
+      aria-hidden={isClosing || undefined}
+      className={cn(
+        "fixed inset-0 z-50",
+        isClosing && "pointer-events-none",
+      )}
     >
       <button
         type="button"
-        onClick={onClose}
+        onClick={isClosing ? undefined : onClose}
+        disabled={isClosing}
         aria-label="Close cart"
         className="absolute inset-0 bg-ink/50 backdrop-blur-sm cursor-default"
-        style={{ animation: "fade-in 0.25s ease-out both" }}
+        style={{
+          animation: isClosing
+            ? "fade-out 0.3s ease-in both"
+            : "fade-in 0.25s ease-out both",
+        }}
       />
 
       <aside
         className="absolute top-0 right-0 h-full w-full sm:max-w-md flex flex-col bg-bone shadow-[-30px_0_80px_-20px_rgba(0,0,0,0.45)]"
-        style={{ animation: "slide-in-right 0.35s ease-out both" }}
+        style={{
+          animation: isClosing
+            ? "slide-out-right 0.35s cubic-bezier(0.4, 0, 1, 1) both"
+            : "slide-in-right 0.35s cubic-bezier(0.16, 1, 0.3, 1) both",
+        }}
       >
         <header className="flex items-start justify-between gap-3 px-6 md:px-7 pt-6 pb-5 border-b border-line">
           <div>
@@ -169,8 +205,9 @@ export function CartModal({
           <button
             type="button"
             onClick={onClose}
+            disabled={isClosing}
             aria-label="Close cart"
-            className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
+            className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh disabled:opacity-40"
           >
             <svg
               viewBox="0 0 16 16"
@@ -229,11 +266,11 @@ export function CartModal({
               >
                 Continue to checkout →
               </button>
-              <div className="mt-4 flex items-center justify-between gap-3">
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <button
                   type="button"
                   onClick={handleKeepBrowsing}
-                  className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink transition-colors max-w-[60%] text-left truncate"
+                  className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink transition-colors text-left sm:max-w-[60%] sm:truncate"
                   title={browseTarget.label}
                 >
                   ← {browseTarget.label}
@@ -241,7 +278,7 @@ export function CartModal({
                 <button
                   type="button"
                   onClick={clear}
-                  className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft hover:text-fresh transition-colors shrink-0"
+                  className="self-start sm:self-auto font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft hover:text-fresh transition-colors shrink-0"
                 >
                   Clear cart
                 </button>
@@ -270,6 +307,10 @@ export function CartModal({
           onToggleCart={() => {
             removeItem(previewItem.photoId);
             setPreviewIndex(null);
+          }}
+          onBuyNow={() => {
+            setPreviewIndex(null);
+            onContinueToCheckout?.();
           }}
         />
       )}

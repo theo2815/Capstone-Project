@@ -31,6 +31,8 @@ interface PhotoPreviewCardProps {
   onPrev?: () => void;
   onNext?: () => void;
   onToggleCart: () => void;
+  onBuyNow: () => void;
+  onViewCart?: () => void;
 }
 
 export function PhotoPreviewCard({
@@ -43,6 +45,8 @@ export function PhotoPreviewCard({
   onPrev,
   onNext,
   onToggleCart,
+  onBuyNow,
+  onViewCart,
 }: PhotoPreviewCardProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -136,7 +140,7 @@ export function PhotoPreviewCard({
 
       <div
         className={cn(
-          "relative w-full h-[92vh] flex flex-col overflow-hidden rounded-2xl bg-bone shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)]",
+          "relative w-full h-[92dvh] max-h-[92vh] flex flex-col overflow-hidden rounded-2xl bg-bone shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)]",
           wide ? "max-w-5xl" : "max-w-lg sm:max-w-xl",
         )}
         style={{ animation: "fade-up 0.4s ease-out both" }}
@@ -144,10 +148,6 @@ export function PhotoPreviewCard({
         <div className="flex items-center justify-between gap-3 px-5 md:px-7 py-4 border-b border-line">
           <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate truncate">
             <span className="text-ink">{eventName}</span>
-            <span className="mx-2 text-slate-soft" aria-hidden="true">
-              ·
-            </span>
-            <span className="tnum">{photo.time}</span>
           </p>
           <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft tnum hidden sm:block whitespace-nowrap">
             <span className="text-ink">{index}</span> / {total}
@@ -240,51 +240,67 @@ export function PhotoPreviewCard({
             </div>
           )}
 
-          <div className="absolute bottom-0 inset-x-0 z-10 px-4 py-3 flex items-end justify-between gap-3 text-bone/85 bg-gradient-to-t from-ink/50 to-transparent pointer-events-none">
-            <span className="font-mono uppercase tracking-[0.3em] text-[10px] tnum">
-              {photo.time}
-            </span>
+          <div className="absolute bottom-0 inset-x-0 z-10 px-4 py-3 flex items-end justify-end gap-3 text-bone/85 bg-gradient-to-t from-ink/50 to-transparent pointer-events-none">
             <span className="font-mono uppercase tracking-[0.3em] text-[10px]">
               Watermarked preview
             </span>
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-end sm:justify-between gap-4 px-5 md:px-7 py-5 md:py-6 bg-bone-deep border-t border-line">
-          <div>
-            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-1.5">
-              {photo.bib ? "Bib" : "Untagged"}
+        <div className="px-5 md:px-7 py-4 sm:py-5 md:py-6 bg-bone-deep border-t border-line">
+          {!inCart && (
+            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3 sm:mb-4 text-center">
+              Pay once, download forever
             </p>
-            <p className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight leading-none tnum">
-              {photo.bib ?? "—"}
-            </p>
-          </div>
-          <div className="flex flex-col sm:items-end gap-2.5">
-            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-              <span className="tnum text-ink">₱{photo.price}</span>
-              <span className="mx-2 text-slate-soft" aria-hidden="true">
-                ·
-              </span>
-              pay once, download forever
-            </p>
+          )}
+          <div className="flex flex-row gap-2 sm:gap-3">
             <button
               type="button"
               onClick={onToggleCart}
               aria-pressed={inCart}
               className={cn(
-                "inline-flex items-center justify-center px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep",
-                inCart
-                  ? "border border-line bg-bone hover:bg-bone-deep text-ink"
-                  : "bg-fresh hover:bg-fresh-deep text-bone",
+                "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[10px] sm:text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
+                "border border-line bg-bone hover:bg-bone-deep text-ink",
               )}
             >
-              {inCart ? "Remove from cart" : "Add to cart →"}
+              {inCart ? "− Remove" : "+ Add to cart"}
+            </button>
+            <button
+              type="button"
+              onClick={onBuyNow}
+              className={cn(
+                "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[10px] sm:text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
+                "bg-fresh hover:bg-fresh-deep text-bone",
+              )}
+            >
+              {inCart ? "Checkout now" : "Buy now"} ·
+              <span className="tnum ml-1 sm:ml-1.5">₱{photo.price}</span>
+              <span aria-hidden="true" className="ml-1 sm:ml-1.5">→</span>
             </button>
           </div>
+          {inCart && (
+            <p className="mt-3 sm:mt-4 font-mono uppercase tracking-[0.3em] text-[10px] text-fresh text-center">
+              <span aria-hidden="true">✓</span> In cart
+              {onViewCart && (
+                <>
+                  <span className="mx-2 text-slate-soft" aria-hidden="true">
+                    ·
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onViewCart}
+                    className="underline underline-offset-4 decoration-line hover:text-fresh-deep hover:decoration-fresh-deep transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh rounded-sm"
+                  >
+                    view cart →
+                  </button>
+                </>
+              )}
+            </p>
+          )}
         </div>
 
         {(onPrev || onNext) && (
-          <div className="md:hidden flex items-center justify-between gap-3 px-5 py-3 border-t border-line bg-bone">
+          <div className="md:hidden flex items-center justify-between gap-3 px-5 py-2 border-t border-line bg-bone">
             <button
               type="button"
               onClick={onPrev}
