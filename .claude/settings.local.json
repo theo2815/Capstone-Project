@@ -87,7 +87,13 @@
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\website\\\\src\" -Recurse -Filter \"*.tsx\")",
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(Sort-Object)",
-      "Bash(pnpm tsc *)"
+      "Bash(pnpm tsc *)",
+      "PowerShell(Expand-Archive *)",
+      "PowerShell($ProgressPreference = 'SilentlyContinue'; $r = Invoke-RestMethod -Uri \"https://start.spring.io/metadata/client\" -Method Get; Write-Output \"Default boot version: $\\($r.bootVersion.default\\)\"; Write-Output \"Available boot versions:\"; $r.bootVersion.values | ForEach-Object { Write-Output \"  $\\($_.id\\)\" })",
+      "Bash(npx eslint *)",
+      "Bash(tail -60 \"C:\\\\\\\\Users\\\\\\\\THEOCE~1\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users-Theo-Cedric-Chan-documents-Start-up-project-capstone-project\\\\\\\\4ae51159-b75a-48d9-882b-ab82e50f0178\\\\\\\\tasks\\\\\\\\bdjgbjocg.output\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

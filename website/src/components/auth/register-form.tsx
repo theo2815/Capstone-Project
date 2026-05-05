@@ -7,15 +7,26 @@ import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
 import { ApiError } from "@/lib/api";
 import { isSafeRedirect } from "@/lib/redirect";
+import { cn } from "@/lib/utils";
 import type { Role } from "@/types/user";
 
-const ROLE_OPTIONS: ReadonlyArray<{ value: Role; label: string }> = [
-  { value: "RUNNER", label: "I run" },
-  { value: "PHOTOGRAPHER", label: "I shoot" },
+interface RoleOption {
+  value: Role;
+  label: string;
+  sub: string;
+}
+
+const ROLE_OPTIONS: ReadonlyArray<RoleOption> = [
+  { value: "RUNNER", label: "I run", sub: "Find your photos." },
+  { value: "PHOTOGRAPHER", label: "I shoot", sub: "Sell your photos." },
 ];
 
 function resolveInitialRole(param: string | null): Role {
   return param === "PHOTOGRAPHER" ? "PHOTOGRAPHER" : "RUNNER";
+}
+
+function pad2(n: number): string {
+  return n.toString().padStart(2, "0");
 }
 
 export function RegisterForm() {
@@ -24,7 +35,7 @@ export function RegisterForm() {
   const { register } = useAuth();
 
   const rawRedirect = searchParams.get("redirect");
-  const redirectTo = isSafeRedirect(rawRedirect) ? rawRedirect : ROUTES.HOME;
+  const redirectTo = isSafeRedirect(rawRedirect) ? rawRedirect : ROUTES.EVENTS;
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -69,23 +80,42 @@ export function RegisterForm() {
       <div
         role="group"
         aria-label="Account type"
-        className="inline-flex border border-line rounded-full p-1 bg-bone-deep/50"
+        className="grid grid-cols-2 gap-3"
       >
-        {ROLE_OPTIONS.map(({ value, label }) => {
-          const active = role === value;
+        {ROLE_OPTIONS.map((option, idx) => {
+          const active = role === option.value;
           return (
             <button
-              key={value}
+              key={option.value}
               type="button"
               aria-pressed={active}
-              onClick={() => setRole(value)}
-              className={`px-5 py-2 rounded-full font-mono uppercase tracking-[0.25em] text-[10px] transition-colors ${
+              onClick={() => setRole(option.value)}
+              className={cn(
+                "group text-left p-4 rounded-2xl border transition-colors duration-200",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
                 active
-                  ? "bg-ink text-bone"
-                  : "text-slate-soft hover:text-ink"
-              }`}
+                  ? "border-ink bg-bone-deep"
+                  : "border-line bg-bone hover:border-slate-soft",
+              )}
             >
-              {label}
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum">
+                  {pad2(idx + 1)}
+                </span>
+                <span
+                  className={cn(
+                    "size-1.5 rounded-full transition-colors",
+                    active ? "bg-fresh" : "bg-transparent",
+                  )}
+                  aria-hidden="true"
+                />
+              </div>
+              <p className="font-display text-lg text-ink leading-tight mt-3">
+                {option.label}
+              </p>
+              <p className="font-sans text-xs text-slate mt-1.5">
+                {option.sub}
+              </p>
             </button>
           );
         })}
@@ -178,7 +208,7 @@ export function RegisterForm() {
           Already have an account?{" "}
           <Link
             href={
-              redirectTo === ROUTES.HOME
+              redirectTo === ROUTES.EVENTS
                 ? ROUTES.LOGIN
                 : `${ROUTES.LOGIN}?redirect=${encodeURIComponent(redirectTo)}`
             }

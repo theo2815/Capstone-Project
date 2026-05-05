@@ -24,7 +24,7 @@ class ApiClient {
       headers,
     });
 
-    if (res.status === 401) {
+    if (res.status === 401 && !isPublicAuthEndpoint(path)) {
       const refreshed = await this.refreshToken();
       if (refreshed) return this.fetch<T>(path, options);
       this.redirectToLogin();
@@ -96,6 +96,19 @@ class ApiClient {
       window.location.href = ROUTES.LOGIN;
     }
   }
+}
+
+const PUBLIC_AUTH_ENDPOINTS = new Set([
+  "/auth/login",
+  "/auth/register",
+  "/auth/refresh",
+  "/auth/forgot-password",
+  "/auth/reset-password",
+]);
+
+function isPublicAuthEndpoint(path: string): boolean {
+  const [pathname] = path.split("?");
+  return PUBLIC_AUTH_ENDPOINTS.has(pathname);
 }
 
 export class ApiError extends Error {

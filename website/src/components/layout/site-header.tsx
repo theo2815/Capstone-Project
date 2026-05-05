@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/hooks/use-auth";
+import { UserMenu } from "@/components/layout/user-menu";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +19,7 @@ export function SiteHeader({
   rightLink = DEFAULT_RIGHT_LINK,
 }: SiteHeaderProps) {
   const pathname = usePathname();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const isEventsActive = pathname === ROUTES.EVENTS;
 
   return (
@@ -52,9 +55,7 @@ export function SiteHeader({
             aria-current={isEventsActive ? "page" : undefined}
             className={cn(
               "relative inline-flex items-center gap-2 font-mono uppercase tracking-[0.25em] text-xs transition-colors",
-              isEventsActive
-                ? "text-ink"
-                : "text-slate hover:text-ink",
+              isEventsActive ? "text-ink" : "text-slate hover:text-ink",
             )}
           >
             {isEventsActive && (
@@ -71,14 +72,21 @@ export function SiteHeader({
               />
             )}
           </Link>
-          {rightLink && (
+          {isLoading ? (
+            <div
+              className="size-9 rounded-full bg-line/40 animate-pulse"
+              aria-hidden="true"
+            />
+          ) : isAuthenticated && user ? (
+            <UserMenu user={user} />
+          ) : rightLink ? (
             <Link
               href={rightLink.href}
               className="font-mono uppercase tracking-[0.25em] text-xs text-ink hover:text-fresh transition-colors"
             >
               {rightLink.label}
             </Link>
-          )}
+          ) : null}
         </nav>
       </div>
     </header>
