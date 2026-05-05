@@ -68,7 +68,26 @@
       "Bash(powershell -Command 'Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in 8000,8765,6379,5432 } | Select-Object LocalPort, OwningProcess | Format-Table -AutoSize')",
       "Bash(npm run *)",
       "Bash(curl *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Read(//c/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/Claude Skills/**)",
+      "Read(//c/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/Documentation for capstone paper/**)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(New-Item *)",
+      "PowerShell(Get-Item *)",
+      "Bash(npx --no-install next build)",
+      "Bash(npx --no-install next dev --port 3000)",
+      "Bash(mkdir \"/c/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/_templates\")",
+      "Bash(mv \"/c/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/_project/_templates/daily-note.md\" \"/c/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/_templates/\")",
+      "Bash(mv \"/c/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/_project/_templates/decision-log.md\" \"/c/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/_templates/\")",
+      "Bash(mv \"/c/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/_project/_templates/feature-doc.md\" \"/c/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/_templates/\")",
+      "Bash(rmdir \"/c/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/_project/_templates\")",
+      "Bash(rm -v blur-detection.md blur-classifier.md bib-recognition.md bib-detector.md face-recognition.md buffalo_l.md)",
+      "Read(//c/c/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/**)",
+      "Read(//c/c/Users/Theo Cedric Chan/Documents/Obsidian Vault/**)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\website\\\\src\" -Recurse -Filter \"*.tsx\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)",
+      "Bash(pnpm tsc *)"
     ]
   }
 }

@@ -6,9 +6,11 @@ import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
 import { ApiError } from "@/lib/api";
+import { useRedirectTarget } from "@/lib/redirect";
 
 export function LoginForm() {
   const router = useRouter();
+  const redirectTo = useRedirectTarget();
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,7 +24,7 @@ export function LoginForm() {
 
     try {
       await login({ email, password });
-      router.push(ROUTES.HOME);
+      router.push(redirectTo);
     } catch (err) {
       setError(
         err instanceof ApiError ? err.message : "Login failed. Please try again.",
@@ -122,7 +124,11 @@ export function LoginForm() {
         <p className="text-center font-mono uppercase tracking-[0.2em] text-[10px] text-slate">
           New here?{" "}
           <Link
-            href={ROUTES.REGISTER}
+            href={
+              redirectTo === ROUTES.HOME
+                ? ROUTES.REGISTER
+                : `${ROUTES.REGISTER}?redirect=${encodeURIComponent(redirectTo)}`
+            }
             className="text-ink hover:text-fresh transition-colors"
           >
             Create account →

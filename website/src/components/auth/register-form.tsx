@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
 import { ApiError } from "@/lib/api";
+import { isSafeRedirect } from "@/lib/redirect";
 import type { Role } from "@/types/user";
 
 const ROLE_OPTIONS: ReadonlyArray<{ value: Role; label: string }> = [
@@ -21,6 +22,9 @@ export function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { register } = useAuth();
+
+  const rawRedirect = searchParams.get("redirect");
+  const redirectTo = isSafeRedirect(rawRedirect) ? rawRedirect : ROUTES.HOME;
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -38,7 +42,7 @@ export function RegisterForm() {
 
     try {
       await register({ name, email, password, role });
-      router.push(ROUTES.HOME);
+      router.push(redirectTo);
     } catch (err) {
       setError(
         err instanceof ApiError
@@ -173,7 +177,11 @@ export function RegisterForm() {
         <p className="text-center font-mono uppercase tracking-[0.2em] text-[10px] text-slate">
           Already have an account?{" "}
           <Link
-            href={ROUTES.LOGIN}
+            href={
+              redirectTo === ROUTES.HOME
+                ? ROUTES.LOGIN
+                : `${ROUTES.LOGIN}?redirect=${encodeURIComponent(redirectTo)}`
+            }
             className="text-ink hover:text-fresh transition-colors"
           >
             Sign in →

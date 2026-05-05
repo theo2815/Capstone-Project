@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import {
   Bricolage_Grotesque,
   Funnel_Sans,
@@ -32,6 +32,12 @@ export const metadata: Metadata = {
   title: "QuickPitik — Race Photos, Delivered in Minutes",
   description:
     "Marathon photos delivered minutes after the finish line. Find yours by face or bib in seconds.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

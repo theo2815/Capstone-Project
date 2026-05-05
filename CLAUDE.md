@@ -120,33 +120,17 @@ Project-specific skills live in the Obsidian vault under `Claude Skills/`. Agent
 | Skill | Path | When to apply |
 |-------|------|---------------|
 | **Frontend Design** | `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Claude Skills\Frontend Design.md` | Any task that creates, redesigns, or polishes a UI/UX — components, pages, layouts, styling, animations, design systems. Applies across `website/`, `mobile/`, and `desktop/` modules. |
-| **Documentation** | **Skill (rulebook):** `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Claude Skills\Document Skill.md`<br>**Second Brain (runtime state):** `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Documentation for capstone paper\` | Any task that writes, drafts, updates, or asks about **the capstone paper** or any of its component documents — **SRS, SDD, SPMP**, plus future paper docs (test plan, user manual, defense materials). Also covers general project documentation: GitHub README, setup/install guides, module `CLAUDE.md` files, architecture docs, API/integration contracts, ADRs (decision logs), vault learning notes, traceability matrices. **Triggers** on phrases like "my paper", "capstone paper", "the SRS / SDD / SPMP", "draft the README", "document this feature", "ADR", "IEEE 830 / 1016 / 1058", "use case description", "functional requirements", "setup guide", "traceability matrix". **Mandatory protocol:** read the skill file in full (rulebook), then read the Second Brain entry points (`DASHBOARD.md`, `AGENT-GUIDE.md`, the relevant `<doc>/README.md` tracker, and the `_knowledge-base/` entries the section depends on) — see the dedicated ritual below. |
+| **Document Skill** | **Skill (rulebook):** `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Claude Skills\Document Skill.md`<br>**Workspace (drafts, facts, logs):** `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Documentation for capstone paper\` | Any task that writes, drafts, reviews, or asks about the **capstone paper** — currently **SRS** (active this semester), **SDD** (next semester). Triggers on phrases like "the SRS", "the SDD", "draft §X.Y", "my paper", "review my section", "promote to Papers-For-Capstone", "what's left on the SRS". **Mandatory protocol:** read the skill file in full, then run the pre-draft ritual it specifies (workspace `README.md` → relevant `facts/*.md` → `open-questions.md` → `adviser-log.md` → draft file). The skill enforces IEEE-830 spec voice, hard rules against fact invention (`[NEEDS USER INPUT — Q-NNN]` placeholder + pause), template fidelity (cover → §3.4 only, numbering gaps preserved), the FORBIDDEN PATTERNS list, and a 10-point self-audit checklist before any section is declared "Draft done." Final assembled SRS is promoted to `Papers-For-Capstone\SRS-QuickPitik.md` for external markdown → Word → PDF conversion. |
 
 ### How to use a skill
 
-1. **Detect the trigger.** Before starting UI/UX work (new component, page redesign, visual refactor, styling pass), recognize that the Frontend Design skill applies.
-2. **Read the skill file in full** before producing any design or code. Do not rely on summaries or memory — the skill encodes specific aesthetic principles and prohibitions.
-3. **Apply the skill's guidance throughout the task** — design thinking, typography, color, motion, composition, backgrounds. Commit to a clear aesthetic direction; avoid the "generic AI aesthetic" patterns the skill explicitly forbids (Inter/Roboto/system fonts, purple-gradient-on-white, predictable layouts).
-4. **Honor the skill over defaults.** If a default approach (e.g., "use Tailwind defaults", "use shadcn/ui as-is") conflicts with the skill, the skill wins.
+1. **Detect the trigger.** When the user's request matches a skill's trigger phrases or domain (UI/UX work → Frontend Design; capstone paper writing → Document Skill), the skill applies.
+2. **Read the skill file in full** before producing any work it covers. Do not rely on summaries or memory — skills encode specific principles, prohibitions, and rituals that override defaults.
+3. **Run any pre-task ritual the skill specifies.** The Document Skill, for example, mandates reading the workspace `README.md`, the relevant `facts/*.md`, `open-questions.md`, and `adviser-log.md` before drafting any SRS section. Skipping the ritual is a protocol failure.
+4. **Apply the skill's guidance throughout the task.** Skills override default approaches — that is the point. Frontend Design overrides "use Tailwind / shadcn defaults"; Document Skill overrides "draft from agent assumptions."
+5. **Honor the skill over defaults.** If a default approach conflicts with the skill, the skill wins.
 
-If the user asks for a UI change and the skill is not consulted, the work is incomplete. Re-read the skill at the start of each UI/UX task — do not assume prior context carries over.
-
-### Capstone Paper Documentation Ritual (MANDATORY)
-
-When the user asks about **writing the capstone paper** or any of its component documents (**SRS / SDD / SPMP** or future paper docs), the agent MUST follow this exact sequence before drafting, restructuring, or summarizing anything:
-
-1. **Read the Documentation Skill in full** — `Claude Skills\Document Skill.md`. It is the rulebook: templates, voice, source-of-truth hierarchy, quality checks.
-2. **Read the Second Brain dashboard** — `Documentation for capstone paper\DASHBOARD.md`. Shows current status across SRS / SDD / SPMP / any future docs.
-3. **Read the agent guide** — `Documentation for capstone paper\AGENT-GUIDE.md`. Owns the status lifecycle (`not-started → in-progress → review → done`), frontmatter contract, and update workflow.
-4. **Read the relevant document tracker** — `Documentation for capstone paper\<doc>\README.md` (e.g., `srs\README.md`). Shows section-level status, blockers, adviser feedback log, and the section's `depends-on` files.
-5. **Read the relevant `_knowledge-base/` entries** for the section being touched. The KB holds canonical facts (features, performance targets, stakeholders, references, glossary, tech stack, system architecture, workflows) — never duplicate or contradict them.
-6. **Open the section file** — read its frontmatter (status, depends-on, traces-to) and existing content before editing.
-7. **After making changes**, update: section frontmatter (`status`, `last-updated`), the document's `README.md` tracker row, and the root `DASHBOARD.md` progress count.
-8. **Tell the user** what changed and where (which file, which status transition).
-
-Do not skip steps. Do not bypass the Second Brain — drift between documents is the failure mode this system prevents.
-
-Trigger phrases that activate this ritual include: "my paper", "capstone paper", "write the paper", "the SRS", "the SDD", "the SPMP", "section X.Y", "draft section", "use case description", "traceability matrix", "non-functional requirements", "IEEE 830 / 1016 / 1058", "what's the status of [doc]", "what's left on the SRS", and similar.
+If a skill applies to the user's request and is not consulted, the work is incomplete. Re-read the skill at the start of each task it covers — do not assume prior context carries over.
 
 ---
 
