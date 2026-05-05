@@ -12,10 +12,12 @@ import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
+import { useScrollLock } from "@/lib/scroll-lock";
 import { cn } from "@/lib/utils";
 import type { EventDetail } from "@/types/event";
 import { type MockPhoto } from "./mock-photos";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
+import { SaveButton } from "@/components/events/save-button";
 
 type Mode = "cockpit" | "browse";
 type PanelMode = "bib" | "selfie";
@@ -146,7 +148,7 @@ function CockpitMode({
   return (
     <>
       <div className="bg-bone">
-        <div className="max-w-7xl mx-auto px-6 md:px-10 pt-5 md:pt-6">
+        <div className="max-w-7xl mx-auto px-6 md:px-10 pt-5 md:pt-6 flex items-center justify-between gap-4">
           <Link
             href="/events"
             className="group inline-flex items-center gap-2 font-mono uppercase tracking-[0.3em] text-[10px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
@@ -159,6 +161,7 @@ function CockpitMode({
             </span>
             <span>Back to events</span>
           </Link>
+          <SaveButton eventId={event.id} variant="inline" />
         </div>
       </div>
 
@@ -702,16 +705,16 @@ function BrowseMode({
       </header>
 
       <div className="sticky top-[3.75rem] z-20 bg-bone/90 backdrop-blur-md border-y border-line">
-        <div className="max-w-7xl mx-auto px-6 md:px-10 py-3 flex items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-6 md:px-10 py-3 flex items-center gap-3">
           <button
             type="button"
             onClick={() => setSearchOpen(true)}
             aria-haspopup="dialog"
-            className="inline-flex items-center gap-2.5 font-mono uppercase tracking-[0.25em] text-[10px] text-ink hover:text-fresh transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            className="flex-1 min-w-0 inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full border border-line bg-bone-deep/60 hover:bg-bone-deep hover:border-slate transition-colors text-left font-mono uppercase tracking-[0.25em] text-[10px] text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             <svg
               viewBox="0 0 16 16"
-              className="size-3.5 text-slate"
+              className="size-3.5 text-slate shrink-0"
               fill="none"
               aria-hidden="true"
             >
@@ -723,7 +726,7 @@ function BrowseMode({
                 strokeLinecap="round"
               />
             </svg>
-            <span>
+            <span className="truncate">
               {isFiltered ? `Search · ${bibFilter}` : "Find your photos"}
             </span>
           </button>
@@ -731,13 +734,13 @@ function BrowseMode({
             <button
               type="button"
               onClick={onClearBib}
-              className="inline-flex items-center gap-2 font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+              className="shrink-0 inline-flex items-center gap-2 font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
             >
               <span>Clear filter</span>
               <span aria-hidden="true">✕</span>
             </button>
           ) : (
-            <span className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft hidden sm:inline">
+            <span className="shrink-0 font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft hidden sm:inline">
               <span className="tnum text-ink">{photos.length}</span> photos
             </span>
           )}
@@ -907,6 +910,8 @@ function SearchModal({
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const bibInputRef = useRef<HTMLInputElement | null>(null);
 
+  useScrollLock(true);
+
   useEffect(() => {
     const previouslyFocused =
       document.activeElement instanceof HTMLElement
@@ -948,12 +953,9 @@ function SearchModal({
     };
 
     document.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
 
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
       previouslyFocused?.focus();
     };
   }, [onClose]);

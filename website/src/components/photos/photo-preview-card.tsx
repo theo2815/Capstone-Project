@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { useScrollLock } from "@/lib/scroll-lock";
 import { cn } from "@/lib/utils";
 
 const TONE_COLORS = [
@@ -21,33 +23,44 @@ export interface PhotoPreviewItem {
   alt?: string;
 }
 
-interface PhotoPreviewCardProps {
+interface BasePhotoPreviewProps {
   photo: PhotoPreviewItem;
   eventName: string;
   index: number;
   total: number;
-  inCart: boolean;
   onClose: () => void;
   onPrev?: () => void;
   onNext?: () => void;
+}
+
+interface BrowsePhotoPreviewProps extends BasePhotoPreviewProps {
+  mode?: "browse";
+  inCart: boolean;
   onToggleCart: () => void;
   onBuyNow: () => void;
   onViewCart?: () => void;
 }
 
-export function PhotoPreviewCard({
-  photo,
-  eventName,
-  index,
-  total,
-  inCart,
-  onClose,
-  onPrev,
-  onNext,
-  onToggleCart,
-  onBuyNow,
-  onViewCart,
-}: PhotoPreviewCardProps) {
+interface OwnedPhotoPreviewProps extends BasePhotoPreviewProps {
+  mode: "owned";
+  onDownload: () => void;
+}
+
+type PhotoPreviewCardProps = BrowsePhotoPreviewProps | OwnedPhotoPreviewProps;
+
+export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
+  const { photo, eventName, index, total, onClose, onPrev, onNext } = props;
+  const mode = props.mode ?? "browse";
+  useScrollLock(true);
+
+  // Mount through a portal so the modal escapes any ancestor that establishes
+  // a containing block (e.g. an `animate-fade-up` ancestor with a non-`none`
+  // transform). Without this, `fixed inset-0` would size to the parent column.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -55,11 +68,8 @@ export function PhotoPreviewCard({
       else if (e.key === "ArrowRight" && onNext) onNext();
     };
     document.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
     };
   }, [onClose, onPrev, onNext]);
 
@@ -74,7 +84,9 @@ export function PhotoPreviewCard({
     setImageFailed(false);
   }, [photo.id, photo.imageUrl]);
 
-  return (
+  if (!mounted) return null;
+
+  const content = (
     <div
       role="dialog"
       aria-modal="true"
@@ -182,33 +194,46 @@ export function PhotoPreviewCard({
             animation: "fade-in 0.4s ease-out both",
           }}
         >
-          <div
-            aria-hidden="true"
-            className="absolute inset-0 pointer-events-none overflow-hidden select-none"
-          >
-            <span
-              className={cn(
-                "absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.4em] text-2xl sm:text-3xl md:text-5xl rotate-[-18deg] whitespace-nowrap transition-colors duration-300",
-                hasImage && imageLoaded && !imageFailed
-                  ? "text-bone/25 mix-blend-overlay"
-                  : "text-bone/15",
-              )}
+          {mode === "browse" && (
+            <div
+              aria-hidden="true"
+              className="absolute inset-0 pointer-events-none overflow-hidden select-none"
             >
-              QuickPitik · Preview
-            </span>
-            {hasImage && imageLoaded && !imageFailed && (
-              <div className="absolute inset-0 grid grid-cols-2 grid-rows-3 gap-0">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <span
-                    key={i}
-                    className="flex items-center justify-center font-mono uppercase tracking-[0.4em] text-[10px] sm:text-xs text-bone/30 mix-blend-overlay rotate-[-18deg] whitespace-nowrap"
-                  >
-                    QuickPitik
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+              <span
+                className={cn(
+                  "absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.4em] text-2xl sm:text-3xl md:text-5xl rotate-[-18deg] whitespace-nowrap transition-colors duration-300",
+                  hasImage && imageLoaded && !imageFailed
+                    ? "text-bone/25 mix-blend-overlay"
+                    : "text-bone/15",
+                )}
+              >
+                QuickPitik · Preview
+              </span>
+              {hasImage && imageLoaded && !imageFailed && (
+                <div className="absolute inset-0 grid grid-cols-2 grid-rows-3 gap-0">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <span
+                      key={i}
+                      className="flex items-center justify-center font-mono uppercase tracking-[0.4em] text-[10px] sm:text-xs text-bone/30 mix-blend-overlay rotate-[-18deg] whitespace-nowrap"
+                    >
+                      QuickPitik
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {mode === "owned" && !hasImage && (
+            <div
+              aria-hidden="true"
+              className="absolute inset-0 flex items-center justify-center pointer-events-none"
+            >
+              <span className="font-mono uppercase tracking-[0.4em] text-sm sm:text-base text-bone/40 tnum">
+                {photo.id.replace(/^mock-/, "")}
+              </span>
+            </div>
+          )}
 
           {hasImage && !imageFailed && (
             // eslint-disable-next-line @next/next/no-img-element
@@ -230,7 +255,7 @@ export function PhotoPreviewCard({
             />
           )}
 
-          {inCart && (
+          {props.mode !== "owned" && props.inCart && (
             <div className="absolute top-4 right-4 inline-flex items-center gap-2 bg-fresh text-bone rounded-full px-3 py-1 font-mono uppercase tracking-[0.25em] text-[10px] z-10">
               <span
                 className="size-1.5 rounded-full bg-bone"
@@ -240,62 +265,85 @@ export function PhotoPreviewCard({
             </div>
           )}
 
-          <div className="absolute bottom-0 inset-x-0 z-10 px-4 py-3 flex items-end justify-end gap-3 text-bone/85 bg-gradient-to-t from-ink/50 to-transparent pointer-events-none">
-            <span className="font-mono uppercase tracking-[0.3em] text-[10px]">
-              Watermarked preview
-            </span>
-          </div>
+          {mode === "browse" && (
+            <div className="absolute bottom-0 inset-x-0 z-10 px-4 py-3 flex items-end justify-end gap-3 text-bone/85 bg-gradient-to-t from-ink/50 to-transparent pointer-events-none">
+              <span className="font-mono uppercase tracking-[0.3em] text-[10px]">
+                Watermarked preview
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="px-5 md:px-7 py-4 sm:py-5 md:py-6 bg-bone-deep border-t border-line">
-          {!inCart && (
-            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3 sm:mb-4 text-center">
-              Pay once, download forever
-            </p>
-          )}
-          <div className="flex flex-row gap-2 sm:gap-3">
-            <button
-              type="button"
-              onClick={onToggleCart}
-              aria-pressed={inCart}
-              className={cn(
-                "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[10px] sm:text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
-                "border border-line bg-bone hover:bg-bone-deep text-ink",
+          {props.mode === "owned" ? (
+            <>
+              <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3 sm:mb-4 text-center">
+                Yours to keep
+              </p>
+              <button
+                type="button"
+                onClick={props.onDownload}
+                className="w-full inline-flex items-center justify-center gap-2 px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[10px] sm:text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap bg-fresh hover:bg-fresh-deep text-bone"
+              >
+                Download photo
+                <span aria-hidden="true">↓</span>
+              </button>
+            </>
+          ) : (
+            <>
+              {!props.inCart && (
+                <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3 sm:mb-4 text-center">
+                  Pay once, download forever
+                </p>
               )}
-            >
-              {inCart ? "− Remove" : "+ Add to cart"}
-            </button>
-            <button
-              type="button"
-              onClick={onBuyNow}
-              className={cn(
-                "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[10px] sm:text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
-                "bg-fresh hover:bg-fresh-deep text-bone",
+              <div className="flex flex-row gap-2 sm:gap-3">
+                <button
+                  type="button"
+                  onClick={props.onToggleCart}
+                  aria-pressed={props.inCart}
+                  className={cn(
+                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[10px] sm:text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
+                    "border border-line bg-bone hover:bg-bone-deep text-ink",
+                  )}
+                >
+                  {props.inCart ? "− Remove" : "+ Add to cart"}
+                </button>
+                <button
+                  type="button"
+                  onClick={props.onBuyNow}
+                  className={cn(
+                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[10px] sm:text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
+                    "bg-fresh hover:bg-fresh-deep text-bone",
+                  )}
+                >
+                  {props.inCart ? "Checkout now" : "Buy now"} ·
+                  <span className="tnum ml-1 sm:ml-1.5">₱{photo.price}</span>
+                  <span aria-hidden="true" className="ml-1 sm:ml-1.5">→</span>
+                </button>
+              </div>
+              {props.inCart && (
+                <p className="mt-3 sm:mt-4 font-mono uppercase tracking-[0.3em] text-[10px] text-fresh text-center">
+                  <span aria-hidden="true">✓</span> In cart
+                  {props.onViewCart && (
+                    <>
+                      <span
+                        className="mx-2 text-slate-soft"
+                        aria-hidden="true"
+                      >
+                        ·
+                      </span>
+                      <button
+                        type="button"
+                        onClick={props.onViewCart}
+                        className="underline underline-offset-4 decoration-line hover:text-fresh-deep hover:decoration-fresh-deep transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh rounded-sm"
+                      >
+                        view cart →
+                      </button>
+                    </>
+                  )}
+                </p>
               )}
-            >
-              {inCart ? "Checkout now" : "Buy now"} ·
-              <span className="tnum ml-1 sm:ml-1.5">₱{photo.price}</span>
-              <span aria-hidden="true" className="ml-1 sm:ml-1.5">→</span>
-            </button>
-          </div>
-          {inCart && (
-            <p className="mt-3 sm:mt-4 font-mono uppercase tracking-[0.3em] text-[10px] text-fresh text-center">
-              <span aria-hidden="true">✓</span> In cart
-              {onViewCart && (
-                <>
-                  <span className="mx-2 text-slate-soft" aria-hidden="true">
-                    ·
-                  </span>
-                  <button
-                    type="button"
-                    onClick={onViewCart}
-                    className="underline underline-offset-4 decoration-line hover:text-fresh-deep hover:decoration-fresh-deep transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh rounded-sm"
-                  >
-                    view cart →
-                  </button>
-                </>
-              )}
-            </p>
+            </>
           )}
         </div>
 
@@ -327,4 +375,6 @@ export function PhotoPreviewCard({
       </div>
     </div>
   );
+
+  return createPortal(content, document.body);
 }
