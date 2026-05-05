@@ -1,10 +1,10 @@
 # CLAUDE.md — Backend (Kotlin + Spring Boot)
 
-**Status:** Not started. This folder is empty; scaffolding pending.
+**Status:** Phase A — auth scaffold complete (2026-05-05). Broader build deferred until website frontend reaches full lock state. See vault `backend/decisions.md`.
 
 ## Role in the project
 
-The Spring Boot backend is the **single public API** for the website and mobile app. It owns users, events, participants, photo uploads, payments, and the marketplace. It delegates all ML work to `ai-api` — clients never call `ai-api` directly.
+Spring Boot service. Public API for website and mobile. Owns users, events, participants, photos, marketplace. Proxies all `ai-api` calls — clients never call `ai-api` directly.
 
 See root `CLAUDE.md` for monorepo-wide rules and `docs/project-vision.md` for product context.
 
@@ -12,51 +12,175 @@ See root `CLAUDE.md` for monorepo-wide rules and `docs/project-vision.md` for pr
 
 | Concern | Choice |
 |---------|--------|
-| Language | Kotlin (JVM 17+) |
-| Framework | Spring Boot 3.x |
-| Build | Gradle (Kotlin DSL — `build.gradle.kts`) |
-| Auth | JWT bearer tokens |
-| DB | PostgreSQL 16 (shared RDS instance with `ai-api`; separate schema) |
-| Storage | AWS S3 |
-| Async | Spring `@Async` + WebSocket for real-time upload notifications |
-| Hosting | AWS EC2 |
+| Language | Kotlin 1.9.25 |
+| JDK | 21 |
+| Framework | Spring Boot 3.5.14 |
+| Build | Gradle Kotlin DSL (`build.gradle.kts`) |
+| Auth | JWT bearer (jjwt 0.12.6) — HS256 |
+| Password hash | BCrypt (strength 12) |
+| DB | PostgreSQL 16 (Docker locally) |
+| Migrations | Flyway |
+| Storage | AWS S3 (Phase C onward) |
+
+## Folder structure
+
+Layer-based packaging under `com.quickpitik`:
+
+```
+entity/         — JPA entities (User, Role enum, RefreshToken, PasswordResetToken)
+repository/     — Spring Data JPA interfaces
+dto/auth/       — Request/response DTOs (Bean Validation on inbound)
+service/        — Business logic (Auth, RefreshToken, PasswordReset, Email)
+controller/     — HTTP endpoints (AuthController)
+config/         — Spring @Configuration (Security, Cors, JwtProperties)
+security/       — JWT plumbing (TokenProvider, Filter, UserDetailsService, AuthPrincipal, OpaqueTokens)
+exception/      — Custom exceptions + GlobalExceptionHandler (@RestControllerAdvice)
+common/         — Cross-cutting (ApiResponse envelope, ResponseEnvelopeAdvice, BootstrapAdminRunner)
+```
+
+Full structure (including future Phase B–G): vault `backend/notes/folder-structure.md`.
 
 ## Module boundaries
 
 - **Website + mobile → this backend only.** Never bypass to `ai-api`.
-- **This backend → ai-api via server-to-server with API key** (`sk_backend_...`, scopes `*`, rate tier `internal`).
-- **Event isolation:** every `ai-api` face call MUST include `event_id`.
+- **This backend → ai-api via server-to-server with API key** (added Phase C).
+- **Event isolation:** every `ai-api` face call MUST include `event_id` (Phase C).
 - **Confidence thresholds:** apply per-event here, not in `ai-api`.
 
-## What to read before coding
+## Local development
 
-| Document | Why |
-|----------|-----|
-| `../docs/project-vision.md` | Product vision, feature matrix, user journeys |
-| `../docs/IMPLEMENTATION_PLAN.md` | Phased roadmap — section 2 covers this backend |
-| `../ai-api/docs/integration-architecture.md` | Boundary between backend and ai-api |
-| `../ai-api/docs/integration-contracts.md` | Exact request/response shapes for ai-api calls |
-| `../docs/api-keys.md` | Backend API key (gitignored) |
+### Prerequisites
+- JDK 21 (already installed)
+- Docker (for Postgres)
 
-## First-milestone files (when scaffolding starts)
+### First-time setup
 
-```
-backend/
-├── src/main/kotlin/com/quickpitik/
-│   ├── QuickPitikApplication.kt
-│   ├── config/          (SecurityConfig, CorsConfig, AiApiConfig, S3Config)
-│   ├── controller/      (Auth, User, Event, Participant, Photo, Search, Order)
-│   ├── service/         (per-domain services; AiApiClient wraps ai-api calls)
-│   ├── repository/      (Spring Data JPA)
-│   ├── model/           (entities — Kotlin data classes for DTOs, JPA entities for persistence)
-│   └── dto/
-└── src/test/kotlin/...
+```powershell
+# 1. Start Postgres
+cd backend
+docker compose up -d postgres
+
+# 2. Boot the app (Flyway runs V1 migration on first start)
+.\gradlew.bat bootRun
 ```
 
-> Use the `kotlin-spring` and `kotlin-jpa` Gradle plugins so Spring/JPA can subclass `final` Kotlin classes without forcing `open` everywhere.
+App boots on `http://localhost:8080`. Frontend talks to `http://localhost:8080/api/v1`.
 
-Flesh this file out as the backend comes online — replace stubs with real conventions, build commands, and gotchas.
+### Run tests
+
+```powershell
+.\gradlew.bat test
+```
+
+Unit tests run without Postgres. End-to-end is verified via `curl` (see Smoke Test below).
+
+### Stop Postgres
+
+```powershell
+docker compose down            # keeps data volume
+docker compose down -v         # wipes data (forces V1 to re-run on next boot)
+```
+
+## Environment variables
+
+All env vars have dev-friendly defaults in `application.yml` so the app boots out of the box. Override in production via OS env, `.env`, or a `application-prod.yml` (gitignored).
+
+| Variable | Default | Production behavior |
+|----------|---------|---------------------|
+| `DB_HOST` | `localhost` | RDS endpoint |
+| `DB_PORT` | `5432` | — |
+| `DB_NAME` | `quickpitik` | — |
+| `DB_USER` | `quickpitik` | — |
+| `DB_PASSWORD` | `quickpitik` | **MUST OVERRIDE** |
+| `JWT_SECRET` | dev-only string (insecure, marked) | **MUST OVERRIDE** — generate with `openssl rand -base64 64` |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated list of frontend origins |
+| `ADMIN_BOOTSTRAP_EMAIL` | `admin@quickpitik.local` | Set per environment |
+| `ADMIN_BOOTSTRAP_PASSWORD` | `changeme123` | **MUST OVERRIDE** |
+| `ADMIN_BOOTSTRAP_NAME` | `QuickPitik Admin` | — |
+| `SERVER_PORT` | `8080` | — |
+
+`BootstrapAdminRunner` creates the admin on first boot if no `ADMIN` exists yet. Subsequent boots are no-ops.
+
+## Smoke test (Phase A)
+
+With Postgres up + app running:
+
+```bash
+# 1. Register a runner
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test Runner","email":"runner@test.local","password":"password123","role":"RUNNER"}'
+
+# 2. Login
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"runner@test.local","password":"password123"}'
+
+# 3. /me with bearer
+curl http://localhost:8080/api/v1/auth/me \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+
+# 4. Refresh
+curl -X POST http://localhost:8080/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refreshToken":"<REFRESH_TOKEN>"}'
+
+# 5. Forgot password — check console for [EMAIL STUB] log line
+curl -X POST http://localhost:8080/api/v1/auth/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{"email":"runner@test.local"}'
+
+# 6. Reset with the logged token
+curl -X POST http://localhost:8080/api/v1/auth/reset-password \
+  -H "Content-Type: application/json" \
+  -d '{"token":"<RESET_TOKEN_FROM_LOG>","newPassword":"newpassword123"}'
+
+# 7. Login as the bootstrap admin
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@quickpitik.local","password":"changeme123"}'
+```
+
+All responses come wrapped in `{ success, data, errors? }`. Match the website `ApiResponse<T>` envelope exactly.
+
+## Auth contract (locked, matches website)
+
+| Endpoint | Method | Auth | Body |
+|----------|--------|------|------|
+| `/api/v1/auth/register` | POST | Public | `{ name, email, password, role: "RUNNER"\|"PHOTOGRAPHER" }` |
+| `/api/v1/auth/login` | POST | Public | `{ email, password }` |
+| `/api/v1/auth/refresh` | POST | Public | `{ refreshToken }` |
+| `/api/v1/auth/forgot-password` | POST | Public | `{ email }` |
+| `/api/v1/auth/reset-password` | POST | Public | `{ token, newPassword }` |
+| `/api/v1/auth/me` | GET | Bearer JWT | — |
+
+`AuthResponse`: `{ accessToken, refreshToken, user: { id, email, name, role, avatarUrl?, createdAt } }`.
+
+Roles are UPPERCASE in JSON: `"ADMIN" | "PHOTOGRAPHER" | "RUNNER"`. `ADMIN` is not creatable via `/auth/register` — only via `BootstrapAdminRunner` on first boot, or admin-promotion endpoints (Phase G).
+
+## Implementation notes
+
+- **Refresh tokens** are opaque random 32-byte base64url strings, hashed with SHA-256 before persistence. **Rotated on every refresh** (parent token revoked, new one issued). On `confirmReset`, all of a user's refresh tokens are revoked to log out other sessions.
+- **Reset tokens** same generation, 15-min expiry, one-shot use.
+- **Access tokens** are JWTs (HS256) carrying `sub=userId`, `email`, `role` claims. 15-min TTL.
+- **Forgot-password** is intentionally silent if the email doesn't exist (anti-enumeration). The endpoint always returns the same generic message.
+- **Email stub**: `EmailService` logs the reset link to stdout. Replace with Resend/SES/SendGrid in a future iteration (icebox).
+- **Response envelope**: `ResponseEnvelopeAdvice` (in `common/`) wraps every controller return value in `ApiResponse.success(...)`. `GlobalExceptionHandler` returns `ResponseEntity<ApiResponse<Nothing>>` directly (already wrapped) so the advice doesn't double-wrap.
 
 ## Working notes live in Obsidian
 
-See `QuickPitik Vault/backend/` for feature designs, DB schema sketches, Spring learning notes, and todos.
+See vault `QuickPitik Vault/backend/`:
+- `index.md` — module overview
+- `tasks.md` — current todos
+- `decisions.md` — ADRs (folder structure, Phase A scope, deferral)
+- `notes/folder-structure.md` — full target structure for all phases
+
+## Common issues
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `WeakKeyException` on boot | `JWT_SECRET` shorter than 32 bytes | Regenerate longer secret |
+| `FlywayException: Validate failed` after schema edit | A migration was modified after being applied | Drop volume (`docker compose down -v`) for dev, or write a new V2 |
+| `org.postgresql.util.PSQLException: Connection refused` | Postgres not started | `docker compose up -d postgres` |
+| `validate ddl-auto` errors on entity rename | Entity ↔ migration mismatch | Either change migration (dev) or write a new one (prod-shaped) |
+| 401 on every authenticated request | `Authorization: Bearer ...` header missing or expired | Re-login or refresh |
