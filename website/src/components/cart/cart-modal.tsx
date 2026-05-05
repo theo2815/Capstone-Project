@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useCartStore } from "@/store/cart-store";
 import { ROUTES } from "@/lib/constants";
+import { useScrollLock } from "@/lib/scroll-lock";
 import { cn } from "@/lib/utils";
 import type { CartItem } from "@/types/order";
 import {
@@ -127,6 +128,8 @@ export function CartModal({
     previewIndexRef.current = previewIndex;
   }, [previewIndex]);
 
+  useScrollLock(renderState === "open");
+
   useEffect(() => {
     if (renderState !== "open") {
       if (renderState === "hidden") setPreviewIndex(null);
@@ -136,11 +139,8 @@ export function CartModal({
       if (e.key === "Escape" && previewIndexRef.current === null) onClose();
     };
     document.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
     };
   }, [renderState, onClose]);
 

@@ -4,8 +4,11 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
+import { useOrdersStore } from "@/store/orders-store";
 import { ROUTES } from "@/lib/constants";
+import { useScrollLock } from "@/lib/scroll-lock";
 import { cn } from "@/lib/utils";
+import type { CartItem } from "@/types/order";
 
 type Step = "identify" | "payment" | "processing" | "success";
 type PaymentMethod = "gcash" | "maya" | "card";
@@ -36,6 +39,7 @@ export function CheckoutModal({
   const items = useCartStore((s) => s.items);
   const total = useCartStore((s) => s.total());
   const clearCart = useCartStore((s) => s.clear);
+  const addOrder = useOrdersStore((s) => s.addOrder);
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const authUser = useAuthStore((s) => s.user);
@@ -66,17 +70,16 @@ export function CheckoutModal({
     setOrderId(null);
   }, [isOpen, isAuthenticated, authUser?.email]);
 
+  useScrollLock(isOpen);
+
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
     };
   }, [isOpen, onClose]);
 
@@ -109,6 +112,32 @@ export function CheckoutModal({
     setStep("processing");
     setTimeout(() => {
       const id = `QP-${Date.now().toString(36).toUpperCase().slice(-6)}`;
+      const method = paymentMethod;
+      const paidAt = new Date().toISOString();
+
+      // Group cart by event so Race Log can derive per-event purchase counts.
+      // TODO(backend): swap for `api.post("/orders", ...)` and stop deriving
+      // the race log purchases client-side once Spring Boot Phase E lands.
+      const itemsByEvent = new Map<string, CartItem[]>();
+      for (const item of items) {
+        const list = itemsByEvent.get(item.eventId) ?? [];
+        list.push(item);
+        itemsByEvent.set(item.eventId, list);
+      }
+      let suffix = 0;
+      for (const [eventId, eventItems] of itemsByEvent) {
+        const orderId =
+          itemsByEvent.size === 1 ? id : `${id}-${++suffix}`;
+        addOrder({
+          id: orderId,
+          eventId,
+          photoIds: eventItems.map((i) => i.photoId),
+          total: eventItems.reduce((sum, i) => sum + i.price, 0),
+          paymentMethod: method,
+          paidAt,
+        });
+      }
+
       setOrderId(id);
       setStep("success");
     }, 1600);

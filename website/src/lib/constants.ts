@@ -13,6 +13,7 @@ export const ROUTES = {
   CHECKOUT: "/checkout",
   ORDERS: "/orders",
   PROFILE: "/profile",
+  ACCOUNT: "/account",
   DASHBOARD: "/dashboard",
   DASHBOARD_EVENTS: "/dashboard/events",
   DASHBOARD_EARNINGS: "/dashboard/earnings",

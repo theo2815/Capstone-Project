@@ -10,7 +10,7 @@ import { useRedirectTarget } from "@/lib/redirect";
 
 export function LoginForm() {
   const router = useRouter();
-  const redirectTo = useRedirectTarget();
+  const redirectTo = useRedirectTarget(ROUTES.EVENTS);
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -125,7 +125,7 @@ export function LoginForm() {
           New here?{" "}
           <Link
             href={
-              redirectTo === ROUTES.HOME
+              redirectTo === ROUTES.EVENTS
                 ? ROUTES.REGISTER
                 : `${ROUTES.REGISTER}?redirect=${encodeURIComponent(redirectTo)}`
             }
