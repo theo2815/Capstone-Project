@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: quickpitik-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-quickpitik}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quickpitik}
+      POSTGRES_DB: ${POSTGRES_DB:-quickpitik}
+    ports:
+      - "5432:5432"
+    volumes:
+      - quickpitik-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  quickpitik-postgres-data:

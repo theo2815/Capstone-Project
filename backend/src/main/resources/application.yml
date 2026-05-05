@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: quickpitik-backend
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:quickpitik}
+    username: ${DB_USER:quickpitik}
+    password: ${DB_PASSWORD:quickpitik}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+server:
+  port: ${SERVER_PORT:8080}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+jwt:
+  # Production: set JWT_SECRET to a 256-bit random value, e.g. `openssl rand -base64 64`.
+  secret: ${JWT_SECRET:dev-only-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random}
+  access-token-ttl: PT15M
+  refresh-token-ttl: P7D
+
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  admin:
+    bootstrap-email: ${ADMIN_BOOTSTRAP_EMAIL:admin@quickpitik.local}
+    bootstrap-password: ${ADMIN_BOOTSTRAP_PASSWORD:changeme123}
+    bootstrap-name: ${ADMIN_BOOTSTRAP_NAME:QuickPitik Admin}
+
+logging:
+  level:
+    root: INFO
+    com.quickpitik: DEBUG
+    org.springframework.security: INFO
