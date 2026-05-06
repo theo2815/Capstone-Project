@@ -18,7 +18,7 @@
   --fresh: #2D9E5E;
   --fresh-deep: #237A48;
   --slate: #475569;
-  --slate-soft: #94A3B8;
+  --slate-soft: #64748B;
   --line: #E5E2D9;
   --surface: #FFFFFF;
 
@@ -148,6 +148,12 @@
   }
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
 body {
   background: var(--background);
   color: var(--foreground);
@@ -213,6 +219,24 @@ body {
 
 /* ── Tabular numerals ── */
 .tnum { font-variant-numeric: tabular-nums; }
+
+/* ── Kicker (mono uppercase eyebrow) ──
+   Escape-hatch utility; prefer <Kicker> from src/components/ui/kicker.tsx.
+   Comfort floor: 13px (≤390 SE-class) / 14px (≥400 big phones) / 12px (≥768 desktop)
+   / 0.18em / slate. */
+.kicker {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  text-transform: uppercase;
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  color: var(--slate);
+}
+@media (min-width: 400px) {
+  .kicker { font-size: 14px; }
+}
+@media (min-width: 768px) {
+  .kicker { font-size: 12px; }
+}
 
 /* ── Idle breathing (splash chooser cards) ── */
 .breathe {

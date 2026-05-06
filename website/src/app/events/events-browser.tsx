@@ -8,6 +8,7 @@ import {
   DropdownTrigger,
 } from "@/components/ui/dropdown";
 import { EventTile } from "@/components/events/event-tile";
+import { Kicker } from "@/components/ui/kicker";
 
 export type EventState = "upcoming" | "live" | "open" | "past";
 export type ListEvent = Event & { state: EventState; city: string };
@@ -136,9 +137,9 @@ function Hero({ liveCount }: { liveCount: number }) {
 
       <div className="relative max-w-7xl mx-auto">
         <div className="max-w-2xl stagger-children">
-          <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate mb-4">
+          <Kicker as="p" size="md" className="mb-4">
             Race photos · Cebu
-          </p>
+          </Kicker>
           <h1 className="font-display text-5xl md:text-7xl lg:text-8xl font-medium tracking-tight leading-[0.95]">
             Pick your race.
             <br />
@@ -222,13 +223,13 @@ function HeroVisual() {
       </div>
 
       <div
-        className="absolute top-[268px] left-[120px] font-mono uppercase tracking-[0.3em] text-[10px] text-ink/55"
+        className="absolute top-[268px] left-[120px] font-mono uppercase tracking-[0.3em] text-[10px] text-slate"
         style={{ animation: "fade-in 0.6s 1.6s both", opacity: 0 }}
       >
         BIB · 4082
       </div>
       <div
-        className="absolute top-[88px] right-[16px] font-mono uppercase tracking-[0.3em] text-[10px] text-ink/45"
+        className="absolute top-[88px] right-[16px] font-mono uppercase tracking-[0.3em] text-[10px] text-slate"
         style={{ animation: "fade-in 0.6s 1.75s both", opacity: 0 }}
       >
         00:34:21
@@ -245,16 +246,16 @@ function LiveTodayBlock({ liveCount }: { liveCount: number }) {
       aria-label={`Jump to ${liveCount} live ${noun} today`}
       className="group block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-4 focus-visible:ring-offset-bone"
     >
-      <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-fresh flex items-center gap-2">
+      <Kicker as="p" tone="active" size="md" className="flex items-center gap-2">
         <span className="size-1.5 rounded-full bg-fresh breathe" />
         Live today
-      </p>
+      </Kicker>
       <p className="font-display text-6xl md:text-7xl font-medium tracking-tight leading-none text-ink mt-2 tnum count-up">
         {liveCount}
       </p>
-      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate mt-2 group-hover:text-fresh transition-colors">
+      <Kicker as="p" className="mt-2 group-hover:text-fresh transition-colors">
         {noun} · jump ↓
-      </p>
+      </Kicker>
     </a>
   );
 }
@@ -338,15 +339,16 @@ function FilterStrip({
                   aria-hidden="true"
                   className="h-3 w-px bg-line shrink-0"
                 />
-                <button
+                <Kicker
+                  as="button"
                   type="button"
                   onClick={handleClearFilters}
                   aria-label="Clear filters"
-                  className="inline-flex items-center gap-1.5 rounded-sm font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-fresh transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone shrink-0"
+                  className="inline-flex items-center gap-1.5 rounded-sm hover:text-fresh transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone shrink-0"
                 >
                   Clear
                   <span aria-hidden="true">✕</span>
-                </button>
+                </Kicker>
               </>
             )}
           </div>
@@ -470,20 +472,21 @@ function SegmentBlock({
             {highlight && (
               <span className="size-2 rounded-full bg-fresh breathe self-center shrink-0" />
             )}
-            <p
-              className={`font-mono uppercase tracking-[0.4em] text-[10px] shrink-0 ${
-                highlight ? "text-fresh" : "text-slate"
-              }`}
+            <Kicker
+              as="p"
+              tone={highlight ? "active" : "default"}
+              size="md"
+              className="shrink-0"
             >
               {kicker}
-            </p>
-            <p className="hidden sm:block font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft truncate">
+            </Kicker>
+            <Kicker as="p" tone="soft" className="hidden sm:block truncate">
               {caption}
-            </p>
+            </Kicker>
           </div>
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft tnum shrink-0">
+          <Kicker as="p" tone="soft" tnum className="shrink-0">
             {items.length} race{items.length === 1 ? "" : "s"}
-          </p>
+          </Kicker>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
           {items.map((e, i) => (
@@ -514,14 +517,14 @@ function FlatResults({
     <section className="bg-bone px-6 md:px-10 py-14 md:py-20">
       <div className="max-w-7xl mx-auto">
         <div className="flex items-baseline justify-between gap-6 mb-10 md:mb-12 border-b border-line pb-4">
-          <p className="font-mono uppercase tracking-[0.4em] text-[10px] text-slate">
+          <Kicker as="p" size="md">
             <span className="tnum text-ink">{events.length}</span>{" "}
             <span className="text-slate-soft">of</span>{" "}
             <span className="tnum">{totalCount}</span> {noun}
-          </p>
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft truncate">
+          </Kicker>
+          <Kicker as="p" tone="soft" className="truncate">
             {cityLabel} · {dateLabel}
-          </p>
+          </Kicker>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
           {events.map((e, i) => (
@@ -537,9 +540,9 @@ function EmptyState() {
   return (
     <section className="px-6 md:px-10 py-24 md:py-32 bg-bone min-h-[40vh] flex items-center">
       <div className="max-w-2xl mx-auto w-full text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-3">
+        <Kicker as="p" className="mb-3">
           No matches
-        </p>
+        </Kicker>
         <p className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight">
           Nothing here yet.
         </p>

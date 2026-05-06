@@ -158,10 +158,10 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
         style={{ animation: "fade-up 0.4s ease-out both" }}
       >
         <div className="flex items-center justify-between gap-3 px-5 md:px-7 py-4 border-b border-line">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate truncate">
+          <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate truncate">
             <span className="text-ink">{eventName}</span>
           </p>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft tnum hidden sm:block whitespace-nowrap">
+          <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum hidden sm:block whitespace-nowrap">
             <span className="text-ink">{index}</span> / {total}
           </p>
           <button
@@ -256,7 +256,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           )}
 
           {props.mode !== "owned" && props.inCart && (
-            <div className="absolute top-4 right-4 inline-flex items-center gap-2 bg-fresh text-bone rounded-full px-3 py-1 font-mono uppercase tracking-[0.25em] text-[10px] z-10">
+            <div className="absolute top-4 right-4 inline-flex items-center gap-2 bg-fresh text-bone rounded-full px-3 py-1 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] z-10">
               <span
                 className="size-1.5 rounded-full bg-bone"
                 aria-hidden="true"
@@ -267,7 +267,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
 
           {mode === "browse" && (
             <div className="absolute bottom-0 inset-x-0 z-10 px-4 py-3 flex items-end justify-end gap-3 text-bone/85 bg-gradient-to-t from-ink/50 to-transparent pointer-events-none">
-              <span className="font-mono uppercase tracking-[0.3em] text-[10px]">
+              <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px]">
                 Watermarked preview
               </span>
             </div>
@@ -277,13 +277,13 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
         <div className="px-5 md:px-7 py-4 sm:py-5 md:py-6 bg-bone-deep border-t border-line">
           {props.mode === "owned" ? (
             <>
-              <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3 sm:mb-4 text-center">
+              <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-3 sm:mb-4 text-center">
                 Yours to keep
               </p>
               <button
                 type="button"
                 onClick={props.onDownload}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[10px] sm:text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap bg-fresh hover:bg-fresh-deep text-bone"
+                className="w-full inline-flex items-center justify-center gap-2 px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap bg-fresh hover:bg-fresh-deep text-bone"
               >
                 Download photo
                 <span aria-hidden="true">↓</span>
@@ -292,7 +292,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           ) : (
             <>
               {!props.inCart && (
-                <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3 sm:mb-4 text-center">
+                <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-3 sm:mb-4 text-center">
                   Pay once, download forever
                 </p>
               )}
@@ -302,7 +302,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                   onClick={props.onToggleCart}
                   aria-pressed={props.inCart}
                   className={cn(
-                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[10px] sm:text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
+                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
                     "border border-line bg-bone hover:bg-bone-deep text-ink",
                   )}
                 >
@@ -312,7 +312,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                   type="button"
                   onClick={props.onBuyNow}
                   className={cn(
-                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[10px] sm:text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
+                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
                     "bg-fresh hover:bg-fresh-deep text-bone",
                   )}
                 >
@@ -322,7 +322,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                 </button>
               </div>
               {props.inCart && (
-                <p className="mt-3 sm:mt-4 font-mono uppercase tracking-[0.3em] text-[10px] text-fresh text-center">
+                <p className="mt-3 sm:mt-4 font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-fresh text-center">
                   <span aria-hidden="true">✓</span> In cart
                   {props.onViewCart && (
                     <>
@@ -358,7 +358,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             >
               <span aria-hidden="true">←</span> Prev
             </button>
-            <span className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft tnum whitespace-nowrap">
+            <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum whitespace-nowrap">
               <span className="text-ink">{index}</span> / {total}
             </span>
             <button

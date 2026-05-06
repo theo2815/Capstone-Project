@@ -108,7 +108,7 @@ function ChooserCard({
         </p>
       </div>
       <div className="mt-8 md:mt-12 flex items-center justify-between">
-        <span className="font-mono uppercase tracking-[0.25em] text-xs text-ink group-hover:text-fresh transition-colors">
+        <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors">
           Continue
         </span>
         <ArrowRight />

@@ -30,7 +30,7 @@ export function GoogleButton({ disabled }: GoogleButtonProps) {
       type="button"
       onClick={handleClick}
       disabled={isLoading || disabled}
-      className="w-full inline-flex items-center justify-center gap-3 bg-bone border border-line hover:border-slate hover:bg-bone-deep/40 active:bg-bone-deep py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-xs text-ink transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      className="w-full inline-flex items-center justify-center gap-3 bg-bone border border-line hover:border-slate hover:bg-bone-deep/40 active:bg-bone-deep py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
     >
       <GoogleG aria-hidden />
       <span>{isLoading ? "Connecting…" : "Continue with Google"}</span>

@@ -142,7 +142,7 @@ function BreakdownStat({
       <p className="font-display font-medium tracking-tight tnum text-2xl md:text-4xl text-ink mt-3 leading-none">
         {value}
       </p>
-      <p className="font-sans text-xs md:text-sm text-slate mt-3">{caption}</p>
+      <p className="font-sans text-sm text-slate mt-3">{caption}</p>
     </div>
   );
 }

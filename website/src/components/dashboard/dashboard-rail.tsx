@@ -335,7 +335,7 @@ function RailTipPortal({
       <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft tnum">
         {guide.number} · {guide.label}
       </p>
-      <p className="font-sans text-xs text-ink-soft leading-relaxed mt-2">
+      <p className="font-sans text-sm text-ink-soft leading-relaxed mt-2">
         {guide.body}
       </p>
     </div>,

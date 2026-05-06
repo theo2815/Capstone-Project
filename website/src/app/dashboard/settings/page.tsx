@@ -10,6 +10,7 @@ import {
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { Dropdown, DropdownItem } from "@/components/ui/dropdown";
+import { Kicker } from "@/components/ui/kicker";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { useUserMediaStore } from "@/store/user-media-store";
@@ -117,9 +118,9 @@ function VerificationStatusPanel() {
           aria-hidden="true"
           className="size-1.5 rounded-full bg-fresh shrink-0"
         />
-        <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate">
+        <Kicker as="p">
           Verified · uploads enabled
-        </p>
+        </Kicker>
       </div>
     );
   }
@@ -127,9 +128,9 @@ function VerificationStatusPanel() {
   if (status === "pending") {
     return (
       <div className="border border-line rounded-2xl px-5 py-4 bg-bone-deep/40 mb-8">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+        <Kicker as="p">
           Awaiting review
-        </p>
+        </Kicker>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
           We&apos;re looking over your settings.
         </p>
@@ -143,9 +144,9 @@ function VerificationStatusPanel() {
 
   return (
     <div className="border border-line rounded-2xl px-5 py-5 bg-bone-deep/40 mb-8">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <Kicker as="p">
         Not yet verified
-      </p>
+      </Kicker>
       <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
         Fill in every section, then submit for review.
       </p>
@@ -219,13 +220,13 @@ function PublicProfileSlab() {
 function SubHeading({ label, caption }: { label: string; caption?: string }) {
   return (
     <div className="flex items-baseline gap-3 flex-wrap mb-6">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <Kicker as="p">
         {label}
-      </p>
+      </Kicker>
       {caption && (
-        <p className="hidden md:block font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+        <Kicker as="p" tone="soft" className="hidden md:block">
           {caption}
-        </p>
+        </Kicker>
       )}
     </div>
   );
@@ -260,22 +261,23 @@ function LivePreview({ nameDraft, bioDraft }: LivePreviewProps) {
   return (
     <div className="border border-line rounded-2xl overflow-hidden bg-bone shadow-sm">
       <div className="px-5 pt-4 pb-3 flex items-center justify-between gap-3 border-b border-line/60">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <Kicker as="p" tone="soft">
           Live preview
-        </p>
+        </Kicker>
         {handleValid ? (
-          <Link
+          <Kicker
+            as={Link}
             href={`/${trimmedHandle}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate hover:text-ink transition-colors inline-flex items-center gap-1"
+            className="hover:text-ink transition-colors inline-flex items-center gap-1"
           >
             Open live <span aria-hidden="true">↗</span>
-          </Link>
+          </Kicker>
         ) : (
-          <span className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          <Kicker tone="soft">
             Set URL to open
-          </span>
+          </Kicker>
         )}
       </div>
 
@@ -313,7 +315,7 @@ function LivePreview({ nameDraft, bioDraft }: LivePreviewProps) {
 
       <div className="relative px-5 pb-5 -mt-7 md:-mt-8">
         <AvatarDisc name={avatarName} size="md" />
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum mt-4 flex items-center gap-2 flex-wrap">
+        <Kicker as="p" tnum className="mt-4 flex items-center gap-2 flex-wrap">
           <span>Photographer</span>
           <span className="text-slate-soft">·</span>
           <span>Cebu</span>
@@ -323,7 +325,7 @@ function LivePreview({ nameDraft, bioDraft }: LivePreviewProps) {
               <span className="text-slate-soft">{accentLabel}</span>
             </>
           )}
-        </p>
+        </Kicker>
 
         <div className="mt-3 flex items-baseline gap-2 flex-wrap">
           <h3
@@ -350,7 +352,7 @@ function LivePreview({ nameDraft, bioDraft }: LivePreviewProps) {
         )}
 
         <div className="mt-4">
-          <span className="inline-flex items-center gap-2 max-w-full rounded-full border border-line bg-bone-deep/40 px-3 py-1.5 font-mono uppercase tracking-[0.25em] text-[10px] text-ink">
+          <Kicker className="inline-flex items-center gap-2 max-w-full rounded-full border border-line bg-bone-deep/40 px-3 py-1.5 text-ink">
             <span className="text-slate-soft shrink-0">URL</span>
             <span className="text-slate-soft shrink-0" aria-hidden="true">
               ·
@@ -358,7 +360,7 @@ function LivePreview({ nameDraft, bioDraft }: LivePreviewProps) {
             <span className="truncate">
               quickpitik.com/{trimmedHandle || "your-handle"}
             </span>
-          </span>
+          </Kicker>
         </div>
       </div>
     </div>
@@ -453,7 +455,7 @@ function PictureSubsection() {
           {error}
         </p>
       )}
-      <p className="font-sans text-xs text-slate-soft mt-4 max-w-md">
+      <p className="font-sans text-sm text-slate-soft mt-4 max-w-md">
         Shown next to your name across QuickPitik. Different from your
         face-search selfies — those live in your{" "}
         <Link
@@ -546,7 +548,7 @@ function CoverSubsection() {
           </button>
         )}
       </div>
-      <p className="font-sans text-xs text-slate-soft mt-4 max-w-md">
+      <p className="font-sans text-sm text-slate-soft mt-4 max-w-md">
         Wide horizontal image — landscape, course, or finish-line shots work
         best. JPEG, PNG, or WebP. Skip portrait photos; they crop badly at
         this aspect.
@@ -619,9 +621,9 @@ function BrandSubsection({
             required
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-4 text-lg text-ink placeholder:text-slate-soft transition-colors"
           />
-          <p className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum uppercase">
+          <Kicker as="p" tone="soft" tnum>
             {nameDraft.trim().length}/{BRAND_NAME_MAX}
-          </p>
+          </Kicker>
         </div>
 
         <div>
@@ -673,9 +675,9 @@ function BrandSubsection({
               );
             })}
           </div>
-          <p className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum uppercase mt-3">
+          <Kicker as="p" tone="soft" tnum className="mt-3">
             {BRAND_COLOR_LABEL[brandColor]}
-          </p>
+          </Kicker>
         </div>
 
         <div className="flex flex-col gap-2">
@@ -691,14 +693,14 @@ function BrandSubsection({
             maxLength={BIO_MAX}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors resize-none"
           />
-          <p
-            className={cn(
-              "font-mono text-[10px] tracking-[0.15em] tnum uppercase",
-              bioDraft.length > BIO_MAX - 20 ? "text-error" : "text-slate-soft",
-            )}
+          <Kicker
+            as="p"
+            tone={bioDraft.length > BIO_MAX - 20 ? "default" : "soft"}
+            tnum
+            className={bioDraft.length > BIO_MAX - 20 ? "text-error" : undefined}
           >
             {bioDraft.length}/{BIO_MAX}
-          </p>
+          </Kicker>
         </div>
 
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -798,9 +800,9 @@ function WatermarkSlab() {
           )}
           {!watermark && (
             <div className="absolute bottom-4 right-4 px-4 py-2 rounded-full border border-dashed border-line bg-bone/40 backdrop-blur-sm">
-              <p className="font-mono uppercase tracking-[0.3em] text-[9px] text-slate">
+              <Kicker as="p">
                 Watermark goes here
-              </p>
+              </Kicker>
             </div>
           )}
         </div>
@@ -843,7 +845,7 @@ function WatermarkSlab() {
             </button>
           )}
 
-          <p className="font-sans text-xs text-slate-soft basis-full md:basis-auto">
+          <p className="font-sans text-sm text-slate-soft basis-full md:basis-auto">
             PNG with transparency recommended · downscaled to 600px wide · 8 MB max.
           </p>
         </div>
@@ -968,9 +970,9 @@ function HandleSlab() {
 
         <div className="border border-line rounded-2xl bg-bone-deep/40 px-5 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="min-w-0">
-            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+            <Kicker as="p" tone="soft">
               Live URL
-            </p>
+            </Kicker>
             <p className="font-mono text-base md:text-lg text-ink mt-2 break-all">
               {previewUrl}
             </p>
@@ -1101,9 +1103,9 @@ function RegionSlab() {
             >
               {REGION_GROUP_ORDER.map((group) => (
                 <div key={group} className="pt-2 first:pt-0">
-                  <p className="px-4 py-2 font-mono uppercase tracking-[0.3em] text-[9px] text-slate-soft">
+                  <Kicker as="p" tone="soft" className="px-4 py-2">
                     {REGION_GROUP_LABEL[group]}
-                  </p>
+                  </Kicker>
                   {PH_REGIONS.filter((r) => r.group === group).map((r) => (
                     <DropdownItem
                       key={r.code}
@@ -1162,9 +1164,9 @@ function RegionSlab() {
         </div>
 
         {region && selectedProvince && (
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate tnum">
+          <Kicker as="p" tnum>
             Selected · {selectedProvince.name} · {selectedRegion?.shortName}
-          </p>
+          </Kicker>
         )}
       </div>
     </Slab>
@@ -1228,9 +1230,9 @@ function SocialSlab() {
         )}
 
         <div>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          <Kicker as="p" tone="soft">
             Add a platform
-          </p>
+          </Kicker>
           <div className="mt-3 flex flex-wrap gap-2.5">
             {SOCIAL_PLATFORMS.map((platform) => (
               <button
@@ -1239,9 +1241,9 @@ function SocialSlab() {
                 onClick={() => handleAdd(platform)}
                 className="font-sans text-sm py-2 px-4 rounded-full border border-line text-ink hover:bg-bone-deep/60 hover:border-slate transition-colors inline-flex items-center gap-2"
               >
-                <span className="font-mono uppercase tracking-[0.15em] text-[9px] text-slate">
+                <Kicker>
                   {SOCIAL_PLATFORM_TILE[platform]}
-                </span>
+                </Kicker>
                 {SOCIAL_PLATFORM_LABEL[platform]}
               </button>
             ))}
@@ -1249,9 +1251,9 @@ function SocialSlab() {
         </div>
 
         {socials.length > 0 && (
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft tnum">
+          <Kicker as="p" tone="soft" tnum>
             {filledCount} of {socials.length} filled in
-          </p>
+          </Kicker>
         )}
       </div>
     </Slab>
@@ -1276,12 +1278,12 @@ function SocialRow({ link, onChange, onRemove }: SocialRowProps) {
 
   return (
     <li className="flex items-start gap-4">
-      <span
+      <Kicker
         aria-hidden="true"
-        className="size-10 shrink-0 rounded-2xl border border-line bg-bone-deep/60 flex items-center justify-center font-mono uppercase tracking-[0.15em] text-[10px] text-ink"
+        className="size-10 shrink-0 rounded-2xl border border-line bg-bone-deep/60 flex items-center justify-center text-ink"
       >
         {SOCIAL_PLATFORM_TILE[link.platform]}
-      </span>
+      </Kicker>
       <div className="flex-1 min-w-0 flex flex-col gap-2">
         <div className="flex items-baseline justify-between gap-3">
           <span className="font-sans text-sm text-slate">
@@ -1290,7 +1292,7 @@ function SocialRow({ link, onChange, onRemove }: SocialRowProps) {
           <button
             type="button"
             onClick={onRemove}
-            className="font-sans text-xs text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
+            className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
           >
             Remove
           </button>
@@ -1390,9 +1392,9 @@ function PayoutSlab() {
         </p>
 
         <div>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          <Kicker as="p" tone="soft">
             Add an account
-          </p>
+          </Kicker>
           <div className="mt-3 flex flex-wrap gap-2.5">
             {PAYOUT_METHODS.map((method) => {
               const active = draftMethod === method;
@@ -1431,9 +1433,9 @@ function PayoutSlab() {
 
         {payouts.length > 0 && (
           <div className="space-y-3">
-            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+            <Kicker as="p" tone="soft">
               Your accounts
-            </p>
+            </Kicker>
             <ul className="space-y-3">
               {payouts.map((account) => (
                 <PayoutCard
@@ -1446,12 +1448,12 @@ function PayoutSlab() {
                 />
               ))}
             </ul>
-            <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft tnum">
+            <Kicker as="p" tone="soft" tnum>
               {payouts.length} account{payouts.length === 1 ? "" : "s"} ·{" "}
               {payouts.find((p) => p.isPrimary)
                 ? `${PAYOUT_METHOD_LABEL[payouts.find((p) => p.isPrimary)!.method]} primary`
                 : "no primary set"}
-            </p>
+            </Kicker>
           </div>
         )}
       </div>
@@ -1546,7 +1548,7 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
             onCancel();
             showToast({ kind: "info", message: "New account discarded." });
           }}
-          className="font-sans text-xs text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
+          className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
         >
           Cancel
         </button>
@@ -1570,7 +1572,7 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
             autoComplete="off"
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
           />
-          <p className="font-sans text-xs text-slate-soft">
+          <p className="font-sans text-sm text-slate-soft">
             Must match the name on your {PAYOUT_METHOD_LABEL[method]} account.
           </p>
         </div>
@@ -1594,7 +1596,7 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
           />
           <p
             className={cn(
-              "font-sans text-xs",
+              "font-sans text-sm",
               numberError ? "text-error" : "text-slate-soft",
             )}
           >
@@ -1618,9 +1620,9 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
                 draggable={false}
               />
             ) : (
-              <p className="font-mono uppercase tracking-[0.3em] text-[9px] text-slate-soft text-center px-2">
+              <Kicker as="p" tone="soft" className="text-center px-2">
                 QR preview
-              </p>
+              </Kicker>
             )}
           </div>
           <div className="flex flex-col gap-3">
@@ -1644,12 +1646,12 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
               <button
                 type="button"
                 onClick={() => setQr(null)}
-                className="self-start font-sans text-xs text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
+                className="self-start font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
               >
                 Remove QR
               </button>
             )}
-            <p className="font-sans text-xs text-slate-soft max-w-xs">
+            <p className="font-sans text-sm text-slate-soft max-w-xs">
               From the {PAYOUT_METHOD_LABEL[method]} app: open your QR, save the
               image to your gallery, then upload it here. Backed up so finance
               can scan if a transfer needs to retry.
@@ -1706,13 +1708,13 @@ function PayoutCard({ account, onMakePrimary, onRemove }: PayoutCardProps) {
               {PAYOUT_METHOD_LABEL[account.method]}
             </p>
             {account.isPrimary && (
-              <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-fresh inline-flex items-center gap-1.5">
+              <Kicker tone="active" className="inline-flex items-center gap-1.5">
                 <span
                   aria-hidden="true"
                   className="size-1.5 rounded-full bg-fresh"
                 />
                 Primary
-              </span>
+              </Kicker>
             )}
           </div>
           <p className="font-sans text-sm text-slate mt-1 truncate">
@@ -1722,9 +1724,9 @@ function PayoutCard({ account, onMakePrimary, onRemove }: PayoutCardProps) {
             {formatted || "—"}
           </p>
           {account.qr && (
-            <p className="font-mono uppercase tracking-[0.25em] text-[9px] text-slate-soft mt-3">
+            <Kicker as="p" tone="soft" className="mt-3">
               QR uploaded
-            </p>
+            </Kicker>
           )}
         </div>
       </div>

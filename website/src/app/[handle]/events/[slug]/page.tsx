@@ -16,6 +16,7 @@ import { PhotoMosaicTile } from "@/components/events/photo-mosaic-tile";
 import { FindPhotosModal } from "@/components/events/find-photos-modal";
 import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
+import { Kicker } from "@/components/ui/kicker";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
 import { isReservedHandle } from "@/lib/reserved-handles";
@@ -201,9 +202,10 @@ function Gallery({
     <div className="flex-1 flex flex-col">
       <header className="px-6 md:px-10 pt-8 md:pt-10 pb-8 md:pb-10 border-b border-line">
         <div className="max-w-7xl mx-auto">
-          <Link
+          <Kicker
+            as={Link}
             href={`/${profile.handle}`}
-            className="group flex w-fit items-center gap-2 font-mono uppercase tracking-[0.3em] text-[10px] text-slate hover:text-ink transition-colors mb-7"
+            className="group flex w-fit items-center gap-2 hover:text-ink transition-colors mb-7"
           >
             <span
               aria-hidden="true"
@@ -212,15 +214,15 @@ function Gallery({
               ←
             </span>
             <span>Back to {profile.displayName}</span>
-          </Link>
+          </Kicker>
 
           <PhotographerChip profile={profile} accent={accent} />
 
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mt-7 tnum flex items-center gap-2 flex-wrap">
+          <Kicker as="p" tnum className="mt-7 flex items-center gap-2 flex-wrap">
             <span>{formatLongDate(event.date, true)}</span>
             <span className="text-slate-soft">·</span>
             <CoverageStateChip state={coverage?.state ?? "open"} />
-          </p>
+          </Kicker>
           <h1 className="font-display text-4xl md:text-6xl font-medium tracking-tight leading-[0.95] text-ink mt-4">
             {isFiltered ? (
               visible.length === 0 ? (
@@ -260,18 +262,19 @@ function Gallery({
               </>
             )}
           </p>
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft mt-3">
+          <Kicker as="p" tone="soft" className="mt-3">
             ₱<span className="tnum">{event.pricePerPhoto}</span> per photo ·
             free watermarked previews · pay once, download forever
-          </p>
+          </Kicker>
 
           <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-3">
-            <Link
+            <Kicker
+              as={Link}
               href={`/events/${event.slug}`}
-              className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink transition-colors px-3 py-1.5 rounded-full border border-line hover:border-slate"
+              className="hover:text-ink transition-colors px-3 py-1.5 rounded-full border border-line hover:border-slate"
             >
               See all photographers →
-            </Link>
+            </Kicker>
           </div>
         </div>
       </header>
@@ -279,11 +282,12 @@ function Gallery({
       {photos.length > 0 && (
         <div className="sticky top-[3.75rem] z-20 bg-bone/90 backdrop-blur-md border-b border-line">
           <div className="max-w-7xl mx-auto px-6 md:px-10 py-3 flex items-center gap-3">
-            <button
+            <Kicker
+              as="button"
               type="button"
               onClick={() => setSearchOpen(true)}
               aria-haspopup="dialog"
-              className="flex-1 min-w-0 inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full border border-line bg-bone-deep/60 hover:bg-bone-deep hover:border-slate transition-colors text-left font-mono uppercase tracking-[0.25em] text-[10px] text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+              className="flex-1 min-w-0 inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full border border-line bg-bone-deep/60 hover:bg-bone-deep hover:border-slate transition-colors text-left text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
             >
               <svg
                 viewBox="0 0 16 16"
@@ -308,20 +312,21 @@ function Gallery({
               <span className="truncate">
                 {isFiltered ? `Search · ${bibFilter}` : "Find your photos"}
               </span>
-            </button>
+            </Kicker>
             {isFiltered ? (
-              <button
+              <Kicker
+                as="button"
                 type="button"
                 onClick={clearBib}
-                className="shrink-0 inline-flex items-center gap-2 font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+                className="shrink-0 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
               >
                 <span>Clear filter</span>
                 <span aria-hidden="true">✕</span>
-              </button>
+              </Kicker>
             ) : (
-              <span className="shrink-0 font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft hidden sm:inline">
+              <Kicker tone="soft" className="shrink-0 hidden sm:inline">
                 <span className="tnum text-ink">{photos.length}</span> photos
-              </span>
+              </Kicker>
             )}
           </div>
         </div>
@@ -410,18 +415,18 @@ function PhotographerChip({
       >
         {getInitials(profile.displayName)}
       </span>
-      <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-ink whitespace-nowrap">
+      <Kicker className="text-ink whitespace-nowrap">
         {profile.displayName}
-      </span>
+      </Kicker>
       <span
         className="hidden sm:inline text-slate-soft text-[10px]"
         aria-hidden="true"
       >
         ·
       </span>
-      <span className="hidden sm:inline font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft whitespace-nowrap">
+      <Kicker tone="soft" className="hidden sm:inline whitespace-nowrap">
         quickpitik.com/{profile.handle}
-      </span>
+      </Kicker>
     </div>
   );
 }
@@ -532,9 +537,9 @@ function PhotoPreviewMount({
 function EmptyGalleryPanel({ displayName }: { displayName: string }) {
   return (
     <div className="border border-dashed border-line rounded-2xl p-10 md:p-16 text-center max-w-2xl mx-auto">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      <Kicker as="p" tone="soft">
         Gallery
-      </p>
+      </Kicker>
       <p className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink mt-4">
         Photos coming soon.
       </p>
@@ -578,9 +583,9 @@ function NotFoundBody({
   return (
     <div className="flex-1 flex items-center justify-center px-6 md:px-10 py-20">
       <div className="text-center max-w-md">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <Kicker as="p" tone="soft">
           Not found
-        </p>
+        </Kicker>
         <h1 className="font-display text-4xl md:text-5xl font-medium tracking-tight text-ink mt-4">
           {headline}
         </h1>

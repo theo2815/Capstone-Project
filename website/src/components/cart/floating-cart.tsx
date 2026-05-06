@@ -184,14 +184,14 @@ export function FloatingCart() {
             </span>
           </span>
           <span className="hidden md:flex flex-col items-start leading-tight">
-            <span className="font-mono uppercase tracking-[0.25em] text-[9px] text-bone/70">
+            <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/70">
               Cart
             </span>
-            <span className="font-mono text-xs tnum">
+            <span className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[12px] tnum">
               ₱{total.toLocaleString()}
             </span>
           </span>
-          <span className="md:hidden font-mono uppercase tracking-[0.2em] text-[10px]">
+          <span className="md:hidden font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px]">
             ₱{total.toLocaleString()}
           </span>
         </button>

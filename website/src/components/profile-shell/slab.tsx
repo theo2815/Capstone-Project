@@ -28,20 +28,20 @@ export function Slab({
     >
       <div className="flex items-baseline justify-between gap-6 mb-8 md:mb-10">
         <div className="flex items-baseline gap-4 min-w-0">
-          <span className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum">
+          <span className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[12px] tracking-[0.15em] text-slate-soft tnum">
             {number}
           </span>
-          <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-ink shrink-0">
+          <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink shrink-0">
             {title}
           </p>
           {caption && (
-            <p className="hidden md:block font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft truncate">
+            <p className="hidden md:block font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft truncate">
               {caption}
             </p>
           )}
         </div>
         {trailing && (
-          <div className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft tnum shrink-0">
+          <div className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum shrink-0">
             {trailing}
           </div>
         )}

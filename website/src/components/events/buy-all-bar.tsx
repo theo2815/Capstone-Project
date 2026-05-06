@@ -65,7 +65,7 @@ export function BuyAllBar({
           onClick={handleBuyAll}
           disabled={pressed || allInCart}
           className={cn(
-            "ml-auto inline-flex items-center bg-fresh hover:bg-fresh-deep text-bone px-5 md:px-7 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-xs transition-colors whitespace-nowrap",
+            "ml-auto inline-flex items-center bg-fresh hover:bg-fresh-deep text-bone px-5 md:px-7 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors whitespace-nowrap",
             (pressed || allInCart) && "opacity-90 cursor-default",
           )}
         >

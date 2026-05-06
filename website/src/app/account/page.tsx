@@ -9,6 +9,7 @@ import {
   Slab,
   type JumpSection,
 } from "@/components/profile-shell";
+import { Kicker } from "@/components/ui/kicker";
 import { AvatarSlab } from "@/components/account/avatar-slab";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/store/auth-store";
@@ -173,9 +174,9 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
     <Slab id="email" number={number} title="Email" caption="Used to sign in">
       <div className="space-y-5">
         <div className="border border-line rounded-2xl px-6 py-5 bg-bone-deep/40">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          <Kicker as="p" tone="soft">
             Sign-in email
-          </p>
+          </Kicker>
           <p className="font-mono text-xl md:text-2xl text-ink mt-3 break-all">
             {user.email}
           </p>

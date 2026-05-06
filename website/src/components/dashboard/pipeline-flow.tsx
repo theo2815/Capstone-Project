@@ -64,7 +64,7 @@ function Node({ node }: { node: PipelineNode }) {
         {node.count.toLocaleString()}
       </p>
       {node.caption && (
-        <p className="font-sans text-xs md:text-sm text-slate mt-3 leading-snug">
+        <p className="font-sans text-sm text-slate mt-3 leading-snug">
           {node.caption}
         </p>
       )}

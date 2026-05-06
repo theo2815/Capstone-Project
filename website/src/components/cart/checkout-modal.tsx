@@ -172,7 +172,7 @@ export function CheckoutModal({
       >
         <header className="flex items-start justify-between gap-3 px-6 md:px-7 pt-6 pb-5 border-b border-line">
           <div className="min-w-0">
-            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-1.5">
+            <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-1.5">
               Checkout
             </p>
             <p className="font-display text-2xl md:text-3xl font-medium text-ink tracking-tight leading-tight">
@@ -336,7 +336,7 @@ function IdentifyStep({
 
       <button
         type="submit"
-        className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
       >
         Continue →
       </button>
@@ -346,7 +346,7 @@ function IdentifyStep({
           <span className="w-full border-t border-line" />
         </div>
         <div className="relative flex justify-center">
-          <span className="bg-bone px-3 font-mono uppercase tracking-[0.3em] text-[9px] text-slate-soft">
+          <span className="bg-bone px-3 font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
             Have an account?
           </span>
         </div>
@@ -355,13 +355,13 @@ function IdentifyStep({
       <div className="grid grid-cols-2 gap-3">
         <Link
           href={`${ROUTES.LOGIN}?redirect=${encodeURIComponent(ROUTES.CART)}`}
-          className="inline-flex items-center justify-center border border-ink hover:bg-ink hover:text-bone text-ink px-4 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[10px] transition-colors"
+          className="inline-flex items-center justify-center border border-ink hover:bg-ink hover:text-bone text-ink px-4 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
         >
           Log in
         </Link>
         <Link
           href={`${ROUTES.REGISTER}?redirect=${encodeURIComponent(ROUTES.CART)}`}
-          className="inline-flex items-center justify-center border border-line hover:bg-bone-deep text-ink px-4 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[10px] transition-colors"
+          className="inline-flex items-center justify-center border border-line hover:bg-bone-deep text-ink px-4 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
         >
           Sign up
         </Link>
@@ -371,7 +371,7 @@ function IdentifyStep({
         <button
           type="button"
           onClick={onBackToCart}
-          className="self-start font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink transition-colors"
+          className="self-start font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
         >
           ← Back to cart
         </button>
@@ -406,7 +406,7 @@ function PaymentStep({
   return (
     <div className="px-6 md:px-7 py-6 flex flex-col gap-7">
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-2">
+        <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-2">
           Order summary
         </p>
         <div className="rounded-xl border border-line bg-bone-deep px-5 py-4 flex items-baseline justify-between gap-3">
@@ -422,14 +422,14 @@ function PaymentStep({
 
       <section>
         <div className="flex items-baseline justify-between gap-3 mb-2">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+          <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
             Send to
           </p>
           {onEditEmail && (
             <button
               type="button"
               onClick={onEditEmail}
-              className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft hover:text-fresh transition-colors"
+              className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft hover:text-fresh transition-colors"
             >
               Edit
             </button>
@@ -439,14 +439,14 @@ function PaymentStep({
           {email || "—"}
         </p>
         {isAuthenticated && (
-          <p className="mt-1 font-mono uppercase tracking-[0.25em] text-[9px] text-slate-soft">
+          <p className="mt-1 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
             Signed-in account
           </p>
         )}
       </section>
 
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-3">
+        <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-3">
           Payment method
         </p>
         <ul className="space-y-2.5">
@@ -478,7 +478,7 @@ function PaymentStep({
                     <span className="block font-display text-base font-medium text-ink leading-snug">
                       {opt.label}
                     </span>
-                    <span className="block mt-0.5 font-sans text-xs text-ink-soft">
+                    <span className="block mt-0.5 font-sans text-sm text-ink-soft">
                       {opt.hint}
                     </span>
                   </span>
@@ -490,7 +490,7 @@ function PaymentStep({
         {paymentError && (
           <p
             role="alert"
-            className="mt-3 font-mono uppercase tracking-[0.25em] text-[10px] text-error"
+            className="mt-3 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-error"
           >
             {paymentError}
           </p>
@@ -500,12 +500,12 @@ function PaymentStep({
       <button
         type="button"
         onClick={onPay}
-        className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
       >
         Pay ₱{total.toLocaleString()} →
       </button>
 
-      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft text-center -mt-3">
+      <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft text-center -mt-3">
         Secure transaction · Watermark removed on download
       </p>
 
@@ -513,7 +513,7 @@ function PaymentStep({
         <button
           type="button"
           onClick={onBackToCart}
-          className="self-start font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink transition-colors"
+          className="self-start font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
         >
           ← Back to cart
         </button>
@@ -571,7 +571,7 @@ function SuccessStep({
             </svg>
           </span>
           <div className="min-w-0">
-            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-1">
+            <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-1">
               Order placed
             </p>
             <p className="font-display text-xl font-medium text-ink tracking-tight leading-tight">
@@ -582,14 +582,14 @@ function SuccessStep({
           </div>
         </div>
         {orderId && (
-          <p className="mt-5 pt-4 border-t border-line font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          <p className="mt-5 pt-4 border-t border-line font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
             Reference · <span className="text-ink tnum">{orderId}</span>
           </p>
         )}
       </div>
 
       <div>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-2">
+        <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-2">
           Download links
         </p>
         <p className="font-sans text-sm text-ink-soft leading-relaxed">
@@ -610,7 +610,7 @@ function SuccessStep({
       <button
         type="button"
         onClick={onDone}
-        className="inline-flex w-full items-center justify-center bg-ink hover:bg-ink-soft text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-xs transition-colors"
+        className="inline-flex w-full items-center justify-center bg-ink hover:bg-ink-soft text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
       >
         Done
       </button>
@@ -642,7 +642,7 @@ function Field({
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <label htmlFor={id} className="block">
-      <span className="block font-mono uppercase tracking-[0.25em] text-[10px] text-slate mb-2">
+      <span className="block font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-2">
         {label}
       </span>
       <input
@@ -666,7 +666,7 @@ function Field({
       {error && (
         <span
           id={`${id}-err`}
-          className="mt-2 block font-mono uppercase tracking-[0.25em] text-[10px] text-error"
+          className="mt-2 block font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-error"
         >
           {error}
         </span>

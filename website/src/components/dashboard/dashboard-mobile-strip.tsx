@@ -55,7 +55,7 @@ export function DashboardMobileStrip() {
                   href={route.href}
                   aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "inline-flex items-center gap-2 px-3 py-1.5 rounded-full border font-mono uppercase tracking-[0.25em] text-[10px] transition-colors",
+                    "inline-flex items-center gap-2 px-3 py-1.5 rounded-full border font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors",
                     isActive
                       ? "border-ink text-ink bg-ink/5"
                       : "border-line text-slate hover:text-ink",
