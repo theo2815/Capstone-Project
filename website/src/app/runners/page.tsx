@@ -358,7 +358,7 @@ function FinalCta() {
           </Link>
           <Link
             href={ROUTES.PHOTOGRAPHERS}
-            className="font-mono uppercase tracking-[0.2em] text-xs text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
           >
             I&apos;m a photographer instead
           </Link>
@@ -389,7 +389,7 @@ function MobileStickyCta() {
     >
       <Link
         href={ROUTES.EVENTS}
-        className="block w-full bg-fresh active:bg-fresh-deep text-bone text-center py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-xs"
+        className="block w-full bg-fresh active:bg-fresh-deep text-bone text-center py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px]"
       >
         Find my photos →
       </Link>

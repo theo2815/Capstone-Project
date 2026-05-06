@@ -17,6 +17,7 @@ import {
   DropdownItem,
   DropdownTrigger,
 } from "@/components/ui/dropdown";
+import { Kicker } from "@/components/ui/kicker";
 import { useAuth } from "@/hooks/use-auth";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useOrdersStore } from "@/store/orders-store";
@@ -168,9 +169,9 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
   const body = (
     <div className="flex items-baseline justify-between gap-6 py-6 md:py-7">
       <div className="flex-1 min-w-0">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum">
+        <Kicker as="p" tnum>
           {date}
-        </p>
+        </Kicker>
         <h3 className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2 truncate">
           {entry.name}
         </h3>
@@ -384,9 +385,9 @@ function PhotographerProfileBody({ user }: { user: User }) {
         <div className="flex flex-col items-start gap-4 md:flex-row md:items-end md:gap-5">
           <AvatarDisc name={displayName} size="lg" />
           <div className="flex-1 min-w-0 md:pb-2">
-            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+            <Kicker as="p">
               Photographer
-            </p>
+            </Kicker>
           </div>
         </div>
 
@@ -461,9 +462,9 @@ function StatsRow({ memberSince }: { memberSince: string }) {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <Kicker as="p">
         {label}
-      </p>
+      </Kicker>
       <p className="font-display font-medium tracking-tight tnum text-2xl md:text-3xl text-ink mt-2 leading-none">
         {value}
       </p>
@@ -475,9 +476,9 @@ function CoverEmptyHint() {
   return (
     <div className="absolute inset-0 flex items-center justify-center">
       <div className="text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <Kicker as="p" tone="soft">
           No cover yet
-        </p>
+        </Kicker>
         <Link
           href={ROUTES.DASHBOARD_SETTINGS}
           className="mt-2 inline-block font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
@@ -512,9 +513,9 @@ function PublicUrlChip({ handle }: { handle: string }) {
   return (
     <div className="mt-6 border border-line rounded-2xl bg-bone-deep/40 px-5 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-6">
       <div className="min-w-0">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <Kicker as="p" tone="soft">
           Public URL
-        </p>
+        </Kicker>
         <p className="font-mono text-sm md:text-base text-ink mt-1.5 break-all">
           {url}
         </p>
@@ -720,9 +721,9 @@ function PortfolioSearchInput({
 function PortfolioFilterEmpty({ onClear }: { onClear: () => void }) {
   return (
     <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-3">
+      <Kicker as="p" className="mb-3">
         No matches
-      </p>
+      </Kicker>
       <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
         Nothing here matches.
       </p>

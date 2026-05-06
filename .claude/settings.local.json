@@ -106,7 +106,8 @@
       "Bash(mv \"\\(work\\)/events/[id]/photos/page.tsx\" \"events/[id]/photos/page.tsx\")",
       "Bash(rmdir \"\\(work\\)/upload\" \"\\(work\\)/events/[id]/upload\" \"\\(work\\)/events/[id]/photos\" \"\\(work\\)/events/[id]\" \"\\(work\\)/events\" \"\\(work\\)/earnings\" \"\\(work\\)/billing\" \"\\(work\\)/settings\" \"\\(work\\)\")",
       "PowerShell(Remove-Item *)",
-      "PowerShell(npm run *)"
+      "PowerShell(npm run *)",
+      "Bash(git *)"
     ]
   }
 }

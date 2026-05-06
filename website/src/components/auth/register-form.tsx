@@ -119,7 +119,7 @@ export function RegisterForm() {
               <p className="font-display text-lg text-ink leading-tight mt-3">
                 {option.label}
               </p>
-              <p className="font-sans text-xs text-slate mt-1.5">
+              <p className="font-sans text-sm text-slate mt-1.5">
                 {option.sub}
               </p>
             </button>

@@ -16,6 +16,7 @@ import {
   PhotoPreviewCard,
   type PhotoPreviewItem,
 } from "@/components/photos/photo-preview-card";
+import { Kicker } from "@/components/ui/kicker";
 import { getEventById } from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
 import {
@@ -110,9 +111,9 @@ function SpendSlab() {
         />
       </div>
       {stats.firstPurchase && (
-        <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft mt-8">
+        <Kicker as="p" tone="soft" className="mt-8">
           Since {stats.firstPurchase}
-        </p>
+        </Kicker>
       )}
     </Slab>
   );
@@ -137,9 +138,9 @@ function Stat({
       >
         {value}
       </p>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mt-3">
+      <Kicker as="p" className="mt-3">
         {label}
-      </p>
+      </Kicker>
     </div>
   );
 }
@@ -220,9 +221,9 @@ function ReceiptRow({ order }: { order: MockOrder }) {
     <div className="py-6 md:py-7">
       <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-3 md:gap-6">
         <div className="flex-1 min-w-0">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum">
+          <Kicker as="p" tnum>
             {formatPaidAt(order.paidAt)}
-          </p>
+          </Kicker>
           {event ? (
             <Link
               href={`/events/${event.slug}`}
@@ -350,9 +351,9 @@ function PhotoStrip({
           aria-label={`Preview ${id.replace(/^mock-/, "")}`}
           className="aspect-[4/3] bg-bone-deep border border-line rounded-md flex items-center justify-center overflow-hidden hover:border-ink/40 hover:bg-bone transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
         >
-          <span className="font-mono text-[10px] tracking-[0.2em] text-slate uppercase tnum px-2 truncate">
+          <Kicker tnum className="px-2 truncate">
             {id.replace(/^mock-/, "")}
-          </span>
+          </Kicker>
         </button>
       ))}
       {overflow > 0 && (
@@ -362,7 +363,7 @@ function PhotoStrip({
           aria-label={`View ${overflow} more photo${overflow === 1 ? "" : "s"}`}
           className="aspect-[4/3] bg-bone-deep border border-line rounded-md flex items-center justify-center overflow-hidden hover:border-ink/40 hover:bg-bone transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
         >
-          <span className="font-mono text-[10px] tracking-[0.2em] text-ink uppercase tnum">
+          <span className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[12px] tracking-[0.18em] text-ink uppercase tnum">
             +{overflow}
           </span>
         </button>

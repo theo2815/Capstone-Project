@@ -23,6 +23,7 @@ import { FindPhotosModal } from "@/components/events/find-photos-modal";
 import { PhotoMosaicTile } from "@/components/events/photo-mosaic-tile";
 import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
+import { Kicker } from "@/components/ui/kicker";
 
 type Mode = "cockpit" | "browse";
 
@@ -146,9 +147,10 @@ function CockpitMode({
     <>
       <div className="bg-bone">
         <div className="max-w-7xl mx-auto px-6 md:px-10 pt-5 md:pt-6 flex items-center justify-between gap-4">
-          <Link
+          <Kicker
+            as={Link}
             href="/events"
-            className="group inline-flex items-center gap-2 font-mono uppercase tracking-[0.3em] text-[10px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            className="group inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             <span
               aria-hidden="true"
@@ -157,7 +159,7 @@ function CockpitMode({
               ←
             </span>
             <span>Back to events</span>
-          </Link>
+          </Kicker>
           <SaveButton eventId={event.id} variant="inline" />
         </div>
       </div>
@@ -171,9 +173,9 @@ function CockpitMode({
               className="rounded-2xl bg-bone border border-line shadow-[0_24px_60px_-20px_rgba(17,17,17,0.18)] p-8 md:p-10"
               style={{ animation: "fade-up 0.7s 0.05s both", opacity: 0 }}
             >
-              <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-5">
+              <Kicker as="p" className="mb-5">
                 {event.name}
-              </p>
+              </Kicker>
               <h1 className="font-display text-4xl md:text-5xl font-medium tracking-tight leading-[0.95]">
                 Find your
                 <br />
@@ -197,15 +199,17 @@ function CockpitMode({
             </div>
           </div>
 
-          <button
+          <Kicker
+            as="button"
             type="button"
             onClick={onBrowseAll}
-            className="mt-10 md:mt-14 inline-flex items-center gap-2 font-mono uppercase tracking-[0.3em] text-[11px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-4 focus-visible:ring-offset-bone"
+            size="md"
+            className="mt-10 md:mt-14 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-4 focus-visible:ring-offset-bone"
             style={{ animation: "fade-in 0.6s 0.55s both", opacity: 0 }}
           >
             Browse all <span className="tnum">{photos.length}</span> photos
             <span aria-hidden="true">↓</span>
-          </button>
+          </Kicker>
         </div>
       </section>
 
@@ -249,18 +253,18 @@ function AboutStrip({ event }: { event: EventDetail }) {
     <section className="bg-bone-deep border-y border-line px-6 md:px-10 py-16 md:py-24">
       <div className="max-w-7xl mx-auto grid md:grid-cols-[1fr_2fr] gap-10 md:gap-16 items-start">
         <div>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-4">
+          <Kicker as="p" className="mb-4">
             About this race
-          </p>
+          </Kicker>
           <h2 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-tight text-ink">
             Race day notes.
           </h2>
-          <div className="mt-6 space-y-2 font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
-            <p>Organizer · {event.organizerName}</p>
-            <p>
+          <div className="mt-6 space-y-2">
+            <Kicker as="p" tone="soft">Organizer · {event.organizerName}</Kicker>
+            <Kicker as="p" tone="soft">
               <span className="tnum">{dateLong}</span> · {event.location}
-            </p>
-            <p>
+            </Kicker>
+            <Kicker as="p" tone="soft">
               <span className="tnum">
                 {event.photoCount.toLocaleString()}
               </span>{" "}
@@ -269,7 +273,7 @@ function AboutStrip({ event }: { event: EventDetail }) {
                 {event.participantCount.toLocaleString()}
               </span>{" "}
               runners
-            </p>
+            </Kicker>
           </div>
         </div>
 
@@ -280,33 +284,31 @@ function AboutStrip({ event }: { event: EventDetail }) {
 
           <div className="flex flex-wrap gap-2">
             {event.categories.map((c) => (
-              <span
+              <Kicker
                 key={c}
-                className="border border-line bg-bone rounded-full px-4 py-1.5 font-mono uppercase tracking-[0.25em] text-[10px] text-ink"
+                className="border border-line bg-bone rounded-full px-4 py-1.5 text-ink"
               >
                 {c}
-              </span>
+              </Kicker>
             ))}
           </div>
 
           <div className="pt-5 border-t border-line">
-            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-3">
+            <Kicker as="p" className="mb-3">
               Pricing
-            </p>
+            </Kicker>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
               <span className="font-display text-5xl md:text-6xl font-medium text-fresh tracking-tight tnum">
                 ₱{event.pricePerPhoto}
               </span>
-              <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate">
-                per photo
-              </span>
+              <Kicker>per photo</Kicker>
               {event.bundlePrice && event.bundleSize && (
                 <>
                   <span className="text-slate-soft">·</span>
-                  <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-ink">
+                  <Kicker className="text-ink">
                     or <span className="tnum">₱{event.bundlePrice}</span> for{" "}
                     <span className="tnum">{event.bundleSize}</span>
-                  </span>
+                  </Kicker>
                 </>
               )}
             </div>
@@ -367,10 +369,11 @@ function BrowseMode({
     <section className="bg-bone min-h-screen flex flex-col">
       <header className="px-6 md:px-10 pt-8 md:pt-12 pb-8 md:pb-10">
         <div className="max-w-7xl mx-auto">
-          <button
+          <Kicker
+            as="button"
             type="button"
             onClick={onBackToCockpit}
-            className="group inline-flex items-center gap-2 font-mono uppercase tracking-[0.3em] text-[10px] text-slate hover:text-ink transition-colors mb-8 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            className="group inline-flex items-center gap-2 hover:text-ink transition-colors mb-8 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             <span
               aria-hidden="true"
@@ -379,12 +382,12 @@ function BrowseMode({
               ←
             </span>
             <span>Back</span>
-          </button>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-4">
+          </Kicker>
+          <Kicker as="p" className="mb-4">
             {isFiltered
               ? `${event.name} · BIB ${bibFilter}`
               : `${event.name} · Gallery`}
-          </p>
+          </Kicker>
           <h2 className="font-display text-4xl md:text-6xl font-medium tracking-tight leading-[0.95] text-ink">
             {isFiltered ? (
               visible.length === 0 ? (
@@ -421,11 +424,12 @@ function BrowseMode({
 
       <div className="sticky top-[3.75rem] z-20 bg-bone/90 backdrop-blur-md border-y border-line">
         <div className="max-w-7xl mx-auto px-6 md:px-10 py-3 flex items-center gap-3">
-          <button
+          <Kicker
+            as="button"
             type="button"
             onClick={() => setSearchOpen(true)}
             aria-haspopup="dialog"
-            className="flex-1 min-w-0 inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full border border-line bg-bone-deep/60 hover:bg-bone-deep hover:border-slate transition-colors text-left font-mono uppercase tracking-[0.25em] text-[10px] text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            className="flex-1 min-w-0 inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full border border-line bg-bone-deep/60 hover:bg-bone-deep hover:border-slate transition-colors text-left text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             <svg
               viewBox="0 0 16 16"
@@ -444,20 +448,21 @@ function BrowseMode({
             <span className="truncate">
               {isFiltered ? `Search · ${bibFilter}` : "Find your photos"}
             </span>
-          </button>
+          </Kicker>
           {isFiltered ? (
-            <button
+            <Kicker
+              as="button"
               type="button"
               onClick={onClearBib}
-              className="shrink-0 inline-flex items-center gap-2 font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+              className="shrink-0 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
             >
               <span>Clear filter</span>
               <span aria-hidden="true">✕</span>
-            </button>
+            </Kicker>
           ) : (
-            <span className="shrink-0 font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft hidden sm:inline">
+            <Kicker tone="soft" className="shrink-0 hidden sm:inline">
               <span className="tnum text-ink">{photos.length}</span> photos
-            </span>
+            </Kicker>
           )}
         </div>
       </div>
@@ -613,12 +618,12 @@ function PhotoPreviewMount({
 function Footer() {
   return (
     <footer className="px-6 md:px-10 py-8 pb-24 md:pb-20 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-bone">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      <Kicker as="p" tone="soft">
         QuickPitik · Cebu, Philippines
-      </p>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      </Kicker>
+      <Kicker as="p" tone="soft">
         © 2026
-      </p>
+      </Kicker>
     </footer>
   );
 }

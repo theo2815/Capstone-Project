@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { HowPayoutsModal } from "@/components/dashboard/how-payouts-modal";
+import { Kicker } from "@/components/ui/kicker";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate, formatMonthYear } from "@/lib/format";
 import { formatPayoutNumber } from "@/lib/payout-format";
@@ -68,12 +69,12 @@ function PayoutsSlab() {
       {payouts.length > 0 && (
         <div className="mt-12 md:mt-16">
           <div className="flex items-baseline justify-between gap-6 mb-5">
-            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+            <Kicker as="p" tone="soft">
               Recent cycles
-            </p>
-            <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft tnum">
+            </Kicker>
+            <Kicker as="p" tone="soft" tnum>
               {payouts.length} cycles
-            </p>
+            </Kicker>
           </div>
           <ul className="border-y border-line divide-y divide-line">
             {payouts.map((payout) => (
@@ -107,9 +108,9 @@ function NextPayoutHero({
   if (!payout) {
     return (
       <div>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <Kicker as="p" tone="soft">
           Next payout
-        </p>
+        </Kicker>
         <p className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink mt-3">
           No payout scheduled
         </p>
@@ -123,9 +124,9 @@ function NextPayoutHero({
 
   return (
     <div>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      <Kicker as="p" tone="soft">
         Next payout
-      </p>
+      </Kicker>
       <p className="font-display text-5xl md:text-7xl font-semibold tracking-tight text-fresh tnum mt-3 leading-none">
         ₱{payout.amount.toLocaleString()}
       </p>
@@ -138,7 +139,7 @@ function NextPayoutHero({
 
       <div className="mt-6 border-t border-line pt-5 max-w-lg">
         {primary ? (
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate flex items-baseline gap-2 flex-wrap">
+          <Kicker as="p" className="flex items-baseline gap-2 flex-wrap">
             <span aria-hidden="true" className="text-slate-soft">
               →
             </span>
@@ -151,7 +152,7 @@ function NextPayoutHero({
             </span>
             <span className="text-slate-soft">·</span>
             <span>Primary</span>
-          </p>
+          </Kicker>
         ) : (
           <Link
             href={`${ROUTES.DASHBOARD_SETTINGS}#payouts`}
@@ -221,13 +222,13 @@ function PayoutRow({ payout }: { payout: PhotographerPayout }) {
   return (
     <div className="py-5 md:py-6 flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
       <div className="flex-1 min-w-0">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum flex items-center gap-2 flex-wrap">
+        <Kicker as="p" tnum className="flex items-center gap-2 flex-wrap">
           <span>Cycle of {formatLongDate(payout.weekOf, true)}</span>
           <span className="text-slate-soft">·</span>
           <span className={STATUS_TONE[payout.status]}>
             {STATUS_LABEL[payout.status]}
           </span>
-        </p>
+        </Kicker>
         <p className="font-sans text-sm text-slate mt-2">
           {payout.status === "paid" ? (
             <>
@@ -287,9 +288,9 @@ function TransactionsSlab() {
           {/* Group by month so the ledger is easier to skim. */}
           {groupByMonth(transactions).map((group) => (
             <li key={group.label} className="py-2">
-              <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft tnum sticky top-20 bg-bone py-2">
+              <Kicker as="p" tone="soft" tnum className="sticky top-20 bg-bone py-2">
                 {group.label} · ₱{group.total.toLocaleString()}
-              </p>
+              </Kicker>
               <ul className="divide-y divide-line">
                 {group.items.map((tx) => (
                   <li key={tx.id}>
@@ -311,9 +312,9 @@ function TransactionRow({ tx }: { tx: PhotographerTransaction }) {
   return (
     <div className="py-4 md:py-5 flex items-baseline justify-between gap-4">
       <div className="flex-1 min-w-0">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum">
+        <Kicker as="p" tnum>
           {formatLongDate(tx.paidAt)}
-        </p>
+        </Kicker>
         <p className="font-sans text-base text-ink mt-2 truncate">
           {event?.name ?? "Event archived"}
         </p>

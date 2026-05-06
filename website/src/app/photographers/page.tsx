@@ -80,7 +80,7 @@ export default function PhotographersPage() {
             href={BATCH_MY_PHOTOS_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 bg-ink hover:bg-ink-soft text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-xs transition-colors"
+            className="inline-flex items-center gap-2 bg-ink hover:bg-ink-soft text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
           >
             Get the desktop app
             <svg
@@ -589,10 +589,10 @@ function UploadScreen() {
       {/* main */}
       <div className="flex-1 p-3 md:p-4 flex flex-col">
         <div className="flex items-center justify-between mb-2">
-          <span className="font-display text-[11px] md:text-xs font-semibold tracking-tight">
+          <span className="font-display text-sm font-semibold tracking-tight">
             Upload photos
           </span>
-          <span className="font-mono text-[9px] text-fresh tnum">247 / 500</span>
+          <span className="font-mono text-[12px] text-fresh tnum">247 / 500</span>
         </div>
 
         {/* drop zone */}
@@ -807,7 +807,7 @@ function FinalCta() {
           </Link>
           <Link
             href={ROUTES.RUNNERS}
-            className="font-mono uppercase tracking-[0.2em] text-xs text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
           >
             I&apos;m a runner instead
           </Link>
@@ -838,7 +838,7 @@ function MobileStickyCta() {
     >
       <Link
         href={REGISTER_AS_PHOTOGRAPHER}
-        className="block w-full bg-fresh active:bg-fresh-deep text-bone text-center py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-xs"
+        className="block w-full bg-fresh active:bg-fresh-deep text-bone text-center py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px]"
       >
         Start selling →
       </Link>

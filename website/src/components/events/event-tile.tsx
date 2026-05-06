@@ -70,7 +70,7 @@ export function EventTile(props: EventTileProps) {
             {event.name}
           </span>
         </div>
-        <span className="absolute bottom-3 right-3 font-mono uppercase tracking-[0.3em] text-[9px] text-bone/35">
+        <span className="absolute bottom-3 right-3 font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/35">
           Banner · soon
         </span>
         <StatusChip state={event.state} />
@@ -83,7 +83,7 @@ export function EventTile(props: EventTileProps) {
         )}
       </div>
       <div className="p-6 md:p-7">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-3">
+        <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-3">
           <span className="tnum">{dateLabel}</span> · {cityUpper}
         </p>
         <h3 className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-tight text-ink">
@@ -182,17 +182,17 @@ function BrowseFooter({
   return (
     <div className="mt-6 pt-4 border-t border-line flex items-center justify-between">
       {isUpcoming ? (
-        <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate">
+        <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
           Opens on race day
         </span>
       ) : (
-        <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate">
+        <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
           <span className="tnum">{event.photoCount.toLocaleString()}</span>{" "}
           photos
         </span>
       )}
       {!isUpcoming && (
-        <span className="font-mono uppercase tracking-[0.25em] text-[11px] text-ink group-hover:text-fresh transition-colors">
+        <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors">
           Open →
         </span>
       )}
@@ -218,11 +218,11 @@ function UploadFooter({
 
   return (
     <div className="mt-6 pt-4 border-t border-line flex items-center justify-between">
-      <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate">
+      <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
         <span className="tnum">{event.participantCount.toLocaleString()}</span>{" "}
         runners
       </span>
-      <span className="font-mono uppercase tracking-[0.25em] text-[11px] text-ink group-hover:text-fresh transition-colors">
+      <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors">
         {cta}
       </span>
     </div>
@@ -238,12 +238,12 @@ function ManageFooter({
 }) {
   return (
     <div className="mt-6 pt-4 border-t border-line flex items-center justify-between">
-      <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate">
+      <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
         <span className="tnum">{photoCount.toLocaleString()}</span> photos
         <span className="text-slate-soft"> · </span>
         <span className="tnum">{salesCount.toLocaleString()}</span> sold
       </span>
-      <span className="font-mono uppercase tracking-[0.25em] text-[11px] text-ink group-hover:text-fresh transition-colors">
+      <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors">
         Open →
       </span>
     </div>
@@ -258,7 +258,7 @@ function StatusChip({ state }: { state: EventState }) {
           aria-hidden="true"
           className="size-1.5 rounded-full bg-fresh breathe"
         />
-        <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-fresh">
+        <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-fresh">
           Photos uploading
         </span>
       </div>
@@ -268,7 +268,7 @@ function StatusChip({ state }: { state: EventState }) {
     return (
       <div className="absolute top-4 left-5 flex items-center gap-2.5">
         <span aria-hidden="true" className="size-1.5 rounded-full bg-fresh" />
-        <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-bone/85">
+        <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/85">
           Save the date
         </span>
       </div>
@@ -278,7 +278,7 @@ function StatusChip({ state }: { state: EventState }) {
     return (
       <div className="absolute top-4 left-5 flex items-center gap-2.5">
         <span aria-hidden="true" className="size-1.5 rounded-full bg-bone/85" />
-        <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-bone/85">
+        <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/85">
           Photos ready
         </span>
       </div>
@@ -287,7 +287,7 @@ function StatusChip({ state }: { state: EventState }) {
   return (
     <div className="absolute top-4 left-5 flex items-center gap-2.5">
       <span aria-hidden="true" className="size-1.5 rounded-full bg-bone/40" />
-      <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-bone/55">
+      <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/55">
         Archive
       </span>
     </div>

@@ -110,7 +110,7 @@ function NotifyForm({ bib }: { bib: string }) {
       </label>
       <button
         type="submit"
-        className="bg-ink hover:bg-ink-soft text-bone px-5 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-xs transition-colors whitespace-nowrap"
+        className="bg-ink hover:bg-ink-soft text-bone px-5 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors whitespace-nowrap"
       >
         Notify me →
       </button>
