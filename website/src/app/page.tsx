@@ -36,7 +36,7 @@ export default function SplashPage() {
             href={ROUTES.PHOTOGRAPHERS}
             kicker="For Photographers"
             title="Sell my photos"
-            sub="AI culls blur. Upload, list, earn."
+            sub="Upload in real time. List and earn."
             icon={<CameraIcon />}
             delay="0.25s"
           />

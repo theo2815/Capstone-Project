@@ -60,8 +60,8 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
                     PHOTOGRAPHER WORKFLOW
                     ═══════════════════
     Camera ──► Mobile App ──► Cloud Storage ──► AI Processing
-                  (real-time      (AWS S3)       (blur filter,
-                   upload)                        face + bib)
+                  (real-time      (AWS S3)       (face + bib
+                   upload)                        indexing)
                                                       │
                                                       ▼
                     RUNNER EXPERIENCE                Marketplace
@@ -76,6 +76,11 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
                   (own backend,       (5-10 seconds vs
                    own database)       1-2 hours manual)
 ```
+
+> **Where blur detection runs.** Blur culling is a desktop-only feature. The
+> mobile app and website never call ai-api blur — photographers cull blurry
+> shots in BatchMyPhotos before they upload, and uploads via mobile/web go
+> straight to live without server-side blur checks.
 
 ---
 
@@ -143,14 +148,16 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
 2. Opens QuickPitik mobile app → Connects camera
 3. Race starts → Photographer shoots
 4. Every photo auto-uploads to cloud in real-time
-5. ai-api runs blur detection on each upload
-6. Blurry photos flagged, sharp photos published
+5. ai-api runs face + bib indexing on each upload
+6. Photos appear in event gallery, searchable by selfie/bib
 7. Runners start seeing their photos within minutes
-8. Race ends → All photos already uploaded and processed
+8. Race ends → All photos already uploaded and indexed
 9. Photographer goes home (no SD card transfer needed)
 ```
 
 **Time saved:** Eliminates 1-2 hours of post-event upload + organization.
+Blur culling is a separate desktop-app workflow run after the event if the
+photographer wants to clean up the set (see Journey 2).
 
 ### Journey 2: Photographer After Event (Desktop)
 
@@ -183,7 +190,7 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
 ```
 1. Admin logs in to QuickPitik admin panel
 2. Creates a new event (e.g., "Cebu Marathon 2026") as a public gallery
-3. Configures event settings (photo pricing, blur threshold, etc.)
+3. Configures event settings (photo pricing, face/bib thresholds, etc.)
 4. Assigns photographers to the event
 5. Event goes live → Photographers can start uploading
 6. Runners browse the public gallery to find and purchase their photos
@@ -202,7 +209,7 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
 | Push notifications | — | Yes | — | — |
 | Photo preview (watermarked) | — | Yes | Yes | — |
 | Photo purchase + download | — | Yes | Yes | — |
-| Blur detection (auto) | Automatic on upload | — | Automatic on upload | Yes (batch) |
+| Blur detection | — | — | — | Yes (batch) |
 | Blur classification | — | — | — | Yes (batch) |
 | Batch auto-sort into folders | — | — | — | Yes |
 | Event management | — | — | Yes | — |
@@ -284,7 +291,7 @@ The ai-api is the **AI engine** that powers the platform's core features. It is 
 
 | ai-api Feature | Used By | For What |
 |----------------|---------|----------|
-| Blur detect/classify | Desktop Backend, Web/Mobile Backend | Quality gate — reject blurry photos |
+| Blur detect/classify | Desktop Backend (only) | Photographer-side blur culling and auto-sort |
 | Face enroll | Web/Mobile Backend | Register participant faces per event |
 | Face search | Web/Mobile Backend | Find participants in uploaded photos |
 | Bib OCR | Web/Mobile Backend | Read bib numbers from race photos |
@@ -371,7 +378,7 @@ QuickPitik creates a complete ecosystem for marathon photography in Cebu by comb
 |---------|----------|
 | No real-time upload | Camera → Mobile → Cloud pipeline |
 | Manual photo sorting (1-2 hours) | Desktop app auto-sort (5-10 seconds) |
-| No blur culling | AI-powered blur detection + classification |
+| No blur culling | AI-powered blur detection + classification (desktop app) |
 | Runners can't find their photos | Face recognition + bib number search |
 | No local marketplace | Website + mobile app with purchase + download |
 

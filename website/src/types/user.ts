@@ -1,5 +1,15 @@
 export type Role = "ADMIN" | "PHOTOGRAPHER" | "RUNNER";
 
+export type OAuthProvider = "GOOGLE" | "APPLE";
+
+export interface OAuthIdentity {
+  provider: OAuthProvider;
+  sub: string;
+  email: string;
+  name: string;
+  avatarUrl?: string;
+}
+
 export interface User {
   id: string;
   email: string;

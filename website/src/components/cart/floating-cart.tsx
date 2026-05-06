@@ -81,9 +81,21 @@ export function FloatingCart() {
   );
   if (isHiddenRoute) return null;
 
-  const isEventDetail =
+  // Two surfaces render BuyAllBar on filtered browse:
+  //   1. /events/{slug}              → runner-wide gallery + bib filter
+  //   2. /{handle}/events/{slug}     → per-photographer gallery + bib filter
+  // Both need the cart pill to lift above the buy-all bar so users can still
+  // reach the cart without clearing the filter. Admin + dashboard variants
+  // share the URL shape but don't render BuyAllBar, so exclude them.
+  const isRunnerEventDetail =
     pathname.startsWith(ROUTES.EVENTS + "/") &&
     pathname !== ROUTES.EVENTS;
+  const isPhotographerEventGallery =
+    /^\/[^/]+\/events\/[^/]+$/.test(pathname) &&
+    !pathname.startsWith("/admin/") &&
+    !pathname.startsWith("/dashboard/") &&
+    !pathname.startsWith(ROUTES.EVENTS + "/");
+  const isEventDetail = isRunnerEventDetail || isPhotographerEventGallery;
   const hasBibFilter = Boolean(searchParams?.get("bib"));
   const isFilteredBrowse = isEventDetail && hasBibFilter;
 
