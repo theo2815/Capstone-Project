@@ -9,6 +9,7 @@ import { ApiError } from "@/lib/api";
 import { isSafeRedirect } from "@/lib/redirect";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types/user";
+import { AuthDivider, GoogleButton } from "@/components/auth/google-button";
 
 interface RoleOption {
   value: Role;
@@ -76,6 +77,11 @@ export function RegisterForm() {
         <br />
         <span className="text-fresh">QuickPitik.</span>
       </h1>
+
+      <div className="space-y-5">
+        <GoogleButton disabled={isLoading} />
+        <AuthDivider label="or with email" />
+      </div>
 
       <div
         role="group"

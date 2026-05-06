@@ -55,6 +55,25 @@ export async function fitToDataUrl(
   return canvas.toDataURL("image/jpeg", quality);
 }
 
+// Same as fitToDataUrl but exports PNG so alpha transparency survives. Used
+// for photographer watermark uploads where the watermark needs to overlay
+// photos cleanly. Larger output than JPEG; scale watermark inputs accordingly.
+export async function fitToPngDataUrl(
+  file: File,
+  maxLongEdge: number,
+): Promise<string> {
+  const img = await loadImage(file);
+  const { width, height } = scaleToFit(img.width, img.height, maxLongEdge);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context unavailable.");
+  ctx.drawImage(img, 0, 0, width, height);
+  return canvas.toDataURL("image/png");
+}
+
 function loadImage(file: File): Promise<HTMLImageElement> {
   const url = URL.createObjectURL(file);
   return new Promise((resolve, reject) => {

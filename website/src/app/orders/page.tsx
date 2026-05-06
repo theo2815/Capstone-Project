@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { SiteHeader } from "@/components/layout/site-header";
-import { AvatarDisc } from "@/components/account/avatar-disc";
+import {
+  IdentityRail,
+  Slab,
+  type JumpSection,
+} from "@/components/profile-shell";
 import { useAuth } from "@/hooks/use-auth";
 import { useOrdersStore, type MockOrder } from "@/store/orders-store";
 import { useToast } from "@/hooks/use-toast";
@@ -15,10 +18,14 @@ import {
 } from "@/components/photos/photo-preview-card";
 import { getEventById } from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
+import {
+  formatMemberSince,
+  formatMonthYear,
+  formatPaidAt,
+} from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { Role, User } from "@/types/user";
 
-const JUMP_SECTIONS: ReadonlyArray<{ id: string; label: string }> = [
+const JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "spend", label: "Spend" },
   { id: "receipts", label: "Receipts" },
 ];
@@ -35,113 +42,38 @@ function OrdersBody() {
   const { user } = useAuth();
   if (!user) return null;
 
+  const memberSince = formatMemberSince(user.createdAt);
+
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
       <SiteHeader />
-      <div className="flex-1 max-w-5xl mx-auto w-full px-6 md:px-10">
+      <div className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10">
         <div className="md:grid md:grid-cols-[15rem_1fr] md:gap-12 lg:gap-20">
-          <IdentityRail user={user} />
+          <IdentityRail
+            user={user}
+            kicker={
+              <>
+                Profile · Receipts
+                <span className="text-slate-soft"> · </span>
+                <span className="tnum">Since {memberSince}</span>
+              </>
+            }
+            headline="Orders."
+            subline={
+              <span className="block max-w-xs">
+                Every receipt and every photo you&apos;ve kept, in one place.
+              </span>
+            }
+            jumpSections={JUMP_SECTIONS}
+            currentPath={ROUTES.ORDERS}
+          />
           <div className="stagger-children min-w-0 pb-8 md:pb-20">
             <SpendSlab />
             <ReceiptsSlab />
           </div>
         </div>
       </div>
-      <Footer />
     </main>
-  );
-}
-
-function IdentityRail({ user }: { user: User }) {
-  const router = useRouter();
-  const { logout } = useAuth();
-  const activeId = useActiveSection(JUMP_SECTIONS.map((s) => s.id));
-  const memberSince = formatMemberSince(user.createdAt);
-  const moreLinks = moreLinksForRole(user.role, ROUTES.ORDERS);
-
-  function handleSignOut() {
-    logout();
-    router.replace(ROUTES.HOME);
-  }
-
-  return (
-    <aside className="md:sticky md:top-24 md:self-start pt-10 md:pt-20 pb-8 md:pb-12 border-b md:border-0 border-line">
-      <div className="flex items-start gap-5 md:block">
-        <AvatarDisc name={user.name} size="md" />
-        <div className="flex-1 min-w-0 md:mt-7">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
-            Profile · Receipts
-            <span className="text-slate-soft"> · </span>
-            <span className="tnum">Since {memberSince}</span>
-          </p>
-          <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] mt-3">
-            Orders.
-          </h1>
-          <p className="font-sans text-sm text-slate mt-3 max-w-xs">
-            Every receipt and every photo you&apos;ve kept, in one place.
-          </p>
-        </div>
-      </div>
-
-      <nav aria-label="Jump to section" className="hidden md:block mt-12">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-          Jump to
-        </p>
-        <ul className="mt-4 space-y-3">
-          {JUMP_SECTIONS.map((section) => {
-            const isActive = activeId === section.id;
-            return (
-              <li key={section.id}>
-                <a
-                  href={`#${section.id}`}
-                  aria-current={isActive ? "true" : undefined}
-                  className={cn(
-                    "group flex items-center gap-3 font-display text-base transition-colors",
-                    isActive ? "text-ink" : "text-slate hover:text-ink",
-                  )}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "size-1.5 rounded-full transition-colors",
-                      isActive ? "bg-fresh" : "bg-line group-hover:bg-slate",
-                    )}
-                  />
-                  <span>{section.label}</span>
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
-
-      <div className="mt-8 md:mt-12">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-          More
-        </p>
-        <ul className="mt-4 space-y-3">
-          {moreLinks.map((link) => (
-            <li key={link.href}>
-              <Link
-                href={link.href}
-                className="font-display text-base text-slate hover:text-ink transition-colors"
-              >
-                {link.label}
-              </Link>
-            </li>
-          ))}
-          <li>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="font-display text-base text-slate hover:text-ink transition-colors"
-            >
-              Sign out
-            </button>
-          </li>
-        </ul>
-      </div>
-    </aside>
   );
 }
 
@@ -491,131 +423,4 @@ function labelForPaymentMethod(method: string): string {
     grabpay: "GrabPay",
   };
   return map[method.toLowerCase()] ?? method;
-}
-
-function formatPaidAt(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
-  const day = d.getDate().toString().padStart(2, "0");
-  const year = d.getFullYear();
-  return `${month} ${day} · ${year}`;
-}
-
-function formatMonthYear(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
-  const year = d.getFullYear();
-  return `${month} ${year}`;
-}
-
-function formatMemberSince(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
-  const year = d.getFullYear();
-  return `${month} ${year}`;
-}
-
-function Slab({
-  id,
-  number,
-  title,
-  caption,
-  trailing,
-  children,
-}: {
-  id?: string;
-  number: string;
-  title: string;
-  caption?: string;
-  trailing?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      id={id}
-      className="border-t border-line py-12 md:py-16 scroll-mt-24 first:border-0 first:pt-10 md:first:pt-20"
-    >
-      <div className="flex items-baseline justify-between gap-6 mb-8 md:mb-10">
-        <div className="flex items-baseline gap-4 min-w-0">
-          <span className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum">
-            {number}
-          </span>
-          <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-ink shrink-0">
-            {title}
-          </p>
-          {caption && (
-            <p className="hidden md:block font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft truncate">
-              {caption}
-            </p>
-          )}
-        </div>
-        {trailing && (
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft tnum shrink-0">
-            {trailing}
-          </p>
-        )}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="px-6 md:px-10 py-8 mt-12 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-bone">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-        QuickPitik &middot; Cebu, Philippines
-      </p>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-        © 2026
-      </p>
-    </footer>
-  );
-}
-
-function useActiveSection(ids: ReadonlyArray<string>): string | null {
-  const [active, setActive] = useState<string | null>(ids[0] ?? null);
-  useEffect(() => {
-    const elements = ids
-      .map((id) => document.getElementById(id))
-      .filter((el): el is HTMLElement => el !== null);
-    if (elements.length === 0) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-        if (visible.length > 0) {
-          setActive(visible[0].target.id);
-        }
-      },
-      {
-        rootMargin: "-25% 0px -55% 0px",
-        threshold: [0, 0.1, 0.5, 1],
-      },
-    );
-
-    elements.forEach((el) => observer.observe(el));
-    return () => observer.disconnect();
-  }, [ids]);
-  return active;
-}
-
-function moreLinksForRole(
-  role: Role,
-  current: string,
-): ReadonlyArray<{ label: string; href: string }> {
-  const all: Array<{ label: string; href: string }> = [
-    { label: "Profile", href: ROUTES.PROFILE },
-    { label: "Account", href: ROUTES.ACCOUNT },
-  ];
-  if (role === "RUNNER") all.push({ label: "Orders", href: ROUTES.ORDERS });
-  if (role === "PHOTOGRAPHER")
-    all.push({ label: "Dashboard", href: ROUTES.DASHBOARD });
-  if (role === "ADMIN") all.push({ label: "Admin", href: ROUTES.ADMIN });
-  return all.filter((l) => l.href !== current);
 }

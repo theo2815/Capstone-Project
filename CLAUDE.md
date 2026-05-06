@@ -11,7 +11,7 @@ Global rulebook for AI agents and contributors working in the `capstone-project`
 - **Photographers** can't upload in real time, manually sort thousands of photos (1–2 hrs), and have no blur-culling tool.
 - **Runners** can't find their own photos in a sea of thousands and have no local platform to buy them.
 
-QuickPitik delivers: real-time camera tethering, AI blur detection, face recognition + bib-number search for runners, and a marketplace. Four products serve these flows: a mobile app, a website, an already-built Electron desktop app, and a shared AI inference service (`ai-api`). Full details live in `docs/project-vision.md`.
+QuickPitik delivers: real-time camera tethering, desktop-only AI blur culling (BatchMyPhotos), face recognition + bib-number search for runners on web and mobile, and a marketplace. Four products serve these flows: a mobile app, a website, an already-built Electron desktop app, and a shared AI inference service (`ai-api`). Full details live in `docs/project-vision.md`.
 
 **North-star outcomes**
 - Photographers: post-event sort time from 1–2 hours → 5–10 seconds.

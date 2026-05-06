@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ChangeEvent } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useUserMediaStore } from "@/store/user-media-store";
@@ -67,12 +68,12 @@ export function AvatarSlab() {
           <p className="font-sans text-sm text-slate mt-2 max-w-md">
             Shown next to your name across QuickPitik. Square crop, 512×512.
             Different from your face-search selfies — those live in your{" "}
-            <a
+            <Link
               href="/profile#selfies"
               className="text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
             >
               selfie library
-            </a>
+            </Link>
             .
           </p>
         </div>

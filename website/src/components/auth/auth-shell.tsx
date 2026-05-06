@@ -1,25 +1,49 @@
 import type { ReactNode } from "react";
 import { SiteHeader } from "@/components/layout/site-header";
+import { cn } from "@/lib/utils";
 
 interface AuthShellProps {
-  rightLink: { label: string; href: string };
+  rightLink?: { label: string; href: string } | null;
+  showFooter?: boolean;
+  showHorizon?: boolean;
+  wide?: boolean;
   children: ReactNode;
 }
 
-export function AuthShell({ rightLink, children }: AuthShellProps) {
+export function AuthShell({
+  rightLink,
+  showFooter = true,
+  showHorizon = true,
+  wide = false,
+  children,
+}: AuthShellProps) {
   return (
     <>
-      <SiteHeader rightLink={rightLink} />
+      <SiteHeader rightLink={rightLink ?? null} />
       <main className="flex-1 relative flex flex-col">
-        <AmbientHorizon />
-        <div className="relative z-10 flex-1 px-6 md:px-10 pt-12 md:pt-20 pb-16 flex flex-col items-center">
-          <div className="w-full max-w-[440px]">{children}</div>
+        {showHorizon && <AmbientHorizon />}
+        <div
+          className={cn(
+            "relative z-10 flex-1 px-6 md:px-10 pt-12 md:pt-20 flex flex-col items-center",
+            showFooter ? "pb-16" : "pb-20",
+          )}
+        >
+          <div
+            className={cn(
+              "w-full",
+              wide ? "max-w-[440px] md:max-w-[960px]" : "max-w-[440px]",
+            )}
+          >
+            {children}
+          </div>
         </div>
-        <div className="relative z-10 px-6 md:px-10 pb-10">
-          <p className="text-center font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-            Cebu &middot; PH &middot; 2026
-          </p>
-        </div>
+        {showFooter && (
+          <div className="relative z-10 px-6 md:px-10 pb-10">
+            <p className="text-center font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+              Cebu &middot; PH &middot; 2026
+            </p>
+          </div>
+        )}
       </main>
     </>
   );

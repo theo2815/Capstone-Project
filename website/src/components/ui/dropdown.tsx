@@ -4,10 +4,20 @@ import {
   useState,
   useRef,
   useEffect,
+  useLayoutEffect,
   type ReactNode,
   type ButtonHTMLAttributes,
 } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+
+// The panel portals to document.body so it escapes ancestor stacking
+// contexts. `stagger-children` + `fade-up` (animation-fill-mode: both) leaves
+// each animated element with a persisted `transform: translateY(0)`, which
+// makes every animated sibling its own stacking context — meaning a `z-30`
+// panel inside Slab N still paints below Slab N+1's content. Same trap that
+// motivated the PhotoPreviewCard portal fix on /orders. See
+// `notes/ui-pitfalls.md` for the full root cause.
 
 interface DropdownProps {
   trigger: ReactNode;
@@ -16,6 +26,13 @@ interface DropdownProps {
   className?: string;
   panelClassName?: string;
   ariaLabel?: string;
+}
+
+interface PanelPosition {
+  top: number;
+  left: number;
+  rightFromViewport: number;
+  triggerWidth: number;
 }
 
 export function Dropdown({
@@ -27,28 +44,104 @@ export function Dropdown({
   ariaLabel,
 }: DropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(false);
+  const [position, setPosition] = useState<PanelPosition>({
+    top: 0,
+    left: 0,
+    rightFromViewport: 0,
+    triggerWidth: 0,
+  });
+  const triggerWrapRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Recompute panel position from the trigger's viewport rect. Called on
+  // open + scroll + resize so the panel stays anchored to the trigger.
+  function updatePosition() {
+    const wrap = triggerWrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    setPosition({
+      top: rect.bottom + 8,
+      left: rect.left,
+      rightFromViewport: window.innerWidth - rect.right,
+      triggerWidth: rect.width,
+    });
+  }
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    updatePosition();
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
+
     const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setIsOpen(false);
+      const target = e.target as Node;
+      if (
+        triggerWrapRef.current?.contains(target) ||
+        panelRef.current?.contains(target)
+      ) {
+        return;
       }
+      setIsOpen(false);
     };
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setIsOpen(false);
     };
+    const handleScroll = () => updatePosition();
+    const handleResize = () => updatePosition();
+
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("keydown", handleKey);
+    // Capture phase catches scroll on any ancestor (including the page body).
+    window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", handleResize);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleKey);
+      window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", handleResize);
     };
   }, [isOpen]);
 
+  const panel =
+    isOpen && mounted
+      ? createPortal(
+          <div
+            ref={panelRef}
+            role="menu"
+            aria-label={ariaLabel}
+            onClick={() => setIsOpen(false)}
+            style={{
+              animation: "fade-in 0.16s ease-out both",
+              position: "fixed",
+              top: position.top,
+              ...(align === "right"
+                ? { right: position.rightFromViewport }
+                : { left: position.left }),
+              minWidth: position.triggerWidth,
+            }}
+            className={cn(
+              "z-50 min-w-[200px] rounded-xl border border-line bg-bone py-1 shadow-[0_12px_32px_-12px_rgba(17,17,17,0.22)] origin-top",
+              panelClassName,
+            )}
+          >
+            {children}
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
-    <div ref={ref} className={cn("relative inline-block", className)}>
+    <div
+      ref={triggerWrapRef}
+      className={cn("relative inline-block", className)}
+    >
       <button
         type="button"
         onClick={() => setIsOpen((v) => !v)}
@@ -59,21 +152,7 @@ export function Dropdown({
       >
         {trigger}
       </button>
-      {isOpen && (
-        <div
-          role="menu"
-          aria-label={ariaLabel}
-          onClick={() => setIsOpen(false)}
-          style={{ animation: "fade-in 0.16s ease-out both" }}
-          className={cn(
-            "absolute z-30 mt-2 min-w-[200px] rounded-xl border border-line bg-bone py-1 shadow-[0_12px_32px_-12px_rgba(17,17,17,0.22)] origin-top",
-            align === "right" ? "right-0" : "left-0",
-            panelClassName,
-          )}
-        >
-          {children}
-        </div>
-      )}
+      {panel}
     </div>
   );
 }

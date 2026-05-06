@@ -11,6 +11,13 @@ interface AvatarDiscProps {
   size?: AvatarSize;
   tone?: AvatarTone;
   className?: string;
+  /**
+   * Override the per-user avatar source. When provided, the store-backed
+   * avatar is ignored — `null` forces initials, `{ dataUrl }` forces an
+   * image. Used on `/[handle]` so cross-photographer pages don't pull the
+   * logged-in user's avatar.
+   */
+  avatarOverride?: { dataUrl: string } | null;
 }
 
 const SIZE_CLASS: Record<AvatarSize, string> = {
@@ -29,8 +36,10 @@ export function AvatarDisc({
   size = "md",
   tone = "ink",
   className,
+  avatarOverride,
 }: AvatarDiscProps) {
-  const avatar = useUserMediaStore((s) => s.avatar);
+  const storeAvatar = useUserMediaStore((s) => s.avatar);
+  const avatar = avatarOverride === undefined ? storeAvatar : avatarOverride;
   const sizeClass = SIZE_CLASS[size];
 
   if (avatar) {

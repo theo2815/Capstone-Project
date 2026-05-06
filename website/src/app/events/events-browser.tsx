@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { Event } from "@/types/event";
 import {
@@ -8,7 +7,7 @@ import {
   DropdownItem,
   DropdownTrigger,
 } from "@/components/ui/dropdown";
-import { SaveButton } from "@/components/events/save-button";
+import { EventTile } from "@/components/events/event-tile";
 
 export type EventState = "upcoming" | "live" | "open" | "past";
 export type ListEvent = Event & { state: EventState; city: string };
@@ -534,138 +533,6 @@ function FlatResults({
   );
 }
 
-function EventTile({ event, index }: { event: ListEvent; index: number }) {
-  const dateLabel = formatShortDate(event.date);
-  const cityUpper = event.city.toUpperCase();
-  const isUpcoming = event.state === "upcoming";
-
-  const animationStyle = {
-    animation: `fade-up 0.5s ${0.05 * index + 0.05}s both`,
-    opacity: 0,
-  };
-
-  const body = (
-    <>
-      <div className="relative aspect-[4/3] bg-ink overflow-hidden">
-        <div className="absolute inset-0 flex items-center justify-center px-6">
-          <span className="font-display text-bone/25 text-2xl md:text-3xl font-medium tracking-tight text-center leading-tight">
-            {event.name}
-          </span>
-        </div>
-        <span className="absolute bottom-3 right-3 font-mono uppercase tracking-[0.3em] text-[9px] text-bone/35">
-          Banner · soon
-        </span>
-        <StatusChip state={event.state} />
-        <SaveButton eventId={event.id} variant="card" />
-      </div>
-      <div className="p-6 md:p-7">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-3">
-          <span className="tnum">{dateLabel}</span> · {cityUpper}
-        </p>
-        <h3 className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-tight text-ink">
-          {event.name}
-        </h3>
-        <p className="mt-3 font-sans text-sm md:text-base text-ink-soft">
-          {event.location}
-        </p>
-        <div className="mt-6 pt-4 border-t border-line flex items-center justify-between">
-          {isUpcoming ? (
-            <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate">
-              Opens on race day
-            </span>
-          ) : (
-            <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate">
-              <span className="tnum">{event.photoCount.toLocaleString()}</span>{" "}
-              photos
-            </span>
-          )}
-          {!isUpcoming && (
-            <span className="font-mono uppercase tracking-[0.25em] text-[11px] text-ink group-hover:text-fresh transition-colors">
-              Open →
-            </span>
-          )}
-        </div>
-      </div>
-    </>
-  );
-
-  if (isUpcoming) {
-    return (
-      <div
-        aria-label={`${event.name} — opens on race day`}
-        className="group block rounded-2xl border border-line bg-bone overflow-hidden"
-        style={animationStyle}
-      >
-        {body}
-      </div>
-    );
-  }
-
-  return (
-    <Link
-      href={`/events/${event.slug}`}
-      aria-label={`Open ${event.name}`}
-      className="group block rounded-2xl border border-line bg-bone overflow-hidden transition-all duration-300 hover:border-ink hover:-translate-y-[2px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
-      style={animationStyle}
-    >
-      {body}
-    </Link>
-  );
-}
-
-function StatusChip({ state }: { state: EventState }) {
-  if (state === "live") {
-    return (
-      <div className="absolute top-4 left-5 flex items-center gap-2.5">
-        <span
-          aria-hidden="true"
-          className="size-1.5 rounded-full bg-fresh breathe"
-        />
-        <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-fresh">
-          Photos uploading
-        </span>
-      </div>
-    );
-  }
-  if (state === "upcoming") {
-    return (
-      <div className="absolute top-4 left-5 flex items-center gap-2.5">
-        <span
-          aria-hidden="true"
-          className="size-1.5 rounded-full bg-fresh"
-        />
-        <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-bone/85">
-          Save the date
-        </span>
-      </div>
-    );
-  }
-  if (state === "open") {
-    return (
-      <div className="absolute top-4 left-5 flex items-center gap-2.5">
-        <span
-          aria-hidden="true"
-          className="size-1.5 rounded-full bg-bone/85"
-        />
-        <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-bone/85">
-          Photos ready
-        </span>
-      </div>
-    );
-  }
-  return (
-    <div className="absolute top-4 left-5 flex items-center gap-2.5">
-      <span
-        aria-hidden="true"
-        className="size-1.5 rounded-full bg-bone/40"
-      />
-      <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-bone/55">
-        Archive
-      </span>
-    </div>
-  );
-}
-
 function EmptyState() {
   return (
     <section className="px-6 md:px-10 py-24 md:py-32 bg-bone min-h-[40vh] flex items-center">
@@ -684,10 +551,3 @@ function EmptyState() {
   );
 }
 
-function formatShortDate(iso: string) {
-  const d = new Date(iso + "T00:00:00");
-  const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
-  const day = d.getDate().toString().padStart(2, "0");
-  const year = d.getFullYear();
-  return `${month} ${day} · ${year}`;
-}

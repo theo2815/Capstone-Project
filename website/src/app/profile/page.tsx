@@ -1,19 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useMemo, useState } from "react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { SiteHeader } from "@/components/layout/site-header";
 import { AvatarDisc } from "@/components/account/avatar-disc";
+import {
+  IdentityRail,
+  Slab,
+  type JumpSection,
+} from "@/components/profile-shell";
 import { SelfieLibrary } from "@/components/profile/selfie-library";
+import { EventTile } from "@/components/events/event-tile";
+import {
+  Dropdown,
+  DropdownItem,
+  DropdownTrigger,
+} from "@/components/ui/dropdown";
 import { useAuth } from "@/hooks/use-auth";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useOrdersStore } from "@/store/orders-store";
 import { useToast } from "@/hooks/use-toast";
 import { EVENT_CATALOG, MOCK_USER_PHOTOS_FOUND } from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
-import { cn } from "@/lib/utils";
+import { formatMemberSince, formatRaceDate } from "@/lib/format";
+import { PHOTOGRAPHER_EVENTS } from "@/lib/photographer-mock";
+import type { ListEvent } from "@/app/events/events-browser";
+import {
+  usePhotographerSettingsStore,
+  BRAND_COLOR_HEX,
+} from "@/store/photographer-settings-store";
 import type { Role, User } from "@/types/user";
 
 type RaceState = "upcoming" | "live" | "open" | "past";
@@ -29,7 +45,7 @@ interface RaceLogEntry {
   isSaved: boolean;
 }
 
-const JUMP_SECTIONS: ReadonlyArray<{ id: string; label: string }> = [
+const JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "selfies", label: "Selfie library" },
   { id: "race-log", label: "Race log" },
 ];
@@ -37,127 +53,62 @@ const JUMP_SECTIONS: ReadonlyArray<{ id: string; label: string }> = [
 export default function ProfilePage() {
   return (
     <ProtectedRoute>
-      <ProfileBody />
+      <ProfileRouter />
     </ProtectedRoute>
   );
 }
 
-function ProfileBody() {
+// Role-branched: runners see the selfie library + race log shell; photographers
+// see a cover-banner-led portfolio surface that mirrors their public /{handle}
+// page with edit affordances.
+function ProfileRouter() {
   const { user } = useAuth();
   if (!user) return null;
+  if (user.role === "PHOTOGRAPHER") return <PhotographerProfileBody user={user} />;
+  return <RunnerProfileBody user={user} />;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Runner profile (existing layout)
+// ─────────────────────────────────────────────────────────────────────────
+
+function RunnerProfileBody({ user }: { user: User }) {
+  const memberSince = formatMemberSince(user.createdAt);
 
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
       <SiteHeader />
-      <div className="flex-1 max-w-5xl mx-auto w-full px-6 md:px-10">
+      <div className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10">
         <div className="md:grid md:grid-cols-[15rem_1fr] md:gap-12 lg:gap-20">
-          <IdentityRail user={user} />
+          <IdentityRail
+            user={user}
+            kicker={
+              <>
+                {roleLabel(user.role)}
+                {" · Cebu · "}
+                <span className="tnum">Since {memberSince}</span>
+              </>
+            }
+            headline={user.name}
+            headlineSize="name"
+            subline={<span className="break-all">{user.email}</span>}
+            jumpSections={JUMP_SECTIONS}
+            currentPath={ROUTES.PROFILE}
+          />
           <div className="stagger-children min-w-0 pb-8 md:pb-20">
             <SelfieLibrarySection />
             <RaceLogSection />
           </div>
         </div>
       </div>
-      <Footer />
     </main>
   );
 }
 
-function IdentityRail({ user }: { user: User }) {
-  const router = useRouter();
-  const { logout } = useAuth();
-  const activeId = useActiveSection(JUMP_SECTIONS.map((s) => s.id));
-  const memberSince = formatMemberSince(user.createdAt);
-  const moreLinks = moreLinksForRole(user.role, ROUTES.PROFILE);
-
-  function handleSignOut() {
-    logout();
-    router.replace(ROUTES.HOME);
-  }
-
-  return (
-    <aside className="md:sticky md:top-24 md:self-start pt-10 md:pt-20 pb-8 md:pb-12 border-b md:border-0 border-line">
-      <div className="flex items-start gap-5 md:block">
-        <AvatarDisc name={user.name} size="md" />
-        <div className="flex-1 min-w-0 md:mt-7">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
-            {user.role === "RUNNER"
-              ? "Runner"
-              : user.role === "PHOTOGRAPHER"
-                ? "Photographer"
-                : "Admin"}
-            {" · Cebu · "}
-            <span className="tnum">Since {memberSince}</span>
-          </p>
-          <p className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
-            {user.name}
-          </p>
-          <p className="font-sans text-sm text-slate mt-2 break-all">
-            {user.email}
-          </p>
-        </div>
-      </div>
-
-      <nav aria-label="Jump to section" className="hidden md:block mt-12">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-          Jump to
-        </p>
-        <ul className="mt-4 space-y-3">
-          {JUMP_SECTIONS.map((section) => {
-            const isActive = activeId === section.id;
-            return (
-              <li key={section.id}>
-                <a
-                  href={`#${section.id}`}
-                  aria-current={isActive ? "true" : undefined}
-                  className={cn(
-                    "group flex items-center gap-3 font-display text-base transition-colors",
-                    isActive ? "text-ink" : "text-slate hover:text-ink",
-                  )}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "size-1.5 rounded-full transition-colors",
-                      isActive ? "bg-fresh" : "bg-line group-hover:bg-slate",
-                    )}
-                  />
-                  <span>{section.label}</span>
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
-
-      <div className="mt-8 md:mt-12">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-          More
-        </p>
-        <ul className="mt-4 space-y-3">
-          {moreLinks.map((link) => (
-            <li key={link.href}>
-              <Link
-                href={link.href}
-                className="font-display text-base text-slate hover:text-ink transition-colors"
-              >
-                {link.label}
-              </Link>
-            </li>
-          ))}
-          <li>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="font-display text-base text-slate hover:text-ink transition-colors"
-            >
-              Sign out
-            </button>
-          </li>
-        </ul>
-      </div>
-    </aside>
-  );
+function roleLabel(role: Role): string {
+  if (role === "RUNNER") return "Runner";
+  if (role === "PHOTOGRAPHER") return "Photographer";
+  return "Admin";
 }
 
 function SelfieLibrarySection() {
@@ -354,121 +305,501 @@ function buildRaceLog(
   return entries.sort((a, b) => b.date.localeCompare(a.date));
 }
 
-function Slab({
-  id,
-  number,
-  title,
-  caption,
-  trailing,
-  children,
-}: {
-  id?: string;
-  number: string;
-  title: string;
-  caption?: string;
-  trailing?: string;
-  children: React.ReactNode;
-}) {
+// ─────────────────────────────────────────────────────────────────────────
+// Photographer profile (cover banner + brand + portfolio)
+// ─────────────────────────────────────────────────────────────────────────
+
+// Portfolio date filter taxonomy. Mirrors `/events` so the photographer's
+// "what runners see" mental model lines up; defined locally to keep
+// events-browser internals decoupled.
+type PortfolioDateKey = "any" | "upcoming" | "live" | "recent" | "archive";
+
+const PORTFOLIO_DATE_OPTIONS: ReadonlyArray<{
+  value: PortfolioDateKey;
+  label: string;
+  matchState?: "upcoming" | "live" | "open" | "past";
+}> = [
+  { value: "any", label: "Any time" },
+  { value: "upcoming", label: "Upcoming", matchState: "upcoming" },
+  { value: "live", label: "Live now", matchState: "live" },
+  { value: "recent", label: "Recent", matchState: "open" },
+  { value: "archive", label: "Archive", matchState: "past" },
+];
+
+function PhotographerProfileBody({ user }: { user: User }) {
+  const cover = usePhotographerSettingsStore((s) => s.cover);
+  const brandName = usePhotographerSettingsStore((s) => s.brandName);
+  const brandColor = usePhotographerSettingsStore((s) => s.brandColor);
+  const bio = usePhotographerSettingsStore((s) => s.bio);
+  const handle = usePhotographerSettingsStore((s) => s.handle);
+
+  const accent = brandColor !== "none" ? BRAND_COLOR_HEX[brandColor] : null;
+  const displayName = brandName.trim() || user.name;
+
   return (
-    <section
-      id={id}
-      className="border-t border-line py-12 md:py-16 scroll-mt-24 first:border-0 first:pt-10 md:first:pt-20"
-    >
-      <div className="flex items-baseline justify-between gap-6 mb-8 md:mb-10">
-        <div className="flex items-baseline gap-4 min-w-0">
-          <span className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum">
-            {number}
-          </span>
-          <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-ink shrink-0">
-            {title}
-          </p>
-          {caption && (
-            <p className="hidden md:block font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft truncate">
-              {caption}
-            </p>
-          )}
-        </div>
-        {trailing && (
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft tnum shrink-0">
-            {trailing}
-          </p>
+    <main className="bg-bone text-ink min-h-screen flex flex-col">
+      <SiteHeader />
+
+      {/* Cover banner — full-bleed inside the SiteHeader's max width.
+          Responsive fit: mobile fills the cover edge-to-edge (object-cover,
+          the photo dominates the small viewport), desktop+ contains the
+          full image (object-contain, bone-deep bands fill any empty space
+          — Facebook-style). The container's bg-bone-deep IS the band fill. */}
+      <div className="relative bg-bone-deep border-b border-line aspect-[16/5] md:aspect-[16/4] overflow-hidden">
+        {cover ? (
+          // eslint-disable-next-line @next/next/no-img-element -- data-URL mock; backend will return signed S3 URLs.
+          <img
+            src={cover.dataUrl}
+            alt=""
+            className="size-full object-cover md:object-contain"
+            draggable={false}
+          />
+        ) : (
+          <CoverEmptyHint />
+        )}
+        {accent && (
+          <span
+            aria-hidden="true"
+            className="absolute bottom-0 inset-x-0 h-1"
+            style={{ backgroundColor: accent }}
+          />
         )}
       </div>
-      {children}
-    </section>
+
+      <div className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10 -mt-10 md:-mt-12 relative">
+        {/* Edit cover — top-right of the negative-margin band. Mobile: own
+            right-aligned row above the avatar. Desktop: absolute, free of
+            the avatar/kicker row. Routes to settings #cover anchor. */}
+        <div className="flex justify-end mb-3 md:mb-0 md:absolute md:top-0 md:right-10 md:z-10">
+          <Link
+            href={`${ROUTES.DASHBOARD_SETTINGS}#cover`}
+            className="inline-flex items-center gap-1.5 font-sans text-sm text-slate hover:text-ink transition-colors"
+          >
+            <CameraGlyph className="size-4" />
+            Edit cover
+            <span aria-hidden="true">→</span>
+          </Link>
+        </div>
+
+        <div className="flex flex-col items-start gap-4 md:flex-row md:items-end md:gap-5">
+          <AvatarDisc name={displayName} size="lg" />
+          <div className="flex-1 min-w-0 md:pb-2">
+            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+              Photographer
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 flex items-baseline gap-3 flex-wrap">
+          <h1 className="font-display text-4xl md:text-5xl font-medium tracking-tight text-ink leading-[1.05]">
+            {displayName}
+          </h1>
+          {accent && (
+            <span
+              aria-hidden="true"
+              className="size-3 rounded-full inline-block"
+              style={{ backgroundColor: accent }}
+            />
+          )}
+        </div>
+
+        {bio && (
+          <p className="font-sans text-base md:text-lg text-ink-soft mt-3 max-w-xl">
+            {bio}
+          </p>
+        )}
+
+        {/* Quick actions — Upload (primary fresh) + Edit profile (text-link). */}
+        <div className="mt-7 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
+          <Link
+            href={ROUTES.DASHBOARD_UPLOAD}
+            className="inline-flex items-center justify-center gap-2 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors w-full sm:w-auto"
+          >
+            <span aria-hidden="true">+</span>
+            Upload photos
+          </Link>
+          <Link
+            href={ROUTES.DASHBOARD_SETTINGS}
+            className="font-sans text-sm text-ink hover:text-fresh transition-colors inline-flex items-center gap-1 self-start sm:self-auto"
+          >
+            Edit profile
+            <span aria-hidden="true">→</span>
+          </Link>
+        </div>
+
+        <StatsRow memberSince={user.createdAt} />
+
+        <PublicUrlChip handle={handle} />
+
+        <div className="stagger-children mt-12 pb-8 md:pb-20">
+          <PortfolioGrid handle={handle} />
+        </div>
+      </div>
+
+    </main>
   );
 }
 
-function Footer() {
+// Photographer-self stats: Events / Photos / Sales / On QuickPitik. Mirrors
+// the public /[handle] stats row but adds Sales (which is owner-relevant).
+// Numbers derived from PHOTOGRAPHER_EVENTS rather than the public profile's
+// `getProfileTotals` since /profile reads the live mock list directly.
+function StatsRow({ memberSince }: { memberSince: string }) {
+  const events = PHOTOGRAPHER_EVENTS.filter((e) => e.photoCount > 0);
+  const totalPhotos = events.reduce((sum, e) => sum + e.photoCount, 0);
+  const totalSales = events.reduce((sum, e) => sum + e.salesCount, 0);
   return (
-    <footer className="px-6 md:px-10 py-8 mt-12 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-bone">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-        QuickPitik &middot; Cebu, Philippines
-      </p>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-        © 2026
-      </p>
-    </footer>
+    <dl className="mt-10 grid grid-cols-2 md:grid-cols-4 gap-y-7 gap-x-8 md:gap-x-12 max-w-2xl">
+      <Stat label="Events" value={events.length.toString()} />
+      <Stat label="Photos" value={totalPhotos.toLocaleString()} />
+      <Stat label="Sales" value={totalSales.toLocaleString()} />
+      <Stat label="On QuickPitik" value={formatMemberSince(memberSince)} />
+    </dl>
   );
 }
 
-function useActiveSection(ids: ReadonlyArray<string>): string | null {
-  const [active, setActive] = useState<string | null>(ids[0] ?? null);
-  useEffect(() => {
-    const elements = ids
-      .map((id) => document.getElementById(id))
-      .filter((el): el is HTMLElement => el !== null);
-    if (elements.length === 0) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-        if (visible.length > 0) {
-          setActive(visible[0].target.id);
-        }
-      },
-      {
-        rootMargin: "-25% 0px -55% 0px",
-        threshold: [0, 0.1, 0.5, 1],
-      },
-    );
-
-    elements.forEach((el) => observer.observe(el));
-    return () => observer.disconnect();
-  }, [ids]);
-  return active;
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+        {label}
+      </p>
+      <p className="font-display font-medium tracking-tight tnum text-2xl md:text-3xl text-ink mt-2 leading-none">
+        {value}
+      </p>
+    </div>
+  );
 }
 
-function moreLinksForRole(
-  role: Role,
-  current: string,
-): ReadonlyArray<{ label: string; href: string }> {
-  const all: Array<{ label: string; href: string }> = [
-    { label: "Profile", href: ROUTES.PROFILE },
-    { label: "Account", href: ROUTES.ACCOUNT },
-  ];
-  if (role === "RUNNER") all.push({ label: "Orders", href: ROUTES.ORDERS });
-  if (role === "PHOTOGRAPHER")
-    all.push({ label: "Dashboard", href: ROUTES.DASHBOARD });
-  if (role === "ADMIN") all.push({ label: "Admin", href: ROUTES.ADMIN });
-  return all.filter((l) => l.href !== current);
+function CoverEmptyHint() {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center">
+      <div className="text-center">
+        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          No cover yet
+        </p>
+        <Link
+          href={ROUTES.DASHBOARD_SETTINGS}
+          className="mt-2 inline-block font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
+        >
+          Add a banner →
+        </Link>
+      </div>
+    </div>
+  );
 }
 
-function formatMemberSince(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
-  const year = d.getFullYear();
-  return `${month} ${year}`;
+function PublicUrlChip({ handle }: { handle: string }) {
+  const { showToast } = useToast();
+  const valid = handle.length > 0;
+  const url = valid
+    ? `quickpitik.com/${handle}`
+    : "quickpitik.com/your-handle";
+
+  const copy = useCallback(async () => {
+    if (!valid) return;
+    try {
+      await navigator.clipboard.writeText(`https://${url}`);
+      showToast({ kind: "success", message: "Public URL copied." });
+    } catch {
+      showToast({
+        kind: "error",
+        message: "Couldn't copy. Try selecting the URL manually.",
+      });
+    }
+  }, [url, valid, showToast]);
+
+  return (
+    <div className="mt-6 border border-line rounded-2xl bg-bone-deep/40 px-5 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-6">
+      <div className="min-w-0">
+        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          Public URL
+        </p>
+        <p className="font-mono text-sm md:text-base text-ink mt-1.5 break-all">
+          {url}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 shrink-0">
+        <button
+          type="button"
+          onClick={copy}
+          disabled={!valid}
+          className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
+        >
+          Copy
+        </button>
+        <Link
+          href={valid ? `/${handle}` : "#"}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-disabled={!valid}
+          onClick={(e) => {
+            if (!valid) e.preventDefault();
+          }}
+          className={
+            valid
+              ? "font-sans text-sm text-ink hover:text-fresh transition-colors inline-flex items-center gap-1"
+              : "font-sans text-sm text-slate-soft cursor-not-allowed inline-flex items-center gap-1"
+          }
+        >
+          Preview public
+          <span aria-hidden="true">↗</span>
+        </Link>
+      </div>
+    </div>
+  );
 }
 
-function formatRaceDate(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  if (Number.isNaN(d.getTime())) return "—";
-  const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
-  const day = d.getDate().toString().padStart(2, "0");
-  const year = d.getFullYear();
-  return `${month} ${day} · ${year}`;
+// Portfolio grid — reuses <EventTile mode="browse"> exactly like /events and
+// /[handle], so "what I see is what runners see" on this surface. Each tile
+// routes to /{handle}/events/{slug} (the photographer's own gallery) via
+// hrefOverride; falls back to /events/{slug} only if the photographer hasn't
+// claimed a handle yet. Date dropdown + name search reuse the /events
+// taxonomy at the surface level.
+function PortfolioGrid({ handle }: { handle: string }) {
+  const allEvents = useMemo(
+    () => PHOTOGRAPHER_EVENTS.filter((e) => e.photoCount > 0),
+    [],
+  );
+  const validHandle = handle.length > 0;
+  const [date, setDate] = useState<PortfolioDateKey>("any");
+  const [query, setQuery] = useState("");
+
+  const filtered = useMemo(() => {
+    const trimmed = query.trim().toLowerCase();
+    return allEvents.filter((summary) => {
+      if (date !== "any") {
+        const want = PORTFOLIO_DATE_OPTIONS.find((d) => d.value === date)
+          ?.matchState;
+        if (want && summary.state !== want) return false;
+      }
+      if (trimmed) {
+        const ce = EVENT_CATALOG.find((e) => e.slug === summary.slug);
+        if (!ce) return false;
+        const hay = `${ce.name} ${ce.location} ${ce.city}`.toLowerCase();
+        if (!hay.includes(trimmed)) return false;
+      }
+      return true;
+    });
+  }, [allEvents, date, query]);
+
+  const clearFilters = () => {
+    setDate("any");
+    setQuery("");
+  };
+
+  return (
+    <Slab
+      id="portfolio"
+      number="01"
+      title="Portfolio"
+      trailing={
+        allEvents.length > 0
+          ? `${allEvents.length} ${allEvents.length === 1 ? "event" : "events"}`
+          : undefined
+      }
+    >
+      {allEvents.length === 0 ? (
+        <PortfolioEmpty />
+      ) : (
+        <>
+          <PortfolioFilterBar
+            date={date}
+            onDateChange={setDate}
+            query={query}
+            onQueryChange={setQuery}
+          />
+          {filtered.length === 0 ? (
+            <PortfolioFilterEmpty onClear={clearFilters} />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
+              {filtered.map((summary, index) => {
+                const tileEvent = toListEvent(summary);
+                if (!tileEvent) return null;
+                return (
+                  <EventTile
+                    key={summary.id}
+                    mode="browse"
+                    event={tileEvent}
+                    index={index}
+                    hrefOverride={
+                      validHandle
+                        ? `/${handle}/events/${summary.slug}`
+                        : undefined
+                    }
+                  />
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </Slab>
+  );
+}
+
+function PortfolioFilterBar({
+  date,
+  onDateChange,
+  query,
+  onQueryChange,
+}: {
+  date: PortfolioDateKey;
+  onDateChange: (v: PortfolioDateKey) => void;
+  query: string;
+  onQueryChange: (v: string) => void;
+}) {
+  const dateLabel =
+    PORTFOLIO_DATE_OPTIONS.find((d) => d.value === date)?.label ?? "Any time";
+  return (
+    <div className="mb-6 md:mb-8 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 border-b border-line pb-4">
+      <div className="sm:flex-1 min-w-0">
+        <PortfolioSearchInput value={query} onChange={onQueryChange} />
+      </div>
+      <Dropdown
+        ariaLabel="Filter portfolio by date"
+        align="right"
+        trigger={<DropdownTrigger>{dateLabel}</DropdownTrigger>}
+      >
+        {PORTFOLIO_DATE_OPTIONS.map((d) => (
+          <DropdownItem
+            key={d.value}
+            variant="mono"
+            active={d.value === date}
+            onClick={() => onDateChange(d.value)}
+          >
+            {d.label}
+          </DropdownItem>
+        ))}
+      </Dropdown>
+    </div>
+  );
+}
+
+function PortfolioSearchInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <svg
+        className="absolute left-0 top-1/2 -translate-y-1/2 size-4 text-slate pointer-events-none"
+        viewBox="0 0 24 24"
+        fill="none"
+        aria-hidden="true"
+      >
+        <circle
+          cx="11"
+          cy="11"
+          r="7"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        />
+        <path
+          d="M16.5 16.5 L21 21"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+      </svg>
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Search events…"
+        aria-label="Search portfolio events"
+        className="block w-full pl-7 pr-2 py-1.5 bg-transparent border-0 outline-none font-mono text-sm tracking-wide placeholder:text-slate-soft text-ink"
+      />
+    </div>
+  );
+}
+
+function PortfolioFilterEmpty({ onClear }: { onClear: () => void }) {
+  return (
+    <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
+      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-3">
+        No matches
+      </p>
+      <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+        Nothing here matches.
+      </p>
+      <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
+        Try clearing the search or change the date filter.
+      </p>
+      <button
+        type="button"
+        onClick={onClear}
+        className="mt-6 font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
+      >
+        Clear filters
+      </button>
+    </div>
+  );
+}
+
+// Build a ListEvent for EventTile from a PhotographerEventSummary. The
+// catalog supplies city + participantCount + status (which the tile reads),
+// the summary supplies the photographer's per-event state + their slice of
+// photoCount.
+function toListEvent(
+  summary: (typeof PHOTOGRAPHER_EVENTS)[number],
+): ListEvent | null {
+  const ce = EVENT_CATALOG.find((e) => e.slug === summary.slug);
+  if (!ce) return null;
+  return {
+    ...ce,
+    photoCount: summary.photoCount,
+    state: summary.state,
+  };
+}
+
+function PortfolioEmpty() {
+  // Drops fresh button — the identity-row "Upload photos" CTA already owns
+  // the page's single fresh element. Empty state points users back up.
+  return (
+    <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
+      <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+        Nothing shipped yet.
+      </p>
+      <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
+        Cover an event and upload your first photos — they&apos;ll show up here
+        as your portfolio.
+      </p>
+      <Link
+        href={ROUTES.DASHBOARD_UPLOAD}
+        className="mt-6 inline-flex items-center gap-1 font-sans text-sm text-ink hover:text-fresh transition-colors"
+      >
+        Upload photos
+        <span aria-hidden="true">→</span>
+      </Link>
+    </div>
+  );
+}
+
+function CameraGlyph({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M3 8h3.5l1.7-2.5h7.6L17.5 8H21v11H3V8z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <circle
+        cx="12"
+        cy="13.5"
+        r="3.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
 }

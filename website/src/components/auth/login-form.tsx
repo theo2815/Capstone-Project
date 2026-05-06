@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
 import { ApiError } from "@/lib/api";
 import { useRedirectTarget } from "@/lib/redirect";
+import { AuthDivider, GoogleButton } from "@/components/auth/google-button";
 
 export function LoginForm() {
   const router = useRouter();
@@ -49,6 +50,11 @@ export function LoginForm() {
       <p className="font-sans text-base text-ink-soft">
         Continue to your photos.
       </p>
+
+      <div className="space-y-5 pt-2">
+        <GoogleButton disabled={isLoading} />
+        <AuthDivider label="or with email" />
+      </div>
 
       <div className="space-y-6 pt-2">
         <FieldBlock>

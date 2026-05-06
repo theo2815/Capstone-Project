@@ -1,22 +1,35 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { SiteHeader } from "@/components/layout/site-header";
-import { AvatarDisc } from "@/components/account/avatar-disc";
+import {
+  IdentityRail,
+  Slab,
+  type JumpSection,
+} from "@/components/profile-shell";
 import { AvatarSlab } from "@/components/account/avatar-slab";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/store/auth-store";
 import { useToast } from "@/hooks/use-toast";
 import { ROUTES } from "@/lib/constants";
-import { cn } from "@/lib/utils";
-import type { Role, User } from "@/types/user";
+import type { User } from "@/types/user";
 
-const JUMP_SECTIONS: ReadonlyArray<{ id: string; label: string }> = [
+const RUNNER_JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "name", label: "Name" },
   { id: "picture", label: "Picture" },
+  { id: "email", label: "Email" },
+  { id: "password", label: "Password" },
+  { id: "danger", label: "Danger" },
+];
+
+// Photographers manage their profile picture in /dashboard/settings (Slab 01)
+// alongside their cover, brand, watermark, etc. — keeping a duplicate Picture
+// slab here would split the photographer's identity-editing surface across two
+// pages. Runner accounts are unaffected.
+const PHOTOGRAPHER_JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
+  { id: "name", label: "Name" },
   { id: "email", label: "Email" },
   { id: "password", label: "Password" },
   { id: "danger", label: "Danger" },
@@ -34,117 +47,45 @@ function AccountBody() {
   const { user } = useAuth();
   if (!user) return null;
 
+  const isPhotographer = user.role === "PHOTOGRAPHER";
+  const jumpSections = isPhotographer
+    ? PHOTOGRAPHER_JUMP_SECTIONS
+    : RUNNER_JUMP_SECTIONS;
+
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
       <SiteHeader />
-      <div className="flex-1 max-w-5xl mx-auto w-full px-6 md:px-10">
+      <div className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10">
         <div className="md:grid md:grid-cols-[15rem_1fr] md:gap-12 lg:gap-20">
-          <SettingsRail user={user} />
+          <IdentityRail
+            user={user}
+            kicker="Profile · Settings"
+            headline={<span className="text-fresh">Account.</span>}
+            subline={
+              <span className="block max-w-xs">
+                Edit how you appear and keep your account secure.
+              </span>
+            }
+            jumpSections={jumpSections}
+            currentPath={ROUTES.ACCOUNT}
+          />
           <div className="stagger-children min-w-0 pb-8 md:pb-20">
-            <NameSlab user={user} />
-            <PictureSlab />
-            <EmailSlab user={user} />
-            <PasswordSlab />
-            <DangerSlab />
+            <NameSlab user={user} number="01" />
+            {!isPhotographer && <PictureSlab number="02" />}
+            <EmailSlab
+              user={user}
+              number={isPhotographer ? "02" : "03"}
+            />
+            <PasswordSlab number={isPhotographer ? "03" : "04"} />
+            <DangerSlab number={isPhotographer ? "04" : "05"} />
           </div>
         </div>
       </div>
-      <Footer />
     </main>
   );
 }
 
-function SettingsRail({ user }: { user: User }) {
-  const router = useRouter();
-  const { logout } = useAuth();
-  const activeId = useActiveSection(JUMP_SECTIONS.map((s) => s.id));
-  const moreLinks = moreLinksForRole(user.role, ROUTES.ACCOUNT);
-
-  function handleSignOut() {
-    logout();
-    router.replace(ROUTES.HOME);
-  }
-
-  return (
-    <aside className="md:sticky md:top-24 md:self-start pt-10 md:pt-20 pb-8 md:pb-12 border-b md:border-0 border-line">
-      <div className="flex items-start gap-5 md:block">
-        <AvatarDisc name={user.name} size="md" />
-        <div className="flex-1 min-w-0 md:mt-7">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
-            Profile · Settings
-          </p>
-          <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] mt-3">
-            <span className="text-fresh">Account.</span>
-          </h1>
-          <p className="font-sans text-sm text-slate mt-3 max-w-xs">
-            Edit how you appear and keep your account secure.
-          </p>
-        </div>
-      </div>
-
-      <nav aria-label="Jump to section" className="hidden md:block mt-12">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-          Jump to
-        </p>
-        <ul className="mt-4 space-y-3">
-          {JUMP_SECTIONS.map((section) => {
-            const isActive = activeId === section.id;
-            return (
-              <li key={section.id}>
-                <a
-                  href={`#${section.id}`}
-                  aria-current={isActive ? "true" : undefined}
-                  className={cn(
-                    "group flex items-center gap-3 font-display text-base transition-colors",
-                    isActive ? "text-ink" : "text-slate hover:text-ink",
-                  )}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "size-1.5 rounded-full transition-colors",
-                      isActive ? "bg-fresh" : "bg-line group-hover:bg-slate",
-                    )}
-                  />
-                  <span>{section.label}</span>
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
-
-      <div className="mt-8 md:mt-12">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-          More
-        </p>
-        <ul className="mt-4 space-y-3">
-          {moreLinks.map((link) => (
-            <li key={link.href}>
-              <Link
-                href={link.href}
-                className="font-display text-base text-slate hover:text-ink transition-colors"
-              >
-                {link.label}
-              </Link>
-            </li>
-          ))}
-          <li>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="font-display text-base text-slate hover:text-ink transition-colors"
-            >
-              Sign out
-            </button>
-          </li>
-        </ul>
-      </div>
-    </aside>
-  );
-}
-
-function NameSlab({ user }: { user: User }) {
+function NameSlab({ user, number }: { user: User; number: string }) {
   const setUser = useAuthStore((s) => s.setUser);
   const { showToast } = useToast();
   const [name, setName] = useState(user.name);
@@ -171,9 +112,9 @@ function NameSlab({ user }: { user: User }) {
   }
 
   return (
-    <Slab id="name" number="01" title="Name">
+    <Slab id="name" number={number} title="Name">
       <form onSubmit={handleSubmit} className="space-y-6">
-        <FieldShell id="name" label="Display name">
+        <FieldShell id="name" label="Full name">
           <input
             id="name"
             value={name}
@@ -219,17 +160,17 @@ function NameSlab({ user }: { user: User }) {
   );
 }
 
-function PictureSlab() {
+function PictureSlab({ number }: { number: string }) {
   return (
-    <Slab id="picture" number="02" title="Picture" caption="Shown next to your name">
+    <Slab id="picture" number={number} title="Picture" caption="Shown next to your name">
       <AvatarSlab />
     </Slab>
   );
 }
 
-function EmailSlab({ user }: { user: User }) {
+function EmailSlab({ user, number }: { user: User; number: string }) {
   return (
-    <Slab id="email" number="03" title="Email" caption="Used to sign in">
+    <Slab id="email" number={number} title="Email" caption="Used to sign in">
       <div className="space-y-5">
         <div className="border border-line rounded-2xl px-6 py-5 bg-bone-deep/40">
           <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
@@ -248,7 +189,7 @@ function EmailSlab({ user }: { user: User }) {
   );
 }
 
-function PasswordSlab() {
+function PasswordSlab({ number }: { number: string }) {
   const { showToast } = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -300,7 +241,7 @@ function PasswordSlab() {
   }
 
   return (
-    <Slab id="password" number="04" title="Password" caption="Min. 8 characters">
+    <Slab id="password" number={number} title="Password" caption="Min. 8 characters">
       <form onSubmit={handleSubmit} className="space-y-6">
         <PasswordField
           id="current-password"
@@ -348,7 +289,7 @@ function PasswordSlab() {
   );
 }
 
-function DangerSlab() {
+function DangerSlab({ number }: { number: string }) {
   const router = useRouter();
   const { logout } = useAuth();
 
@@ -358,7 +299,7 @@ function DangerSlab() {
   }
 
   return (
-    <Slab id="danger" number="05" title="Danger" caption="Account-wide actions">
+    <Slab id="danger" number={number} title="Danger" caption="Account-wide actions">
       <div className="space-y-6">
         <div className="border border-line rounded-2xl px-6 py-5 bg-bone-deep/40">
           <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink">
@@ -455,97 +396,4 @@ function FormStatusLine({ status }: { status: FormStatus }) {
       {status.message}
     </p>
   );
-}
-
-function Slab({
-  id,
-  number,
-  title,
-  caption,
-  children,
-}: {
-  id?: string;
-  number: string;
-  title: string;
-  caption?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      id={id}
-      className="border-t border-line py-12 md:py-14 scroll-mt-24 first:border-0 first:pt-10 md:first:pt-20"
-    >
-      <div className="flex items-baseline gap-4 min-w-0 mb-7 md:mb-8">
-        <span className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum">
-          {number}
-        </span>
-        <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-ink shrink-0">
-          {title}
-        </p>
-        {caption && (
-          <p className="hidden md:block font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft truncate">
-            {caption}
-          </p>
-        )}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="px-6 md:px-10 py-8 mt-12 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-bone">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-        QuickPitik &middot; Cebu, Philippines
-      </p>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-        © 2026
-      </p>
-    </footer>
-  );
-}
-
-function useActiveSection(ids: ReadonlyArray<string>): string | null {
-  const [active, setActive] = useState<string | null>(ids[0] ?? null);
-  useEffect(() => {
-    const elements = ids
-      .map((id) => document.getElementById(id))
-      .filter((el): el is HTMLElement => el !== null);
-    if (elements.length === 0) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-        if (visible.length > 0) {
-          setActive(visible[0].target.id);
-        }
-      },
-      {
-        rootMargin: "-25% 0px -55% 0px",
-        threshold: [0, 0.1, 0.5, 1],
-      },
-    );
-
-    elements.forEach((el) => observer.observe(el));
-    return () => observer.disconnect();
-  }, [ids]);
-  return active;
-}
-
-function moreLinksForRole(
-  role: Role,
-  current: string,
-): ReadonlyArray<{ label: string; href: string }> {
-  const all: Array<{ label: string; href: string }> = [
-    { label: "Profile", href: ROUTES.PROFILE },
-    { label: "Account", href: ROUTES.ACCOUNT },
-  ];
-  if (role === "RUNNER") all.push({ label: "Orders", href: ROUTES.ORDERS });
-  if (role === "PHOTOGRAPHER")
-    all.push({ label: "Dashboard", href: ROUTES.DASHBOARD });
-  if (role === "ADMIN") all.push({ label: "Admin", href: ROUTES.ADMIN });
-  return all.filter((l) => l.href !== current);
 }
