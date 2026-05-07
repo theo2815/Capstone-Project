@@ -9,16 +9,20 @@ import {
   PhotoPreviewCard,
   type PhotoPreviewItem,
 } from "@/components/photos/photo-preview-card";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { ROUTES } from "@/lib/constants";
 import { getEventById } from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
+import { useMockLatency } from "@/lib/mock-latency";
 import {
   PHOTOGRAPHER_EVENTS,
   generatePhotographerLibrary,
   type PhotographerEventSummary,
   type PhotographerLibraryPhoto,
 } from "@/lib/photographer-mock";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
 import { cn } from "@/lib/utils";
 
@@ -48,10 +52,28 @@ const STATE_LABEL: Record<EventState, string> = {
 export default function FocusedSharePage() {
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
-  const event = id ? getEventById(id) : undefined;
-  const photographer = id
-    ? PHOTOGRAPHER_EVENTS.find((p) => p.id === id)
-    : undefined;
+
+  // Memoize the synchronous lookup so useMockLatency sees a stable reference
+  // per id — without it, every parent re-render hands the hook a fresh object
+  // and the effect re-fires unnecessarily.
+  const resolved = useMemo(
+    () => ({
+      event: id ? getEventById(id) : undefined,
+      photographer: id
+        ? PHOTOGRAPHER_EVENTS.find((p) => p.id === id)
+        : undefined,
+    }),
+    [id],
+  );
+  const { data, isLoading } = useMockLatency(resolved);
+
+  // Show skeleton while the (mock-latency-gated) lookup is in flight. Once
+  // resolved with no event / no photographer / no uploads → 404.
+  if (isLoading || data === null) {
+    return <FocusedShareSkeleton />;
+  }
+
+  const { event, photographer } = data;
 
   // Only events the photographer has actually covered render this page.
   // Anything else (catalog event without uploads, or no event at all) → 404.
@@ -68,6 +90,40 @@ export default function FocusedSharePage() {
         <ShareHeroBand event={event} />
         <Stats photographer={photographer} />
         <PhotoGrid event={event} photographer={photographer} />
+      </div>
+    </main>
+  );
+}
+
+// Pulse-animated placeholder mirroring the share page's actual layout shape
+// (back chip → hero → share band → stats → mosaic) so swap-in is reflow-free
+// when data resolves. Mounts behind useMockLatency — invisible at the dev
+// default of MOCK_LATENCY_MS = 0.
+function FocusedShareSkeleton() {
+  return (
+    <main className="bg-bone text-ink min-h-screen flex flex-col">
+      <SiteHeader />
+      <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
+        <Skeleton className="h-3 w-32 mb-8 md:mb-10" />
+        <section className="mb-10 md:mb-12">
+          <Skeleton className="h-3 w-44 mb-4" />
+          <Skeleton className="h-12 md:h-16 w-3/4 mb-4" />
+          <Skeleton className="h-4 w-1/2" />
+        </section>
+        <Skeleton className="h-14 w-full rounded-2xl mb-8 md:mb-12" />
+        <div className="flex flex-wrap gap-x-8 gap-y-4 mb-10 md:mb-12">
+          <Skeleton className="h-8 w-24" />
+          <Skeleton className="h-8 w-24" />
+          <Skeleton className="h-8 w-24" />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <TileSkeleton
+              key={i}
+              aspectRatio={i % 3 === 0 ? "aspect-[3/4]" : "aspect-[3/2]"}
+            />
+          ))}
+        </div>
       </div>
     </main>
   );
@@ -302,12 +358,16 @@ function PhotoGrid({
     () => generatePhotographerLibrary(photographer),
     [photographer],
   );
-  const showing = photos.length;
-  const total = photographer.photoCount;
-  const hasMore = total > showing;
+  const total = photos.length;
 
   const { showToast } = useToast();
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PHOTO_INITIAL);
+
+  const visibleSlice = useMemo(
+    () => photos.slice(0, loadedCount),
+    [photos, loadedCount],
+  );
 
   const handleOpen = useCallback((i: number) => setOpenIndex(i), []);
   const handleClose = useCallback(() => setOpenIndex(null), []);
@@ -316,9 +376,9 @@ function PhotoGrid({
   }, []);
   const handleNext = useCallback(() => {
     setOpenIndex((i) =>
-      i === null || i === photos.length - 1 ? i : i + 1,
+      i === null || i === visibleSlice.length - 1 ? i : i + 1,
     );
-  }, [photos.length]);
+  }, [visibleSlice.length]);
   const handleDownload = useCallback(() => {
     // TODO(backend): swap for `api.get('/me/photographer/photos/{id}/download')`
     // returning a signed S3 URL once Spring Boot Phase F lands. The owned-mode
@@ -329,7 +389,7 @@ function PhotoGrid({
     });
   }, [showToast]);
 
-  const openPhoto = openIndex !== null ? photos[openIndex] : null;
+  const openPhoto = openIndex !== null ? visibleSlice[openIndex] : null;
   const previewItem: PhotoPreviewItem | null = openPhoto
     ? {
         id: openPhoto.id,
@@ -354,7 +414,7 @@ function PhotoGrid({
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
-        {photos.map((photo, i) => (
+        {visibleSlice.map((photo, i) => (
           <PhotoTile
             key={photo.id}
             photo={photo}
@@ -364,12 +424,12 @@ function PhotoGrid({
         ))}
       </div>
 
-      {hasMore && (
-        <p className="mt-8 font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft tnum text-center">
-          Showing <span className="text-ink">{showing.toLocaleString()}</span>{" "}
-          of <span className="text-ink">{total.toLocaleString()}</span>
-        </p>
-      )}
+      <LoadMoreButton
+        shown={visibleSlice.length}
+        total={total}
+        increment={PAGE_SIZE.PHOTO_INCREMENT}
+        onLoadMore={() => setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT)}
+      />
 
       {previewItem && openIndex !== null && (
         <PhotoPreviewCard
@@ -377,10 +437,10 @@ function PhotoGrid({
           photo={previewItem}
           eventName={event.name}
           index={openIndex + 1}
-          total={photos.length}
+          total={visibleSlice.length}
           onClose={handleClose}
           onPrev={openIndex > 0 ? handlePrev : undefined}
-          onNext={openIndex < photos.length - 1 ? handleNext : undefined}
+          onNext={openIndex < visibleSlice.length - 1 ? handleNext : undefined}
           onDownload={handleDownload}
         />
       )}

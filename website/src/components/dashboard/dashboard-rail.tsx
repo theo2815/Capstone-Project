@@ -7,11 +7,11 @@ import {
   useState,
   type FocusEvent,
 } from "react";
-import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { moreLinksForRole } from "@/components/profile-shell";
+import { RailTipPortal } from "@/components/ui/rail-tip-portal";
 import { useAuth } from "@/hooks/use-auth";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import { ROUTES } from "@/lib/constants";
@@ -303,43 +303,6 @@ function RailRow({
         <RailTipPortal anchor={labelRef.current} guide={guide} tipId={tipId} />
       )}
     </li>
-  );
-}
-
-function RailTipPortal({
-  anchor,
-  guide,
-  tipId,
-}: {
-  anchor: HTMLElement;
-  guide: SectionGuideEntry;
-  tipId: string;
-}) {
-  const rect = anchor.getBoundingClientRect();
-  // Vertically center the popover against the label so the kicker sits at
-  // roughly the same y as the rail label rather than top-aligned.
-  const TIP_HEIGHT_APPROX = 96;
-  return createPortal(
-    <div
-      id={tipId}
-      role="tooltip"
-      style={{
-        position: "fixed",
-        top: rect.top + rect.height / 2 - TIP_HEIGHT_APPROX / 2,
-        left: rect.right + 12,
-        width: 240,
-        zIndex: 50,
-      }}
-      className="border border-line rounded-2xl bg-bone shadow-lg p-4"
-    >
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft tnum">
-        {guide.number} · {guide.label}
-      </p>
-      <p className="font-sans text-sm text-ink-soft leading-relaxed mt-2">
-        {guide.body}
-      </p>
-    </div>,
-    document.body,
   );
 }
 

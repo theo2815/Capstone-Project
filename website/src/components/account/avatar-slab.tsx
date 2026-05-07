@@ -11,6 +11,7 @@ import {
   validateImageFile,
 } from "@/lib/image-utils";
 import { AvatarDisc } from "@/components/account/avatar-disc";
+import { FieldError } from "@/components/ui/field-error";
 
 const AVATAR_SIZE_PX = 512;
 
@@ -78,11 +79,7 @@ export function AvatarSlab() {
           </p>
         </div>
 
-        {error && (
-          <p role="alert" className="font-sans text-sm text-error">
-            {error}
-          </p>
-        )}
+        <FieldError message={error} id="account-avatar-error" density="tight" />
 
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <label

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { Kicker } from "@/components/ui/kicker";
 import { formatLongDate, formatMonthYear } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -21,13 +22,26 @@ interface SparklineProps {
 // `interactive` opts in to hover/tap-to-pin: bars become focusable buttons,
 // the active bar deepens to ink, and a label row below the chart morphs
 // between axis labels (default) and the active week's readout.
+//
+// Empty / malformed data: filters out non-finite amounts up front and falls
+// back to a dashed-baseline `No data yet` placeholder when nothing usable
+// remains. Keeps the visual slot so surrounding copy doesn't reflow when
+// the backend hands back an empty series.
 export function Sparkline({
   data,
   ariaLabel,
   interactive = false,
 }: SparklineProps) {
-  const max = Math.max(...data.map((d) => d.amount), 1);
+  const safeData = useMemo(
+    () => data.filter((d) => Number.isFinite(d.amount) && d.amount >= 0),
+    [data],
+  );
+  const max = Math.max(...safeData.map((d) => d.amount), 1);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
+  if (safeData.length === 0) {
+    return <SparklineEmpty ariaLabel={ariaLabel} />;
+  }
 
   if (!interactive) {
     return (
@@ -36,7 +50,7 @@ export function Sparkline({
         aria-label={ariaLabel}
         className="flex items-end gap-1 h-16 md:h-20 bg-bone-deep rounded-md p-1.5"
       >
-        {data.map((point, i) => {
+        {safeData.map((point, i) => {
           const pct = Math.max(4, (point.amount / max) * 100);
           return (
             <div
@@ -54,9 +68,9 @@ export function Sparkline({
     );
   }
 
-  const active = activeIndex !== null ? data[activeIndex] : null;
-  const firstWeek = data[0]?.weekOf;
-  const lastWeek = data[data.length - 1]?.weekOf;
+  const active = activeIndex !== null ? safeData[activeIndex] : null;
+  const firstWeek = safeData[0]?.weekOf;
+  const lastWeek = safeData[safeData.length - 1]?.weekOf;
 
   return (
     <div>
@@ -66,7 +80,7 @@ export function Sparkline({
         className="flex items-end gap-1 h-16 md:h-20 bg-bone-deep rounded-md p-1.5"
         onMouseLeave={() => setActiveIndex(null)}
       >
-        {data.map((point, i) => {
+        {safeData.map((point, i) => {
           const pct = Math.max(4, (point.amount / max) * 100);
           const isActive = activeIndex === i;
           return (
@@ -116,6 +130,26 @@ export function Sparkline({
           )
         )}
       </div>
+    </div>
+  );
+}
+
+// Fallback when the series is empty or every amount is non-finite. Keeps
+// the same height as the live chart so consuming layouts don't reflow.
+function SparklineEmpty({ ariaLabel }: { ariaLabel?: string }) {
+  return (
+    <div
+      role="img"
+      aria-label={ariaLabel ?? "No earnings data yet"}
+      className="h-16 md:h-20 bg-bone-deep rounded-md p-1.5 flex items-center justify-center relative"
+    >
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-2 bottom-1.5 border-t border-dashed border-line"
+      />
+      <Kicker as="p" tone="soft" tnum>
+        No data yet
+      </Kicker>
     </div>
   );
 }

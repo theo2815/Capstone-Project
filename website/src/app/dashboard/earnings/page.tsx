@@ -5,8 +5,12 @@ import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { Sparkline } from "@/components/dashboard/sparkline";
 import { PlatformCutModal } from "@/components/dashboard/platform-cut-modal";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
+import { useMockLatency } from "@/lib/mock-latency";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
   PHOTOGRAPHER_EARNINGS,
   PHOTOGRAPHER_EVENTS,
@@ -25,8 +29,30 @@ export default function EarningsPage() {
 }
 
 function LifetimeSlab() {
-  const e = PHOTOGRAPHER_EARNINGS;
+  const { data: e, isLoading } = useMockLatency(PHOTOGRAPHER_EARNINGS);
   const [cutModalOpen, setCutModalOpen] = useState(false);
+
+  if (isLoading || !e) {
+    return (
+      <Slab
+        id="lifetime"
+        number="01"
+        title="Lifetime"
+        caption="After platform cut"
+      >
+        <div>
+          <Skeleton className="h-3 w-32" />
+          <Skeleton className="h-12 md:h-16 w-72 md:w-96 mt-3" />
+          <Skeleton className="h-4 w-48 mt-4" />
+        </div>
+        <div className="mt-10">
+          <Skeleton className="h-3 w-28" />
+          <Skeleton className="h-3 w-56 mt-2" />
+          <Skeleton className="h-16 md:h-20 w-full mt-4" />
+        </div>
+      </Slab>
+    );
+  }
 
   return (
     <Slab
@@ -84,7 +110,25 @@ function LifetimeSlab() {
 }
 
 function BreakdownSlab() {
-  const e = PHOTOGRAPHER_EARNINGS;
+  const { data: e, isLoading } = useMockLatency(PHOTOGRAPHER_EARNINGS);
+  if (isLoading || !e) {
+    return (
+      <Slab id="breakdown" number="02" title="Breakdown" caption="Current cycle">
+        <div className="grid grid-cols-3 gap-4 md:gap-8">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="border-l border-line pl-4 md:pl-6 first:border-0 first:pl-0"
+            >
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-8 md:h-10 w-24 mt-3" />
+              <Skeleton className="h-4 w-16 mt-3" />
+            </div>
+          ))}
+        </div>
+      </Slab>
+    );
+  }
   return (
     <Slab id="breakdown" number="02" title="Breakdown" caption="Current cycle">
       <div className="grid grid-cols-3 gap-4 md:gap-8">
@@ -148,14 +192,34 @@ function BreakdownStat({
 }
 
 function PerEventSlab() {
+  const { data: rawEvents, isLoading } = useMockLatency(PHOTOGRAPHER_EVENTS);
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EARNINGS_INITIAL);
+
+  if (isLoading || !rawEvents) {
+    return (
+      <Slab id="per-event" number="03" title="Per-event">
+        <ul className="border-y border-line divide-y divide-line">
+          {[0, 1, 2].map((i) => (
+            <li key={i} className="py-5 md:py-6">
+              <Skeleton className="h-3 w-28" />
+              <Skeleton className="h-5 md:h-6 w-64 mt-2" />
+              <Skeleton className="h-4 w-44 mt-2" />
+            </li>
+          ))}
+        </ul>
+      </Slab>
+    );
+  }
+
   // Sort events by lifetime revenue kept, descending. Skip events with zero
   // (upcoming events not yet covered) so the table shows revenue-bearing
   // entries only. The full list lives at /dashboard/events.
-  const events = [...PHOTOGRAPHER_EVENTS]
+  const events = [...rawEvents]
     .filter((e) => e.revenueKept > 0)
     .sort((a, b) => b.revenueKept - a.revenueKept);
 
   const totalKept = events.reduce((sum, e) => sum + e.revenueKept, 0);
+  const visibleSlice = events.slice(0, loadedCount);
 
   return (
     <Slab
@@ -171,13 +235,23 @@ function PerEventSlab() {
           Per-event revenue will land here once your first photo sells.
         </p>
       ) : (
-        <ul className="border-y border-line divide-y divide-line">
-          {events.map((event) => (
-            <li key={event.id}>
-              <PerEventRow event={event} totalKept={totalKept} />
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="border-y border-line divide-y divide-line">
+            {visibleSlice.map((event) => (
+              <li key={event.id}>
+                <PerEventRow event={event} totalKept={totalKept} />
+              </li>
+            ))}
+          </ul>
+          <LoadMoreButton
+            shown={visibleSlice.length}
+            total={events.length}
+            increment={PAGE_SIZE.EARNINGS_INCREMENT}
+            onLoadMore={() =>
+              setLoadedCount((n) => n + PAGE_SIZE.EARNINGS_INCREMENT)
+            }
+          />
+        </>
       )}
     </Slab>
   );

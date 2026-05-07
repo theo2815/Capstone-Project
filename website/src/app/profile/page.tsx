@@ -13,16 +13,20 @@ import {
 import { SelfieLibrary } from "@/components/profile/selfie-library";
 import { EventTile } from "@/components/events/event-tile";
 import {
-  Dropdown,
-  DropdownItem,
-  DropdownTrigger,
-} from "@/components/ui/dropdown";
+  EventFilterBar,
+  EventFilterEmpty,
+  matchEventDate,
+  type EventDateKey,
+} from "@/components/dashboard/event-filter-bar";
 import { Kicker } from "@/components/ui/kicker";
 import { useAuth } from "@/hooks/use-auth";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useOrdersStore } from "@/store/orders-store";
 import { useToast } from "@/hooks/use-toast";
-import { EVENT_CATALOG, MOCK_USER_PHOTOS_FOUND } from "@/lib/event-catalog";
+import {
+  getCatalogWithOverrides,
+  MOCK_USER_PHOTOS_FOUND,
+} from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
 import { formatMemberSince, formatRaceDate } from "@/lib/format";
 import { PHOTOGRAPHER_EVENTS } from "@/lib/photographer-mock";
@@ -289,7 +293,7 @@ function buildRaceLog(
 
   const entries: RaceLogEntry[] = [];
   for (const id of includedIds) {
-    const event = EVENT_CATALOG.find((e) => e.id === id);
+    const event = getCatalogWithOverrides().find((e) => e.id === id);
     if (!event) continue;
     entries.push({
       id: event.id,
@@ -309,23 +313,6 @@ function buildRaceLog(
 // ─────────────────────────────────────────────────────────────────────────
 // Photographer profile (cover banner + brand + portfolio)
 // ─────────────────────────────────────────────────────────────────────────
-
-// Portfolio date filter taxonomy. Mirrors `/events` so the photographer's
-// "what runners see" mental model lines up; defined locally to keep
-// events-browser internals decoupled.
-type PortfolioDateKey = "any" | "upcoming" | "live" | "recent" | "archive";
-
-const PORTFOLIO_DATE_OPTIONS: ReadonlyArray<{
-  value: PortfolioDateKey;
-  label: string;
-  matchState?: "upcoming" | "live" | "open" | "past";
-}> = [
-  { value: "any", label: "Any time" },
-  { value: "upcoming", label: "Upcoming", matchState: "upcoming" },
-  { value: "live", label: "Live now", matchState: "live" },
-  { value: "recent", label: "Recent", matchState: "open" },
-  { value: "archive", label: "Archive", matchState: "past" },
-];
 
 function PhotographerProfileBody({ user }: { user: User }) {
   const cover = usePhotographerSettingsStore((s) => s.cover);
@@ -563,19 +550,15 @@ function PortfolioGrid({ handle }: { handle: string }) {
     [],
   );
   const validHandle = handle.length > 0;
-  const [date, setDate] = useState<PortfolioDateKey>("any");
+  const [date, setDate] = useState<EventDateKey>("any");
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
     return allEvents.filter((summary) => {
-      if (date !== "any") {
-        const want = PORTFOLIO_DATE_OPTIONS.find((d) => d.value === date)
-          ?.matchState;
-        if (want && summary.state !== want) return false;
-      }
+      if (!matchEventDate(summary.state, date)) return false;
       if (trimmed) {
-        const ce = EVENT_CATALOG.find((e) => e.slug === summary.slug);
+        const ce = getCatalogWithOverrides().find((e) => e.slug === summary.slug);
         if (!ce) return false;
         const hay = `${ce.name} ${ce.location} ${ce.city}`.toLowerCase();
         if (!hay.includes(trimmed)) return false;
@@ -604,14 +587,16 @@ function PortfolioGrid({ handle }: { handle: string }) {
         <PortfolioEmpty />
       ) : (
         <>
-          <PortfolioFilterBar
+          <EventFilterBar
             date={date}
             onDateChange={setDate}
             query={query}
             onQueryChange={setQuery}
+            dateAriaLabel="Filter portfolio by date"
+            searchAriaLabel="Search portfolio events"
           />
           {filtered.length === 0 ? (
-            <PortfolioFilterEmpty onClear={clearFilters} />
+            <EventFilterEmpty onClear={clearFilters} />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
               {filtered.map((summary, index) => {
@@ -639,108 +624,6 @@ function PortfolioGrid({ handle }: { handle: string }) {
   );
 }
 
-function PortfolioFilterBar({
-  date,
-  onDateChange,
-  query,
-  onQueryChange,
-}: {
-  date: PortfolioDateKey;
-  onDateChange: (v: PortfolioDateKey) => void;
-  query: string;
-  onQueryChange: (v: string) => void;
-}) {
-  const dateLabel =
-    PORTFOLIO_DATE_OPTIONS.find((d) => d.value === date)?.label ?? "Any time";
-  return (
-    <div className="mb-6 md:mb-8 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 border-b border-line pb-4">
-      <div className="sm:flex-1 min-w-0">
-        <PortfolioSearchInput value={query} onChange={onQueryChange} />
-      </div>
-      <Dropdown
-        ariaLabel="Filter portfolio by date"
-        align="right"
-        trigger={<DropdownTrigger>{dateLabel}</DropdownTrigger>}
-      >
-        {PORTFOLIO_DATE_OPTIONS.map((d) => (
-          <DropdownItem
-            key={d.value}
-            variant="mono"
-            active={d.value === date}
-            onClick={() => onDateChange(d.value)}
-          >
-            {d.label}
-          </DropdownItem>
-        ))}
-      </Dropdown>
-    </div>
-  );
-}
-
-function PortfolioSearchInput({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="relative">
-      <svg
-        className="absolute left-0 top-1/2 -translate-y-1/2 size-4 text-slate pointer-events-none"
-        viewBox="0 0 24 24"
-        fill="none"
-        aria-hidden="true"
-      >
-        <circle
-          cx="11"
-          cy="11"
-          r="7"
-          stroke="currentColor"
-          strokeWidth="1.5"
-        />
-        <path
-          d="M16.5 16.5 L21 21"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        />
-      </svg>
-      <input
-        type="search"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Search events…"
-        aria-label="Search portfolio events"
-        className="block w-full pl-7 pr-2 py-1.5 bg-transparent border-0 outline-none font-mono text-sm tracking-wide placeholder:text-slate-soft text-ink"
-      />
-    </div>
-  );
-}
-
-function PortfolioFilterEmpty({ onClear }: { onClear: () => void }) {
-  return (
-    <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-      <Kicker as="p" className="mb-3">
-        No matches
-      </Kicker>
-      <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
-        Nothing here matches.
-      </p>
-      <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
-        Try clearing the search or change the date filter.
-      </p>
-      <button
-        type="button"
-        onClick={onClear}
-        className="mt-6 font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
-      >
-        Clear filters
-      </button>
-    </div>
-  );
-}
-
 // Build a ListEvent for EventTile from a PhotographerEventSummary. The
 // catalog supplies city + participantCount + status (which the tile reads),
 // the summary supplies the photographer's per-event state + their slice of
@@ -748,7 +631,7 @@ function PortfolioFilterEmpty({ onClear }: { onClear: () => void }) {
 function toListEvent(
   summary: (typeof PHOTOGRAPHER_EVENTS)[number],
 ): ListEvent | null {
-  const ce = EVENT_CATALOG.find((e) => e.slug === summary.slug);
+  const ce = getCatalogWithOverrides().find((e) => e.slug === summary.slug);
   if (!ce) return null;
   return {
     ...ce,

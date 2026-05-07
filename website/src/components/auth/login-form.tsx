@@ -7,7 +7,14 @@ import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
 import { ApiError } from "@/lib/api";
 import { useRedirectTarget } from "@/lib/redirect";
+import { validateEmail, validatePassword } from "@/lib/auth-validation";
 import { AuthDivider, GoogleButton } from "@/components/auth/google-button";
+import { FieldError } from "@/components/ui/field-error";
+
+interface FieldErrors {
+  email?: string | null;
+  password?: string | null;
+}
 
 export function LoginForm() {
   const router = useRouter();
@@ -15,19 +22,33 @@ export function LoginForm() {
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  function clearFieldError(field: keyof FieldErrors) {
+    if (errors[field] || submitError) {
+      setErrors((prev) => ({ ...prev, [field]: null }));
+      setSubmitError(null);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError("");
-    setIsLoading(true);
+    const next: FieldErrors = {
+      email: validateEmail(email),
+      password: validatePassword(password),
+    };
+    setErrors(next);
+    setSubmitError(null);
+    if (next.email || next.password) return;
 
+    setIsLoading(true);
     try {
-      await login({ email, password });
+      await login({ email: email.trim(), password });
       router.push(redirectTo);
     } catch (err) {
-      setError(
+      setSubmitError(
         err instanceof ApiError ? err.message : "Login failed. Please try again.",
       );
     } finally {
@@ -36,7 +57,7 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="stagger-children space-y-7">
+    <form onSubmit={handleSubmit} noValidate className="stagger-children space-y-7">
       <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
         Log in
       </p>
@@ -68,13 +89,17 @@ export function LoginForm() {
             id="email"
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              clearFieldError("email");
+            }}
             placeholder="you@example.com"
             autoComplete="email"
-            required
-            aria-invalid={!!error}
+            aria-invalid={!!errors.email}
+            aria-describedby={errors.email ? "email-error" : undefined}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
           />
+          <FieldError message={errors.email} id="email-error" density="tight" />
         </FieldBlock>
 
         <FieldBlock>
@@ -88,24 +113,25 @@ export function LoginForm() {
             id="password"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              clearFieldError("password");
+            }}
             placeholder="Your password"
             autoComplete="current-password"
-            required
-            aria-invalid={!!error}
+            aria-invalid={!!errors.password}
+            aria-describedby={errors.password ? "password-error" : undefined}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
+          />
+          <FieldError
+            message={errors.password}
+            id="password-error"
+            density="tight"
           />
         </FieldBlock>
       </div>
 
-      {error && (
-        <p
-          role="alert"
-          className="font-mono uppercase tracking-[0.15em] text-[11px] text-error"
-        >
-          {error}
-        </p>
-      )}
+      <FieldError message={submitError} id="login-submit-error" />
 
       <div className="space-y-4 pt-2">
         <button

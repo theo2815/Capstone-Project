@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import type { ListEvent } from "@/app/events/events-browser";
+import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
 
 // Mock catalog. Lifted out of `app/events/page.tsx` so /profile's Race Log can
 // resolve event metadata by ID without re-importing client modules.
@@ -151,5 +153,36 @@ export const MOCK_USER_PHOTOS_FOUND: Record<string, number> = {
 };
 
 export function getEventById(id: string): ListEvent | undefined {
-  return EVENT_CATALOG.find((e) => e.id === id);
+  return getCatalogWithOverrides().find((e) => e.id === id);
+}
+
+// Non-reactive merged view. Use inside event handlers, server components,
+// or any code that reads the catalog once. For reactive consumers (UI that
+// must re-render when admin flips a state), use `useEventCatalog()` below.
+export function getCatalogWithOverrides(
+  seed: ReadonlyArray<ListEvent> = EVENT_CATALOG,
+): ReadonlyArray<ListEvent> {
+  const overrides = useAdminEventOverridesStore.getState().overrides;
+  if (Object.keys(overrides).length === 0) return seed;
+  return seed.map((e) => {
+    const patch = overrides[e.id];
+    return patch ? { ...e, ...patch } : e;
+  });
+}
+
+// Reactive hook. Subscribes to the admin override store so the consuming
+// component re-renders when admin flips a state. Pass a custom `seed` only
+// if the page received its own (e.g. the server-rendered /events page that
+// hydrates EventsBrowser with the canonical seed).
+export function useEventCatalog(
+  seed: ReadonlyArray<ListEvent> = EVENT_CATALOG,
+): ReadonlyArray<ListEvent> {
+  const overrides = useAdminEventOverridesStore((s) => s.overrides);
+  return useMemo(() => {
+    if (Object.keys(overrides).length === 0) return seed;
+    return seed.map((e) => {
+      const patch = overrides[e.id];
+      return patch ? { ...e, ...patch } : e;
+    });
+  }, [seed, overrides]);
 }

@@ -1,11 +1,20 @@
 "use client";
 
-import type { EventState } from "@/app/events/events-browser";
+import { useMemo, useState } from "react";
+import type { EventState, ListEvent } from "@/app/events/events-browser";
 import { Slab } from "@/components/profile-shell";
 import { VerificationBanner } from "@/components/dashboard/verification-banner";
+import {
+  EventFilterBar,
+  EventFilterEmpty,
+  matchEventDate,
+  type EventDateKey,
+} from "@/components/dashboard/event-filter-bar";
 import { EventTile } from "@/components/events/event-tile";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useCanUpload } from "@/hooks/use-can-upload";
-import { EVENT_CATALOG } from "@/lib/event-catalog";
+import { useEventCatalog } from "@/lib/event-catalog";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 
 // Photographer upload picker. Shows every event in the catalog (not just the
 // photographer's own coverage) so they can pick where to lift photos to. The
@@ -51,13 +60,38 @@ const SECTIONS: Array<{
 export default function UploadPickerPage() {
   const gate = useCanUpload();
   const canUpload = gate.kind === "ok";
+  const catalog = useEventCatalog();
+
+  const [date, setDate] = useState<EventDateKey>("any");
+  const [query, setQuery] = useState("");
+
+  const filteredCatalog = useMemo(() => {
+    const trimmed = query.trim().toLowerCase();
+    return catalog.filter((event) => {
+      if (!matchEventDate(event.state, date)) return false;
+      if (trimmed) {
+        const hay = `${event.name} ${event.location} ${event.city}`.toLowerCase();
+        if (!hay.includes(trimmed)) return false;
+      }
+      return true;
+    });
+  }, [catalog, date, query]);
 
   const visibleSections = SECTIONS.map((section) => ({
     ...section,
-    items: EVENT_CATALOG.filter((e) => e.state === section.matchState),
+    items: filteredCatalog.filter((e) => e.state === section.matchState),
   })).filter((section) => section.items.length > 0);
 
-  if (visibleSections.length === 0) {
+  const isFiltered = date !== "any" || query.trim().length > 0;
+
+  const clearFilters = () => {
+    setDate("any");
+    setQuery("");
+  };
+
+  // Catalog itself is empty — no events to upload to at all. Skip the filter
+  // bar (filtering nothing yields nothing) and show the wider PickerEmpty.
+  if (catalog.length === 0) {
     return (
       <>
         <VerificationBanner />
@@ -70,32 +104,85 @@ export default function UploadPickerPage() {
     <>
       <VerificationBanner />
 
-      {visibleSections.map((section) => {
-        const noun = section.items.length === 1 ? "race" : "races";
-        return (
-          <Slab
+      <EventFilterBar
+        date={date}
+        onDateChange={setDate}
+        query={query}
+        onQueryChange={setQuery}
+        dateAriaLabel="Filter upload picker by date"
+        searchAriaLabel="Search events to upload to"
+      />
+
+      {visibleSections.length === 0 ? (
+        isFiltered ? (
+          <EventFilterEmpty onClear={clearFilters} />
+        ) : (
+          <PickerEmpty />
+        )
+      ) : (
+        visibleSections.map((section) => (
+          <UploadSection
             key={section.id}
             id={section.id}
             number={section.number}
             title={section.title}
             caption={section.caption}
-            trailing={`${section.items.length} ${noun}`}
-          >
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
-              {section.items.map((event, i) => (
-                <EventTile
-                  key={event.id}
-                  mode="upload"
-                  event={event}
-                  index={i}
-                  canUpload={canUpload}
-                />
-              ))}
-            </div>
-          </Slab>
-        );
-      })}
+            items={section.items}
+            canUpload={canUpload}
+          />
+        ))
+      )}
     </>
+  );
+}
+
+function UploadSection({
+  id,
+  number,
+  title,
+  caption,
+  items,
+  canUpload,
+}: {
+  id: string;
+  number: string;
+  title: string;
+  caption: string;
+  items: ReadonlyArray<ListEvent>;
+  canUpload: boolean;
+}) {
+  const noun = items.length === 1 ? "race" : "races";
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EVENT_GRID_INITIAL);
+  const visibleSlice = items.slice(0, loadedCount);
+
+  return (
+    <Slab
+      id={id}
+      number={number}
+      title={title}
+      caption={caption}
+      trailing={`${items.length} ${noun}`}
+    >
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
+        {visibleSlice.map((event, i) => (
+          <EventTile
+            key={event.id}
+            mode="upload"
+            event={event}
+            index={i}
+            canUpload={canUpload}
+          />
+        ))}
+      </div>
+      <LoadMoreButton
+        shown={visibleSlice.length}
+        total={items.length}
+        increment={PAGE_SIZE.EVENT_GRID_INCREMENT}
+        onLoadMore={() =>
+          setLoadedCount((n) => n + PAGE_SIZE.EVENT_GRID_INCREMENT)
+        }
+      />
+    </Slab>
   );
 }
 

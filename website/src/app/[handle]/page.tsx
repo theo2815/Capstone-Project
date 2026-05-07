@@ -2,18 +2,21 @@
 
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
+import { useState } from "react";
 import { SiteHeader } from "@/components/layout/site-header";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { EventTile } from "@/components/events/event-tile";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { isReservedHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
 import { formatMemberSince } from "@/lib/format";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
   PHOTOGRAPHER_EVENTS,
   type EventState,
 } from "@/lib/photographer-mock";
-import { EVENT_CATALOG } from "@/lib/event-catalog";
+import { getCatalogWithOverrides } from "@/lib/event-catalog";
 import {
   getPhotographerByHandle,
   getProfileTotals,
@@ -275,6 +278,9 @@ function PortfolioSection({
   handle: string;
   isOwner: boolean;
 }) {
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PORTFOLIO_INITIAL);
+  const visibleSlice = events.slice(0, loadedCount);
+
   return (
     <div className="max-w-7xl mx-auto w-full px-6 md:px-10 mt-10 md:mt-14 pb-20">
       <Slab
@@ -284,7 +290,7 @@ function PortfolioSection({
         trailing={`${events.length} ${events.length === 1 ? "event" : "events"}`}
       >
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
-          {events.map((coverage, index) => {
+          {visibleSlice.map((coverage, index) => {
             const tileEvent = toListEvent(coverage);
             if (!tileEvent) return null;
             return (
@@ -299,6 +305,14 @@ function PortfolioSection({
             );
           })}
         </div>
+        <LoadMoreButton
+          shown={visibleSlice.length}
+          total={events.length}
+          increment={PAGE_SIZE.PORTFOLIO_INCREMENT}
+          onLoadMore={() =>
+            setLoadedCount((n) => n + PAGE_SIZE.PORTFOLIO_INCREMENT)
+          }
+        />
       </Slab>
     </div>
   );
@@ -315,7 +329,7 @@ function toListEvent(coverage: {
   state: EventState;
   photoCount: number;
 }): ListEvent | null {
-  const ce = EVENT_CATALOG.find((e) => e.slug === coverage.eventSlug);
+  const ce = getCatalogWithOverrides().find((e) => e.slug === coverage.eventSlug);
   if (!ce) return null;
   return {
     ...ce,

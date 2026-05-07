@@ -17,8 +17,10 @@ import {
   type PhotoPreviewItem,
 } from "@/components/photos/photo-preview-card";
 import { Kicker } from "@/components/ui/kicker";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { getEventById } from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
   formatMemberSince,
   formatMonthYear,
@@ -148,10 +150,15 @@ function Stat({
 function ReceiptsSlab() {
   const orders = useOrdersStore((s) => s.orders);
   const sorted = useMemo(
-    () => [...orders].sort((a, b) => b.paidAt.localeCompare(a.paidAt)),
+    () =>
+      [...orders].sort((a, b) =>
+        (b.paidAt ?? "").localeCompare(a.paidAt ?? ""),
+      ),
     [orders],
   );
   const trailing = `${sorted.length} receipt${sorted.length === 1 ? "" : "s"}`;
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.RECEIPT_INITIAL);
+  const visibleSlice = sorted.slice(0, loadedCount);
 
   return (
     <Slab
@@ -163,13 +170,23 @@ function ReceiptsSlab() {
       {sorted.length === 0 ? (
         <ReceiptsEmpty />
       ) : (
-        <ul className="border-y border-line divide-y divide-line">
-          {sorted.map((order) => (
-            <li key={order.id}>
-              <ReceiptRow order={order} />
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="border-y border-line divide-y divide-line">
+            {visibleSlice.map((order) => (
+              <li key={order.id}>
+                <ReceiptRow order={order} />
+              </li>
+            ))}
+          </ul>
+          <LoadMoreButton
+            shown={visibleSlice.length}
+            total={sorted.length}
+            increment={PAGE_SIZE.RECEIPT_INCREMENT}
+            onLoadMore={() =>
+              setLoadedCount((n) => n + PAGE_SIZE.RECEIPT_INCREMENT)
+            }
+          />
+        </>
       )}
     </Slab>
   );
@@ -181,20 +198,29 @@ function ReceiptRow({ order }: { order: MockOrder }) {
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const { showToast } = useToast();
 
+  // Defensive coalesce — backend payloads can ship partial fields and the
+  // renderer must not crash on a single bad row. Mock data is always complete;
+  // these defaults only matter post-backend.
+  const photoIds = order.photoIds ?? [];
+  const total = order.total ?? 0;
+  const paymentMethod = order.paymentMethod ?? "";
+  const orderLabel = order.id ?? "—";
+  const photoCount = photoIds.length;
+
   // Build PhotoPreviewItem[] for the lightbox. Owned mode hides watermark, in-cart
   // pill, and price-bearing CTAs, so bib/time/price are placeholders here.
   // TODO(backend): hydrate `imageUrl` (and real bib/time) from `/me/orders/{id}`
   // once Spring Boot Phase E lands.
   const previewItems = useMemo<ReadonlyArray<PhotoPreviewItem>>(
     () =>
-      order.photoIds.map((id, i) => ({
+      photoIds.map((id, i) => ({
         id,
         bib: null,
         time: "—",
         tone: i,
         price: 0,
       })),
-    [order.photoIds],
+    [photoIds],
   );
 
   function handleDownloadAll() {
@@ -202,7 +228,7 @@ function ReceiptRow({ order }: { order: MockOrder }) {
     // exposes `/me/orders/${order.id}/download-bundle`.
     showToast({
       kind: "success",
-      message: `Preparing ${order.photoIds.length} photo${order.photoIds.length === 1 ? "" : "s"}…`,
+      message: `Preparing ${photoCount} photo${photoCount === 1 ? "" : "s"}…`,
     });
   }
 
@@ -215,7 +241,7 @@ function ReceiptRow({ order }: { order: MockOrder }) {
     });
   }
 
-  const photoCountLabel = order.photoIds.length === 1 ? "photo" : "photos";
+  const photoCountLabel = photoCount === 1 ? "photo" : "photos";
 
   return (
     <div className="py-6 md:py-7">
@@ -237,23 +263,23 @@ function ReceiptRow({ order }: { order: MockOrder }) {
             </p>
           )}
           <p className="font-sans text-sm text-slate mt-2">
-            <span className="font-mono tnum">{order.photoIds.length}</span>{" "}
+            <span className="font-mono tnum">{photoCount}</span>{" "}
             {photoCountLabel}
             <span className="text-slate-soft"> · </span>
-            {labelForPaymentMethod(order.paymentMethod)}
+            {labelForPaymentMethod(paymentMethod)}
             <span className="text-slate-soft"> · </span>
-            <span className="font-mono">{order.id}</span>
+            <span className="font-mono">{orderLabel}</span>
           </p>
         </div>
         <div className="flex items-baseline justify-between md:flex-col md:items-end gap-3 md:gap-2 shrink-0">
           <p className="font-mono tnum font-medium text-ink text-xl md:text-2xl">
-            ₱{order.total.toLocaleString()}
+            ₱{total.toLocaleString()}
           </p>
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
-            aria-controls={`receipt-${order.id}-photos`}
+            aria-controls={`receipt-${orderLabel}-photos`}
             className="font-sans text-sm text-slate hover:text-ink transition-colors inline-flex items-center gap-1.5 group"
           >
             <span className="underline decoration-line underline-offset-4 decoration-1 group-hover:decoration-ink">
@@ -274,24 +300,32 @@ function ReceiptRow({ order }: { order: MockOrder }) {
 
       {expanded && (
         <div
-          id={`receipt-${order.id}-photos`}
+          id={`receipt-${orderLabel}-photos`}
           className="mt-6 pt-6 border-t border-line/60 animate-fade-in"
         >
-          <PhotoStrip
-            photoIds={order.photoIds}
-            onSelect={(i) => setPreviewIndex(i)}
-          />
+          {photoCount === 0 ? (
+            <p className="font-sans text-sm text-slate">
+              Photo details aren&apos;t available for this order.
+            </p>
+          ) : (
+            <PhotoStrip
+              photoIds={photoIds}
+              onSelect={(i) => setPreviewIndex(i)}
+            />
+          )}
           <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3">
-            <button
-              type="button"
-              onClick={handleDownloadAll}
-              className="font-sans text-base font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
-            >
-              Download all
-              <span aria-hidden="true">↓</span>
-            </button>
+            {photoCount > 0 && (
+              <button
+                type="button"
+                onClick={handleDownloadAll}
+                className="font-sans text-base font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
+              >
+                Download all
+                <span aria-hidden="true">↓</span>
+              </button>
+            )}
             <a
-              href={`mailto:support@quickpitik.com?subject=Receipt ${order.id}`}
+              href={`mailto:support@quickpitik.com?subject=Receipt ${orderLabel}`}
               className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
             >
               Need help with this order?
@@ -404,9 +438,11 @@ function computeSpendStats(orders: ReadonlyArray<MockOrder>): {
   let photoCount = 0;
   let earliest: string | null = null;
   for (const o of orders) {
-    total += o.total;
-    photoCount += o.photoIds.length;
-    if (earliest === null || o.paidAt < earliest) earliest = o.paidAt;
+    total += o.total ?? 0;
+    photoCount += (o.photoIds ?? []).length;
+    if (o.paidAt && (earliest === null || o.paidAt < earliest)) {
+      earliest = o.paidAt;
+    }
   }
   return {
     total,

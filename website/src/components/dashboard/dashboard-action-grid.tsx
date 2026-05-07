@@ -4,8 +4,10 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { Sparkline } from "@/components/dashboard/sparkline";
+import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
+import { useMockLatency } from "@/lib/mock-latency";
 import {
   BRAND_COLOR_HEX,
   usePhotographerSettingsStore,
@@ -159,8 +161,21 @@ function ProfileCard() {
 }
 
 // ─── Earnings — 12-week sparkline ─────────────────────────────────────────
+// Gated through useMockLatency so the sparkline + caption show a skeleton
+// during the (currently zero-ms) fetch window. With MOCK_LATENCY_MS = 0 the
+// hook resolves on first render — no flash, no overhead. Bumping the
+// constant in lib/mock-latency.ts is what reveals this state.
 function EarningsCard() {
-  const e = PHOTOGRAPHER_EARNINGS;
+  const { data: e, isLoading } = useMockLatency(PHOTOGRAPHER_EARNINGS);
+  if (isLoading || !e) {
+    return (
+      <CardShell href={ROUTES.DASHBOARD_EARNINGS}>
+        <TileSkeleton aspectRatio="h-16 md:h-20" className="rounded-md" />
+        <CardLabel>View earnings</CardLabel>
+        <Skeleton className="h-3 w-44 mt-2" />
+      </CardShell>
+    );
+  }
   return (
     <CardShell href={ROUTES.DASHBOARD_EARNINGS}>
       <Sparkline
@@ -177,11 +192,29 @@ function EarningsCard() {
 
 // ─── Events — state-dot rows ──────────────────────────────────────────────
 function EventsCard() {
-  const live = PHOTOGRAPHER_EVENTS.filter((e) => e.state === "live").length;
-  const upcoming = PHOTOGRAPHER_EVENTS.filter(
-    (e) => e.state === "upcoming",
-  ).length;
-  const archived = PHOTOGRAPHER_EVENTS.filter(
+  const { data: events, isLoading } = useMockLatency(PHOTOGRAPHER_EVENTS);
+  if (isLoading || !events) {
+    return (
+      <CardShell href={ROUTES.DASHBOARD_EVENTS}>
+        <ul className="space-y-2">
+          <li>
+            <Skeleton className="h-3 w-32" />
+          </li>
+          <li>
+            <Skeleton className="h-3 w-28" />
+          </li>
+          <li>
+            <Skeleton className="h-3 w-36" />
+          </li>
+        </ul>
+        <CardLabel>Manage events</CardLabel>
+        <Skeleton className="h-3 w-36 mt-2" />
+      </CardShell>
+    );
+  }
+  const live = events.filter((e) => e.state === "live").length;
+  const upcoming = events.filter((e) => e.state === "upcoming").length;
+  const archived = events.filter(
     (e) => e.state === "open" || e.state === "past",
   ).length;
 

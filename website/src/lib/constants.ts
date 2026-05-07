@@ -23,8 +23,14 @@ export const ROUTES = {
   DASHBOARD_BILLING: "/dashboard/billing",
   DASHBOARD_SETTINGS: "/dashboard/settings",
   ADMIN: "/admin",
+  ADMIN_INBOX: "/admin/inbox",
+  ADMIN_OVERVIEW: "/admin/overview",
   ADMIN_EVENTS: "/admin/events",
-  ADMIN_USERS: "/admin/users",
+  ADMIN_VERIFICATIONS: "/admin/verifications",
+  ADMIN_DISPUTES: "/admin/disputes",
+  ADMIN_PAYOUTS: "/admin/payouts",
+  ADMIN_PHOTOGRAPHERS: "/admin/photographers",
+  ADMIN_FLAGS: "/admin/flags",
 } as const;
 
 export const ROLES = {

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useCartStore } from "@/store/cart-store";
+import { useConfirmation } from "@/hooks/use-confirmation";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn } from "@/lib/utils";
@@ -46,6 +47,19 @@ export function CartModal({
   const removeItem = useCartStore((s) => s.removeItem);
   const clear = useCartStore((s) => s.clear);
   const total = useCartStore((s) => s.total());
+  const { confirm } = useConfirmation();
+
+  async function handleClearCart() {
+    const ok = await confirm({
+      title: "Clear cart?",
+      message:
+        "This removes every photo from your cart. You'll have to add them again to check out.",
+      confirmLabel: "Clear cart",
+      danger: true,
+    });
+    if (!ok) return;
+    clear();
+  }
 
   const pathname = usePathname() ?? "";
   const router = useRouter();
@@ -277,7 +291,7 @@ export function CartModal({
                 </button>
                 <button
                   type="button"
-                  onClick={clear}
+                  onClick={handleClearCart}
                   className="self-start sm:self-auto font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft hover:text-fresh transition-colors shrink-0"
                 >
                   Clear cart

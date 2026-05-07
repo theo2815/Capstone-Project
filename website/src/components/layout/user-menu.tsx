@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
+import { useConfirmation } from "@/hooks/use-confirmation";
 import { useUserMediaStore } from "@/store/user-media-store";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -55,6 +56,7 @@ function pad2(n: number): string {
 export function UserMenu({ user }: UserMenuProps) {
   const router = useRouter();
   const { logout } = useAuth();
+  const { confirm } = useConfirmation();
   const avatar = useUserMediaStore((s) => s.avatar);
   const [isOpen, setIsOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -86,9 +88,27 @@ export function UserMenu({ user }: UserMenuProps) {
     };
   }, [isOpen]);
 
-  function handleSignOut() {
+  async function handleSignOut() {
+    // Confirmation gate is mobile-only — desktop sign-out stays a single click
+    // (intentional dropdown action, low miss-tap risk). Tailwind's md breakpoint
+    // is 768px, so anything narrower gets the modal.
+    const isMobile =
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 767px)").matches;
+
+    if (isMobile) {
+      setIsOpen(false);
+      const ok = await confirm({
+        title: "Sign out?",
+        message: "You'll need to sign in again to access your account.",
+        confirmLabel: "Sign out",
+      });
+      if (!ok) return;
+    } else {
+      setIsOpen(false);
+    }
+
     logout();
-    setIsOpen(false);
     router.replace(ROUTES.HOME);
   }
 

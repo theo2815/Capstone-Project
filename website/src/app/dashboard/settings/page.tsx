@@ -3,21 +3,30 @@
 import Link from "next/link";
 import {
   useCallback,
+  useEffect,
+  useRef,
   useState,
   type ChangeEvent,
   type FormEvent,
 } from "react";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
+import { CharCounter } from "@/components/ui/char-counter";
 import { Dropdown, DropdownItem } from "@/components/ui/dropdown";
+import { FieldError } from "@/components/ui/field-error";
 import { Kicker } from "@/components/ui/kicker";
 import { useAuth } from "@/hooks/use-auth";
+import { useConfirmation } from "@/hooks/use-confirmation";
+import { useDebouncedSave } from "@/hooks/use-debounced-save";
 import { useToast } from "@/hooks/use-toast";
 import { useUserMediaStore } from "@/store/user-media-store";
 import {
   ACCEPTED_IMAGE_MIME,
+  ImageProcessingError,
+  detectPngTransparency,
   fitToDataUrl,
   fitToPngDataUrl,
+  inspectImageDimensions,
   squareCropToDataUrl,
   validateImageFile,
 } from "@/lib/image-utils";
@@ -71,6 +80,80 @@ const REGION_GROUP_ORDER: ReadonlyArray<RegionGroup> = [
   "mindanao",
 ];
 
+// Cover banner is 16:5 (= 3.2). Anything below this aspect ratio is portrait
+// or near-square — the middle horizontal strip is the only thing that ends up
+// visible after the cover-fit, so warn the user before committing. Threshold
+// is intentionally wider than 3.2 so we only flag obviously-wrong shapes, not
+// just imperfect crops.
+const COVER_MIN_ASPECT = 1.4;
+
+// Below this fraction of non-opaque pixels in a PNG, treat the file as
+// effectively solid — it'll stamp on photos as a block instead of overlaying.
+const WATERMARK_TRANSPARENCY_FLOOR = 0.05;
+
+// Map our typed image-processing errors to user-facing copy. Falls back to a
+// generic message when the error is a plain Error or unknown.
+function imageErrorCopy(err: unknown): string {
+  if (err instanceof ImageProcessingError) {
+    if (err.code === "decode") {
+      return "This file looks corrupted. Try exporting a fresh JPEG or PNG.";
+    }
+    if (err.code === "canvas-tainted") {
+      return "Browser blocked this image. Try a different file.";
+    }
+  }
+  return "Could not process this image. Try another.";
+}
+
+// Per-platform URL shape gates for Slab 05. Loose enough to cover the common
+// subdomains (www, m, web, fb.com short form, youtu.be) but strict enough to
+// catch a TikTok URL pasted into the Facebook row. The website row only
+// requires a valid http(s) prefix + a host with a dot.
+const SOCIAL_URL_PATTERN: Record<SocialPlatform, RegExp> = {
+  facebook: /^https?:\/\/(?:www\.|m\.|web\.)?(?:facebook\.com|fb\.com|fb\.me)\//i,
+  instagram: /^https?:\/\/(?:www\.)?instagram\.com\//i,
+  tiktok: /^https?:\/\/(?:www\.|vm\.)?tiktok\.com\//i,
+  x: /^https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\//i,
+  youtube: /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\//i,
+  website: /^https?:\/\/[^\s/]+\.[^\s/]+/i,
+};
+
+// 2 KB is well past any real social URL but stops a megabyte-paste from
+// reaching the store and the eventual backend.
+const SOCIAL_URL_MAX = 2048;
+
+// Strip protocol, trailing slash, and case for duplicate detection — so
+// `https://Facebook.com/foo/` and `http://facebook.com/foo` collide.
+function normalizeSocialUrl(url: string): string {
+  return url.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+}
+
+interface SocialValidationContext {
+  duplicateUrls: ReadonlySet<string>;
+}
+
+function validateSocialUrl(
+  platform: SocialPlatform,
+  url: string,
+  ctx: SocialValidationContext,
+): string | null {
+  const trimmed = url.trim();
+  if (trimmed.length === 0) return "Add a URL or remove this row.";
+  if (trimmed.length > SOCIAL_URL_MAX) {
+    return `URL is at most ${SOCIAL_URL_MAX} characters.`;
+  }
+  if (!SOCIAL_URL_PATTERN[platform].test(trimmed)) {
+    if (platform === "website") {
+      return "URL must start with http:// or https://.";
+    }
+    return `This doesn't look like a ${SOCIAL_PLATFORM_LABEL[platform]} URL.`;
+  }
+  if (ctx.duplicateUrls.has(normalizeSocialUrl(trimmed))) {
+    return "This URL is already added.";
+  }
+  return null;
+}
+
 export default function SettingsPage() {
   return (
     <>
@@ -100,15 +183,11 @@ function VerificationStatusPanel() {
       kind: "info",
       message: "Submitted for review. We'll let you know.",
     });
-    // TODO(backend): replace this auto-approve simulation with
-    // `POST /me/photographer/verification` returning a real review state.
-    setTimeout(() => {
-      setStatus("approved");
-      showToast({
-        kind: "success",
-        message: "Verified. You can upload to your events now.",
-      });
-    }, 3000);
+    // Admin approval is the only path to "approved" — handled in
+    // `/admin/verifications`. The 3-second auto-approve mock was removed
+    // 2026-05-07 when the admin workspace shipped; the photographer now
+    // really does sit in `pending` until a human reviews them.
+    // TODO(backend): wire `POST /me/photographer/verification` once Phase F lands.
   }
 
   if (status === "approved") {
@@ -376,8 +455,10 @@ function PictureSubsection() {
   const avatar = useUserMediaStore((s) => s.avatar);
   const setAvatar = useUserMediaStore((s) => s.setAvatar);
   const { showToast } = useToast();
+  const { confirm } = useConfirmation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -398,14 +479,21 @@ function PictureSubsection() {
       const dataUrl = await squareCropToDataUrl(file, AVATAR_SIZE_PX);
       setAvatar({ dataUrl, uploadedAt: new Date().toISOString() });
       showToast({ kind: "success", message: "Profile picture updated." });
-    } catch {
-      setError("Could not process this image. Try another.");
+    } catch (err) {
+      setError(imageErrorCopy(err));
     } finally {
       setBusy(false);
     }
   }
 
-  function handleRemove() {
+  async function handleRemove() {
+    const ok = await confirm({
+      title: "Remove profile picture?",
+      message:
+        "Your initials will show next to your name until you upload a new one.",
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
     setAvatar(null);
     setError(null);
     showToast({ kind: "success", message: "Profile picture removed." });
@@ -432,10 +520,13 @@ function PictureSubsection() {
                 : "Upload picture"}
             {!busy && <span aria-hidden="true">→</span>}
             <input
+              ref={inputRef}
               type="file"
               accept={ACCEPTED_IMAGE_MIME.join(",")}
               onChange={handlePick}
               disabled={busy}
+              aria-describedby={error ? "picture-error" : undefined}
+              aria-invalid={error ? true : undefined}
               className="sr-only"
             />
           </label>
@@ -450,10 +541,15 @@ function PictureSubsection() {
           )}
         </div>
       </div>
-      {error && (
-        <p role="alert" className="font-sans text-sm text-error mt-3">
-          {error}
-        </p>
+      <FieldError message={error} id="picture-error" />
+      {error && !busy && (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors mt-2"
+        >
+          Try again
+        </button>
       )}
       <p className="font-sans text-sm text-slate-soft mt-4 max-w-md">
         Shown next to your name across QuickPitik. Different from your
@@ -478,8 +574,10 @@ function CoverSubsection() {
   const cover = usePhotographerSettingsStore((s) => s.cover);
   const setCover = usePhotographerSettingsStore((s) => s.setCover);
   const { showToast } = useToast();
+  const { confirm } = useConfirmation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -492,6 +590,32 @@ function CoverSubsection() {
       return;
     }
 
+    // Inspect dimensions BEFORE setting busy — the soft confirmation may
+    // bounce the upload, and we don't want the button stuck in Processing
+    // while the user is reading the dialog. If decode fails here, surface
+    // the same error copy as the encode path.
+    let aspectRatio: number;
+    try {
+      const dims = await inspectImageDimensions(file);
+      aspectRatio = dims.aspectRatio;
+    } catch (err) {
+      setError(imageErrorCopy(err));
+      return;
+    }
+
+    if (aspectRatio < COVER_MIN_ASPECT) {
+      const ok = await confirm({
+        title: "This crops to a wide banner.",
+        message:
+          "Your image is taller than wide. Only the middle horizontal strip will show. Use it anyway?",
+        confirmLabel: "Use it",
+      });
+      if (!ok) {
+        setError(null);
+        return;
+      }
+    }
+
     setBusy(true);
     setError(null);
     try {
@@ -500,14 +624,21 @@ function CoverSubsection() {
       const dataUrl = await fitToDataUrl(file, COVER_MAX_PX, 0.82);
       setCover({ dataUrl, uploadedAt: new Date().toISOString() });
       showToast({ kind: "success", message: "Cover updated." });
-    } catch {
-      setError("Could not process this image. Try another.");
+    } catch (err) {
+      setError(imageErrorCopy(err));
     } finally {
       setBusy(false);
     }
   }
 
-  function handleRemove() {
+  async function handleRemove() {
+    const ok = await confirm({
+      title: "Remove cover?",
+      message:
+        "Your portfolio will fall back to the default banner until you upload a new one.",
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
     setCover(null);
     setError(null);
     showToast({ kind: "success", message: "Cover removed." });
@@ -516,11 +647,6 @@ function CoverSubsection() {
   return (
     <div>
       <SubHeading label="Cover banner" caption="16:5 · 1920px wide · 8 MB" />
-      {error && (
-        <p role="alert" className="font-sans text-sm text-error mb-3">
-          {error}
-        </p>
-      )}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         <label
           className={cn(
@@ -531,10 +657,13 @@ function CoverSubsection() {
           {busy ? "Processing…" : cover ? "Replace cover" : "Upload cover"}
           {!busy && <span aria-hidden="true">→</span>}
           <input
+            ref={inputRef}
             type="file"
             accept={ACCEPTED_IMAGE_MIME.join(",")}
             onChange={handlePick}
             disabled={busy}
+            aria-describedby={error ? "cover-error" : undefined}
+            aria-invalid={error ? true : undefined}
             className="sr-only"
           />
         </label>
@@ -548,6 +677,16 @@ function CoverSubsection() {
           </button>
         )}
       </div>
+      <FieldError message={error} id="cover-error" />
+      {error && !busy && (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors mt-2"
+        >
+          Try again
+        </button>
+      )}
       <p className="font-sans text-sm text-slate-soft mt-4 max-w-md">
         Wide horizontal image — landscape, course, or finish-line shots work
         best. JPEG, PNG, or WebP. Skip portrait photos; they crop badly at
@@ -582,27 +721,57 @@ function BrandSubsection({
   const setBio = usePhotographerSettingsStore((s) => s.setBio);
   const { showToast } = useToast();
 
-  const [saving, setSaving] = useState(false);
+  // Track touch so an unfilled name on first render doesn't shout at the
+  // user — the error only appears after they've interacted (blur or first
+  // edit) and the field is still invalid.
+  const [nameTouched, setNameTouched] = useState(false);
+
+  // Silent commit — auto-save (debounce-pause) writes to the store without
+  // toasting so rapid editing doesn't flood the user with "Saved." pings.
+  // Explicit Save click runs flush() then surfaces a single confirmation
+  // toast in handleSubmit below.
+  // TODO(backend): swap for `api.put("/me/photographer/brand", draft)`.
+  const saveBrand = useCallback(
+    async (draft: { name: string; bio: string }) => {
+      setBrandName(draft.name.trim());
+      setBio(draft.bio);
+    },
+    [setBrandName, setBio],
+  );
+
+  const { save, flush, isSaving } = useDebouncedSave(saveBrand);
 
   const dirty = nameDraft.trim() !== brandName || bioDraft !== bio;
+  const nameHasNewline = /[\r\n]/.test(nameDraft);
   const validName =
-    nameDraft.trim().length > 0 && nameDraft.trim().length <= BRAND_NAME_MAX;
+    nameDraft.trim().length > 0 &&
+    nameDraft.trim().length <= BRAND_NAME_MAX &&
+    !nameHasNewline;
   const validBio = bioDraft.length <= BIO_MAX;
+  const nameError =
+    nameTouched && nameDraft.trim().length === 0
+      ? "Display name is required."
+      : nameTouched && nameHasNewline
+        ? "Display name can't contain a line break."
+        : null;
+
+  // Schedule a debounced auto-save whenever the draft is dirty AND valid.
+  // Invalid drafts (empty / too long / newline) hold until the user fixes
+  // them; the explicit Save button still runs through flush().
+  useEffect(() => {
+    if (dirty && validName && validBio) {
+      save({ name: nameDraft, bio: bioDraft });
+    }
+  }, [dirty, validName, validBio, nameDraft, bioDraft, save]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!dirty || !validName || !validBio) return;
-    setSaving(true);
-    try {
-      // TODO(backend): swap setTimeout for `api.put("/me/photographer/brand", {...})`.
-      await new Promise((r) => setTimeout(r, 500));
-      setBrandName(nameDraft.trim());
-      setBio(bioDraft);
-      showToast({ kind: "success", message: "Brand saved." });
-    } finally {
-      setSaving(false);
-    }
+    await flush();
+    showToast({ kind: "success", message: "Brand saved." });
   }
+
+  const saving = isSaving;
 
   return (
     <form onSubmit={handleSubmit}>
@@ -615,15 +784,30 @@ function BrandSubsection({
           <input
             id="brand-name"
             value={nameDraft}
-            onChange={(e) => setNameDraft(e.target.value)}
+            onChange={(e) => {
+              setNameDraft(e.target.value);
+              if (!nameTouched) setNameTouched(true);
+            }}
+            onBlur={() => setNameTouched(true)}
             placeholder="Cebu Coastline Photo"
             maxLength={BRAND_NAME_MAX}
             required
+            aria-describedby={
+              nameError ? "brand-name-error" : "brand-name-counter"
+            }
+            aria-invalid={nameError ? true : undefined}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-4 text-lg text-ink placeholder:text-slate-soft transition-colors"
           />
-          <Kicker as="p" tone="soft" tnum>
-            {nameDraft.trim().length}/{BRAND_NAME_MAX}
-          </Kicker>
+          <CharCounter
+            id="brand-name-counter"
+            current={nameDraft.trim().length}
+            max={BRAND_NAME_MAX}
+          />
+          <FieldError
+            message={nameError}
+            id="brand-name-error"
+            density="tight"
+          />
         </div>
 
         <div>
@@ -693,14 +877,7 @@ function BrandSubsection({
             maxLength={BIO_MAX}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors resize-none"
           />
-          <Kicker
-            as="p"
-            tone={bioDraft.length > BIO_MAX - 20 ? "default" : "soft"}
-            tnum
-            className={bioDraft.length > BIO_MAX - 20 ? "text-error" : undefined}
-          >
-            {bioDraft.length}/{BIO_MAX}
-          </Kicker>
+          <CharCounter current={bioDraft.length} max={BIO_MAX} />
         </div>
 
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -738,8 +915,10 @@ function WatermarkSlab() {
   const watermark = usePhotographerSettingsStore((s) => s.watermark);
   const setWatermark = usePhotographerSettingsStore((s) => s.setWatermark);
   const { showToast } = useToast();
+  const { confirm } = useConfirmation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -752,6 +931,58 @@ function WatermarkSlab() {
       return;
     }
 
+    // Watermark is PNG-only (JPEG/WebP can't preserve the transparency the
+    // overlay needs). The accept attr filters the OS picker, but a drag-drop
+    // or programmatic pick can still bypass it — so check explicitly.
+    if (file.type !== "image/png") {
+      setError(
+        "Use a transparent PNG. JPEG and WebP can't preserve transparency for the overlay.",
+      );
+      return;
+    }
+
+    // Detect alpha coverage before committing — solid-bg PNGs would stamp
+    // photos as a block. User can override (some photographers want a solid
+    // brand bar), so this is a soft confirmation, not a hard error.
+    let alphaCoverage: number;
+    try {
+      const probe = await detectPngTransparency(file);
+      alphaCoverage = probe.alphaCoverage;
+    } catch (err) {
+      setError(imageErrorCopy(err));
+      return;
+    }
+
+    if (alphaCoverage < WATERMARK_TRANSPARENCY_FLOOR) {
+      const ok = await confirm({
+        title: "This watermark has no transparency.",
+        message:
+          "It will stamp your photos as a solid block. Continue, or upload a PNG with a transparent background?",
+        confirmLabel: "Use it anyway",
+      });
+      if (!ok) {
+        setError(null);
+        return;
+      }
+    }
+
+    // Replacement confirmation — unique to watermark because it retroactively
+    // affects how runners perceive the brand on the gallery (already-stamped
+    // photos won't re-stamp, but new uploads will use the new mark; warn so
+    // the photographer doesn't accidentally split their gallery's look).
+    if (watermark) {
+      const ok = await confirm({
+        title: "Replace watermark?",
+        message:
+          "New uploads will use the new watermark. Photos already stamped won't change.",
+        confirmLabel: "Replace",
+      });
+      if (!ok) {
+        setError(null);
+        return;
+      }
+    }
+
     setBusy(true);
     setError(null);
     try {
@@ -761,14 +992,21 @@ function WatermarkSlab() {
       const dataUrl = await fitToPngDataUrl(file, WATERMARK_MAX_PX);
       setWatermark({ dataUrl, uploadedAt: new Date().toISOString() });
       showToast({ kind: "success", message: "Watermark updated." });
-    } catch {
-      setError("Could not process this image. Try another.");
+    } catch (err) {
+      setError(imageErrorCopy(err));
     } finally {
       setBusy(false);
     }
   }
 
-  function handleRemove() {
+  async function handleRemove() {
+    const ok = await confirm({
+      title: "Remove watermark?",
+      message:
+        "New uploads will go out unwatermarked until you replace it. Existing photos already stamped won't change.",
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
     setWatermark(null);
     setError(null);
     showToast({ kind: "success", message: "Watermark removed." });
@@ -807,12 +1045,6 @@ function WatermarkSlab() {
           )}
         </div>
 
-        {error && (
-          <p role="alert" className="font-sans text-sm text-error">
-            {error}
-          </p>
-        )}
-
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <label
             className={cn(
@@ -827,10 +1059,13 @@ function WatermarkSlab() {
                 : "Upload watermark"}
             {!busy && <span aria-hidden="true">→</span>}
             <input
+              ref={inputRef}
               type="file"
-              accept={ACCEPTED_IMAGE_MIME.join(",")}
+              accept="image/png"
               onChange={handlePick}
               disabled={busy}
+              aria-describedby={error ? "watermark-error" : undefined}
+              aria-invalid={error ? true : undefined}
               className="sr-only"
             />
           </label>
@@ -849,6 +1084,17 @@ function WatermarkSlab() {
             PNG with transparency recommended · downscaled to 600px wide · 8 MB max.
           </p>
         </div>
+
+        <FieldError message={error} id="watermark-error" />
+        {error && !busy && (
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors mt-2"
+          >
+            Try again
+          </button>
+        )}
       </div>
     </Slab>
   );
@@ -878,7 +1124,20 @@ function HandleSlab() {
   const setHandle = usePhotographerSettingsStore((s) => s.setHandle);
   const { showToast } = useToast();
   const [draft, setDraft] = useState(handle);
-  const [saving, setSaving] = useState(false);
+
+  // Silent commit — same pattern as BrandSubsection. Auto-save fires on
+  // debounce-pause without toasting; explicit Save click runs flush() then
+  // surfaces a single confirmation toast.
+  // TODO(backend): swap for `api.put("/me/photographer/handle", { handle })`
+  // and check `409 Conflict` for handle already taken across users.
+  const saveHandle = useCallback(
+    async (next: string) => {
+      setHandle(next);
+    },
+    [setHandle],
+  );
+
+  const { save, flush, isSaving } = useDebouncedSave(saveHandle);
 
   const validation = validateHandle(draft);
   const dirty = draft.trim().toLowerCase() !== handle;
@@ -903,20 +1162,23 @@ function HandleSlab() {
     }
   }, [previewUrl, valid, showToast]);
 
+  // Schedule a debounced auto-save when the draft is dirty AND valid. Invalid
+  // drafts hold (FieldError surfaces them); explicit Save button still runs
+  // through flush().
+  useEffect(() => {
+    if (dirty && valid) {
+      save(draft);
+    }
+  }, [dirty, valid, draft, save]);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!dirty || !valid) return;
-    setSaving(true);
-    try {
-      // TODO(backend): swap setTimeout for `api.put("/me/photographer/handle", { handle })`
-      // and check `409 Conflict` for handle already taken across users.
-      await new Promise((r) => setTimeout(r, 500));
-      setHandle(draft);
-      showToast({ kind: "success", message: "Public URL updated." });
-    } finally {
-      setSaving(false);
-    }
+    await flush();
+    showToast({ kind: "success", message: "Public URL updated." });
   }
+
+  const saving = isSaving;
 
   return (
     <Slab
@@ -938,34 +1200,42 @@ function HandleSlab() {
               id="handle"
               value={draft}
               onChange={(e) =>
-                setDraft(
-                  e.target.value
-                    .replace(/[^a-zA-Z0-9-]/g, "")
-                    .toLowerCase()
-                    .slice(0, 32),
-                )
+                // Lowercase only (canonical form for the URL — this is
+                // normalization, not auto-correct of invalid characters).
+                // Anything else the user types — spaces, emoji, > 32 chars —
+                // stays in the field and surfaces via <FieldError> below so
+                // the user can see what they typed and fix it themselves.
+                setDraft(e.target.value.toLowerCase())
               }
               placeholder="your-handle"
               autoComplete="off"
               spellCheck={false}
               required
+              aria-describedby={
+                validation && draft.length > 0
+                  ? "handle-error"
+                  : "handle-hint"
+              }
+              aria-invalid={
+                validation && draft.length > 0 ? true : undefined
+              }
               className="flex-1 min-w-0 bg-transparent focus:outline-none py-4 text-lg font-mono text-ink placeholder:text-slate-soft"
             />
           </div>
-          <p
-            className={cn(
-              "font-sans text-sm",
-              draft.length === 0
-                ? "text-slate-soft"
-                : valid
-                  ? "text-slate"
-                  : "text-error",
-            )}
-          >
-            {draft.length === 0
-              ? "Lowercase letters, numbers, and dashes. 3–32 characters."
-              : (validation ?? "Looks good — you can save.")}
-          </p>
+          {draft.length === 0 ? (
+            <p
+              id="handle-hint"
+              className="font-sans text-sm text-slate-soft"
+            >
+              Lowercase letters, numbers, and dashes. 3–32 characters.
+            </p>
+          ) : (
+            <FieldError
+              message={validation}
+              id="handle-error"
+              density="tight"
+            />
+          )}
         </div>
 
         <div className="border border-line rounded-2xl bg-bone-deep/40 px-5 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -1046,6 +1316,14 @@ function RegionSlab() {
       ? selectedRegion.provinces.find((p) => p.code === region.provinceCode)
       : undefined;
 
+  // A persisted region/province code can fail to resolve when the backend
+  // renames or removes one (Phase B+ — the mock list never changes). Surface
+  // the gap so the user knows to re-pick instead of silently rendering
+  // "Pick a region" as if nothing was set.
+  const staleRegion = !!region && !selectedRegion;
+  const staleProvince =
+    !!region && !!selectedRegion && !!region.provinceCode && !selectedProvince;
+
   function handlePickRegion(regionCode: string) {
     if (region?.regionCode === regionCode) return;
     // Reset province when region changes — the user must re-pick.
@@ -1086,7 +1364,11 @@ function RegionSlab() {
               className="w-full"
               panelClassName="max-h-80 overflow-y-auto w-[min(28rem,calc(100vw-2rem))]"
               trigger={
-                <span className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left transition-colors hover:border-slate">
+                <span
+                  aria-describedby={staleRegion ? "region-error" : undefined}
+                  aria-invalid={staleRegion ? true : undefined}
+                  className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left transition-colors hover:border-slate"
+                >
                   <span
                     className={cn(
                       "truncate text-lg",
@@ -1118,6 +1400,15 @@ function RegionSlab() {
                 </div>
               ))}
             </Dropdown>
+            <FieldError
+              message={
+                staleRegion
+                  ? "That region is no longer available. Pick a new one."
+                  : null
+              }
+              id="region-error"
+              density="tight"
+            />
           </div>
 
           <div className="flex flex-col gap-2">
@@ -1129,14 +1420,23 @@ function RegionSlab() {
                 className="w-full"
                 panelClassName="max-h-80 overflow-y-auto w-[min(20rem,calc(100vw-2rem))]"
                 trigger={
-                  <span className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left transition-colors hover:border-slate">
+                  <span
+                    aria-describedby={
+                      staleProvince ? "province-error" : undefined
+                    }
+                    aria-invalid={staleProvince ? true : undefined}
+                    className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left transition-colors hover:border-slate"
+                  >
                     <span
                       className={cn(
                         "truncate text-lg",
                         selectedProvince ? "text-ink" : "text-slate-soft",
                       )}
                     >
-                      {selectedProvince?.name ?? "Pick a province"}
+                      {selectedProvince?.name ??
+                        (selectedRegion.provinces.length === 0
+                          ? "No provinces in this region"
+                          : "Pick a province")}
                     </span>
                     <span aria-hidden="true" className="text-slate shrink-0">
                       ▾
@@ -1160,6 +1460,15 @@ function RegionSlab() {
                 <span aria-hidden="true">▾</span>
               </span>
             )}
+            <FieldError
+              message={
+                staleProvince
+                  ? "That province is no longer available. Pick a new one."
+                  : null
+              }
+              id="province-error"
+              density="tight"
+            />
           </div>
         </div>
 
@@ -1183,6 +1492,7 @@ function SocialSlab() {
   const updateSocial = usePhotographerSettingsStore((s) => s.updateSocial);
   const removeSocial = usePhotographerSettingsStore((s) => s.removeSocial);
   const { showToast } = useToast();
+  const { confirm } = useConfirmation();
 
   function handleAdd(platform: SocialPlatform) {
     addSocial(platform, "");
@@ -1192,15 +1502,45 @@ function SocialSlab() {
     });
   }
 
-  function handleRemove(id: string, platform: SocialPlatform) {
+  async function handleRemove(id: string, platform: SocialPlatform) {
+    const label = SOCIAL_PLATFORM_LABEL[platform];
+    const ok = await confirm({
+      title: `Remove ${label} link?`,
+      message:
+        "Runners use these to verify you're real. You can add it back anytime.",
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
     removeSocial(id);
     showToast({
       kind: "success",
-      message: `${SOCIAL_PLATFORM_LABEL[platform]} link removed.`,
+      message: `${label} link removed.`,
     });
   }
 
   const filledCount = socials.filter((s) => s.url.trim().length > 0).length;
+
+  // Compute the set of normalized URLs that appear in more than one row, so
+  // each affected row can flag itself. Skips empty values — those are caught
+  // by the empty-row check, not the duplicate check.
+  const duplicateUrls = (() => {
+    const counts = new Map<string, number>();
+    for (const link of socials) {
+      const trimmed = link.url.trim();
+      if (trimmed.length === 0) continue;
+      const key = normalizeSocialUrl(trimmed);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const dupes = new Set<string>();
+    for (const [key, count] of counts) {
+      if (count > 1) dupes.add(key);
+    }
+    return dupes;
+  })();
+
+  const invalidCount = socials.filter((link) =>
+    validateSocialUrl(link.platform, link.url, { duplicateUrls }) !== null
+  ).length;
 
   return (
     <Slab
@@ -1222,6 +1562,7 @@ function SocialSlab() {
               <SocialRow
                 key={link.id}
                 link={link}
+                duplicateUrls={duplicateUrls}
                 onChange={(url) => updateSocial(link.id, url)}
                 onRemove={() => handleRemove(link.id, link.platform)}
               />
@@ -1251,8 +1592,14 @@ function SocialSlab() {
         </div>
 
         {socials.length > 0 && (
-          <Kicker as="p" tone="soft" tnum>
+          <Kicker
+            as="p"
+            tone="soft"
+            tnum
+            className={cn(invalidCount > 0 && "text-warning")}
+          >
             {filledCount} of {socials.length} filled in
+            {invalidCount > 0 && ` · ${invalidCount} need${invalidCount === 1 ? "s" : ""} attention`}
           </Kicker>
         )}
       </div>
@@ -1262,11 +1609,22 @@ function SocialSlab() {
 
 interface SocialRowProps {
   link: SocialLink;
+  duplicateUrls: ReadonlySet<string>;
   onChange: (url: string) => void;
   onRemove: () => void;
 }
 
-function SocialRow({ link, onChange, onRemove }: SocialRowProps) {
+function SocialRow({
+  link,
+  duplicateUrls,
+  onChange,
+  onRemove,
+}: SocialRowProps) {
+  // Mirrors the brand-name pattern: an empty row that the user just added
+  // shouldn't shout "Add a URL or remove this row." until they've engaged
+  // with the input. First keystroke or first blur flips this on.
+  const [touched, setTouched] = useState(link.url.trim().length > 0);
+
   const placeholder: Record<SocialPlatform, string> = {
     facebook: "https://facebook.com/your-page",
     instagram: "https://instagram.com/your-handle",
@@ -1275,6 +1633,12 @@ function SocialRow({ link, onChange, onRemove }: SocialRowProps) {
     youtube: "https://youtube.com/@your-channel",
     website: "https://your-site.com",
   };
+
+  const validation = validateSocialUrl(link.platform, link.url, {
+    duplicateUrls,
+  });
+  const errorMessage = touched ? validation : null;
+  const errorId = `social-error-${link.id}`;
 
   return (
     <li className="flex items-start gap-4">
@@ -1300,13 +1664,21 @@ function SocialRow({ link, onChange, onRemove }: SocialRowProps) {
         <input
           type="url"
           value={link.url}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            onChange(e.target.value);
+            if (!touched) setTouched(true);
+          }}
+          onBlur={() => setTouched(true)}
           placeholder={placeholder[link.platform]}
+          maxLength={SOCIAL_URL_MAX}
+          aria-describedby={errorMessage ? errorId : undefined}
+          aria-invalid={errorMessage ? true : undefined}
           className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
           inputMode="url"
           autoComplete="off"
           spellCheck={false}
         />
+        <FieldError message={errorMessage} id={errorId} density="tight" />
       </div>
     </li>
   );
@@ -1316,16 +1688,25 @@ function SocialRow({ link, onChange, onRemove }: SocialRowProps) {
 // Slab 06 — Payout accounts
 // ─────────────────────────────────────────────────────────────────────────
 
+// Validation contract:
+//   - Empty input is null (required-ness is the form's job, not this helper's).
+//   - Overflow checks fire BEFORE shape checks so a 30-digit paste reads as
+//     "Mobile number is at most 11 digits." instead of "PH mobile numbers
+//     start with 09." (the displayed value gets format-truncated, but the
+//     stored draft holds the full paste — surface the overflow explicitly so
+//     the user understands why their typed value differs from what shows).
 function validatePayoutNumber(method: PayoutMethod, raw: string): string | null {
   const d = raw.replace(/\D/g, "");
   if (method === "gcash" || method === "maya") {
     if (d.length === 0) return null;
-    if (d.length !== 11) return "Must be 11 digits.";
-    if (!d.startsWith("09")) return "Must start with 09.";
+    if (d.length > 11) return "Mobile number is at most 11 digits.";
+    if (d.length !== 11) return "Mobile number is 11 digits.";
+    if (!d.startsWith("09")) return "PH mobile numbers start with 09.";
     return null;
   }
   if (d.length === 0) return null;
-  if (d.length < 10) return "Must be at least 10 digits.";
+  if (d.length > 16) return "Account number is at most 16 digits.";
+  if (d.length < 10) return "Account number is at least 10 digits.";
   return null;
 }
 
@@ -1337,6 +1718,7 @@ function PayoutSlab() {
   );
   const removePayout = usePhotographerSettingsStore((s) => s.removePayout);
   const { showToast } = useToast();
+  const { confirm } = useConfirmation();
 
   const [draftMethod, setDraftMethod] = useState<PayoutMethod | null>(null);
 
@@ -1368,11 +1750,26 @@ function PayoutSlab() {
     });
   }
 
-  function handleRemove(id: string, method: PayoutMethod) {
+  async function handleRemove(id: string, method: PayoutMethod) {
+    const label = PAYOUT_METHOD_LABEL[method];
+    const isOnlyPayout = payouts.length === 1;
+    const account = payouts.find((p) => p.id === id);
+    const isPrimary = account?.isPrimary ?? false;
+    const ok = await confirm({
+      title: `Remove ${label} account?`,
+      message: isOnlyPayout
+        ? "This is your only payout account. Without one, sales can't be paid out until you add a new account."
+        : isPrimary
+          ? "This is your primary account. We'll promote one of your other accounts to primary automatically."
+          : "Future sales won't pay out to this account anymore.",
+      confirmLabel: "Remove",
+      danger: true,
+    });
+    if (!ok) return;
     removePayout(id);
     showToast({
       kind: "success",
-      message: `${PAYOUT_METHOD_LABEL[method]} account removed.`,
+      message: `${label} account removed.`,
     });
   }
 
@@ -1475,22 +1872,36 @@ interface PayoutFormProps {
 function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
   const { showToast } = useToast();
   const [accountName, setAccountName] = useState("");
+  const [nameTouched, setNameTouched] = useState(false);
   const [accountNumber, setAccountNumber] = useState("");
   const [qr, setQr] = useState<{ dataUrl: string; uploadedAt: string } | null>(
     null,
   );
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [qrError, setQrError] = useState<string | null>(null);
+  const qrInputRef = useRef<HTMLInputElement>(null);
 
   const numberError = validatePayoutNumber(method, accountNumber);
   const validNumber =
     accountNumber.replace(/\D/g, "").length > 0 && numberError === null;
   const validName = accountName.trim().length > 0;
+  // TODO(backend): per the plan, real account-name match validation lives on
+  // the server — `POST /me/photographer/payouts/verify` returns whether the
+  // typed name matches the wallet record. Until then the inline rule is just
+  // a non-empty check; the helper text below sets the expectation.
+  const nameError =
+    nameTouched && accountName.trim().length === 0
+      ? "Account name is required."
+      : null;
   const canSave = validNumber && validName;
 
   const numberLabel = method === "gotyme" ? "Account number" : "Mobile number";
   const numberPlaceholder =
     method === "gotyme" ? "1234 5678 9012" : "0917 555 0101";
+  const numberHelper =
+    method === "gotyme"
+      ? "Your GoTyme account number, digits only."
+      : "11-digit mobile number registered to this wallet.";
 
   async function handleQrPick(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -1499,22 +1910,27 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
 
     const validationError = validateImageFile(file);
     if (validationError) {
-      setError(validationError);
+      setQrError(validationError);
       return;
     }
 
     setBusy(true);
-    setError(null);
+    setQrError(null);
     try {
       // TODO(backend): swap for `api.post("/me/photographer/payouts/{id}/qr", formData)`
       // — server stores the image privately; only finance staff can read it.
       const dataUrl = await fitToPngDataUrl(file, QR_MAX_PX);
       setQr({ dataUrl, uploadedAt: new Date().toISOString() });
-    } catch {
-      setError("Could not process this image. Try another.");
+    } catch (err) {
+      setQrError(imageErrorCopy(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleQrRetry() {
+    setQrError(null);
+    qrInputRef.current?.click();
   }
 
   function handleSubmit(e: FormEvent) {
@@ -1565,16 +1981,39 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
           <input
             id={`payout-name-${method}`}
             value={accountName}
-            onChange={(e) => setAccountName(e.target.value)}
+            onChange={(e) => {
+              setAccountName(e.target.value);
+              if (!nameTouched) setNameTouched(true);
+            }}
+            onBlur={() => setNameTouched(true)}
             placeholder="Juan Dela Cruz"
             maxLength={ACCOUNT_NAME_MAX}
             required
             autoComplete="off"
+            aria-describedby={
+              nameError
+                ? `payout-name-error-${method}`
+                : `payout-name-counter-${method}`
+            }
+            aria-invalid={nameError ? true : undefined}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
           />
-          <p className="font-sans text-sm text-slate-soft">
-            Must match the name on your {PAYOUT_METHOD_LABEL[method]} account.
-          </p>
+          <CharCounter
+            id={`payout-name-counter-${method}`}
+            current={accountName.length}
+            max={ACCOUNT_NAME_MAX}
+          />
+          {nameError ? (
+            <FieldError
+              message={nameError}
+              id={`payout-name-error-${method}`}
+              density="tight"
+            />
+          ) : (
+            <p className="font-sans text-sm text-slate-soft">
+              Must match the name on your {PAYOUT_METHOD_LABEL[method]} account.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-2">
@@ -1592,18 +2031,28 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
             inputMode="numeric"
             required
             autoComplete="off"
+            aria-describedby={
+              numberError
+                ? `payout-number-error-${method}`
+                : `payout-number-hint-${method}`
+            }
+            aria-invalid={numberError ? true : undefined}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base font-mono tnum text-ink placeholder:text-slate-soft transition-colors"
           />
-          <p
-            className={cn(
-              "font-sans text-sm",
-              numberError ? "text-error" : "text-slate-soft",
-            )}
-          >
-            {numberError ?? (method === "gotyme"
-              ? "Your GoTyme account number, digits only."
-              : "11-digit mobile number registered to this wallet.")}
-          </p>
+          {numberError ? (
+            <FieldError
+              message={numberError}
+              id={`payout-number-error-${method}`}
+              density="tight"
+            />
+          ) : (
+            <p
+              id={`payout-number-hint-${method}`}
+              className="font-sans text-sm text-slate-soft"
+            >
+              {numberHelper}
+            </p>
+          )}
         </div>
       </div>
 
@@ -1635,10 +2084,13 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
               {busy ? "Processing…" : qr ? "Replace QR" : "Upload QR"}
               {!busy && <span aria-hidden="true">→</span>}
               <input
+                ref={qrInputRef}
                 type="file"
                 accept={ACCEPTED_IMAGE_MIME.join(",")}
                 onChange={handleQrPick}
                 disabled={busy}
+                aria-describedby={qrError ? `payout-qr-error-${method}` : undefined}
+                aria-invalid={qrError ? true : undefined}
                 className="sr-only"
               />
             </label>
@@ -1659,10 +2111,19 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
           </div>
         </div>
 
-        {error && (
-          <p role="alert" className="font-sans text-sm text-error">
-            {error}
-          </p>
+        <FieldError
+          message={qrError}
+          id={`payout-qr-error-${method}`}
+          density="tight"
+        />
+        {qrError && !busy && (
+          <button
+            type="button"
+            onClick={handleQrRetry}
+            className="self-start font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
+          >
+            Try again
+          </button>
         )}
       </div>
 

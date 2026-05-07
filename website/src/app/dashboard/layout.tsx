@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 // Photographer-only gate + persistent dashboard shell. Most /dashboard/*
 // pages render inside DashboardShell (SiteHeader + sticky rail + content).
@@ -22,9 +23,17 @@ export default function DashboardLayout({
   const pathname = usePathname() ?? "";
   const isFocused = FOCUSED_PATTERNS.some((re) => re.test(pathname));
 
+  // Boundary mounts INSIDE DashboardShell so an error inside a page only
+  // blanks the page area — the rail stays navigable so the photographer
+  // can hop sections without a hard reload. `key={pathname}` hard-resets
+  // the boundary on navigation; without it, an error caught on /earnings
+  // would persist visually after the user clicks the rail to /billing,
+  // because the boundary instance survives across page swaps.
+  const guarded = <ErrorBoundary key={pathname}>{children}</ErrorBoundary>;
+
   return (
     <ProtectedRoute allowedRoles={["PHOTOGRAPHER"]}>
-      {isFocused ? children : <DashboardShell>{children}</DashboardShell>}
+      {isFocused ? guarded : <DashboardShell>{guarded}</DashboardShell>}
     </ProtectedRoute>
   );
 }

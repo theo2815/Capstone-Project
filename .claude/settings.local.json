@@ -107,7 +107,12 @@
       "Bash(rmdir \"\\(work\\)/upload\" \"\\(work\\)/events/[id]/upload\" \"\\(work\\)/events/[id]/photos\" \"\\(work\\)/events/[id]\" \"\\(work\\)/events\" \"\\(work\\)/earnings\" \"\\(work\\)/billing\" \"\\(work\\)/settings\" \"\\(work\\)\")",
       "PowerShell(Remove-Item *)",
       "PowerShell(npm run *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\website\\\\src\\\\app\\\\admin\" -Recurse)",
+      "Bash(Select-Object FullName)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\website\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Theo Cedric Chan\\\\Documents\\\\Obsidian Vault\\\\QuickPitik Vault\\\\website\" -ErrorAction SilentlyContinue)"
     ]
   }
 }

@@ -14,6 +14,13 @@ import { AvatarSlab } from "@/components/account/avatar-slab";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/store/auth-store";
 import { useToast } from "@/hooks/use-toast";
+import { FieldError } from "@/components/ui/field-error";
+import {
+  NAME_MAX,
+  PASSWORD_MIN,
+  validateName,
+  validatePassword,
+} from "@/lib/auth-validation";
 import { ROUTES } from "@/lib/constants";
 import type { User } from "@/types/user";
 
@@ -79,6 +86,12 @@ function AccountBody() {
             />
             <PasswordSlab number={isPhotographer ? "03" : "04"} />
             <DangerSlab number={isPhotographer ? "04" : "05"} />
+            {process.env.NODE_ENV === "development" && (
+              <DevRoleSlab
+                number={isPhotographer ? "05" : "06"}
+                user={user}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -90,65 +103,79 @@ function NameSlab({ user, number }: { user: User; number: string }) {
   const setUser = useAuthStore((s) => s.setUser);
   const { showToast } = useToast();
   const [name, setName] = useState(user.name);
-  const [status, setStatus] = useState<FormStatus>({ kind: "idle" });
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const dirty = name.trim() !== user.name && name.trim().length > 0;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!dirty) return;
-    setStatus({ kind: "loading" });
+    const fieldError = validateName(name);
+    setNameError(fieldError);
+    setSubmitError(null);
+    if (fieldError) return;
 
+    setIsSaving(true);
     try {
       // TODO(backend): swap setTimeout for `api.put<User>("/me/profile", { name: name.trim() })`
       // when Spring Boot exposes the profile-update endpoint.
       await new Promise((r) => setTimeout(r, 600));
       const next = { ...user, name: name.trim() };
       setUser(next);
-      setStatus({ kind: "idle" });
       showToast({ kind: "success", message: "Name updated." });
     } catch {
-      setStatus({ kind: "error", message: "Could not save. Try again." });
+      setSubmitError("Could not save. Try again.");
+    } finally {
+      setIsSaving(false);
     }
   }
 
   return (
     <Slab id="name" number={number} title="Name">
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSubmit} noValidate className="space-y-6">
         <FieldShell id="name" label="Full name">
           <input
             id="name"
             value={name}
             onChange={(e) => {
               setName(e.target.value);
-              if (status.kind !== "idle" && status.kind !== "loading") {
-                setStatus({ kind: "idle" });
-              }
+              if (nameError) setNameError(null);
+              if (submitError) setSubmitError(null);
             }}
             placeholder="Juan dela Cruz"
             autoComplete="name"
-            required
+            maxLength={NAME_MAX}
+            aria-invalid={!!nameError}
+            aria-describedby={nameError ? "account-name-error" : undefined}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-4 text-lg text-ink placeholder:text-slate-soft transition-colors"
+          />
+          <FieldError
+            message={nameError}
+            id="account-name-error"
+            density="tight"
           />
         </FieldShell>
 
-        <FormStatusLine status={status} />
+        <FieldError message={submitError} id="account-name-submit-error" />
 
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <button
             type="submit"
-            disabled={!dirty || status.kind === "loading"}
+            disabled={!dirty || isSaving}
             className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
           >
-            {status.kind === "loading" ? "Saving…" : "Save name"}
-            {status.kind !== "loading" && <span aria-hidden="true">→</span>}
+            {isSaving ? "Saving…" : "Save name"}
+            {!isSaving && <span aria-hidden="true">→</span>}
           </button>
-          {dirty && status.kind !== "loading" && (
+          {dirty && !isSaving && (
             <button
               type="button"
               onClick={() => {
                 setName(user.name);
-                setStatus({ kind: "idle" });
+                setNameError(null);
+                setSubmitError(null);
               }}
               className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
             >
@@ -190,68 +217,81 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
   );
 }
 
+interface PasswordErrors {
+  current?: string | null;
+  next?: string | null;
+  confirm?: string | null;
+}
+
 function PasswordSlab({ number }: { number: string }) {
   const { showToast } = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [status, setStatus] = useState<FormStatus>({ kind: "idle" });
+  const [errors, setErrors] = useState<PasswordErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   function reset() {
     setCurrent("");
     setNext("");
     setConfirm("");
+    setErrors({});
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!current || !next || !confirm) {
-      setStatus({ kind: "error", message: "Fill in every field." });
-      return;
-    }
-    if (next.length < 8) {
-      setStatus({
-        kind: "error",
-        message: "New password must be at least 8 characters.",
-      });
-      return;
-    }
-    if (next !== confirm) {
-      setStatus({ kind: "error", message: "New passwords don't match." });
-      return;
-    }
+    const nextErrors: PasswordErrors = {
+      current: current ? null : "Current password is required.",
+      next: validatePassword(next),
+      confirm: !confirm
+        ? "Confirm the new password."
+        : next && next !== confirm
+          ? "Passwords don't match."
+          : null,
+    };
+    setErrors(nextErrors);
+    setSubmitError(null);
+    if (nextErrors.current || nextErrors.next || nextErrors.confirm) return;
 
-    setStatus({ kind: "loading" });
-
+    setIsSaving(true);
     try {
       // TODO(backend): swap setTimeout for `api.put("/me/password", { currentPassword: current, newPassword: next })`
       // when Spring Boot exposes the password-change endpoint.
       await new Promise((r) => setTimeout(r, 600));
       reset();
-      setStatus({ kind: "idle" });
       showToast({ kind: "success", message: "Password updated." });
     } catch {
-      setStatus({ kind: "error", message: "Could not save. Try again." });
+      setSubmitError("Could not save. Try again.");
+    } finally {
+      setIsSaving(false);
     }
   }
 
-  function clearStatusOnInput() {
-    if (status.kind !== "idle" && status.kind !== "loading") {
-      setStatus({ kind: "idle" });
+  function clearFieldError(field: keyof PasswordErrors) {
+    if (errors[field] || submitError) {
+      setErrors((prev) => ({ ...prev, [field]: null }));
+      setSubmitError(null);
     }
   }
 
   return (
-    <Slab id="password" number={number} title="Password" caption="Min. 8 characters">
-      <form onSubmit={handleSubmit} className="space-y-6">
+    <Slab
+      id="password"
+      number={number}
+      title="Password"
+      caption={`Min. ${PASSWORD_MIN} characters`}
+    >
+      <form onSubmit={handleSubmit} noValidate className="space-y-6">
         <PasswordField
           id="current-password"
           label="Current password"
           autoComplete="current-password"
           value={current}
+          error={errors.current}
           onChange={(v) => {
             setCurrent(v);
-            clearStatusOnInput();
+            clearFieldError("current");
           }}
         />
         <PasswordField
@@ -259,9 +299,10 @@ function PasswordSlab({ number }: { number: string }) {
           label="New password"
           autoComplete="new-password"
           value={next}
+          error={errors.next}
           onChange={(v) => {
             setNext(v);
-            clearStatusOnInput();
+            clearFieldError("next");
           }}
         />
         <PasswordField
@@ -269,23 +310,87 @@ function PasswordSlab({ number }: { number: string }) {
           label="Confirm new password"
           autoComplete="new-password"
           value={confirm}
+          error={errors.confirm}
           onChange={(v) => {
             setConfirm(v);
-            clearStatusOnInput();
+            clearFieldError("confirm");
           }}
         />
 
-        <FormStatusLine status={status} />
+        <FieldError message={submitError} id="account-password-submit-error" />
 
         <button
           type="submit"
-          disabled={status.kind === "loading"}
+          disabled={isSaving}
           className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
         >
-          {status.kind === "loading" ? "Saving…" : "Change password"}
-          {status.kind !== "loading" && <span aria-hidden="true">→</span>}
+          {isSaving ? "Saving…" : "Change password"}
+          {!isSaving && <span aria-hidden="true">→</span>}
         </button>
       </form>
+    </Slab>
+  );
+}
+
+function DevRoleSlab({ user, number }: { user: User; number: string }) {
+  const setUser = useAuthStore((s) => s.setUser);
+  const { showToast } = useToast();
+
+  function setRole(next: User["role"]) {
+    if (next === user.role) return;
+    setUser({ ...user, role: next });
+    showToast({
+      kind: "info",
+      message: `Now signed in as ${next.toLowerCase()}.`,
+    });
+  }
+
+  const roles: ReadonlyArray<{ value: User["role"]; label: string }> = [
+    { value: "ADMIN", label: "Admin" },
+    { value: "PHOTOGRAPHER", label: "Photographer" },
+    { value: "RUNNER", label: "Runner" },
+  ];
+
+  return (
+    <Slab
+      id="dev-role"
+      number={number}
+      title="Dev"
+      caption="Role swap (development only)"
+    >
+      <div className="border border-dashed border-line rounded-2xl px-6 py-5">
+        <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink">
+          Switch roles for testing.
+        </p>
+        <p className="font-sans text-sm text-slate mt-2 max-w-md">
+          Demo helper while the backend is mocked. Picks the role on the
+          current session without touching credentials. Won&apos;t render
+          in production.
+        </p>
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          {roles.map((role) => {
+            const isActive = role.value === user.role;
+            return (
+              <button
+                key={role.value}
+                type="button"
+                onClick={() => setRole(role.value)}
+                disabled={isActive}
+                className={`font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full px-5 py-2 border transition-colors ${
+                  isActive
+                    ? "border-ink text-ink bg-ink/5 cursor-default"
+                    : "border-line text-slate hover:text-ink hover:border-ink"
+                }`}
+              >
+                {role.label}
+                {isActive && (
+                  <span className="ml-2 size-1.5 rounded-full bg-fresh inline-block align-middle" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </Slab>
   );
 }
@@ -359,14 +464,17 @@ function PasswordField({
   label,
   autoComplete,
   value,
+  error,
   onChange,
 }: {
   id: string;
   label: string;
   autoComplete: string;
   value: string;
+  error?: string | null;
   onChange: (v: string) => void;
 }) {
+  const errorId = `${id}-error`;
   return (
     <FieldShell id={id} label={label}>
       <input
@@ -376,25 +484,11 @@ function PasswordField({
         onChange={(e) => onChange(e.target.value)}
         placeholder="••••••••"
         autoComplete={autoComplete}
-        required
+        aria-invalid={!!error}
+        aria-describedby={error ? errorId : undefined}
         className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-4 text-lg text-ink placeholder:text-slate-soft transition-colors"
       />
+      <FieldError message={error} id={errorId} density="tight" />
     </FieldShell>
-  );
-}
-
-// Success cases are now surfaced via toasts; this status line only renders
-// field-level errors close to the form they describe.
-type FormStatus =
-  | { kind: "idle" }
-  | { kind: "loading" }
-  | { kind: "error"; message: string };
-
-function FormStatusLine({ status }: { status: FormStatus }) {
-  if (status.kind !== "error") return null;
-  return (
-    <p role="alert" className="font-sans text-sm text-error">
-      {status.message}
-    </p>
   );
 }

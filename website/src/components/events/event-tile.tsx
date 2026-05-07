@@ -250,7 +250,7 @@ function ManageFooter({
   );
 }
 
-function StatusChip({ state }: { state: EventState }) {
+export function StatusChip({ state }: { state: EventState }) {
   if (state === "live") {
     return (
       <div className="absolute top-4 left-5 flex items-center gap-2.5">

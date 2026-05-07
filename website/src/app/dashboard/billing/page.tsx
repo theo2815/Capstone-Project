@@ -1,13 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { HowPayoutsModal } from "@/components/dashboard/how-payouts-modal";
 import { Kicker } from "@/components/ui/kicker";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate, formatMonthYear } from "@/lib/format";
+import { useMockLatency } from "@/lib/mock-latency";
 import { formatPayoutNumber } from "@/lib/payout-format";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
   PHOTOGRAPHER_PAYOUTS,
   PHOTOGRAPHER_TRANSACTIONS,
@@ -47,7 +51,31 @@ export default function BillingPage() {
 
 function PayoutsSlab() {
   const [howOpen, setHowOpen] = useState(false);
-  const payouts = PHOTOGRAPHER_PAYOUTS;
+  const { data: payouts, isLoading } = useMockLatency(PHOTOGRAPHER_PAYOUTS);
+
+  if (isLoading || !payouts) {
+    return (
+      <Slab id="payouts" number="01" title="Payouts" caption="Weekly · GCash">
+        <div>
+          <Skeleton className="h-3 w-28" />
+          <Skeleton className="h-12 md:h-16 w-72 md:w-96 mt-3" />
+          <Skeleton className="h-4 w-56 mt-4" />
+        </div>
+        <div className="mt-12 md:mt-16">
+          <Skeleton className="h-3 w-32 mb-5" />
+          <ul className="border-y border-line divide-y divide-line">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="py-5 md:py-6">
+                <Skeleton className="h-3 w-44" />
+                <Skeleton className="h-4 w-64 mt-2" />
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Slab>
+    );
+  }
+
   const next = pickNextScheduled(payouts);
   const inReviewTotal = payouts
     .filter((p) => p.status === "pending")
@@ -264,7 +292,61 @@ function PayoutRow({ payout }: { payout: PhotographerPayout }) {
 }
 
 function TransactionsSlab() {
-  const transactions = PHOTOGRAPHER_TRANSACTIONS;
+  const { data: transactions, isLoading } = useMockLatency(
+    PHOTOGRAPHER_TRANSACTIONS,
+  );
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.TRANSACTION_INITIAL);
+
+  // Memos must run on every render — using `?? []` so the loading branch
+  // still calls them with a stable empty list. Skeleton early-return lives
+  // below the hooks.
+  const txList = transactions ?? [];
+
+  // Full-month totals computed over the complete list — sticky header values
+  // stay stable as load-more reveals more rows within a month.
+  const fullMonthTotals = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const tx of txList) {
+      const key = monthKey(tx.paidAt);
+      map.set(key, (map.get(key) ?? 0) + tx.amountKept);
+    }
+    return map;
+  }, [txList]);
+
+  const loadedSlice = useMemo(
+    () => txList.slice(0, loadedCount),
+    [txList, loadedCount],
+  );
+
+  const loadedGroups = useMemo(
+    () => groupByMonth(loadedSlice, fullMonthTotals),
+    [loadedSlice, fullMonthTotals],
+  );
+
+  if (isLoading || !transactions) {
+    return (
+      <Slab
+        id="transactions"
+        number="02"
+        title="Transactions"
+        caption="Each photo sale, post-platform-cut"
+      >
+        <ul className="border-y border-line divide-y divide-line">
+          {[0, 1, 2, 3].map((i) => (
+            <li key={i} className="py-4 md:py-5 flex items-baseline justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <Skeleton className="h-3 w-28" />
+                <Skeleton className="h-4 w-48 mt-2" />
+                <Skeleton className="h-3 w-36 mt-1" />
+              </div>
+              <Skeleton className="h-5 w-16 shrink-0" />
+            </li>
+          ))}
+        </ul>
+      </Slab>
+    );
+  }
+
   const total = transactions.reduce((sum, tx) => sum + tx.amountKept, 0);
 
   return (
@@ -284,23 +366,33 @@ function TransactionsSlab() {
           Sales will land here as runners buy your photos.
         </p>
       ) : (
-        <ul className="border-y border-line divide-y divide-line">
-          {/* Group by month so the ledger is easier to skim. */}
-          {groupByMonth(transactions).map((group) => (
-            <li key={group.label} className="py-2">
-              <Kicker as="p" tone="soft" tnum className="sticky top-20 bg-bone py-2">
-                {group.label} · ₱{group.total.toLocaleString()}
-              </Kicker>
-              <ul className="divide-y divide-line">
-                {group.items.map((tx) => (
-                  <li key={tx.id}>
-                    <TransactionRow tx={tx} />
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="border-y border-line divide-y divide-line">
+            {/* Group by month so the ledger is easier to skim. */}
+            {loadedGroups.map((group) => (
+              <li key={group.label} className="py-2">
+                <Kicker as="p" tone="soft" tnum className="sticky top-20 bg-bone py-2">
+                  {group.label} · ₱{group.total.toLocaleString()}
+                </Kicker>
+                <ul className="divide-y divide-line">
+                  {group.items.map((tx) => (
+                    <li key={tx.id}>
+                      <TransactionRow tx={tx} />
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+          <LoadMoreButton
+            shown={loadedSlice.length}
+            total={transactions.length}
+            increment={PAGE_SIZE.TRANSACTION_INCREMENT}
+            onLoadMore={() =>
+              setLoadedCount((n) => n + PAGE_SIZE.TRANSACTION_INCREMENT)
+            }
+          />
+        </>
       )}
     </Slab>
   );
@@ -358,6 +450,7 @@ interface MonthGroup {
 
 function groupByMonth(
   transactions: ReadonlyArray<PhotographerTransaction>,
+  fullMonthTotals?: ReadonlyMap<string, number>,
 ): ReadonlyArray<MonthGroup> {
   const buckets = new Map<string, PhotographerTransaction[]>();
   for (const tx of transactions) {
@@ -367,10 +460,14 @@ function groupByMonth(
     else buckets.set(key, [tx]);
   }
   // Map keys are insertion-ordered; PHOTOGRAPHER_TRANSACTIONS is newest-first
-  // so the buckets iterate newest-month first.
+  // so the buckets iterate newest-month first. When fullMonthTotals is passed
+  // (load-more case), the sticky header total stays stable across pages
+  // instead of growing as more rows in the same month load.
   return Array.from(buckets.entries()).map(([key, items]) => ({
     label: formatMonthYear(`${key}-01T00:00:00Z`),
-    total: items.reduce((sum, tx) => sum + tx.amountKept, 0),
+    total:
+      fullMonthTotals?.get(key) ??
+      items.reduce((sum, tx) => sum + tx.amountKept, 0),
     items,
   }));
 }

@@ -7,7 +7,6 @@ import {
   type FormEvent,
 } from "react";
 import Link from "next/link";
-import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
 import type { EventDetail } from "@/types/event";
@@ -24,6 +23,9 @@ import { PhotoMosaicTile } from "@/components/events/photo-mosaic-tile";
 import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
 import { Kicker } from "@/components/ui/kicker";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 
 type Mode = "cockpit" | "browse";
 
@@ -33,61 +35,36 @@ interface Props {
 }
 
 export function EventCockpit({ event, photos }: Props) {
-  const sp = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname();
+  const [bibFilter] = useUrlState<string>("bib", "", {
+    parse: (raw) => raw.trim().toUpperCase(),
+  });
+  const [browseFlag] = useUrlState<string>("browse", "");
+  const setUrlBatch = useUrlStateBatch();
 
-  const initialBibParam = (sp.get("bib") ?? "").trim().toUpperCase();
-  const initialBrowse = sp.get("browse") === "1";
-  const initialMode: Mode =
-    initialBrowse || initialBibParam ? "browse" : "cockpit";
+  const mode: Mode = bibFilter || browseFlag === "1" ? "browse" : "cockpit";
 
-  const [mode, setMode] = useState<Mode>(initialMode);
   const [panelMode, setPanelMode] = useState<SearchPanelMode>("bib");
-  const [bibInput, setBibInput] = useState(initialBibParam);
-  const [bibFilter, setBibFilter] = useState<string>(initialBibParam);
-
-  const replaceUrl = (next: { bib?: string; browse?: boolean } | null) => {
-    if (!next) {
-      router.replace(pathname, { scroll: false });
-      return;
-    }
-    const params = new URLSearchParams();
-    if (next.bib) {
-      params.set("bib", next.bib);
-    } else if (next.browse) {
-      params.set("browse", "1");
-    }
-    const qs = params.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  };
+  const [bibInput, setBibInput] = useState(bibFilter);
 
   const submitBib = (raw: string) => {
     const clean = raw.trim().toUpperCase();
     if (!clean) return;
-    setBibFilter(clean);
-    setMode("browse");
-    replaceUrl({ bib: clean });
+    setUrlBatch({ bib: clean, browse: null });
   };
 
   const clearBib = () => {
-    setBibFilter("");
-    replaceUrl({ browse: true });
+    setUrlBatch({ bib: null, browse: "1" });
   };
 
   const switchToBrowse = () => {
-    setMode("browse");
-    setBibFilter("");
     setPanelMode("bib");
-    replaceUrl({ browse: true });
+    setUrlBatch({ bib: null, browse: "1" });
   };
 
   const switchToCockpit = () => {
-    setMode("cockpit");
     setBibInput("");
-    setBibFilter("");
     setPanelMode("bib");
-    replaceUrl(null);
+    setUrlBatch({ bib: null, browse: null });
   };
 
   if (mode === "browse") {
@@ -341,6 +318,7 @@ function BrowseMode({
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PHOTO_INITIAL);
 
   const cleanedQuery = bibFilter.replace(/^B-/i, "").trim().toUpperCase();
   const isFiltered = cleanedQuery.length > 0;
@@ -355,15 +333,24 @@ function BrowseMode({
   }, [photos, cleanedQuery, isFiltered]);
 
   useEffect(() => {
-    if (previewIndex !== null && previewIndex >= visible.length) {
-      setPreviewIndex(visible.length === 0 ? null : visible.length - 1);
+    setLoadedCount(PAGE_SIZE.PHOTO_INITIAL);
+  }, [cleanedQuery]);
+
+  const visibleSlice = useMemo(
+    () => visible.slice(0, loadedCount),
+    [visible, loadedCount],
+  );
+
+  useEffect(() => {
+    if (previewIndex !== null && previewIndex >= visibleSlice.length) {
+      setPreviewIndex(visibleSlice.length === 0 ? null : visibleSlice.length - 1);
     }
-  }, [visible.length, previewIndex]);
+  }, [visibleSlice.length, previewIndex]);
 
   const total = visible.reduce((sum, p) => sum + p.price, 0);
   const showBuyAll = isFiltered && visible.length > 0;
   const previewPhoto =
-    previewIndex !== null ? visible[previewIndex] ?? null : null;
+    previewIndex !== null ? visibleSlice[previewIndex] ?? null : null;
 
   return (
     <section className="bg-bone min-h-screen flex flex-col">
@@ -472,16 +459,27 @@ function BrowseMode({
           <BibEmptyResult event={event} bib={bibFilter} onClear={onClearBib} />
         ) : (
           <div className="px-6 md:px-10 py-10 md:py-14 pb-20">
-            <div className="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
-              {visible.map((p, i) => (
-                <PhotoMosaicTile
-                  key={p.id}
-                  event={event}
-                  photo={p}
-                  index={i}
-                  onOpen={() => setPreviewIndex(i)}
-                />
-              ))}
+            <div className="max-w-7xl mx-auto">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
+                {visibleSlice.map((p, i) => (
+                  <PhotoMosaicTile
+                    key={p.id}
+                    event={event}
+                    photo={p}
+                    index={i}
+                    onOpen={() => setPreviewIndex(i)}
+                  />
+                ))}
+              </div>
+              <LoadMoreButton
+                shown={visibleSlice.length}
+                total={visible.length}
+                increment={PAGE_SIZE.PHOTO_INCREMENT}
+                onLoadMore={() =>
+                  setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT)
+                }
+                countSuffix={isFiltered ? `· BIB ${bibFilter}` : undefined}
+              />
             </div>
           </div>
         )}
@@ -504,7 +502,7 @@ function BrowseMode({
           event={event}
           photo={previewPhoto}
           index={previewIndex}
-          total={visible.length}
+          total={visibleSlice.length}
           onClose={() => setPreviewIndex(null)}
           onPrev={
             previewIndex > 0
@@ -512,7 +510,7 @@ function BrowseMode({
               : undefined
           }
           onNext={
-            previewIndex < visible.length - 1
+            previewIndex < visibleSlice.length - 1
               ? () => setPreviewIndex(previewIndex + 1)
               : undefined
           }
