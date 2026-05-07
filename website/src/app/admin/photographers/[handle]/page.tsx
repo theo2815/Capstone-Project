@@ -10,13 +10,21 @@ import {
   useAdminPhotographerView,
   syntheticCoverGradient,
 } from "@/lib/admin-photographer-view";
+import type { EffectivePhotographerSettings } from "@/lib/admin-photographer-view";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate, formatMemberSince } from "@/lib/format";
 import { useEventCatalog } from "@/lib/event-catalog";
-import { PAYOUT_METHOD_LABEL } from "@/store/photographer-settings-store";
+import {
+  BRAND_COLOR_HEX,
+  BRAND_COLOR_LABEL,
+  PAYOUT_METHOD_LABEL,
+  SOCIAL_PLATFORM_LABEL,
+  SOCIAL_PLATFORM_TILE,
+} from "@/store/photographer-settings-store";
 import type { CoverSource } from "@/lib/photographer-registry";
 import type { PhotographerSettingsSnapshot } from "@/lib/admin-user-registry";
 import { formatPayoutNumber } from "@/lib/payout-format";
+import { formatRegionLabel } from "@/lib/ph-regions";
 
 const COMPLETENESS_FIELDS: ReadonlyArray<{
   key: keyof PhotographerSettingsSnapshot;
@@ -35,10 +43,15 @@ const STATUS_LABEL = {
   incomplete: "Incomplete",
 } as const;
 
-// Phase 2a admin photographer detail. Hero + 5 content slabs (completeness,
-// about, payouts, events covered, activity) + sticky-on-lg <AdminActionAside>.
-// Reads via useAdminPhotographerView() so admin store overrides + live
-// settings flow through to the visible state without a refresh.
+const PUBLIC_URL_PREFIX = "quickpitik.com";
+
+// Phase 2a admin photographer detail. Hero + 8 content slabs (completeness,
+// about, public URL, watermark, socials, payouts, events covered, activity)
+// + sticky-on-lg <AdminActionAside>. Reads via useAdminPhotographerView()
+// so admin store overrides + live settings flow through to the visible
+// state without a refresh. Non-session photographers (anyone other than
+// the logged-in user) read full settings from the admin seed module so
+// admin can verify cover/watermark/region/socials/payouts in one place.
 export default function AdminPhotographerDetailPage() {
   const params = useParams<{ handle: string }>();
   const raw = Array.isArray(params.handle) ? params.handle[0] : params.handle;
@@ -50,17 +63,16 @@ export default function AdminPhotographerDetailPage() {
     notFound();
   }
 
-  const { row, profile, liveSettings, decisions } = view;
-  const displayName = row.brandName ?? row.name;
+  const { row, profile, effectiveSettings, decisions } = view;
+  const displayName =
+    effectiveSettings?.brandName?.trim() || row.brandName || row.name;
   const cover: CoverSource =
+    effectiveSettings?.cover ??
     profile?.cover ??
-    (liveSettings?.cover
-      ? { kind: "image", url: liveSettings.cover.dataUrl }
-      : { kind: "gradient", ...syntheticCoverGradient(row.userId) });
+    { kind: "gradient", ...syntheticCoverGradient(row.userId) };
   const bio =
-    liveSettings?.bio?.trim() || profile?.bio || "Bio not set yet.";
-  const memberSinceIso =
-    profile?.memberSince ?? row.createdAt;
+    effectiveSettings?.bio?.trim() || profile?.bio || "Bio not set yet.";
+  const memberSinceIso = profile?.memberSince ?? row.createdAt;
   const isSuspended = row.suspendedAt !== null;
   const statusLabel = isSuspended
     ? "Suspended"
@@ -70,6 +82,7 @@ export default function AdminPhotographerDetailPage() {
     : row.verificationStatus === "approved"
       ? "fresh"
       : "slate";
+  const publicHandle = effectiveSettings?.handle?.trim() || row.handle || "";
 
   return (
     <>
@@ -85,29 +98,35 @@ export default function AdminPhotographerDetailPage() {
       <Hero
         cover={cover}
         displayName={displayName}
-        handle={row.handle}
+        handle={publicHandle || null}
         statusLabel={statusLabel}
         statusTone={statusTone}
         memberSince={memberSinceIso}
         region={row.region}
         city={row.city}
         decisionCount={decisions.length}
+        brandColor={effectiveSettings?.brandColor}
       />
 
       <div className="mt-10 lg:mt-14 grid lg:grid-cols-[1fr_18rem] lg:gap-12 lg:items-start">
         <div>
           <CompletenessSlab
             snapshot={row.settingsSnapshot}
-            liveSettings={liveSettings}
+            effective={effectiveSettings}
           />
           <AboutSlab
             bio={bio}
             region={row.region}
+            regionCodes={effectiveSettings?.region ?? null}
             city={row.city}
             memberSince={memberSinceIso}
             email={row.email}
+            brandColor={effectiveSettings?.brandColor}
           />
-          <PayoutsSlab liveSettings={liveSettings} />
+          <PublicUrlSlab handle={publicHandle} />
+          <WatermarkSlab effective={effectiveSettings} brand={displayName} />
+          <SocialsSlab effective={effectiveSettings} />
+          <PayoutsSlab effective={effectiveSettings} />
           <EventsCoveredSlab
             events={profile?.events ?? []}
             catalogResolver={(slug) =>
@@ -134,6 +153,7 @@ function Hero({
   region,
   city,
   decisionCount,
+  brandColor,
 }: {
   cover: CoverSource;
   displayName: string;
@@ -144,7 +164,10 @@ function Hero({
   region: string | null;
   city: string;
   decisionCount: number;
+  brandColor?: EffectivePhotographerSettings["brandColor"];
 }) {
+  const brandHex =
+    brandColor && brandColor !== "none" ? BRAND_COLOR_HEX[brandColor] : null;
   return (
     <header>
       <div className="relative bg-bone-deep border border-line rounded-2xl aspect-[16/7] md:aspect-[16/5] overflow-hidden">
@@ -173,7 +196,14 @@ function Hero({
             Photographer
           </p>
           <div className="mt-2 flex items-baseline gap-3 flex-wrap">
-            <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink leading-[1.05]">
+            <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink leading-[1.05] flex items-baseline gap-2.5">
+              {brandHex && (
+                <span
+                  aria-hidden
+                  className="inline-block size-2 rounded-full translate-y-[-2px] shrink-0"
+                  style={{ backgroundColor: brandHex }}
+                />
+              )}
               {displayName}
             </h1>
             <StatusPill label={statusLabel} tone={statusTone} />
@@ -223,26 +253,23 @@ function StatusPill({
 
 function CompletenessSlab({
   snapshot,
-  liveSettings,
+  effective,
 }: {
   snapshot: PhotographerSettingsSnapshot | null;
-  liveSettings: ReturnType<typeof useAdminPhotographerView> extends infer V
-    ? V extends { liveSettings: infer L }
-      ? L
-      : never
-    : never;
+  effective: EffectivePhotographerSettings | null;
 }) {
-  // When viewing the session photographer, derive completeness from live
-  // store state instead of the seeded snapshot so admin sees the latest.
-  const effectiveSnapshot: PhotographerSettingsSnapshot | null = liveSettings
+  // When effective settings are present (live OR seed), derive completeness
+  // from them so admin sees what's actually filled in for this photographer
+  // — not just the directory snapshot.
+  const effectiveSnapshot: PhotographerSettingsSnapshot | null = effective
     ? {
-        hasCover: !!liveSettings.cover,
-        hasBrandName: liveSettings.brandName.trim().length > 0,
-        hasWatermark: !!liveSettings.watermark,
-        hasHandle: liveSettings.handle.trim().length >= 3,
-        hasRegion: !!liveSettings.region,
-        socialCount: liveSettings.socials.length,
-        payoutCount: liveSettings.payouts.length,
+        hasCover: !!effective.cover,
+        hasBrandName: effective.brandName.trim().length > 0,
+        hasWatermark: !!effective.watermark,
+        hasHandle: effective.handle.trim().length >= 3,
+        hasRegion: !!effective.region,
+        socialCount: effective.socials.length,
+        payoutCount: effective.payouts.length,
       }
     : snapshot;
 
@@ -324,26 +351,37 @@ function CompletenessRow({
 function AboutSlab({
   bio,
   region,
+  regionCodes,
   city,
   memberSince,
   email,
+  brandColor,
 }: {
   bio: string;
   region: string | null;
+  regionCodes: { regionCode: string; provinceCode: string } | null;
   city: string;
   memberSince: string;
   email: string;
+  brandColor?: EffectivePhotographerSettings["brandColor"];
 }) {
+  const resolvedRegion = regionCodes
+    ? formatRegionLabel(regionCodes.regionCode, regionCodes.provinceCode)
+    : null;
+  const regionLine = resolvedRegion ?? region ?? "—";
   return (
     <Slab id="about" number="02" title="About" caption="Profile basics">
       <p className="font-sans text-base text-ink-soft leading-relaxed max-w-2xl">
         {bio}
       </p>
       <dl className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8 max-w-2xl">
-        <DefRow label="Region" value={region ?? "—"} />
+        <DefRow label="Region" value={regionLine} />
         <DefRow label="City" value={city} />
         <DefRow label="Joined" value={formatLongDate(memberSince, true)} />
         <DefRow label="Email" value={email} mono />
+        {brandColor && brandColor !== "none" && (
+          <DefRow label="Brand accent" value={BRAND_COLOR_LABEL[brandColor]} />
+        )}
       </dl>
     </Slab>
   );
@@ -372,37 +410,165 @@ function DefRow({
   );
 }
 
-/* ─────────────── PAYOUTS ─────────────── */
+/* ─────────────── PUBLIC URL ─────────────── */
 
-function PayoutsSlab({
-  liveSettings,
-}: {
-  liveSettings: ReturnType<typeof useAdminPhotographerView> extends infer V
-    ? V extends { liveSettings: infer L }
-      ? L
-      : never
-    : never;
-}) {
-  if (!liveSettings) {
+function PublicUrlSlab({ handle }: { handle: string }) {
+  if (!handle) {
     return (
       <Slab
-        id="payouts"
+        id="public-url"
         number="03"
-        title="Payouts"
-        caption="Sales destinations"
+        title="Public URL"
+        caption="Where runners find this photographer"
       >
         <p className="font-sans text-sm text-slate-soft">
-          Payout details visible only when this photographer is signed in.
+          No handle set yet.
         </p>
       </Slab>
     );
   }
-  const payouts = liveSettings.payouts;
+  const display = `${PUBLIC_URL_PREFIX}/${handle}`;
+  return (
+    <Slab
+      id="public-url"
+      number="03"
+      title="Public URL"
+      caption="Where runners find this photographer"
+      trailing={`@${handle}`}
+    >
+      <div className="flex items-center justify-between gap-4 flex-wrap rounded-2xl border border-line bg-bone-deep px-4 py-3">
+        <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-ink tnum truncate">
+          {display}
+        </p>
+        <Link
+          href={`/${handle}`}
+          target="_blank"
+          rel="noopener"
+          className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+        >
+          Open ↗
+        </Link>
+      </div>
+    </Slab>
+  );
+}
+
+/* ─────────────── WATERMARK ─────────────── */
+
+function WatermarkSlab({
+  effective,
+  brand,
+}: {
+  effective: EffectivePhotographerSettings | null;
+  brand: string;
+}) {
+  const watermark = effective?.watermark ?? null;
+  return (
+    <Slab
+      id="watermark"
+      number="04"
+      title="Watermark"
+      caption="Stamped on every preview"
+      trailing={watermark ? "On file" : "Not set"}
+    >
+      {!watermark ? (
+        <p className="font-sans text-sm text-slate-soft">
+          Photographer hasn&apos;t uploaded a watermark yet.
+        </p>
+      ) : (
+        <div className="rounded-2xl border border-line bg-bone-deep p-6 md:p-8 flex items-center justify-center min-h-[120px]">
+          {watermark.kind === "image" ? (
+            // eslint-disable-next-line @next/next/no-img-element -- data URL preview from photographer settings store; backend serves signed S3 URL.
+            <img
+              src={watermark.dataUrl}
+              alt={`${brand} watermark`}
+              className="max-h-24 max-w-full object-contain"
+              draggable={false}
+            />
+          ) : (
+            <span
+              className="font-mono uppercase tracking-[0.4em] text-2xl md:text-3xl text-ink/70"
+              aria-label={`Watermark label: ${watermark.label}`}
+            >
+              © {watermark.label}
+            </span>
+          )}
+        </div>
+      )}
+    </Slab>
+  );
+}
+
+/* ─────────────── SOCIALS ─────────────── */
+
+function SocialsSlab({
+  effective,
+}: {
+  effective: EffectivePhotographerSettings | null;
+}) {
+  const socials = effective?.socials ?? [];
+  return (
+    <Slab
+      id="socials"
+      number="05"
+      title="Social & verification links"
+      caption="Public proof of identity"
+      trailing={`${socials.length} ${socials.length === 1 ? "link" : "links"}`}
+    >
+      {socials.length === 0 ? (
+        <p className="font-sans text-sm text-slate-soft">
+          No social profiles linked yet.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {socials.map((social) => (
+            <li
+              key={social.id}
+              className="flex items-center gap-4 border-b border-line pb-3"
+            >
+              <span
+                aria-hidden
+                className="shrink-0 size-10 rounded-xl border border-line bg-bone-deep flex items-center justify-center font-mono uppercase tracking-[0.15em] text-[13px] text-ink"
+              >
+                {SOCIAL_PLATFORM_TILE[social.platform]}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-display text-base text-ink">
+                  {SOCIAL_PLATFORM_LABEL[social.platform]}
+                </p>
+                <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-slate-soft mt-0.5 truncate">
+                  {social.url}
+                </p>
+              </div>
+              <a
+                href={social.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+              >
+                Open ↗
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Slab>
+  );
+}
+
+/* ─────────────── PAYOUTS ─────────────── */
+
+function PayoutsSlab({
+  effective,
+}: {
+  effective: EffectivePhotographerSettings | null;
+}) {
+  const payouts = effective?.payouts ?? [];
   return (
     <Slab
       id="payouts"
-      number="03"
-      title="Payouts"
+      number="06"
+      title="Payout accounts"
       caption="Sales destinations"
       trailing={`${payouts.length} ${payouts.length === 1 ? "account" : "accounts"}`}
     >
@@ -458,7 +624,7 @@ function EventsCoveredSlab({
   return (
     <Slab
       id="events"
-      number="04"
+      number="07"
       title="Events covered"
       caption="Race history"
       trailing={`${events.length} ${events.length === 1 ? "event" : "events"}`}
@@ -504,7 +670,7 @@ function ActivitySlab({ userId }: { userId: string }) {
   return (
     <Slab
       id="activity"
-      number="05"
+      number="08"
       title="Activity"
       caption="Decisions on file"
     >

@@ -55,6 +55,12 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<SectionGuideEntry> = [
     label: "Overview",
     body: "Weekly review — eight KPIs, a 30-day trend, and your latest decisions. Not the daily home.",
   },
+  {
+    number: "08",
+    href: ROUTES.ADMIN_SALES,
+    label: "Sales",
+    body: "Where the money comes from — GMV, platform cut, refunds, top photographers and events.",
+  },
 ];
 
 export const ADMIN_SECTION_GUIDE: ReadonlyArray<SectionGuideEntry> =

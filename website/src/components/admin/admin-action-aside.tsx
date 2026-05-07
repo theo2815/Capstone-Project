@@ -3,6 +3,13 @@
 import { useState } from "react";
 import { useAdminUserStore } from "@/store/admin-user-store";
 import { useToast } from "@/hooks/use-toast";
+import {
+  notifyAccountSuspended,
+  notifyAccountUnsuspended,
+  notifyAdminMessage,
+  notifyVerificationApproved,
+  notifyVerificationRejected,
+} from "@/lib/admin-photographer-notifications";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
 import { AdminRejectModal } from "./admin-reject-modal";
 import { AdminSuspendModal } from "./admin-suspend-modal";
@@ -44,23 +51,41 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
 
   function handleApprove() {
     approve(row.userId);
+    notifyVerificationApproved({
+      photographerId: row.userId,
+      brandName: displayName,
+    });
     showToast({ kind: "success", message: `Approved · ${displayName}` });
   }
 
   function handleReject(reason: string) {
     reject(row.userId, reason);
+    notifyVerificationRejected({
+      photographerId: row.userId,
+      brandName: displayName,
+      reason,
+    });
     setRejectOpen(false);
     showToast({ kind: "info", message: `Sent back · ${displayName}` });
   }
 
   function handleSuspend(reason: string) {
     suspend(row.userId, reason);
+    notifyAccountSuspended({
+      photographerId: row.userId,
+      brandName: displayName,
+      reason,
+    });
     setSuspendOpen(false);
     showToast({ kind: "info", message: `Suspended · ${displayName}` });
   }
 
   function handleUnsuspend() {
     unsuspend(row.userId);
+    notifyAccountUnsuspended({
+      photographerId: row.userId,
+      brandName: displayName,
+    });
     showToast({ kind: "success", message: `Unsuspended · ${displayName}` });
   }
 
@@ -82,11 +107,16 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
     });
   }
 
-  function handleMessage() {
+  function handleMessage(payload: { subject: string; body: string }) {
+    notifyAdminMessage({
+      photographerId: row.userId,
+      subject: payload.subject,
+      body: payload.body,
+    });
     setMessageOpen(false);
     showToast({
-      kind: "info",
-      message: "Saved to outbox · backend queue ships in Phase B7",
+      kind: "success",
+      message: `Message sent · ${displayName}`,
     });
   }
 
