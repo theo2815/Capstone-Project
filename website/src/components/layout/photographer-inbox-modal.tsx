@@ -29,6 +29,11 @@ const KIND_TONE: Record<PhotographerMessageKind, string> = {
   payout_held: "text-warning",
   report_acknowledged: "text-slate",
   report_resolved: "text-fresh",
+  verification_approved: "text-fresh",
+  verification_rejected: "text-warning",
+  account_suspended: "text-error",
+  account_unsuspended: "text-fresh",
+  admin_message: "text-ink",
 };
 
 export function PhotographerInboxModal({
@@ -167,7 +172,26 @@ function InboxRow({ message, onMarkRead, onRemove, onViewCycle }: InboxRowProps)
         {message.body}
       </p>
       <div className="mt-3 flex items-center justify-between gap-3">
-        {message.payoutCycleId ? (
+        {message.cta ? (
+          <Link
+            href={message.cta.href}
+            onClick={(e) => {
+              e.stopPropagation();
+              onViewCycle();
+            }}
+            className="inline-flex items-center gap-1"
+          >
+            <Kicker
+              tone="active"
+              className="underline decoration-fresh/40 underline-offset-4 decoration-1 hover:decoration-fresh"
+            >
+              {message.cta.label}
+            </Kicker>
+            <span aria-hidden="true" className="text-fresh">
+              →
+            </span>
+          </Link>
+        ) : message.payoutCycleId ? (
           <Link
             href={`${ROUTES.DASHBOARD_BILLING}#cycle-${message.payoutCycleId}`}
             onClick={(e) => {

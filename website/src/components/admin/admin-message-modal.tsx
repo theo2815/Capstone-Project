@@ -10,14 +10,13 @@ import {
 interface AdminMessageModalProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: () => void;
+  onSubmit: (payload: { subject: string; body: string }) => void;
   photographerName: string;
 }
 
-// Send-message modal — UI theater for Phase 2a. There's no message queue
-// backend yet. On submit, the parent shows a "Saved to outbox · backend
-// queue ships in Phase B7" toast and the modal closes. The audit log does
-// NOT record the message attempt (until backend persistence exists).
+// Send-message modal. On submit, the parent pushes the message into the
+// photographer's inbox via notifyAdminMessage(). Audit-log persistence
+// arrives with backend Phase F; until then the inbox row is the receipt.
 export function AdminMessageModal({
   open,
   onClose,
@@ -33,7 +32,7 @@ export function AdminMessageModal({
 
   function handleSubmit() {
     if (!canSend) return;
-    onSubmit();
+    onSubmit({ subject: subject.trim(), body: body.trim() });
     setSubject("");
     setBody("");
   }
@@ -44,8 +43,8 @@ export function AdminMessageModal({
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Send message"
-      intro={`Reach out to ${photographerName} privately. The message lands in their dashboard inbox once the messaging service is online.`}
-      submitLabel="Send to outbox"
+      intro={`Reach out to ${photographerName} privately. The message lands directly in their dashboard inbox.`}
+      submitLabel="Send"
       submitDisabled={!canSend}
     >
       <AdminTextInput

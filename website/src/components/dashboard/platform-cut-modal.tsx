@@ -3,22 +3,20 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useScrollLock } from "@/lib/scroll-lock";
+import {
+  PHOTO_PRICE_PHP,
+  PER_PHOTO_PLATFORM_CUT,
+  PER_PHOTO_PHOTOGRAPHER_KEEP,
+} from "@/lib/platform-economics";
 
 // Platform cut explainer. Triggered from the lifetime ₱ slab on
-// /dashboard/earnings. Numbers are illustrative and based on a placeholder
-// per-photo price of ₱125 — when per-photographer pricing lands in the
-// settings store, swap PRICE / CUT to read from there (or from a backend
-// config endpoint).
-//
-// TODO(backend): replace the hardcoded constants with a /api/platform/fees
-// payload (cut, processing, breakdown). Until Phase F lands these values
-// are duplicated here.
+// /dashboard/earnings. Numbers come from `lib/platform-economics.ts` so the
+// admin sales page and this modal stay in lockstep until backend Phase F
+// replaces the constants with a `/api/platform/fees` payload.
 
-const PRICE = 125;
-const CUT_RATE = 0.25;
-const KEEP_RATE = 1 - CUT_RATE;
-const CUT_AMOUNT = PRICE * CUT_RATE;
-const KEEP_AMOUNT = PRICE * KEEP_RATE;
+const PRICE = PHOTO_PRICE_PHP;
+const CUT_AMOUNT = PER_PHOTO_PLATFORM_CUT;
+const KEEP_AMOUNT = PER_PHOTO_PHOTOGRAPHER_KEEP;
 const SCALE_TIERS = [15, 30, 50, 100] as const;
 
 interface PlatformCutModalProps {

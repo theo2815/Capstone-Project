@@ -8,7 +8,20 @@
 export type PhotographerMessageKind =
   | "payout_held"
   | "report_acknowledged"
-  | "report_resolved";
+  | "report_resolved"
+  | "verification_approved"
+  | "verification_rejected"
+  | "account_suspended"
+  | "account_unsuspended"
+  | "admin_message";
+
+/** Optional CTA on a message — render as a kicker link beside the cycle/report
+ * link in the inbox row. Used by verification + suspension messages to point
+ * the photographer to the right next step (dashboard / settings). */
+export interface PhotographerMessageCta {
+  href: string;
+  label: string;
+}
 
 export interface PhotographerMessage {
   id: string;
@@ -19,6 +32,7 @@ export interface PhotographerMessage {
   body: string;
   payoutCycleId?: string;
   reportId?: string;
+  cta?: PhotographerMessageCta;
   createdAt: string;
   readAt: string | null;
   /**
@@ -33,6 +47,11 @@ export const MESSAGE_KIND_LABEL: Record<PhotographerMessageKind, string> = {
   payout_held: "Payout held",
   report_acknowledged: "Report acknowledged",
   report_resolved: "Report resolved",
+  verification_approved: "Verification approved",
+  verification_rejected: "Verification needs changes",
+  account_suspended: "Account suspended",
+  account_unsuspended: "Account reinstated",
+  admin_message: "Message from admin",
 };
 
 // Seeded messages so a fresh photographer session has something to look at

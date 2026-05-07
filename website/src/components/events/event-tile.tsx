@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
 import { SaveButton } from "@/components/events/save-button";
 import { ROUTES } from "@/lib/constants";
+import { canUploadToEvent } from "@/lib/event-catalog";
 
 // Reused by /events (browse), /dashboard/upload (upload), and
 // /dashboard/events (manage). Discriminated union mirrors <PhotoPreviewCard>.
@@ -65,14 +66,26 @@ export function EventTile(props: EventTileProps) {
   const body = (
     <>
       <div className="relative aspect-[4/3] bg-ink overflow-hidden">
-        <div className="absolute inset-0 flex items-center justify-center px-6">
-          <span className="font-display text-bone/25 text-2xl md:text-3xl font-medium tracking-tight text-center leading-tight">
-            {event.name}
-          </span>
-        </div>
-        <span className="absolute bottom-3 right-3 font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/35">
-          Banner · soon
-        </span>
+        {event.bannerUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={event.bannerUrl}
+            alt=""
+            aria-hidden="true"
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : (
+          <>
+            <div className="absolute inset-0 flex items-center justify-center px-6">
+              <span className="font-display text-bone/25 text-2xl md:text-3xl font-medium tracking-tight text-center leading-tight">
+                {event.name}
+              </span>
+            </div>
+            <span className="absolute bottom-3 right-3 font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/35">
+              Banner · soon
+            </span>
+          </>
+        )}
         <StatusChip state={event.state} />
         {isBrowse && (
           <SaveButton
@@ -92,21 +105,14 @@ export function EventTile(props: EventTileProps) {
         <p className="mt-3 font-sans text-sm md:text-base text-ink-soft">
           {event.location}
         </p>
-        {mode === "browse" && (
-          <BrowseFooter event={event} isUpcoming={isUpcoming} />
-        )}
+        {mode === "browse" && <BrowseFooter isUpcoming={isUpcoming} />}
         {mode === "upload" && (
           <UploadFooter
             event={event}
             canUpload={(props as EventTileUploadProps).canUpload}
           />
         )}
-        {mode === "manage" && (
-          <ManageFooter
-            photoCount={(props as EventTileManageProps).photoCount}
-            salesCount={(props as EventTileManageProps).salesCount}
-          />
-        )}
+        {mode === "manage" && <ManageFooter />}
       </div>
     </>
   );
@@ -172,26 +178,17 @@ export function EventTile(props: EventTileProps) {
   );
 }
 
-function BrowseFooter({
-  event,
-  isUpcoming,
-}: {
-  event: ListEvent;
-  isUpcoming: boolean;
-}) {
+function BrowseFooter({ isUpcoming }: { isUpcoming: boolean }) {
+  // Card body already carries date · city + title + location, so the footer
+  // is just the action affordance. Upcoming events are non-interactive — show
+  // the wait copy instead of an arrow so runners aren't tempted to click.
   return (
-    <div className="mt-6 pt-4 border-t border-line flex items-center justify-between">
+    <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
       {isUpcoming ? (
         <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
           Opens on race day
         </span>
       ) : (
-        <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
-          <span className="tnum">{event.photoCount.toLocaleString()}</span>{" "}
-          photos
-        </span>
-      )}
-      {!isUpcoming && (
         <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors">
           Open →
         </span>
@@ -207,42 +204,43 @@ function UploadFooter({
   event: ListEvent;
   canUpload: boolean;
 }) {
-  // Verification-incomplete is the more actionable issue, so it wins over
-  // the date-based hint. Once verified, an upcoming tile signals that
-  // uploads are gated by race day rather than the photographer's setup.
-  const cta = !canUpload
-    ? "Finish settings →"
-    : event.state === "upcoming"
-      ? "Opens on race day →"
-      : "Upload →";
+  // Verification-incomplete is the most actionable issue, so it wins over
+  // the date-based hints. Once verified, the date drives copy:
+  //   upcoming      → opens on race day
+  //   live (grace)  → upload →
+  //   open / past   → window closed (4-day grace expired)
+  const inGrace = canUploadToEvent(event.date);
+  let cta: string;
+  let muted = false;
+  if (!canUpload) {
+    cta = "Finish settings →";
+  } else if (event.state === "upcoming") {
+    cta = "Opens on race day →";
+  } else if (inGrace) {
+    cta = "Upload →";
+  } else {
+    cta = "Upload window closed";
+    muted = true;
+  }
 
   return (
-    <div className="mt-6 pt-4 border-t border-line flex items-center justify-between">
-      <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
-        <span className="tnum">{event.participantCount.toLocaleString()}</span>{" "}
-        runners
-      </span>
-      <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors">
+    <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
+      <span
+        className={
+          muted
+            ? "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate"
+            : "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors"
+        }
+      >
         {cta}
       </span>
     </div>
   );
 }
 
-function ManageFooter({
-  photoCount,
-  salesCount,
-}: {
-  photoCount: number;
-  salesCount: number;
-}) {
+function ManageFooter() {
   return (
-    <div className="mt-6 pt-4 border-t border-line flex items-center justify-between">
-      <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
-        <span className="tnum">{photoCount.toLocaleString()}</span> photos
-        <span className="text-slate-soft"> · </span>
-        <span className="tnum">{salesCount.toLocaleString()}</span> sold
-      </span>
+    <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
       <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors">
         Open →
       </span>

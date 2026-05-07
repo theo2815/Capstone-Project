@@ -20,7 +20,12 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import { useToast } from "@/hooks/use-toast";
 import { ROUTES } from "@/lib/constants";
-import { getEventById } from "@/lib/event-catalog";
+import {
+  UPLOAD_GRACE_DAYS,
+  canUploadToEvent,
+  getEventById,
+  uploadDaysRemaining,
+} from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
 import { ACCEPTED_IMAGE_MIME, MAX_UPLOAD_BYTES } from "@/lib/image-utils";
 import { PAGE_SIZE } from "@/lib/pagination-config";
@@ -113,6 +118,7 @@ function Hero({ event }: { event: ListEvent }) {
         <span>{formatLongDate(event.date, true)}</span>
         <span className="text-slate-soft">·</span>
         <StateChip state={event.state} />
+        <GraceBadge event={event} />
       </p>
       <h1 className="font-display text-4xl md:text-6xl font-medium tracking-tight text-ink mt-4 leading-[1.05]">
         {event.name}
@@ -162,6 +168,35 @@ function UploadGate({ event }: { event: ListEvent }) {
     );
   }
 
+  // Grace period closed — race day was 4+ days ago. Photographers cannot
+  // push fresh photos to this event; the gallery itself stays open for sale
+  // (and remains searchable on /events/[slug]).
+  if (!canUploadToEvent(event.date)) {
+    return (
+      <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
+        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          Upload window closed
+        </p>
+        <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
+          Race-day grace ended.
+        </p>
+        <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto tnum">
+          {formatLongDate(event.date, true)} · {event.location}
+        </p>
+        <p className="font-sans text-sm text-slate mt-6 max-w-md mx-auto">
+          Photographers have a {UPLOAD_GRACE_DAYS}-day window starting on race
+          day. Reach out to admin if you have late frames that need to land.
+        </p>
+        <Link
+          href={ROUTES.DASHBOARD_UPLOAD}
+          className="inline-flex mt-6 font-sans text-sm font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-2.5 px-5 rounded-full transition-colors"
+        >
+          Pick a different event
+        </Link>
+      </div>
+    );
+  }
+
   if (gate.kind !== "ok") {
     return (
       <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
@@ -176,6 +211,23 @@ function UploadGate({ event }: { event: ListEvent }) {
   }
 
   return <UploadForm event={event} />;
+}
+
+function GraceBadge({ event }: { event: ListEvent }) {
+  const remaining = uploadDaysRemaining(event.date);
+  if (remaining === null) return null;
+  const label =
+    remaining === 0
+      ? "Closes end of today"
+      : remaining === 1
+        ? "1 day left to upload"
+        : `${remaining} days left to upload`;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="text-slate-soft">·</span>
+      <span className="text-fresh tnum">{label}</span>
+    </span>
+  );
 }
 
 function UploadForm({ event }: { event: ListEvent }) {

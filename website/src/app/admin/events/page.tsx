@@ -1,16 +1,27 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { AdminEventCard } from "@/components/admin/admin-event-card";
+import { AdminEventFormModal } from "@/components/admin/admin-event-form-modal";
 import { useEventCatalog } from "@/lib/event-catalog";
+import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
+import { useToast } from "@/hooks/use-toast";
+import { useConfirmation } from "@/hooks/use-confirmation";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
 
-// Phase 1 admin Events page. Four slabs (Live / Upcoming / Recent /
-// Archive) of <AdminEventCard>s with inline state-change dropdowns.
-// Reads `useEventCatalog()` so admin overrides persisted in
-// `admin-event-overrides-store` flow through. The same hook backs
-// /events and /dashboard/upload, closing the demo loop end-to-end.
+// Admin Events page. Four slabs (Live / Upcoming / Recent / Archive) of
+// <AdminEventCard>s. Lifecycle state is derived from `event.date`
+// (see `lib/event-catalog.ts`) — admin only edits Title/Location/Date and
+// the four states fall out automatically:
+//
+//   future date            → Upcoming
+//   day 0..3 (race + 4d)   → Live  (photographer upload window)
+//   day 4..89              → Recent (gallery for sale, no more uploads)
+//   day 90+                → Archive
+//
+// The same `useEventCatalog()` backs /events and /dashboard/upload, so a
+// create/edit/delete here flows into both runner + photographer surfaces.
 
 const SECTIONS: ReadonlyArray<{
   id: string;
@@ -24,7 +35,7 @@ const SECTIONS: ReadonlyArray<{
     id: "live",
     number: "01",
     title: "Live now",
-    caption: "Currently accepting uploads",
+    caption: "Currently accepting uploads · 4-day grace from race day",
     matchState: "live",
     cols: "grid-cols-1 md:grid-cols-2",
   },
@@ -40,7 +51,7 @@ const SECTIONS: ReadonlyArray<{
     id: "recent",
     number: "03",
     title: "Recent",
-    caption: "Galleries open for sale",
+    caption: "Galleries open for sale · upload window closed",
     matchState: "open",
     cols: "grid-cols-1 md:grid-cols-2",
   },
@@ -56,6 +67,14 @@ const SECTIONS: ReadonlyArray<{
 
 export default function AdminEventsPage() {
   const catalog = useEventCatalog();
+  const createEvent = useAdminEventOverridesStore((s) => s.createEvent);
+  const editEvent = useAdminEventOverridesStore((s) => s.editEvent);
+  const deleteEvent = useAdminEventOverridesStore((s) => s.deleteEvent);
+  const { showToast } = useToast();
+  const { confirm } = useConfirmation();
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<ListEvent | null>(null);
 
   const grouped = useMemo(() => {
     return SECTIONS.map((section) => ({
@@ -66,9 +85,60 @@ export default function AdminEventsPage() {
 
   const liveCount = byState(catalog, "live").length;
 
+  function handleCreateSubmit(payload: {
+    name: string;
+    location: string;
+    date: string;
+    bannerUrl?: string;
+  }) {
+    createEvent(payload);
+    setCreateOpen(false);
+    showToast({ kind: "success", message: `Created · ${payload.name}` });
+  }
+
+  function handleEditSubmit(payload: {
+    name: string;
+    location: string;
+    date: string;
+    bannerUrl?: string;
+  }) {
+    if (!editTarget) return;
+    editEvent(editTarget.id, {
+      name: payload.name,
+      location: payload.location,
+      date: payload.date,
+      bannerUrl: payload.bannerUrl,
+    });
+    setEditTarget(null);
+    showToast({ kind: "success", message: `Updated · ${payload.name}` });
+  }
+
+  async function handleDelete(event: ListEvent) {
+    const ok = await confirm({
+      title: "Delete event?",
+      message: (
+        <>
+          Removes <strong className="text-ink">{event.name}</strong> from{" "}
+          <span className="font-mono text-[13px]">/events</span>, the
+          photographer upload picker, and the admin board. This is a mock
+          delete — the real backend will soft-archive instead.
+        </>
+      ),
+      confirmLabel: "Delete event",
+      danger: true,
+    });
+    if (!ok) return;
+    deleteEvent(event.id);
+    showToast({ kind: "info", message: `Deleted · ${event.name}` });
+  }
+
   return (
     <>
-      <Header total={catalog.length} liveCount={liveCount} />
+      <Header
+        total={catalog.length}
+        liveCount={liveCount}
+        onCreate={() => setCreateOpen(true)}
+      />
       {grouped.map((section) => {
         const noun = section.items.length === 1 ? "event" : "events";
         return (
@@ -87,13 +157,33 @@ export default function AdminEventsPage() {
             ) : (
               <div className={`grid gap-6 md:gap-8 ${section.cols}`}>
                 {section.items.map((event, i) => (
-                  <AdminEventCard key={event.id} event={event} index={i} />
+                  <AdminEventCard
+                    key={event.id}
+                    event={event}
+                    index={i}
+                    onEdit={(e) => setEditTarget(e)}
+                    onDelete={handleDelete}
+                  />
                 ))}
               </div>
             )}
           </Slab>
         );
       })}
+
+      <AdminEventFormModal
+        open={createOpen}
+        mode="create"
+        onClose={() => setCreateOpen(false)}
+        onSubmit={handleCreateSubmit}
+      />
+      <AdminEventFormModal
+        open={editTarget !== null}
+        mode="edit"
+        event={editTarget}
+        onClose={() => setEditTarget(null)}
+        onSubmit={handleEditSubmit}
+      />
     </>
   );
 }
@@ -101,24 +191,38 @@ export default function AdminEventsPage() {
 function Header({
   total,
   liveCount,
+  onCreate,
 }: {
   total: number;
   liveCount: number;
+  onCreate: () => void;
 }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
-        Events ·{" "}
-        <span className="tnum">{total.toLocaleString()}</span> on platform ·{" "}
-        <span className="tnum">{liveCount}</span> live
-      </p>
-      <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
-        Events.
-      </h1>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+            Events ·{" "}
+            <span className="tnum">{total.toLocaleString()}</span> on platform ·{" "}
+            <span className="tnum">{liveCount}</span> live
+          </p>
+          <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+            Events.
+          </h1>
+        </div>
+        <button
+          type="button"
+          onClick={onCreate}
+          className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] bg-fresh text-bone hover:bg-fresh-deep transition-colors rounded-full px-5 py-2.5"
+        >
+          + New event
+        </button>
+      </div>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Move a race through its lifecycle. Flipping a state here updates
-        the runner-facing /events listing and the photographer&apos;s upload
-        picker the moment you save.
+        Lifecycle is derived from the date — set Title, Location, and Date and
+        the cards on /events plus the photographer upload picker update the
+        moment you save. Photographers have a 4-day upload window starting on
+        race day.
       </p>
     </header>
   );

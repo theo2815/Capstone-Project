@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { EventState, ListEvent } from "@/app/events/events-browser";
 import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
 
 // Mock catalog. Lifted out of `app/events/page.tsx` so /profile's Race Log can
@@ -8,7 +8,16 @@ import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store
 // TODO(backend): replace with `api.get<Event[]>("/events?...")` paginated; the
 // race log will eventually fetch only the events the user has touched.
 
-export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
+// Lifecycle is now derived from `date` instead of carried in the seed.
+// `UPLOAD_GRACE_DAYS` is the photographer upload window (race day + 3 = 4
+// days inclusive). After that the event flips to "open" (gallery for sale).
+// Past `RECENT_TO_ARCHIVE_DAYS` it goes to "past" (archive).
+export const UPLOAD_GRACE_DAYS = 4;
+export const RECENT_TO_ARCHIVE_DAYS = 90;
+
+type SeedEvent = Omit<ListEvent, "state">;
+
+const SEED: ReadonlyArray<SeedEvent> = [
   {
     id: "u1",
     slug: "cebu-bay-run-2026",
@@ -19,7 +28,6 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
     photoCount: 0,
     participantCount: 1500,
     status: "ACTIVE",
-    state: "upcoming",
   },
   {
     id: "u2",
@@ -31,7 +39,6 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
     photoCount: 0,
     participantCount: 800,
     status: "ACTIVE",
-    state: "upcoming",
   },
   {
     id: "u3",
@@ -43,7 +50,6 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
     photoCount: 0,
     participantCount: 600,
     status: "ACTIVE",
-    state: "upcoming",
   },
   {
     id: "1",
@@ -55,7 +61,6 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
     photoCount: 1240,
     participantCount: 4800,
     status: "ACTIVE",
-    state: "live",
   },
   {
     id: "2",
@@ -67,7 +72,6 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
     photoCount: 612,
     participantCount: 1800,
     status: "ACTIVE",
-    state: "live",
   },
   {
     id: "3",
@@ -79,7 +83,6 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
     photoCount: 3850,
     participantCount: 2400,
     status: "COMPLETED",
-    state: "open",
   },
   {
     id: "4",
@@ -91,7 +94,6 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
     photoCount: 2120,
     participantCount: 3100,
     status: "COMPLETED",
-    state: "open",
   },
   {
     id: "5",
@@ -103,7 +105,6 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
     photoCount: 980,
     participantCount: 1200,
     status: "COMPLETED",
-    state: "open",
   },
   {
     id: "6",
@@ -115,7 +116,6 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
     photoCount: 4200,
     participantCount: 5600,
     status: "ARCHIVED",
-    state: "past",
   },
   {
     id: "7",
@@ -127,7 +127,6 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
     photoCount: 1640,
     participantCount: 1900,
     status: "ARCHIVED",
-    state: "past",
   },
   {
     id: "8",
@@ -139,9 +138,56 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = [
     photoCount: 720,
     participantCount: 950,
     status: "ARCHIVED",
-    state: "past",
   },
 ];
+
+// Whole-day delta from event date to today. Negative = future, 0 = race day,
+// positive = past. Both sides anchored to local midnight so the boundaries
+// flip cleanly at 00:00 instead of mid-day.
+function daysSinceEvent(eventDate: string, now: Date = new Date()): number {
+  const event = new Date(`${eventDate}T00:00:00`);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const ms = today.getTime() - event.getTime();
+  return Math.floor(ms / (1000 * 60 * 60 * 24));
+}
+
+export function deriveEventState(
+  eventDate: string,
+  now: Date = new Date(),
+): EventState {
+  const days = daysSinceEvent(eventDate, now);
+  if (days < 0) return "upcoming";
+  if (days < UPLOAD_GRACE_DAYS) return "live";
+  if (days < RECENT_TO_ARCHIVE_DAYS) return "open";
+  return "past";
+}
+
+// True when photographer can still push photos to this event. Race day
+// (day 0) through day 3 inclusive — 4 days total. Day 4 onward is closed.
+export function canUploadToEvent(
+  eventDate: string,
+  now: Date = new Date(),
+): boolean {
+  const days = daysSinceEvent(eventDate, now);
+  return days >= 0 && days < UPLOAD_GRACE_DAYS;
+}
+
+// Days remaining in the upload window (0 = closes at end of today, null = not
+// open yet or already closed). Used by the upload tile to nudge "1 day left."
+export function uploadDaysRemaining(
+  eventDate: string,
+  now: Date = new Date(),
+): number | null {
+  const days = daysSinceEvent(eventDate, now);
+  if (days < 0 || days >= UPLOAD_GRACE_DAYS) return null;
+  return UPLOAD_GRACE_DAYS - 1 - days;
+}
+
+// Public catalog seed — readers can reference but we recompute state on read.
+export const EVENT_CATALOG: ReadonlyArray<ListEvent> = SEED.map((e) => ({
+  ...e,
+  state: deriveEventState(e.date),
+}));
 
 // Mocked per-event "photos found of you" counts for the demo Race Log.
 // Real value comes from ai-api face-search results scoped to the event +
@@ -162,27 +208,44 @@ export function getEventById(id: string): ListEvent | undefined {
 export function getCatalogWithOverrides(
   seed: ReadonlyArray<ListEvent> = EVENT_CATALOG,
 ): ReadonlyArray<ListEvent> {
-  const overrides = useAdminEventOverridesStore.getState().overrides;
-  if (Object.keys(overrides).length === 0) return seed;
-  return seed.map((e) => {
-    const patch = overrides[e.id];
-    return patch ? { ...e, ...patch } : e;
-  });
+  const store = useAdminEventOverridesStore.getState();
+  return mergeAdminCatalog(seed, store.overrides, store.submissions, store.tombstones);
 }
 
 // Reactive hook. Subscribes to the admin override store so the consuming
-// component re-renders when admin flips a state. Pass a custom `seed` only
-// if the page received its own (e.g. the server-rendered /events page that
-// hydrates EventsBrowser with the canonical seed).
+// component re-renders when admin creates/edits/deletes. Pass a custom `seed`
+// only if the page received its own (e.g. the server-rendered /events page).
 export function useEventCatalog(
   seed: ReadonlyArray<ListEvent> = EVENT_CATALOG,
 ): ReadonlyArray<ListEvent> {
   const overrides = useAdminEventOverridesStore((s) => s.overrides);
-  return useMemo(() => {
-    if (Object.keys(overrides).length === 0) return seed;
-    return seed.map((e) => {
+  const submissions = useAdminEventOverridesStore((s) => s.submissions);
+  const tombstones = useAdminEventOverridesStore((s) => s.tombstones);
+  return useMemo(
+    () => mergeAdminCatalog(seed, overrides, submissions, tombstones),
+    [seed, overrides, submissions, tombstones],
+  );
+}
+
+function mergeAdminCatalog(
+  seed: ReadonlyArray<ListEvent>,
+  overrides: Record<string, Partial<ListEvent>>,
+  submissions: ReadonlyArray<ListEvent>,
+  tombstones: ReadonlyArray<string>,
+): ReadonlyArray<ListEvent> {
+  const tombstoned = new Set(tombstones);
+  const patched = seed
+    .filter((e) => !tombstoned.has(e.id))
+    .map((e) => {
       const patch = overrides[e.id];
-      return patch ? { ...e, ...patch } : e;
+      if (!patch) return e;
+      const merged = { ...e, ...patch };
+      // Derived state always wins over any stale `state` patch the store
+      // may carry (legacy `setEventState` calls). Date can change via edit;
+      // recompute from the merged date.
+      merged.state = deriveEventState(merged.date);
+      return merged;
     });
-  }, [seed, overrides]);
+  // Submissions go in front so they sort naturally with the rest.
+  return [...submissions, ...patched];
 }

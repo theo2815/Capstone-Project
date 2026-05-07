@@ -1,11 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { Pagination } from "@/components/ui/pagination";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { useAdminUserStore } from "@/store/admin-user-store";
+import {
+  notifyVerificationApproved,
+  notifyVerificationRejected,
+} from "@/lib/admin-photographer-notifications";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useUrlState } from "@/hooks/use-url-state";
@@ -14,12 +19,23 @@ import {
   useQueueKeyboardNav,
   useDrawerVerbs,
 } from "@/hooks/use-admin-keyboard";
-import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
+import {
+  PAYOUT_METHOD_LABEL,
+  SOCIAL_PLATFORM_LABEL,
+  SOCIAL_PLATFORM_TILE,
+  usePhotographerSettingsStore,
+} from "@/store/photographer-settings-store";
 import {
   ADMIN_USER_SEED,
   type AdminUserRow,
   type PhotographerSettingsSnapshot,
 } from "@/lib/admin-user-registry";
+import {
+  useEffectivePhotographerSettings,
+  type EffectivePhotographerSettings,
+} from "@/lib/admin-photographer-view";
+import { formatPayoutNumber } from "@/lib/payout-format";
+import { formatRegionLabel } from "@/lib/ph-regions";
 
 // Verifications queue body — extracted from /admin/verifications/page.tsx so
 // /admin/inbox can render the same three slabs (Open queue · Incomplete ·
@@ -205,7 +221,16 @@ export function VerificationsQueue() {
 
   function handleBulkApprove() {
     const ids = Array.from(selected);
-    for (const id of ids) approve(id);
+    for (const id of ids) {
+      const target = byId.get(id);
+      approve(id);
+      if (target) {
+        notifyVerificationApproved({
+          photographerId: id,
+          brandName: target.brandName ?? target.name,
+        });
+      }
+    }
     clearSelection();
     showToast({
       kind: "success",
@@ -217,7 +242,17 @@ export function VerificationsQueue() {
 
   function handleBulkRejectSubmit(reason: string) {
     const ids = Array.from(selected);
-    for (const id of ids) reject(id, reason);
+    for (const id of ids) {
+      const target = byId.get(id);
+      reject(id, reason);
+      if (target) {
+        notifyVerificationRejected({
+          photographerId: id,
+          brandName: target.brandName ?? target.name,
+          reason,
+        });
+      }
+    }
     setBulkRejectOpen(false);
     clearSelection();
     showToast({
@@ -230,22 +265,27 @@ export function VerificationsQueue() {
 
   function handleDrawerApprove() {
     if (!openRow) return;
+    const brand = openRow.brandName ?? openRow.name;
     approve(openRow.userId);
-    showToast({
-      kind: "success",
-      message: `Approved · ${openRow.brandName ?? openRow.name}`,
+    notifyVerificationApproved({
+      photographerId: openRow.userId,
+      brandName: brand,
     });
+    showToast({ kind: "success", message: `Approved · ${brand}` });
     setRowId("");
   }
 
   function handleDrawerRejectSubmit(reason: string) {
     if (!openRow) return;
+    const brand = openRow.brandName ?? openRow.name;
     reject(openRow.userId, reason);
-    setDrawerRejectOpen(false);
-    showToast({
-      kind: "info",
-      message: `Sent back · ${openRow.brandName ?? openRow.name}`,
+    notifyVerificationRejected({
+      photographerId: openRow.userId,
+      brandName: brand,
+      reason,
     });
+    setDrawerRejectOpen(false);
+    showToast({ kind: "info", message: `Sent back · ${brand}` });
     setRowId("");
   }
 
@@ -616,21 +656,37 @@ function PendingRow({
 function VerificationDetailBody({ row }: { row: AdminUserRow }) {
   const { user: sessionUser } = useAuth();
   const liveSettings = usePhotographerSettingsStore();
+  const effective = useEffectivePhotographerSettings(row.userId);
 
   const isSelf = sessionUser?.id === row.userId;
-  const liveSnapshot: PhotographerSettingsSnapshot | null = isSelf
+  const liveSnapshot: PhotographerSettingsSnapshot | null = effective
     ? {
-        hasCover: !!liveSettings.cover,
-        hasBrandName: liveSettings.brandName.trim().length > 0,
-        hasWatermark: !!liveSettings.watermark,
-        hasHandle: liveSettings.handle.trim().length >= 3,
-        hasRegion: !!liveSettings.region,
-        socialCount: liveSettings.socials.length,
-        payoutCount: liveSettings.payouts.length,
+        hasCover: !!effective.cover,
+        hasBrandName: effective.brandName.trim().length > 0,
+        hasWatermark: !!effective.watermark,
+        hasHandle: effective.handle.trim().length >= 3,
+        hasRegion: !!effective.region,
+        socialCount: effective.socials.length,
+        payoutCount: effective.payouts.length,
       }
-    : row.settingsSnapshot;
+    : isSelf
+      ? {
+          hasCover: !!liveSettings.cover,
+          hasBrandName: liveSettings.brandName.trim().length > 0,
+          hasWatermark: !!liveSettings.watermark,
+          hasHandle: liveSettings.handle.trim().length >= 3,
+          hasRegion: !!liveSettings.region,
+          socialCount: liveSettings.socials.length,
+          payoutCount: liveSettings.payouts.length,
+        }
+      : row.settingsSnapshot;
 
   const completeness = computeCompleteness(liveSnapshot);
+  const resolvedRegion = effective?.region
+    ? formatRegionLabel(effective.region.regionCode, effective.region.provinceCode)
+    : null;
+  const regionLine = resolvedRegion ?? row.region ?? "Not set";
+  const publicHandle = effective?.handle?.trim() || row.handle || "";
 
   return (
     <div className="space-y-10">
@@ -648,17 +704,23 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
           />
           <FieldRow
             label="Handle"
-            value={row.handle ? `@${row.handle}` : "—"}
+            value={publicHandle ? `@${publicHandle}` : "—"}
             mono
           />
           <FieldRow label="City" value={row.city} mono={false} />
-          <FieldRow
-            label="Region"
-            value={row.region ?? "Not set"}
-            mono={false}
-          />
+          <FieldRow label="Region" value={regionLine} mono={false} />
         </dl>
       </section>
+
+      <CoverSection effective={effective} />
+
+      <PublicUrlSection handle={publicHandle} />
+
+      <WatermarkSection effective={effective} brand={row.brandName ?? row.name} />
+
+      <SocialsSection effective={effective} />
+
+      <PayoutsSection effective={effective} />
 
       <section>
         <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
@@ -724,6 +786,216 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
         </dl>
       </section>
     </div>
+  );
+}
+
+function CoverSection({
+  effective,
+}: {
+  effective: EffectivePhotographerSettings | null;
+}) {
+  const cover = effective?.cover ?? null;
+  return (
+    <section>
+      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        Public profile cover
+      </p>
+      {!cover ? (
+        <p className="font-sans text-sm text-slate-soft">
+          No cover banner uploaded.
+        </p>
+      ) : (
+        <div className="relative bg-bone-deep border border-line rounded-2xl aspect-[16/7] md:aspect-[16/5] overflow-hidden">
+          {cover.kind === "image" ? (
+            // eslint-disable-next-line @next/next/no-img-element -- data URL preview; backend serves signed S3 URL.
+            <img
+              src={cover.url}
+              alt=""
+              className="size-full object-cover"
+              draggable={false}
+            />
+          ) : (
+            <div
+              aria-hidden
+              className="size-full"
+              style={{
+                background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
+              }}
+            />
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PublicUrlSection({ handle }: { handle: string }) {
+  return (
+    <section>
+      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        Public URL
+      </p>
+      {!handle ? (
+        <p className="font-sans text-sm text-slate-soft">
+          No handle set yet.
+        </p>
+      ) : (
+        <div className="flex items-center justify-between gap-4 flex-wrap rounded-2xl border border-line bg-bone-deep px-4 py-3">
+          <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-ink tnum truncate">
+            quickpitik.com/{handle}
+          </p>
+          <Link
+            href={`/${handle}`}
+            target="_blank"
+            rel="noopener"
+            className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+          >
+            Open ↗
+          </Link>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function WatermarkSection({
+  effective,
+  brand,
+}: {
+  effective: EffectivePhotographerSettings | null;
+  brand: string;
+}) {
+  const watermark = effective?.watermark ?? null;
+  return (
+    <section>
+      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        Watermark
+      </p>
+      {!watermark ? (
+        <p className="font-sans text-sm text-slate-soft">
+          No watermark uploaded.
+        </p>
+      ) : (
+        <div className="rounded-2xl border border-line bg-bone-deep p-6 md:p-8 flex items-center justify-center min-h-[120px]">
+          {watermark.kind === "image" ? (
+            // eslint-disable-next-line @next/next/no-img-element -- data URL preview from photographer settings store; backend serves signed S3 URL.
+            <img
+              src={watermark.dataUrl}
+              alt={`${brand} watermark`}
+              className="max-h-24 max-w-full object-contain"
+              draggable={false}
+            />
+          ) : (
+            <span
+              className="font-mono uppercase tracking-[0.4em] text-2xl md:text-3xl text-ink/70"
+              aria-label={`Watermark label: ${watermark.label}`}
+            >
+              © {watermark.label}
+            </span>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SocialsSection({
+  effective,
+}: {
+  effective: EffectivePhotographerSettings | null;
+}) {
+  const socials = effective?.socials ?? [];
+  return (
+    <section>
+      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        Social & verification links · {socials.length}{" "}
+        {socials.length === 1 ? "link" : "links"}
+      </p>
+      {socials.length === 0 ? (
+        <p className="font-sans text-sm text-slate-soft">
+          No social profiles linked yet.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {socials.map((social) => (
+            <li
+              key={social.id}
+              className="flex items-center gap-4 border-b border-line pb-3"
+            >
+              <span
+                aria-hidden
+                className="shrink-0 size-10 rounded-xl border border-line bg-bone-deep flex items-center justify-center font-mono uppercase tracking-[0.15em] text-[13px] text-ink"
+              >
+                {SOCIAL_PLATFORM_TILE[social.platform]}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-display text-base text-ink">
+                  {SOCIAL_PLATFORM_LABEL[social.platform]}
+                </p>
+                <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-slate-soft mt-0.5 truncate">
+                  {social.url}
+                </p>
+              </div>
+              <a
+                href={social.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+              >
+                Open ↗
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function PayoutsSection({
+  effective,
+}: {
+  effective: EffectivePhotographerSettings | null;
+}) {
+  const payouts = effective?.payouts ?? [];
+  return (
+    <section>
+      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        Payout accounts · {payouts.length}{" "}
+        {payouts.length === 1 ? "account" : "accounts"}
+      </p>
+      {payouts.length === 0 ? (
+        <p className="font-sans text-sm text-slate-soft">
+          No payout accounts on file.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {payouts.map((p) => (
+            <li
+              key={p.id}
+              className="flex items-center justify-between gap-4 border-b border-line pb-3"
+            >
+              <div className="min-w-0">
+                <p className="font-display text-base text-ink truncate">
+                  {PAYOUT_METHOD_LABEL[p.method]}
+                  {p.isPrimary && (
+                    <span className="ml-2 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh tnum">
+                      Primary
+                    </span>
+                  )}
+                </p>
+                <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+                  {formatPayoutNumber(p.method, p.accountNumber)}
+                </p>
+              </div>
+              <p className="font-sans text-sm text-slate-soft truncate">
+                {p.accountName}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

@@ -43,6 +43,7 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
     nestedPrefix: ROUTES.ADMIN_PHOTOGRAPHERS,
   },
   { href: ROUTES.ADMIN_OVERVIEW, label: "Overview" },
+  { href: ROUTES.ADMIN_SALES, label: "Sales" },
 ];
 
 const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED

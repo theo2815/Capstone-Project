@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   PhotographerMessage,
+  PhotographerMessageCta,
   PhotographerMessageKind,
 } from "@/lib/photographer-messages";
 
@@ -22,6 +23,7 @@ export interface AddMessagePayload {
   body: string;
   payoutCycleId?: string;
   reportId?: string;
+  cta?: PhotographerMessageCta;
 }
 
 interface PhotographerMessageState {
@@ -56,6 +58,7 @@ export const usePhotographerMessageStore = create<PhotographerMessageState>(
         body: payload.body,
         payoutCycleId: payload.payoutCycleId,
         reportId: payload.reportId,
+        cta: payload.cta,
         createdAt: nowIso(),
         readAt: null,
       };

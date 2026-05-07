@@ -168,6 +168,13 @@ const PAGE_SEEDS: ReadonlyArray<PageSeed> = [
     route: `${ROUTES.ADMIN_EVENTS}/new`,
     keywords: ["create", "add", "event"],
   },
+  {
+    id: "page:sales",
+    title: "Sales",
+    subtitle: "Revenue intelligence · GMV, platform cut, top performers",
+    route: ROUTES.ADMIN_SALES,
+    keywords: ["revenue", "money", "gmv", "earnings", "cut", "income"],
+  },
 ];
 
 function mergeRow(
