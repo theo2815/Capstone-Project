@@ -10,6 +10,13 @@ import { isSafeRedirect } from "@/lib/redirect";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types/user";
 import { AuthDivider, GoogleButton } from "@/components/auth/google-button";
+import { FieldError } from "@/components/ui/field-error";
+import {
+  NAME_MAX,
+  validateEmail,
+  validateName,
+  validatePassword,
+} from "@/lib/auth-validation";
 
 interface RoleOption {
   value: Role;
@@ -30,6 +37,12 @@ function pad2(n: number): string {
   return n.toString().padStart(2, "0");
 }
 
+interface FieldErrors {
+  name?: string | null;
+  email?: string | null;
+  password?: string | null;
+}
+
 export function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -44,19 +57,34 @@ export function RegisterForm() {
   const [role, setRole] = useState<Role>(() =>
     resolveInitialRole(searchParams.get("role")),
   );
-  const [error, setError] = useState("");
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  function clearFieldError(field: keyof FieldErrors) {
+    if (errors[field] || submitError) {
+      setErrors((prev) => ({ ...prev, [field]: null }));
+      setSubmitError(null);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError("");
-    setIsLoading(true);
+    const next: FieldErrors = {
+      name: validateName(name),
+      email: validateEmail(email),
+      password: validatePassword(password),
+    };
+    setErrors(next);
+    setSubmitError(null);
+    if (next.name || next.email || next.password) return;
 
+    setIsLoading(true);
     try {
-      await register({ name, email, password, role });
+      await register({ name: name.trim(), email: email.trim(), password, role });
       router.push(redirectTo);
     } catch (err) {
-      setError(
+      setSubmitError(
         err instanceof ApiError
           ? err.message
           : "Registration failed. Please try again.",
@@ -67,7 +95,7 @@ export function RegisterForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="stagger-children space-y-7">
+    <form onSubmit={handleSubmit} noValidate className="stagger-children space-y-7">
       <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
         Create account
       </p>
@@ -138,13 +166,18 @@ export function RegisterForm() {
           <input
             id="name"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              clearFieldError("name");
+            }}
             placeholder="Juan dela Cruz"
             autoComplete="name"
-            required
-            aria-invalid={!!error}
+            maxLength={NAME_MAX}
+            aria-invalid={!!errors.name}
+            aria-describedby={errors.name ? "name-error" : undefined}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
           />
+          <FieldError message={errors.name} id="name-error" density="tight" />
         </FieldBlock>
 
         <FieldBlock>
@@ -158,13 +191,17 @@ export function RegisterForm() {
             id="email"
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              clearFieldError("email");
+            }}
             placeholder="you@example.com"
             autoComplete="email"
-            required
-            aria-invalid={!!error}
+            aria-invalid={!!errors.email}
+            aria-describedby={errors.email ? "email-error" : undefined}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
           />
+          <FieldError message={errors.email} id="email-error" density="tight" />
         </FieldBlock>
 
         <FieldBlock>
@@ -181,25 +218,25 @@ export function RegisterForm() {
             id="password"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              clearFieldError("password");
+            }}
             placeholder="••••••••"
             autoComplete="new-password"
-            minLength={8}
-            required
-            aria-invalid={!!error}
+            aria-invalid={!!errors.password}
+            aria-describedby={errors.password ? "password-error" : undefined}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
+          />
+          <FieldError
+            message={errors.password}
+            id="password-error"
+            density="tight"
           />
         </FieldBlock>
       </div>
 
-      {error && (
-        <p
-          role="alert"
-          className="font-mono uppercase tracking-[0.15em] text-[11px] text-error"
-        >
-          {error}
-        </p>
-      )}
+      <FieldError message={submitError} id="register-submit-error" />
 
       <button
         type="submit"

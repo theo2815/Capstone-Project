@@ -92,9 +92,9 @@ export function validateHandle(handle: string): string | null {
   const cleaned = handle.trim().toLowerCase();
   if (cleaned.length === 0) return "Handle is required.";
   if (cleaned.length < 3) return "Handle must be at least 3 characters.";
-  if (cleaned.length > 32) return "Handle must be 32 characters or fewer.";
+  if (cleaned.length > 32) return "Handle is limited to 32 characters.";
   if (!isValidHandleFormat(cleaned)) {
-    return "Use lowercase letters, numbers, and single dashes.";
+    return "Use lowercase letters, numbers, and dashes. No spaces or symbols.";
   }
   if (isReservedHandle(cleaned)) {
     return "That handle is reserved. Try another.";

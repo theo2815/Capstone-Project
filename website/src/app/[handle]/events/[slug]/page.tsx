@@ -1,13 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import {
-  notFound,
-  usePathname,
-  useRouter,
-  useSearchParams,
-  useParams,
-} from "next/navigation";
+import { notFound, useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { SiteHeader } from "@/components/layout/site-header";
 import { ProfileShellFooter } from "@/components/profile-shell";
@@ -17,6 +11,9 @@ import { FindPhotosModal } from "@/components/events/find-photos-modal";
 import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
 import { Kicker } from "@/components/ui/kicker";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { useUrlState } from "@/hooks/use-url-state";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
 import { isReservedHandle } from "@/lib/reserved-handles";
@@ -135,10 +132,6 @@ function Gallery({
   profile: PhotographerProfile;
   event: EventDetail;
 }) {
-  const sp = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname();
-
   const coverage = profile.events.find((e) => e.eventSlug === event.slug);
   const photoCount = coverage?.photoCount ?? 0;
   const accent =
@@ -151,28 +144,21 @@ function Gallery({
     [profile.handle, event, photoCount],
   );
 
-  const initialBib = (sp.get("bib") ?? "").trim().toUpperCase();
-  const [bibFilter, setBibFilter] = useState<string>(initialBib);
+  const [bibFilter, setBibFilter] = useUrlState<string>("bib", "", {
+    parse: (raw) => raw.trim().toUpperCase(),
+  });
   const [searchOpen, setSearchOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-
-  const replaceBib = (next: string | null) => {
-    const params = new URLSearchParams();
-    if (next) params.set("bib", next);
-    const qs = params.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  };
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PHOTO_INITIAL);
 
   const submitBib = (raw: string) => {
     const clean = raw.trim().toUpperCase();
     if (!clean) return;
     setBibFilter(clean);
-    replaceBib(clean);
   };
 
   const clearBib = () => {
     setBibFilter("");
-    replaceBib(null);
   };
 
   const cleanedQuery = bibFilter.replace(/^B-/i, "").trim().toUpperCase();
@@ -188,15 +174,24 @@ function Gallery({
   }, [photos, cleanedQuery, isFiltered]);
 
   useEffect(() => {
-    if (previewIndex !== null && previewIndex >= visible.length) {
-      setPreviewIndex(visible.length === 0 ? null : visible.length - 1);
+    setLoadedCount(PAGE_SIZE.PHOTO_INITIAL);
+  }, [cleanedQuery]);
+
+  const visibleSlice = useMemo(
+    () => visible.slice(0, loadedCount),
+    [visible, loadedCount],
+  );
+
+  useEffect(() => {
+    if (previewIndex !== null && previewIndex >= visibleSlice.length) {
+      setPreviewIndex(visibleSlice.length === 0 ? null : visibleSlice.length - 1);
     }
-  }, [visible.length, previewIndex]);
+  }, [visibleSlice.length, previewIndex]);
 
   const total = visible.reduce((sum, p) => sum + p.price, 0);
   const showBuyAll = isFiltered && visible.length > 0;
   const previewPhoto =
-    previewIndex !== null ? visible[previewIndex] ?? null : null;
+    previewIndex !== null ? visibleSlice[previewIndex] ?? null : null;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -344,17 +339,28 @@ function Gallery({
               ctaLabel={`Or skim ${profile.displayName}'s gallery →`}
             />
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
-              {visible.map((p, i) => (
-                <PhotoMosaicTile
-                  key={p.id}
-                  event={event}
-                  photo={p}
-                  index={i}
-                  onOpen={() => setPreviewIndex(i)}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
+                {visibleSlice.map((p, i) => (
+                  <PhotoMosaicTile
+                    key={p.id}
+                    event={event}
+                    photo={p}
+                    index={i}
+                    onOpen={() => setPreviewIndex(i)}
+                  />
+                ))}
+              </div>
+              <LoadMoreButton
+                shown={visibleSlice.length}
+                total={visible.length}
+                increment={PAGE_SIZE.PHOTO_INCREMENT}
+                onLoadMore={() =>
+                  setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT)
+                }
+                countSuffix={isFiltered ? `· BIB ${bibFilter}` : undefined}
+              />
+            </>
           )}
         </div>
       </div>
@@ -376,7 +382,7 @@ function Gallery({
           event={event}
           photo={previewPhoto}
           index={previewIndex}
-          total={visible.length}
+          total={visibleSlice.length}
           onClose={() => setPreviewIndex(null)}
           onPrev={
             previewIndex > 0
@@ -384,7 +390,7 @@ function Gallery({
               : undefined
           }
           onNext={
-            previewIndex < visible.length - 1
+            previewIndex < visibleSlice.length - 1
               ? () => setPreviewIndex(previewIndex + 1)
               : undefined
           }

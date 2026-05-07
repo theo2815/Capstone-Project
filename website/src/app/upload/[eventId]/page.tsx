@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -14,12 +15,15 @@ import {
 import type { EventState, ListEvent } from "@/app/events/events-browser";
 import { VerificationBanner } from "@/components/dashboard/verification-banner";
 import { SiteHeader } from "@/components/layout/site-header";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import { useToast } from "@/hooks/use-toast";
 import { ROUTES } from "@/lib/constants";
 import { getEventById } from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
 import { ACCEPTED_IMAGE_MIME, MAX_UPLOAD_BYTES } from "@/lib/image-utils";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { cn } from "@/lib/utils";
 
 // Auto-upload mode. Photos go straight to the gallery as they finish — there
@@ -29,6 +33,15 @@ import { cn } from "@/lib/utils";
 // 1500-photo coverage across three parallel tabs.
 
 const BATCH_LIMIT = 500;
+
+// Per-tick failure probability inside the mock upload loop. Real backend will
+// surface actual XHR errors via setEntries — this exists only so the Try-again
+// + Retry-failed affordances have something to retry against in the website-
+// only first pass. With ~6 ticks per file, the per-file fail rate lands around
+// 9 % — enough to surface single-row and bulk retry flows during pre-flight
+// without flooding a normal batch.
+// TODO(backend): remove when api.post + XHR onerror replaces the mock tick.
+const MOCK_UPLOAD_FAIL_PROB = 0.015;
 
 const STATE_LABEL: Record<EventState, string> = {
   live: "LIVE",
@@ -44,6 +57,10 @@ interface UploadEntry {
   /** 0..100 — mock progress, real backend will stream actual bytes. */
   progress: number;
   error?: string;
+  /** True when the error happened during upload (network glitch — same file
+   *  could succeed on a retry). False when the file was rejected by
+   *  validation — same file means same error, so retry would mislead. */
+  retryable?: boolean;
 }
 
 export default function FocusedUploadPage() {
@@ -65,7 +82,13 @@ export default function FocusedUploadPage() {
         <BackChip />
         <Hero event={event} />
         <VerificationBanner />
-        <UploadGate event={event} />
+        {/* Boundary scoped to the gate + dropzone so a thrown error in the
+            upload pipeline (drag handler, batch validator, mock progress
+            tick) keeps the back chip + hero usable. The header is outside
+            the boundary so the user can always navigate away. */}
+        <ErrorBoundary>
+          <UploadGate event={event} />
+        </ErrorBoundary>
       </div>
     </main>
   );
@@ -214,6 +237,7 @@ function UploadForm({ event }: { event: ListEvent }) {
           status: error ? "error" : "queued",
           progress: 0,
           error,
+          retryable: false,
         };
       });
 
@@ -227,11 +251,19 @@ function UploadForm({ event }: { event: ListEvent }) {
         showToast({
           kind: "error",
           message: `${dropped.toLocaleString()} photo${dropped === 1 ? "" : "s"} skipped — over the ${BATCH_LIMIT.toLocaleString()}-per-batch limit.`,
+          // Lengthen the dwell when the dropped count is larger than what a
+          // glance can absorb in 4 s. 6 s is the longest dwell the toast
+          // store currently honors without feeling sticky.
+          duration: dropped > 5 ? 6000 : undefined,
         });
       }
     },
     [entries.length, showToast],
   );
+
+  // Bumped on retry so the upload effect re-fires even when entries.length
+  // hasn't changed (retried entries flip back to queued in place).
+  const [retryNonce, setRetryNonce] = useState(0);
 
   // Auto-upload: every queued file flows queued → uploading → done. There's
   // no separate publish step — done == in the gallery (web uploads go straight
@@ -254,6 +286,24 @@ function UploadForm({ event }: { event: ListEvent }) {
 
         let pct = 0;
         const tick = () => {
+          // Mock a transient network failure mid-upload. See
+          // MOCK_UPLOAD_FAIL_PROB above for the rationale.
+          if (Math.random() < MOCK_UPLOAD_FAIL_PROB) {
+            setEntries((prev) =>
+              prev.map((p) =>
+                p.id === entry.id
+                  ? {
+                      ...p,
+                      status: "error",
+                      error: "Upload failed.",
+                      progress: 0,
+                      retryable: true,
+                    }
+                  : p,
+              ),
+            );
+            return;
+          }
           pct += Math.random() * 18 + 6;
           if (pct >= 100) {
             setEntries((prev) =>
@@ -276,7 +326,7 @@ function UploadForm({ event }: { event: ListEvent }) {
       }, delay);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries.length]);
+  }, [entries.length, retryNonce]);
 
   function handleSelect(e: ChangeEvent<HTMLInputElement>) {
     if (e.target.files) {
@@ -314,13 +364,43 @@ function UploadForm({ event }: { event: ListEvent }) {
     if (dragCounter.current === 0) setDragActive(false);
   }
 
-  function clearOne(id: string) {
+  const clearOne = useCallback((id: string) => {
     setEntries((prev) => prev.filter((p) => p.id !== id));
-  }
+  }, []);
 
   function clearErrored() {
     setEntries((prev) => prev.filter((p) => p.status !== "error"));
   }
+
+  // Reset a single retryable error back to queued so the upload effect picks
+  // it up again. retryNonce++ guarantees the effect re-fires even though
+  // entries.length hasn't changed.
+  const retryOne = useCallback((id: string) => {
+    setEntries((prev) =>
+      prev.map((p) =>
+        p.id === id && p.status === "error" && p.retryable
+          ? { ...p, status: "queued", progress: 0, error: undefined }
+          : p,
+      ),
+    );
+    setRetryNonce((n) => n + 1);
+  }, []);
+
+  function retryAllFailed() {
+    setEntries((prev) =>
+      prev.map((p) =>
+        p.status === "error" && p.retryable
+          ? { ...p, status: "queued", progress: 0, error: undefined }
+          : p,
+      ),
+    );
+    setRetryNonce((n) => n + 1);
+  }
+
+  const retryableErroredCount = useMemo(
+    () => entries.filter((e) => e.status === "error" && e.retryable).length,
+    [entries],
+  );
 
   return (
     <>
@@ -412,8 +492,11 @@ function UploadForm({ event }: { event: ListEvent }) {
           inFlight={inFlight.length}
           validTotal={validEntries.length}
           overallPct={overallPct}
+          retryableErroredCount={retryableErroredCount}
           onClearAll={() => setEntries([])}
           onRemove={clearOne}
+          onRetry={retryOne}
+          onRetryAllFailed={retryAllFailed}
         />
       )}
 
@@ -428,31 +511,55 @@ function StagedSection({
   inFlight,
   validTotal,
   overallPct,
+  retryableErroredCount,
   onClearAll,
   onRemove,
+  onRetry,
+  onRetryAllFailed,
 }: {
   entries: UploadEntry[];
   done: number;
   inFlight: number;
   validTotal: number;
   overallPct: number;
+  retryableErroredCount: number;
   onClearAll: () => void;
   onRemove: (id: string) => void;
+  onRetry: (id: string) => void;
+  onRetryAllFailed: () => void;
 }) {
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.STAGED_INITIAL);
+  const visibleSlice = entries.slice(0, loadedCount);
+
   return (
     <section className="mb-10">
-      <div className="flex items-baseline justify-between border-b border-line pb-4 mb-6 gap-4">
+      <div className="flex items-baseline justify-between border-b border-line pb-4 mb-6 gap-4 flex-wrap">
         <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum">
           <span className="text-ink">{entries.length.toLocaleString()}</span>{" "}
           staged
         </p>
-        <button
-          type="button"
-          onClick={onClearAll}
-          className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
-        >
-          Clear all
-        </button>
+        <div className="flex items-baseline gap-5">
+          {retryableErroredCount > 0 && (
+            <button
+              type="button"
+              onClick={onRetryAllFailed}
+              className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
+            >
+              Retry{" "}
+              <span className="tnum">
+                {retryableErroredCount.toLocaleString()}
+              </span>{" "}
+              failed
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClearAll}
+            className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
+          >
+            Clear all
+          </button>
+        </div>
       </div>
 
       <OverallProgress
@@ -463,12 +570,20 @@ function StagedSection({
       />
 
       <ul className="divide-y divide-line">
-        {entries.map((entry) => (
+        {visibleSlice.map((entry) => (
           <li key={entry.id}>
-            <QueueRow entry={entry} onRemove={onRemove} />
+            <QueueRow entry={entry} onRemove={onRemove} onRetry={onRetry} />
           </li>
         ))}
       </ul>
+      <LoadMoreButton
+        shown={visibleSlice.length}
+        total={entries.length}
+        increment={PAGE_SIZE.STAGED_INCREMENT}
+        onLoadMore={() =>
+          setLoadedCount((n) => n + PAGE_SIZE.STAGED_INCREMENT)
+        }
+      />
     </section>
   );
 }
@@ -550,14 +665,21 @@ function UploadMoreFooter({ href }: { href: string }) {
   );
 }
 
-function QueueRow({
+// Memoized so off-batch rows don't re-render on every progress tick. A 500-photo
+// batch ticks setEntries every ~90 ms; without memo, every row re-renders each
+// tick (12k renders/sec). With memo + identity-stable onRemove/onRetry, only
+// the row whose entry reference changed re-renders.
+const QueueRow = memo(function QueueRow({
   entry,
   onRemove,
+  onRetry,
 }: {
   entry: UploadEntry;
   onRemove: (id: string) => void;
+  onRetry: (id: string) => void;
 }) {
   const status = entry.status;
+  const canRetry = status === "error" && entry.retryable === true;
 
   return (
     <div className="py-4 md:py-5 flex items-center gap-4">
@@ -605,17 +727,29 @@ function QueueRow({
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => onRemove(entry.id)}
-        aria-label={`Remove ${entry.file.name}`}
-        className="font-mono text-[10px] tracking-[0.15em] uppercase text-slate hover:text-error transition-colors px-2 py-1 shrink-0"
-      >
-        Remove
-      </button>
+      <div className="flex items-center gap-1 shrink-0">
+        {canRetry && (
+          <button
+            type="button"
+            onClick={() => onRetry(entry.id)}
+            aria-label={`Try uploading ${entry.file.name} again`}
+            className="font-mono text-[10px] tracking-[0.15em] uppercase text-slate hover:text-ink transition-colors px-2 py-1"
+          >
+            Try again
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => onRemove(entry.id)}
+          aria-label={`Remove ${entry.file.name}`}
+          className="font-mono text-[10px] tracking-[0.15em] uppercase text-slate hover:text-error transition-colors px-2 py-1"
+        >
+          Remove
+        </button>
+      </div>
     </div>
   );
-}
+});
 
 function validate(file: File): string | undefined {
   if (!ACCEPTED_IMAGE_MIME.includes(file.type)) {

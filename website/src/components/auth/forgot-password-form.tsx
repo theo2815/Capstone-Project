@@ -4,6 +4,8 @@ import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { ROUTES } from "@/lib/constants";
 import { api, ApiError } from "@/lib/api";
+import { validateEmail } from "@/lib/auth-validation";
+import { FieldError } from "@/components/ui/field-error";
 
 type Status = "request" | "sent";
 
@@ -11,20 +13,24 @@ export function ForgotPasswordForm() {
   const [status, setStatus] = useState<Status>("request");
   const [email, setEmail] = useState("");
   const [submittedEmail, setSubmittedEmail] = useState("");
-  const [error, setError] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError("");
-    setIsLoading(true);
+    const fieldError = validateEmail(email);
+    setEmailError(fieldError);
+    setSubmitError(null);
+    if (fieldError) return;
 
+    setIsLoading(true);
     try {
-      await api.post("/auth/forgot-password", { email });
-      setSubmittedEmail(email);
+      await api.post("/auth/forgot-password", { email: email.trim() });
+      setSubmittedEmail(email.trim());
       setStatus("sent");
     } catch (err) {
-      setError(
+      setSubmitError(
         err instanceof ApiError
           ? err.message
           : "Could not send reset link. Please try again.",
@@ -38,7 +44,8 @@ export function ForgotPasswordForm() {
     setEmail("");
     setSubmittedEmail("");
     setStatus("request");
-    setError("");
+    setEmailError(null);
+    setSubmitError(null);
   }
 
   if (status === "sent") {
@@ -93,7 +100,7 @@ export function ForgotPasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="stagger-children space-y-7">
+    <form onSubmit={handleSubmit} noValidate className="stagger-children space-y-7">
       <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
         Reset access
       </p>
@@ -120,24 +127,22 @@ export function ForgotPasswordForm() {
             id="email"
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (emailError) setEmailError(null);
+              if (submitError) setSubmitError(null);
+            }}
             placeholder="you@example.com"
             autoComplete="email"
-            required
-            aria-invalid={!!error}
+            aria-invalid={!!emailError}
+            aria-describedby={emailError ? "email-error" : undefined}
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
           />
+          <FieldError message={emailError} id="email-error" density="tight" />
         </div>
       </div>
 
-      {error && (
-        <p
-          role="alert"
-          className="font-mono uppercase tracking-[0.15em] text-[11px] text-error"
-        >
-          {error}
-        </p>
-      )}
+      <FieldError message={submitError} id="forgot-submit-error" />
 
       <button
         type="submit"

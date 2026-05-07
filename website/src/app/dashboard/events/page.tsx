@@ -1,8 +1,19 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
+import {
+  EventFilterBar,
+  EventFilterEmpty,
+  matchEventDate,
+  type EventDateKey,
+} from "@/components/dashboard/event-filter-bar";
 import { EventTile } from "@/components/events/event-tile";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { TileSkeleton } from "@/components/ui/skeleton";
 import { getEventById } from "@/lib/event-catalog";
+import { useMockLatency } from "@/lib/mock-latency";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { PHOTOGRAPHER_EVENTS } from "@/lib/photographer-mock";
 
 // Photographer's "events I've covered" list — only events with at least one
@@ -10,20 +21,71 @@ import { PHOTOGRAPHER_EVENTS } from "@/lib/photographer-mock";
 // /dashboard/events/[id].
 
 export default function DashboardEventsPage() {
-  const covered = PHOTOGRAPHER_EVENTS.filter((p) => p.photoCount > 0)
-    .map((p) => {
-      const catalog = getEventById(p.id);
-      return catalog ? { catalog, photographer: p } : null;
-    })
-    .filter(
-      (x): x is { catalog: NonNullable<ReturnType<typeof getEventById>>; photographer: (typeof PHOTOGRAPHER_EVENTS)[number] } =>
-        x !== null,
-    );
+  const { data: rawEvents, isLoading } = useMockLatency(PHOTOGRAPHER_EVENTS);
+
+  const covered = useMemo(
+    () =>
+      (rawEvents ?? [])
+        .filter((p) => p.photoCount > 0)
+        .map((p) => {
+          const catalog = getEventById(p.id);
+          return catalog ? { catalog, photographer: p } : null;
+        })
+        .filter(
+          (
+            x,
+          ): x is {
+            catalog: NonNullable<ReturnType<typeof getEventById>>;
+            photographer: (typeof PHOTOGRAPHER_EVENTS)[number];
+          } => x !== null,
+        ),
+    [rawEvents],
+  );
 
   const trailing =
     covered.length > 0
       ? `${covered.length} event${covered.length === 1 ? "" : "s"}`
       : undefined;
+
+  const [date, setDate] = useState<EventDateKey>("any");
+  const [query, setQuery] = useState("");
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EVENT_GRID_INITIAL);
+
+  const filtered = useMemo(() => {
+    const trimmed = query.trim().toLowerCase();
+    return covered.filter(({ catalog }) => {
+      if (!matchEventDate(catalog.state, date)) return false;
+      if (trimmed) {
+        const hay =
+          `${catalog.name} ${catalog.location} ${catalog.city}`.toLowerCase();
+        if (!hay.includes(trimmed)) return false;
+      }
+      return true;
+    });
+  }, [covered, date, query]);
+
+  const visibleSlice = filtered.slice(0, loadedCount);
+  const clearFilters = () => {
+    setDate("any");
+    setQuery("");
+  };
+
+  if (isLoading) {
+    return (
+      <Slab
+        id="covered"
+        number="01"
+        title="Your covered events"
+        caption="Events where you've uploaded photos"
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
+          {[0, 1, 2, 3].map((i) => (
+            <TileSkeleton key={i} />
+          ))}
+        </div>
+      </Slab>
+    );
+  }
 
   return (
     <Slab
@@ -36,18 +98,42 @@ export default function DashboardEventsPage() {
       {covered.length === 0 ? (
         <CoveredEmpty />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
-          {covered.map(({ catalog, photographer }, i) => (
-            <EventTile
-              key={catalog.id}
-              mode="manage"
-              event={catalog}
-              index={i}
-              photoCount={photographer.photoCount}
-              salesCount={photographer.salesCount}
-            />
-          ))}
-        </div>
+        <>
+          <EventFilterBar
+            date={date}
+            onDateChange={setDate}
+            query={query}
+            onQueryChange={setQuery}
+            dateAriaLabel="Filter covered events by date"
+            searchAriaLabel="Search covered events"
+          />
+          {filtered.length === 0 ? (
+            <EventFilterEmpty onClear={clearFilters} />
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
+                {visibleSlice.map(({ catalog, photographer }, i) => (
+                  <EventTile
+                    key={catalog.id}
+                    mode="manage"
+                    event={catalog}
+                    index={i}
+                    photoCount={photographer.photoCount}
+                    salesCount={photographer.salesCount}
+                  />
+                ))}
+              </div>
+              <LoadMoreButton
+                shown={visibleSlice.length}
+                total={filtered.length}
+                increment={PAGE_SIZE.EVENT_GRID_INCREMENT}
+                onLoadMore={() =>
+                  setLoadedCount((n) => n + PAGE_SIZE.EVENT_GRID_INCREMENT)
+                }
+              />
+            </>
+          )}
+        </>
       )}
     </Slab>
   );

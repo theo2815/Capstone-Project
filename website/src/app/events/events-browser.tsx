@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Event } from "@/types/event";
 import {
   Dropdown,
@@ -9,6 +9,10 @@ import {
 } from "@/components/ui/dropdown";
 import { EventTile } from "@/components/events/event-tile";
 import { Kicker } from "@/components/ui/kicker";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { useEventCatalog } from "@/lib/event-catalog";
+import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 
 export type EventState = "upcoming" | "live" | "open" | "past";
 export type ListEvent = Event & { state: EventState; city: string };
@@ -75,10 +79,14 @@ const SEGMENT_GROUPS: {
   },
 ];
 
-export function EventsBrowser({ events }: EventsBrowserProps) {
-  const [query, setQuery] = useState("");
-  const [city, setCity] = useState<string>("all");
-  const [date, setDate] = useState<DateKey>("any");
+export function EventsBrowser({ events: seed }: EventsBrowserProps) {
+  // Apply admin overrides on top of the SSR-passed seed so admin state
+  // changes propagate to /events without re-fetching.
+  const events = useEventCatalog(seed);
+  const [query, setQuery] = useUrlState<string>("q", "", { debounceMs: 300 });
+  const [city, setCity] = useUrlState<string>("city", "all");
+  const [date, setDate] = useUrlState<DateKey>("date", "any");
+  const setUrlBatch = useUrlStateBatch();
 
   const cityOptions = useMemo(() => {
     const unique = Array.from(new Set(events.map((e) => e.city)));
@@ -107,6 +115,10 @@ export function EventsBrowser({ events }: EventsBrowserProps) {
 
   const liveCount = events.filter((e) => e.state === "live").length;
 
+  const handleClearFilters = () => {
+    setUrlBatch({ city: null, date: null });
+  };
+
   return (
     <>
       <Hero liveCount={liveCount} />
@@ -118,6 +130,7 @@ export function EventsBrowser({ events }: EventsBrowserProps) {
         date={date}
         onDateChange={setDate}
         cityOptions={cityOptions}
+        onClearFilters={handleClearFilters}
       />
       <Results
         events={filtered}
@@ -125,6 +138,7 @@ export function EventsBrowser({ events }: EventsBrowserProps) {
         isFiltered={isFiltered}
         city={city}
         date={date}
+        filterKey={`${trimmed}|${city}|${date}`}
       />
     </>
   );
@@ -268,6 +282,7 @@ function FilterStrip({
   date,
   onDateChange,
   cityOptions,
+  onClearFilters,
 }: {
   query: string;
   onQueryChange: (v: string) => void;
@@ -276,15 +291,13 @@ function FilterStrip({
   date: DateKey;
   onDateChange: (v: DateKey) => void;
   cityOptions: string[];
+  onClearFilters: () => void;
 }) {
   const cityLabel = city === "all" ? "All cities" : city;
   const dateLabel =
     DATE_OPTIONS.find((d) => d.value === date)?.label ?? "Any time";
   const hasActiveFilter = city !== "all" || date !== "any";
-  const handleClearFilters = () => {
-    if (city !== "all") onCityChange("all");
-    if (date !== "any") onDateChange("any");
-  };
+  const handleClearFilters = onClearFilters;
 
   return (
     <div className="sticky top-[3.75rem] z-20 bg-bone/90 backdrop-blur-md border-y border-line">
@@ -405,12 +418,14 @@ function Results({
   isFiltered,
   city,
   date,
+  filterKey,
 }: {
   events: ReadonlyArray<ListEvent>;
   totalCount: number;
   isFiltered: boolean;
   city: string;
   date: DateKey;
+  filterKey: string;
 }) {
   if (events.length === 0) {
     return <EmptyState />;
@@ -444,6 +459,7 @@ function Results({
       totalCount={totalCount}
       city={city}
       date={date}
+      filterKey={filterKey}
     />
   );
 }
@@ -503,16 +519,26 @@ function FlatResults({
   totalCount,
   city,
   date,
+  filterKey,
 }: {
   events: ReadonlyArray<ListEvent>;
   totalCount: number;
   city: string;
   date: DateKey;
+  filterKey: string;
 }) {
   const cityLabel = city === "all" ? "All cities" : city;
   const dateLabel =
     DATE_OPTIONS.find((d) => d.value === date)?.label ?? "Any time";
   const noun = events.length === 1 ? "race" : "races";
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EVENT_GRID_INITIAL);
+
+  useEffect(() => {
+    setLoadedCount(PAGE_SIZE.EVENT_GRID_INITIAL);
+  }, [filterKey]);
+
+  const visibleSlice = events.slice(0, loadedCount);
+
   return (
     <section className="bg-bone px-6 md:px-10 py-14 md:py-20">
       <div className="max-w-7xl mx-auto">
@@ -527,10 +553,18 @@ function FlatResults({
           </Kicker>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
-          {events.map((e, i) => (
+          {visibleSlice.map((e, i) => (
             <EventTile key={e.id} event={e} index={i} />
           ))}
         </div>
+        <LoadMoreButton
+          shown={visibleSlice.length}
+          total={events.length}
+          increment={PAGE_SIZE.EVENT_GRID_INCREMENT}
+          onLoadMore={() =>
+            setLoadedCount((n) => n + PAGE_SIZE.EVENT_GRID_INCREMENT)
+          }
+        />
       </div>
     </section>
   );

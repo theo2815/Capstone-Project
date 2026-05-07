@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { SiteHeader } from "@/components/layout/site-header";
 import { EVENT_CATALOG } from "@/lib/event-catalog";
 import { EventsBrowser } from "./events-browser";
@@ -14,7 +15,9 @@ export default function EventsPage() {
     <main className="bg-bone text-ink relative">
       <SiteHeader />
 
-      <EventsBrowser events={EVENT_CATALOG} />
+      <Suspense fallback={null}>
+        <EventsBrowser events={EVENT_CATALOG} />
+      </Suspense>
 
       <Footer />
     </main>
