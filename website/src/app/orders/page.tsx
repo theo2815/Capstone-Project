@@ -18,6 +18,15 @@ import {
 } from "@/components/photos/photo-preview-card";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { RefundModal } from "@/components/orders/refund-modal";
+import {
+  useAdminDisputeStore,
+  getEffectiveDisputes,
+} from "@/store/admin-dispute-store";
+import {
+  getOrderRefundStatus,
+  type OrderRefundStatus,
+} from "@/lib/refund-helpers";
 import { getEventById } from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
 import { PAGE_SIZE } from "@/lib/pagination-config";
@@ -26,7 +35,7 @@ import {
   formatMonthYear,
   formatPaidAt,
 } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 
 const JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "spend", label: "Spend" },
@@ -43,15 +52,20 @@ export default function OrdersPage() {
 
 function OrdersBody() {
   const { user } = useAuth();
+  const [refundOrder, setRefundOrder] = useState<MockOrder | null>(null);
   if (!user) return null;
 
   const memberSince = formatMemberSince(user.createdAt);
+  const runnerHandle = deriveRunnerHandle(user.email);
+  const refundEvent = refundOrder
+    ? getEventById(refundOrder.eventId)
+    : undefined;
 
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
       <SiteHeader />
-      <div className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10">
-        <div className="md:grid md:grid-cols-[15rem_1fr] md:gap-12 lg:gap-20">
+      <div className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10 flex flex-col">
+        <div className="md:grid md:grid-cols-[15rem_1fr] md:gap-12 lg:gap-20 flex-1">
           <IdentityRail
             user={user}
             kicker={
@@ -70,14 +84,34 @@ function OrdersBody() {
             jumpSections={JUMP_SECTIONS}
             currentPath={ROUTES.ORDERS}
           />
-          <div className="stagger-children min-w-0 pb-8 md:pb-20">
+          <div className="stagger-children min-w-0 pb-8 md:pb-20 md:border-l md:border-line md:-ml-6 lg:-ml-10 md:pl-6 lg:pl-10">
             <SpendSlab />
-            <ReceiptsSlab />
+            <ReceiptsSlab onRefundRequest={setRefundOrder} />
           </div>
         </div>
       </div>
+
+      {refundOrder && (
+        <RefundModal
+          mode="request"
+          isOpen
+          onClose={() => setRefundOrder(null)}
+          order={refundOrder}
+          eventName={refundEvent?.name ?? "—"}
+          photographerHandle=""
+          runnerHandle={runnerHandle}
+        />
+      )}
     </main>
   );
+}
+
+// Mock-only handle derivation for runner-submitted disputes. Backend ships
+// a real `handle` field on User in Phase B; until then we slugify the email
+// local part so the admin queue has something readable.
+function deriveRunnerHandle(email: string): string {
+  const local = email.split("@")[0] ?? "";
+  return local.split(".")[0].toLowerCase() || "runner";
 }
 
 function SpendSlab() {
@@ -147,7 +181,11 @@ function Stat({
   );
 }
 
-function ReceiptsSlab() {
+function ReceiptsSlab({
+  onRefundRequest,
+}: {
+  onRefundRequest: (order: MockOrder) => void;
+}) {
   const orders = useOrdersStore((s) => s.orders);
   const sorted = useMemo(
     () =>
@@ -174,7 +212,10 @@ function ReceiptsSlab() {
           <ul className="border-y border-line divide-y divide-line">
             {visibleSlice.map((order) => (
               <li key={order.id}>
-                <ReceiptRow order={order} />
+                <ReceiptRow
+                  order={order}
+                  onRefundRequest={onRefundRequest}
+                />
               </li>
             ))}
           </ul>
@@ -192,11 +233,26 @@ function ReceiptsSlab() {
   );
 }
 
-function ReceiptRow({ order }: { order: MockOrder }) {
+function ReceiptRow({
+  order,
+  onRefundRequest,
+}: {
+  order: MockOrder;
+  onRefundRequest: (order: MockOrder) => void;
+}) {
   const event = getEventById(order.eventId);
   const [expanded, setExpanded] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const { showToast } = useToast();
+
+  const overrides = useAdminDisputeStore((s) => s.overrides);
+  const submissions = useAdminDisputeStore((s) => s.submissions);
+  const refundStatus = useMemo<OrderRefundStatus>(
+    () => getOrderRefundStatus(order, getEffectiveDisputes(overrides, submissions)),
+    [order, overrides, submissions],
+  );
+  const canRequest =
+    refundStatus.kind === "none" || refundStatus.kind === "rejected";
 
   // Defensive coalesce — backend payloads can ship partial fields and the
   // renderer must not crash on a single bad row. Mock data is always complete;
@@ -270,6 +326,10 @@ function ReceiptRow({ order }: { order: MockOrder }) {
             <span className="text-slate-soft"> · </span>
             <span className="font-mono">{orderLabel}</span>
           </p>
+          <RefundStatusChip
+            status={refundStatus}
+            photoCount={photoCount}
+          />
         </div>
         <div className="flex items-baseline justify-between md:flex-col md:items-end gap-3 md:gap-2 shrink-0">
           <p className="font-mono tnum font-medium text-ink text-xl md:text-2xl">
@@ -324,12 +384,21 @@ function ReceiptRow({ order }: { order: MockOrder }) {
                 <span aria-hidden="true">↓</span>
               </button>
             )}
-            <a
-              href={`mailto:support@quickpitik.com?subject=Receipt ${orderLabel}`}
-              className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
-            >
-              Need help with this order?
-            </a>
+            {canRequest ? (
+              <button
+                type="button"
+                onClick={() => onRefundRequest(order)}
+                className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
+              >
+                Request a refund
+              </button>
+            ) : (
+              <span className="font-sans text-sm text-slate-soft">
+                {refundStatus.kind === "approved"
+                  ? "Refund issued · cannot resubmit"
+                  : "Refund pending review"}
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -460,4 +529,52 @@ function labelForPaymentMethod(method: string): string {
     grabpay: "GrabPay",
   };
   return map[method.toLowerCase()] ?? method;
+}
+
+function RefundStatusChip({
+  status,
+  photoCount,
+}: {
+  status: OrderRefundStatus;
+  photoCount: number;
+}) {
+  if (status.kind === "none") return null;
+
+  const label = (() => {
+    switch (status.kind) {
+      case "pending":
+        return `Refund pending · ${status.pendingCount} of ${photoCount} photo${photoCount === 1 ? "" : "s"}`;
+      case "partial":
+        return `Refund in review · ${status.totalDisputed} of ${photoCount} photo${photoCount === 1 ? "" : "s"}`;
+      case "approved":
+        return `Refund approved · ${formatPrice(status.refundAmount)}`;
+      case "rejected":
+        return `Refund declined`;
+      default:
+        return null;
+    }
+  })();
+
+  if (!label) return null;
+
+  return (
+    <Kicker
+      as="p"
+      tnum
+      className="mt-3 inline-flex items-center gap-2"
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "size-1.5 rounded-full",
+          status.kind === "approved"
+            ? "bg-fresh"
+            : status.kind === "rejected"
+              ? "bg-error"
+              : "bg-slate",
+        )}
+      />
+      {label}
+    </Kicker>
+  );
 }

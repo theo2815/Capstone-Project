@@ -1,16 +1,13 @@
-"use client";
-
-import { Sidebar, type SidebarLink } from "@/components/layout/sidebar";
 import { ProtectedRoute } from "@/components/auth/protected-route";
-import { LayoutDashboard, Calendar, Users } from "lucide-react";
-import { ROUTES } from "@/lib/constants";
+import { AdminShell } from "@/components/admin/admin-shell";
 
-const adminLinks: SidebarLink[] = [
-  { href: ROUTES.ADMIN, label: "Overview", icon: LayoutDashboard },
-  { href: ROUTES.ADMIN_EVENTS, label: "Events", icon: Calendar },
-  { href: ROUTES.ADMIN_USERS, label: "Users", icon: Users },
-];
-
+// Persistent admin layout. Mirrors /dashboard/layout.tsx — gates the entire
+// /admin/* tree on ADMIN role and mounts the persistent <AdminShell>.
+//
+// All /admin/* routes inherit the rail + mobile chip strip + DesktopNudge.
+// No FOCUSED_PATTERNS opt-out (yet) — Phase 1 surfaces all keep the shell.
+// When Phase 2's /admin/disputes/[id] focused detail page lands, add an
+// allowlist here the same way /dashboard/layout.tsx does for share pages.
 export default function AdminLayout({
   children,
 }: {
@@ -18,10 +15,7 @@ export default function AdminLayout({
 }) {
   return (
     <ProtectedRoute allowedRoles={["ADMIN"]}>
-      <div className="flex min-h-[calc(100vh-4rem)]">
-        <Sidebar title="Admin" links={adminLinks} />
-        <main className="flex-1 p-6 lg:p-8">{children}</main>
-      </div>
+      <AdminShell>{children}</AdminShell>
     </ProtectedRoute>
   );
 }

@@ -24,6 +24,7 @@ import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { RefundModal } from "@/components/orders/refund-modal";
 import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 
@@ -319,6 +320,7 @@ function BrowseMode({
   const [searchOpen, setSearchOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PHOTO_INITIAL);
+  const [isPolicyOpen, setIsPolicyOpen] = useState(false);
 
   const cleanedQuery = bibFilter.replace(/^B-/i, "").trim().toUpperCase();
   const isFiltered = cleanedQuery.length > 0;
@@ -406,6 +408,16 @@ function BrowseMode({
               ? "These are the photos matching your bib. Tap any to add to cart."
               : "Skim the wall, or open search anytime to find your bib."}
           </p>
+          <Kicker
+            as="button"
+            type="button"
+            tone="soft"
+            onClick={() => setIsPolicyOpen(true)}
+            className="mt-5 inline-flex items-center gap-2 underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+          >
+            Refund Policy
+            <span aria-hidden="true">→</span>
+          </Kicker>
         </div>
       </header>
 
@@ -496,6 +508,12 @@ function BrowseMode({
           onSubmitBib={onSubmitBib}
         />
       )}
+
+      <RefundModal
+        mode="policy"
+        isOpen={isPolicyOpen}
+        onClose={() => setIsPolicyOpen(false)}
+      />
 
       {previewPhoto && previewIndex !== null && (
         <PhotoPreviewMount

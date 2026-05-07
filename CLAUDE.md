@@ -24,7 +24,7 @@ QuickPitik delivers: real-time camera tethering, desktop-only AI blur culling (B
 | Product | Stack | Status | Module CLAUDE.md |
 |---------|-------|--------|------------------|
 | `ai-api/` | FastAPI + Celery (Python 3.11+) | Phases 1–6 complete; hardening in progress | `ai-api/CLAUDE.md` |
-| `backend/` | Spring Boot (Kotlin) | Not started | `backend/CLAUDE.md` (stub) |
+| `backend/` | Spring Boot (Kotlin) | Phase A auth complete (2026-05-05); Phase B–G deferred until website lock | `backend/CLAUDE.md` |
 | `website/` | Next.js on Vercel | UI scaffolding in progress | `website/CLAUDE.md` (stub) |
 | `mobile/` | Kotlin (Android first) | Not started | `mobile/CLAUDE.md` (stub) |
 | `desktop/` | Electron | Already built (lives at `C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos`) | `desktop/CLAUDE.md` (stub) |
