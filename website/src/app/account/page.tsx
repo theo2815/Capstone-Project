@@ -63,8 +63,8 @@ function AccountBody() {
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
       <SiteHeader />
-      <div className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10">
-        <div className="md:grid md:grid-cols-[15rem_1fr] md:gap-12 lg:gap-20">
+      <div className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10 flex flex-col">
+        <div className="md:grid md:grid-cols-[15rem_1fr] md:gap-12 lg:gap-20 flex-1">
           <IdentityRail
             user={user}
             kicker="Profile · Settings"
@@ -77,7 +77,7 @@ function AccountBody() {
             jumpSections={jumpSections}
             currentPath={ROUTES.ACCOUNT}
           />
-          <div className="stagger-children min-w-0 pb-8 md:pb-20">
+          <div className="stagger-children min-w-0 pb-8 md:pb-20 md:border-l md:border-line md:-ml-6 lg:-ml-10 md:pl-6 lg:pl-10">
             <NameSlab user={user} number="01" />
             {!isPhotographer && <PictureSlab number="02" />}
             <EmailSlab

@@ -112,7 +112,12 @@
       "Bash(Select-Object FullName)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\website\" -Directory)",
       "Bash(Select-Object Name)",
-      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Theo Cedric Chan\\\\Documents\\\\Obsidian Vault\\\\QuickPitik Vault\\\\website\" -ErrorAction SilentlyContinue)"
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Theo Cedric Chan\\\\Documents\\\\Obsidian Vault\\\\QuickPitik Vault\\\\website\" -ErrorAction SilentlyContinue)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(pnpm exec *)",
+      "PowerShell(pnpm exec *)",
+      "PowerShell(npm exec *)",
+      "Bash(awk '/^## 2026-05-08 — Payout operations loop/,/^---$/' \"C:/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/website/decisions.md\")"
     ]
   }
 }

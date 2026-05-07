@@ -42,3 +42,10 @@ export const ROLES = {
 export const MAX_UPLOAD_SIZE = 10 * 1024 * 1024; // 10 MB
 export const MAX_BATCH_UPLOAD = 50;
 export const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+// Admin Flags queue is hidden for v1 — out of scope per 2026-05-08 product
+// decision (no content moderation in scope until post-launch). Flip to true
+// to revive the rail row, KPI tile, inbox chip, palette entries, and the
+// /admin/flags focus-mode route. Underlying store + queue body are kept
+// intact so reviving needs no code change beyond this constant.
+export const ADMIN_FLAGS_ENABLED: boolean = false;

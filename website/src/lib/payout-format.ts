@@ -18,3 +18,4 @@ export function formatPayoutNumber(method: PayoutMethod, raw: string): string {
     return `${trimmed.slice(0, 4)} ${trimmed.slice(4)}`;
   return `${trimmed.slice(0, 4)} ${trimmed.slice(4, 7)} ${trimmed.slice(7)}`;
 }
+

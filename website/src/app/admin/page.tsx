@@ -1,9 +1,13 @@
+import { redirect } from "next/navigation";
+import { ROUTES } from "@/lib/constants";
+
+// Phase 1 admin redesign — /admin lands directly on the Inbox queue. The
+// previous overview content (8-tile KPI grid + 30-day trend + decisions
+// timeline) lives at /admin/overview as the weekly-review tab.
+//
+// Server-side redirect runs before <ProtectedRoute> in the layout. The
+// inbox layout (same AdminLayout) re-applies the ADMIN role gate, so
+// auth still gets enforced — just at the inbox URL instead of /admin.
 export default function AdminPage() {
-  return (
-    <div>
-      <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
-      <p className="mt-1 text-gray-600">Platform overview and statistics.</p>
-      {/* Platform stats: total events, users, photos, revenue will go here */}
-    </div>
-  );
+  redirect(ROUTES.ADMIN_INBOX);
 }

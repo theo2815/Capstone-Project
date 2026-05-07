@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { HowPayoutsModal } from "@/components/dashboard/how-payouts-modal";
+import { FilePayoutReportModal } from "@/components/dashboard/file-payout-report-modal";
+import { TrackPayoutReportModal } from "@/components/dashboard/track-payout-report-modal";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,6 +22,14 @@ import {
   type PhotographerPayout,
   type PhotographerTransaction,
 } from "@/lib/photographer-mock";
+import {
+  getEffectiveReports,
+  getLatestReportForCycle,
+  type PayoutReport,
+} from "@/lib/admin-payout-reports";
+import { useAdminPayoutReportStore } from "@/store/admin-payout-report-store";
+import { resolveCurrentPhotographer } from "@/lib/current-photographer";
+import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import {
   PAYOUT_METHOD_LABEL,
@@ -51,7 +61,39 @@ export default function BillingPage() {
 
 function PayoutsSlab() {
   const [howOpen, setHowOpen] = useState(false);
+  const [reportingCycle, setReportingCycle] = useState<PhotographerPayout | null>(
+    null,
+  );
+  const [trackingCycle, setTrackingCycle] = useState<PhotographerPayout | null>(
+    null,
+  );
   const { data: payouts, isLoading } = useMockLatency(PHOTOGRAPHER_PAYOUTS);
+  const { user } = useAuth();
+  const photographer = resolveCurrentPhotographer(user);
+  const submissions = useAdminPayoutReportStore((s) => s.submissions);
+  const overrides = useAdminPayoutReportStore((s) => s.overrides);
+
+  const reports = useMemo(
+    () => getEffectiveReports(submissions, overrides),
+    [submissions, overrides],
+  );
+
+  // Lookup of latestReport per cycle id, scoped to the current photographer.
+  // null entries mean "no report yet" — row shows File a report; non-null
+  // entries flip the row to Track your report.
+  const reportByCycleId = useMemo(() => {
+    const map = new Map<string, PayoutReport>();
+    if (!photographer) return map;
+    for (const p of payouts ?? []) {
+      const r = getLatestReportForCycle(reports, photographer.id, p.id);
+      if (r) map.set(p.id, r);
+    }
+    return map;
+  }, [reports, photographer, payouts]);
+
+  const trackingReport = trackingCycle
+    ? (reportByCycleId.get(trackingCycle.id) ?? null)
+    : null;
 
   if (isLoading || !payouts) {
     return (
@@ -106,8 +148,13 @@ function PayoutsSlab() {
           </div>
           <ul className="border-y border-line divide-y divide-line">
             {payouts.map((payout) => (
-              <li key={payout.id}>
-                <PayoutRow payout={payout} />
+              <li key={payout.id} id={`cycle-${payout.id}`}>
+                <PayoutRow
+                  payout={payout}
+                  hasReport={reportByCycleId.has(payout.id)}
+                  onReport={() => setReportingCycle(payout)}
+                  onTrack={() => setTrackingCycle(payout)}
+                />
               </li>
             ))}
           </ul>
@@ -115,6 +162,22 @@ function PayoutsSlab() {
       )}
 
       <HowPayoutsModal isOpen={howOpen} onClose={() => setHowOpen(false)} />
+      <FilePayoutReportModal
+        cycle={reportingCycle}
+        onClose={() => setReportingCycle(null)}
+      />
+      <TrackPayoutReportModal
+        report={trackingReport}
+        cycle={trackingCycle}
+        onClose={() => setTrackingCycle(null)}
+        onFileFollowUp={() => {
+          // Hand off to the file-report modal on the same cycle. Closing the
+          // track modal first avoids two modals briefly stacking.
+          const cycle = trackingCycle;
+          setTrackingCycle(null);
+          if (cycle) setReportingCycle(cycle);
+        }}
+      />
     </Slab>
   );
 }
@@ -246,7 +309,24 @@ function HowItWorksLink({ onClick }: { onClick: () => void }) {
   );
 }
 
-function PayoutRow({ payout }: { payout: PhotographerPayout }) {
+function PayoutRow({
+  payout,
+  hasReport,
+  onReport,
+  onTrack,
+}: {
+  payout: PhotographerPayout;
+  hasReport: boolean;
+  onReport: () => void;
+  onTrack: () => void;
+}) {
+  // Reports only make sense for cycles that have moved past the schedule
+  // boundary — paid (money should have landed) and pending (funds in
+  // transit, but might not arrive). Scheduled cycles are too early to
+  // report on. Track-your-report stays available regardless once filed,
+  // so the photographer can keep checking back even after status shifts.
+  const canReport = payout.status === "paid" || payout.status === "pending";
+
   return (
     <div className="py-5 md:py-6 flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
       <div className="flex-1 min-w-0">
@@ -278,6 +358,23 @@ function PayoutRow({ payout }: { payout: PhotographerPayout }) {
             </>
           )}
         </p>
+        {hasReport ? (
+          <button
+            type="button"
+            onClick={onTrack}
+            className="mt-2 font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
+          >
+            Track your report
+          </button>
+        ) : canReport ? (
+          <button
+            type="button"
+            onClick={onReport}
+            className="mt-2 font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
+          >
+            File a report
+          </button>
+        ) : null}
       </div>
       <p
         className={cn(
