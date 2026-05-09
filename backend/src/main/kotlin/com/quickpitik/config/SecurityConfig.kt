@@ -54,6 +54,8 @@ class SecurityConfig(
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/regions").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/platform/**").permitAll()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/events/*/photos/search-by-face").authenticated()
+                auth.requestMatchers(HttpMethod.POST, "/api/v1/orders").permitAll()
+                auth.requestMatchers(HttpMethod.POST, "/api/v1/payments/webhook/**").permitAll()
                 auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 auth.anyRequest().authenticated()
             }
