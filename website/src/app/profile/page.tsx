@@ -21,7 +21,7 @@ import {
 import { Kicker } from "@/components/ui/kicker";
 import { useAuth } from "@/hooks/use-auth";
 import { useSavedEventsStore } from "@/store/saved-events-store";
-import { useOrdersStore } from "@/store/orders-store";
+import { useOrdersList } from "@/hooks/use-orders";
 import { useToast } from "@/hooks/use-toast";
 import {
   getCatalogWithOverrides,
@@ -131,7 +131,7 @@ function SelfieLibrarySection() {
 
 function RaceLogSection() {
   const savedIds = useSavedEventsStore((s) => s.ids);
-  const orders = useOrdersStore((s) => s.orders);
+  const { orders } = useOrdersList();
 
   const log = useMemo(
     () => buildRaceLog(savedIds, orders),

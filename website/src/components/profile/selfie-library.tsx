@@ -1,12 +1,21 @@
 "use client";
 
 import { useState, type ChangeEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   SELFIE_MAX,
   useUserMediaStore,
   type SelfieRef,
 } from "@/store/user-media-store";
+import { useSelfiesList } from "@/hooks/use-selfies";
 import { useToast } from "@/hooks/use-toast";
+import { ApiError } from "@/lib/api";
+import {
+  uploadSelfie,
+  deleteSelfie,
+  setPrimarySelfie,
+} from "@/lib/api-selfies";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   ACCEPTED_IMAGE_MIME,
   fitToDataUrl,
@@ -16,10 +25,11 @@ import {
 const SELFIE_LONG_EDGE_PX = 1024;
 
 export function SelfieLibrary() {
-  const selfies = useUserMediaStore((s) => s.selfies);
-  const addSelfie = useUserMediaStore((s) => s.addSelfie);
-  const removeSelfie = useUserMediaStore((s) => s.removeSelfie);
-  const setPrimary = useUserMediaStore((s) => s.setPrimary);
+  const { selfies } = useSelfiesList();
+  const addSelfieMock = useUserMediaStore((s) => s.addSelfie);
+  const removeSelfieMock = useUserMediaStore((s) => s.removeSelfie);
+  const setPrimaryMock = useUserMediaStore((s) => s.setPrimary);
+  const queryClient = useQueryClient();
   const { showToast } = useToast();
 
   const [busy, setBusy] = useState(false);
@@ -27,6 +37,18 @@ export function SelfieLibrary() {
 
   const remaining = SELFIE_MAX - selfies.length;
   const primary = selfies.find((s) => s.isPrimary);
+
+  function invalidateSelfieDependents() {
+    queryClient.invalidateQueries({ queryKey: ["me", "selfies"] });
+    // Selfie-search results depend on the user's primary embedding; refresh
+    // any cached event photo queries so the cockpit picks up the new primary.
+    queryClient.invalidateQueries({
+      predicate: (q) =>
+        Array.isArray(q.queryKey) &&
+        q.queryKey[0] === "events" &&
+        q.queryKey[2] === "photos",
+    });
+  }
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
@@ -39,6 +61,7 @@ export function SelfieLibrary() {
       const accepted = files.slice(0, remaining);
       let firstSkipReason: string | null = null;
       let addedCount = 0;
+      let capHit = false;
 
       for (const file of accepted) {
         const validationError = validateImageFile(file);
@@ -48,19 +71,42 @@ export function SelfieLibrary() {
           }
           continue;
         }
-        // TODO(backend+ai-api): swap for `api.post("/me/selfies", formData)`.
-        // Backend proxies ai-api `/faces/embed` for the real quality gate; on
-        // 422 we'd surface the rejection reason verbatim via an error toast.
-        // Until then, every upload passes with a mock score.
-        const dataUrl = await fitToDataUrl(file, SELFIE_LONG_EDGE_PX);
-        addSelfie({
-          id: crypto.randomUUID(),
-          dataUrl,
-          uploadedAt: new Date().toISOString(),
-          isPrimary: false,
-          qualityScore: 0.92,
-        });
-        addedCount++;
+
+        if (BACKEND_LIVE) {
+          try {
+            await uploadSelfie(file);
+            addedCount++;
+          } catch (err) {
+            if (err instanceof ApiError) {
+              const code = err.errors[0]?.code;
+              if (code === "SELFIE_LIMIT_REACHED") {
+                capHit = true;
+                break;
+              }
+              if (!firstSkipReason) {
+                firstSkipReason = `${file.name}: ${err.errors[0]?.message ?? "Selfie rejected."}`;
+              }
+              continue;
+            }
+            if (!firstSkipReason) {
+              firstSkipReason = `${file.name}: Could not upload.`;
+            }
+          }
+        } else {
+          const dataUrl = await fitToDataUrl(file, SELFIE_LONG_EDGE_PX);
+          addSelfieMock({
+            id: crypto.randomUUID(),
+            dataUrl,
+            uploadedAt: new Date().toISOString(),
+            isPrimary: false,
+            qualityScore: 0.92,
+          });
+          addedCount++;
+        }
+      }
+
+      if (BACKEND_LIVE && addedCount > 0) {
+        invalidateSelfieDependents();
       }
 
       if (addedCount > 0) {
@@ -73,7 +119,9 @@ export function SelfieLibrary() {
         });
       }
 
-      if (files.length > remaining) {
+      if (capHit) {
+        setError(`Reached the ${SELFIE_MAX}-selfie cap.`);
+      } else if (files.length > remaining) {
         setError(
           `Only ${remaining} selfie${remaining === 1 ? "" : "s"} could be added — ${SELFIE_MAX} is the cap.`,
         );
@@ -87,13 +135,41 @@ export function SelfieLibrary() {
     }
   }
 
-  function handleRemove(id: string) {
-    removeSelfie(id);
+  async function handleRemove(id: string) {
+    if (BACKEND_LIVE) {
+      try {
+        await deleteSelfie(id);
+        invalidateSelfieDependents();
+      } catch (err) {
+        setError(
+          err instanceof ApiError
+            ? (err.errors[0]?.message ?? "Could not remove the selfie.")
+            : "Could not remove the selfie.",
+        );
+        return;
+      }
+    } else {
+      removeSelfieMock(id);
+    }
     showToast({ kind: "success", message: "Selfie removed." });
   }
 
-  function handleSetPrimary(id: string) {
-    setPrimary(id);
+  async function handleSetPrimary(id: string) {
+    if (BACKEND_LIVE) {
+      try {
+        await setPrimarySelfie(id);
+        invalidateSelfieDependents();
+      } catch (err) {
+        setError(
+          err instanceof ApiError
+            ? (err.errors[0]?.message ?? "Could not set primary.")
+            : "Could not set primary. Try again.",
+        );
+        return;
+      }
+    } else {
+      setPrimaryMock(id);
+    }
     showToast({ kind: "success", message: "Set as primary selfie." });
   }
 
@@ -204,7 +280,7 @@ function SelfieTile({
 }) {
   return (
     <div className="group relative aspect-square rounded-2xl overflow-hidden bg-ink">
-      {/* eslint-disable-next-line @next/next/no-img-element -- data-URL mock; backend will return signed S3 URLs. */}
+      {/* eslint-disable-next-line @next/next/no-img-element -- selfie URLs (signed S3 in live, base64 in mock) outside Next image-domain config. */}
       <img
         src={selfie.dataUrl}
         alt=""

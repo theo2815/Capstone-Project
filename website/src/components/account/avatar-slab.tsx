@@ -3,8 +3,12 @@
 import Link from "next/link";
 import { useState, type ChangeEvent } from "react";
 import { useAuth } from "@/hooks/use-auth";
+import { useAuthStore } from "@/store/auth-store";
 import { useUserMediaStore } from "@/store/user-media-store";
 import { useToast } from "@/hooks/use-toast";
+import { ApiError } from "@/lib/api";
+import { uploadAvatar, deleteAvatar } from "@/lib/api-avatar";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   ACCEPTED_IMAGE_MIME,
   squareCropToDataUrl,
@@ -17,13 +21,19 @@ const AVATAR_SIZE_PX = 512;
 
 export function AvatarSlab() {
   const { user } = useAuth();
-  const avatar = useUserMediaStore((s) => s.avatar);
+  const setUser = useAuthStore((s) => s.setUser);
+  const storeAvatar = useUserMediaStore((s) => s.avatar);
   const setAvatar = useUserMediaStore((s) => s.setAvatar);
   const { showToast } = useToast();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!user) return null;
+
+  // In live mode, the canonical avatar lives on `user.avatarUrl`. The store
+  // remains the mock-mode source-of-truth; the union here lets the "Replace /
+  // Remove" CTAs surface as soon as either source has an image.
+  const hasAvatar = BACKEND_LIVE ? !!user.avatarUrl : !!storeAvatar;
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -39,22 +49,45 @@ export function AvatarSlab() {
     setBusy(true);
     setError(null);
     try {
-      // TODO(backend): swap for `api.post("/me/avatar", formData)`. Server-side
-      // will do the same center-crop + JPEG re-encode this helper does.
-      const dataUrl = await squareCropToDataUrl(file, AVATAR_SIZE_PX);
-      setAvatar({ dataUrl, uploadedAt: new Date().toISOString() });
+      if (BACKEND_LIVE) {
+        const updated = await uploadAvatar(file);
+        setUser(updated);
+        // Drop any leftover mock-mode store avatar so the UI tracks user.avatarUrl.
+        if (storeAvatar) setAvatar(null);
+      } else {
+        const dataUrl = await squareCropToDataUrl(file, AVATAR_SIZE_PX);
+        setAvatar({ dataUrl, uploadedAt: new Date().toISOString() });
+      }
       showToast({ kind: "success", message: "Profile picture updated." });
-    } catch {
-      setError("Could not process this image. Try another.");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.errors[0]?.message ?? "Could not save the picture.");
+      } else {
+        setError("Could not process this image. Try another.");
+      }
     } finally {
       setBusy(false);
     }
   }
 
-  function handleRemove() {
-    // TODO(backend): swap for `api.delete("/me/avatar")`.
-    setAvatar(null);
+  async function handleRemove() {
     setError(null);
+    if (BACKEND_LIVE) {
+      try {
+        const updated = await deleteAvatar();
+        setUser(updated);
+        if (storeAvatar) setAvatar(null);
+      } catch (err) {
+        setError(
+          err instanceof ApiError
+            ? (err.errors[0]?.message ?? "Could not remove the picture.")
+            : "Could not remove the picture. Try again.",
+        );
+        return;
+      }
+    } else {
+      setAvatar(null);
+    }
     showToast({ kind: "success", message: "Profile picture removed." });
   }
 
@@ -64,7 +97,7 @@ export function AvatarSlab() {
       <div className="flex-1 min-w-0 space-y-5">
         <div>
           <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink">
-            {avatar ? "Looking sharp." : "Add a profile picture."}
+            {hasAvatar ? "Looking sharp." : "Add a profile picture."}
           </p>
           <p className="font-sans text-sm text-slate mt-2 max-w-md">
             Shown next to your name across QuickPitik. Square crop, 512×512.
@@ -88,7 +121,7 @@ export function AvatarSlab() {
               (busy ? "opacity-60 cursor-wait" : "cursor-pointer")
             }
           >
-            {busy ? "Processing…" : avatar ? "Replace picture" : "Upload picture"}
+            {busy ? "Processing…" : hasAvatar ? "Replace picture" : "Upload picture"}
             {!busy && <span aria-hidden="true">→</span>}
             <input
               type="file"
@@ -99,7 +132,7 @@ export function AvatarSlab() {
             />
           </label>
 
-          {avatar && !busy && (
+          {hasAvatar && !busy && (
             <button
               type="button"
               onClick={handleRemove}
