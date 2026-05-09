@@ -3,7 +3,7 @@
 import { useCallback } from "react";
 import { useAuthStore } from "@/store/auth-store";
 import { api } from "@/lib/api";
-import { setTokens, clearTokens } from "@/lib/auth";
+import { getRefreshToken, setTokens, clearTokens } from "@/lib/auth";
 import type {
   AuthResponse,
   LoginRequest,
@@ -64,6 +64,15 @@ export function useAuth() {
   }, [setPendingOAuth]);
 
   const logout = useCallback(() => {
+    // Best-effort refresh-token revocation per Q-009 ADR (2026-05-09). Fire
+    // and forget — the FE clears state regardless of network outcome so
+    // logout stays fast and offline-friendly.
+    const refreshToken = getRefreshToken();
+    if (refreshToken) {
+      api.post("/auth/logout", { refreshToken }).catch(() => {
+        /* best-effort: server-side revoke is nice-to-have, not blocking */
+      });
+    }
     clearTokens();
     clearUser();
   }, [clearUser]);

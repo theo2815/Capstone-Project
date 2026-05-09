@@ -1,5 +1,6 @@
 import { getAccessToken, getRefreshToken, setTokens, clearTokens } from "./auth";
-import { API_BASE_URL, ROUTES } from "./constants";
+import { API_BASE_URL } from "./constants";
+import { buildLoginRedirect } from "./redirect";
 import type { ApiResponse } from "@/types/api";
 
 class ApiClient {
@@ -93,7 +94,8 @@ class ApiClient {
   private redirectToLogin(): void {
     if (typeof window !== "undefined") {
       clearTokens();
-      window.location.href = ROUTES.LOGIN;
+      const currentUrl = window.location.pathname + window.location.search;
+      window.location.href = buildLoginRedirect(currentUrl);
     }
   }
 }
@@ -104,6 +106,7 @@ const PUBLIC_AUTH_ENDPOINTS = new Set([
   "/auth/refresh",
   "/auth/forgot-password",
   "/auth/reset-password",
+  "/auth/logout",
 ]);
 
 function isPublicAuthEndpoint(path: string): boolean {

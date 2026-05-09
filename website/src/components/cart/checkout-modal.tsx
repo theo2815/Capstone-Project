@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
@@ -9,6 +10,17 @@ import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn } from "@/lib/utils";
 import type { CartItem } from "@/types/order";
+
+// Build the post-login resume URL: original page + `?checkout=1` flag.
+// `<CheckoutResumeWatcher>` reads the flag on mount and re-opens the modal,
+// so the user lands back on the page where they invoked checkout instead
+// of the legacy `/cart` page.
+function buildResumeUrl(pathname: string, sp: URLSearchParams | null): string {
+  const params = new URLSearchParams(sp ?? undefined);
+  params.set("checkout", "1");
+  const queryStr = params.toString();
+  return queryStr ? `${pathname}?${queryStr}` : pathname;
+}
 
 type Step = "identify" | "payment" | "processing" | "success";
 type PaymentMethod = "gcash" | "maya" | "card";
@@ -43,6 +55,10 @@ export function CheckoutModal({
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const authUser = useAuthStore((s) => s.user);
+
+  const pathname = usePathname() ?? ROUTES.HOME;
+  const searchParams = useSearchParams();
+  const resumeUrl = buildResumeUrl(pathname, searchParams);
 
   const initialStep: Step = isAuthenticated ? "payment" : "identify";
   const [step, setStep] = useState<Step>(initialStep);
@@ -219,6 +235,7 @@ export function CheckoutModal({
               onConfirmChange={setConfirmEmail}
               onSubmit={handleIdentifySubmit}
               onBackToCart={onBackToCart}
+              resumeUrl={resumeUrl}
             />
           )}
           {step === "payment" && (
@@ -292,6 +309,7 @@ function IdentifyStep({
   onConfirmChange,
   onSubmit,
   onBackToCart,
+  resumeUrl,
 }: {
   email: string;
   confirmEmail: string;
@@ -300,6 +318,7 @@ function IdentifyStep({
   onConfirmChange: (v: string) => void;
   onSubmit: (e: FormEvent) => void;
   onBackToCart?: () => void;
+  resumeUrl: string;
 }) {
   return (
     <form
@@ -354,13 +373,13 @@ function IdentifyStep({
 
       <div className="grid grid-cols-2 gap-3">
         <Link
-          href={`${ROUTES.LOGIN}?redirect=${encodeURIComponent(ROUTES.CART)}`}
+          href={`${ROUTES.LOGIN}?redirect=${encodeURIComponent(resumeUrl)}`}
           className="inline-flex items-center justify-center border border-ink hover:bg-ink hover:text-bone text-ink px-4 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
         >
           Log in
         </Link>
         <Link
-          href={`${ROUTES.REGISTER}?redirect=${encodeURIComponent(ROUTES.CART)}`}
+          href={`${ROUTES.REGISTER}?redirect=${encodeURIComponent(resumeUrl)}`}
           className="inline-flex items-center justify-center border border-line hover:bg-bone-deep text-ink px-4 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
         >
           Sign up
