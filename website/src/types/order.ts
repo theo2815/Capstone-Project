@@ -26,3 +26,16 @@ export interface OrderItem {
   downloadUrl?: string;
   price: number;
 }
+
+// Phase E hydration shape for /me/orders/{id}.photos[]. Server bakes the
+// presigned URLs (Q-005); mock fallback leaves URL fields undefined so
+// PhotoStrip + lightbox fall back to ID-chip rendering.
+export interface OrderPhotoDetail {
+  id: string;
+  bib: string | null;
+  time: string;
+  tone: number;
+  thumbnailUrl?: string;
+  previewUrl?: string;
+  downloadUrl?: string;
+}
