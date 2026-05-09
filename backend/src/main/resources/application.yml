@@ -39,6 +39,35 @@ app:
     bootstrap-email: ${ADMIN_BOOTSTRAP_EMAIL:admin@quickpitik.local}
     bootstrap-password: ${ADMIN_BOOTSTRAP_PASSWORD:changeme123}
     bootstrap-name: ${ADMIN_BOOTSTRAP_NAME:QuickPitik Admin}
+  storage:
+    backend: ${STORAGE_BACKEND:LOCAL}
+    bucket: ${STORAGE_BUCKET:quickpitik-dev}
+    region: ${STORAGE_REGION:ap-southeast-1}
+    endpoint: ${STORAGE_ENDPOINT:}
+    access-key: ${STORAGE_ACCESS_KEY:}
+    secret-key: ${STORAGE_SECRET_KEY:}
+    path-style-access: ${STORAGE_PATH_STYLE:false}
+    local-root: ${STORAGE_LOCAL_ROOT:.storage}
+    public-base-url: ${STORAGE_PUBLIC_BASE_URL:}
+  ai-api:
+    base-url: ${AI_API_URL:http://localhost:8000}
+    api-key: ${AI_API_KEY:dev-only-ai-api-key-DO-NOT-USE-IN-PRODUCTION}
+    connect-timeout: PT5S
+    read-timeout: PT30S
+    max-retries: 3
+    backoff-base-millis: 500
+    face-match-threshold-default: 0.6
+    face-top-k-default: 5
+    bib-confidence-threshold-default: 0.7
+    blur-reject-threshold: 100.0
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:false}
+    photographer-upload:
+      capacity: 600
+      refill-period: PT1M
+    public-gallery:
+      capacity: 60
+      refill-period: PT1M
 
 logging:
   level:
