@@ -12,6 +12,7 @@ import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { usePublicPhotographer } from "@/hooks/use-photographer-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { useCartStore } from "@/store/cart-store";
@@ -73,11 +74,14 @@ function PageBody({ handle, slug }: { handle: string; slug: string }) {
   const settings = usePhotographerSettingsStore();
   const event = MOCK_EVENT_DETAILS[slug];
 
+  // Live mode prefers GET /public/photographers/{handle} (Q-016) for the
+  // non-self path; mock-mode falls back to the registry seed below.
+  const isOwnHandle = handle.length > 0 && settings.handle === handle;
+  const liveProfile = usePublicPhotographer(isOwnHandle ? null : handle);
+
   if (!event) {
     return <NotFoundBody handle={handle} reason="event" />;
   }
-
-  const isOwnHandle = handle.length > 0 && settings.handle === handle;
 
   // Owner preview: build a synthetic profile + coverage from the live
   // settings store + PHOTOGRAPHER_EVENTS, so the photographer can preview
@@ -112,7 +116,7 @@ function PageBody({ handle, slug }: { handle: string; slug: string }) {
     return <Gallery profile={ownerProfile} event={event} />;
   }
 
-  const profile = getPhotographerByHandle(handle);
+  const profile = liveProfile ?? getPhotographerByHandle(handle);
   if (!profile) {
     return <NotFoundBody handle={handle} reason="profile" />;
   }

@@ -8,6 +8,7 @@ import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { EventTile } from "@/components/events/event-tile";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { usePublicPhotographer } from "@/hooks/use-photographer-data";
 import { isReservedHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
 import { formatMemberSince } from "@/lib/format";
@@ -64,12 +65,17 @@ function PublicProfileBody({ handle }: { handle: string }) {
   const settings = usePhotographerSettingsStore();
   const isOwnHandle = handle.length > 0 && settings.handle === handle;
 
+  // Live mode prefers GET /public/photographers/{handle} (Q-016); mock-mode
+  // falls back to the registry seed. Owner-self preview always reads from the
+  // settings store so unsaved local edits show without a backend round-trip.
+  const liveProfile = usePublicPhotographer(isOwnHandle ? null : handle);
+
   if (isOwnHandle) {
     const profile = ownerProfileFromSettings(handle, settings);
     return <ProfileLayout profile={profile} isOwner />;
   }
 
-  const registryProfile = getPhotographerByHandle(handle);
+  const registryProfile = liveProfile ?? getPhotographerByHandle(handle);
   if (registryProfile) {
     return <ProfileLayout profile={registryProfile} isOwner={false} />;
   }

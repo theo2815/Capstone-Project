@@ -16,6 +16,8 @@ import {
 } from "@/lib/admin-payout-reports";
 import { useAdminPayoutReportStore } from "@/store/admin-payout-report-store";
 import { useToast } from "@/hooks/use-toast";
+import { submitPayoutReport } from "@/lib/api-photographer-earnings";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
 import { resolveCurrentPhotographer } from "@/lib/current-photographer";
 import { useAuth } from "@/hooks/use-auth";
 import type { PhotographerPayout } from "@/lib/photographer-mock";
@@ -80,7 +82,9 @@ export function FilePayoutReportModal({
     }
     setError(null);
     setSubmitting(true);
-    // Synthetic latency seam — matches the rest of the mock submit surfaces.
+    // Local store update fires immediately for the UI snap; live mode also
+    // POSTs the report to the backend (Q-A1 cycle ID). 600ms latency seam
+    // mirrors the mock submit pacing so toasts don't feel rushed.
     setTimeout(() => {
       submitReport({
         payoutCycleId: cycle.id,
@@ -90,6 +94,15 @@ export function FilePayoutReportModal({
         reason,
         note: note.trim(),
       });
+      if (BACKEND_LIVE) {
+        void submitPayoutReport({
+          payoutId: cycle.id,
+          reason,
+          note: note.trim() || null,
+        }).catch((err) => {
+          console.error("[photographer/payout-report] submit failed", err);
+        });
+      }
       setSubmitting(false);
       showToast({
         kind: "success",

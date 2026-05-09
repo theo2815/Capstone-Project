@@ -19,6 +19,8 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import { useToast } from "@/hooks/use-toast";
+import { uploadPhotographerPhoto } from "@/lib/api-photographer";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
 import { ROUTES } from "@/lib/constants";
 import {
   UPLOAD_GRACE_DAYS,
@@ -320,12 +322,54 @@ function UploadForm({ event }: { event: ListEvent }) {
   // Auto-upload: every queued file flows queued → uploading → done. There's
   // no separate publish step — done == in the gallery (web uploads go straight
   // to live; blur culling is desktop-only via BatchMyPhotos).
-  // TODO(backend): swap the setTimeout-driven mock for `api.post` per file
-  // with a real XMLHttpRequest progress callback driving setEntries. The
-  // shape of UploadEntry stays — only the timing source changes.
+  //
+  // Live mode (BACKEND_LIVE): one XHR per file (Q-013) with onprogress driving
+  // setEntries. Mock mode keeps the setTimeout tick + transient failure injection.
   useEffect(() => {
     const queued = entries.filter((e) => e.status === "queued");
     if (queued.length === 0) return;
+
+    if (BACKEND_LIVE) {
+      queued.forEach((entry) => {
+        setEntries((prev) =>
+          prev.map((p) =>
+            p.id === entry.id ? { ...p, status: "uploading" } : p,
+          ),
+        );
+        uploadPhotographerPhoto(event.id, entry.file, (progress) => {
+          setEntries((prev) =>
+            prev.map((p) =>
+              p.id === entry.id ? { ...p, progress: progress.percent } : p,
+            ),
+          );
+        })
+          .then(() => {
+            setEntries((prev) =>
+              prev.map((p) =>
+                p.id === entry.id
+                  ? { ...p, status: "done", progress: 100 }
+                  : p,
+              ),
+            );
+          })
+          .catch((err: Error) => {
+            setEntries((prev) =>
+              prev.map((p) =>
+                p.id === entry.id
+                  ? {
+                      ...p,
+                      status: "error",
+                      error: err.message || "Upload failed.",
+                      progress: 0,
+                      retryable: true,
+                    }
+                  : p,
+              ),
+            );
+          });
+      });
+      return;
+    }
 
     queued.forEach((entry, index) => {
       const delay = index * 80;
@@ -378,7 +422,7 @@ function UploadForm({ event }: { event: ListEvent }) {
       }, delay);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries.length, retryNonce]);
+  }, [entries.length, retryNonce, event.id]);
 
   function handleSelect(e: ChangeEvent<HTMLInputElement>) {
     if (e.target.files) {

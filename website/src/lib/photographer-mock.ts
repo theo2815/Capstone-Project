@@ -274,8 +274,8 @@ export interface PhotographerPayout {
   status: PayoutStatus;
   /** ISO timestamp when the payout was settled (paid) or is expected (others). */
   settledAt: string;
-  /** Method used / planned (always GCash for first-pass). */
-  method: "gcash" | "bank";
+  /** Q-E1 RESOLVED 2026-05-10: enum locked to gcash | maya | gotyme. */
+  method: "gcash" | "maya" | "gotyme";
   /** Reference number for paid cycles. null for pending/scheduled. */
   reference: string | null;
 }
@@ -296,7 +296,7 @@ export interface PhotographerTransaction {
 // to ~₱24,850 lifetime when combined with seed earnings on the dashboard.
 export const PHOTOGRAPHER_PAYOUTS: ReadonlyArray<PhotographerPayout> = [
   {
-    id: "PO-2026-19",
+    id: "PAY-2026W19-CEBUSTRIDE",
     weekOf: "2026-05-04",
     amount: 3800,
     status: "scheduled",
@@ -305,7 +305,7 @@ export const PHOTOGRAPHER_PAYOUTS: ReadonlyArray<PhotographerPayout> = [
     reference: null,
   },
   {
-    id: "PO-2026-18",
+    id: "PAY-2026W18-CEBUSTRIDE",
     weekOf: "2026-04-27",
     amount: 3050,
     status: "pending",
@@ -314,7 +314,7 @@ export const PHOTOGRAPHER_PAYOUTS: ReadonlyArray<PhotographerPayout> = [
     reference: null,
   },
   {
-    id: "PO-2026-17",
+    id: "PAY-2026W17-CEBUSTRIDE",
     weekOf: "2026-04-20",
     amount: 1980,
     status: "paid",
@@ -323,7 +323,7 @@ export const PHOTOGRAPHER_PAYOUTS: ReadonlyArray<PhotographerPayout> = [
     reference: "GC-A1B2C3D4",
   },
   {
-    id: "PO-2026-16",
+    id: "PAY-2026W16-CEBUSTRIDE",
     weekOf: "2026-04-13",
     amount: 2400,
     status: "paid",
@@ -332,7 +332,7 @@ export const PHOTOGRAPHER_PAYOUTS: ReadonlyArray<PhotographerPayout> = [
     reference: "GC-E5F6G7H8",
   },
   {
-    id: "PO-2026-15",
+    id: "PAY-2026W15-CEBUSTRIDE",
     weekOf: "2026-04-06",
     amount: 1180,
     status: "paid",
@@ -341,7 +341,7 @@ export const PHOTOGRAPHER_PAYOUTS: ReadonlyArray<PhotographerPayout> = [
     reference: "GC-J9K0L1M2",
   },
   {
-    id: "PO-2026-14",
+    id: "PAY-2026W14-CEBUSTRIDE",
     weekOf: "2026-03-30",
     amount: 1320,
     status: "paid",

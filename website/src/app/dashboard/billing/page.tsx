@@ -9,6 +9,10 @@ import { TrackPayoutReportModal } from "@/components/dashboard/track-payout-repo
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  usePhotographerPayouts,
+  usePhotographerTransactions,
+} from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate, formatMonthYear } from "@/lib/format";
 import { useMockLatency } from "@/lib/mock-latency";
@@ -67,7 +71,12 @@ function PayoutsSlab() {
   const [trackingCycle, setTrackingCycle] = useState<PhotographerPayout | null>(
     null,
   );
-  const { data: payouts, isLoading } = useMockLatency(PHOTOGRAPHER_PAYOUTS);
+  // Live mode prefers GET /me/photographer/payouts (Q-A1 + Q-E1); mock-mode
+  // falls back to PHOTOGRAPHER_PAYOUTS seed.
+  const livePayouts = usePhotographerPayouts();
+  const { data: payouts, isLoading } = useMockLatency(
+    livePayouts ?? PHOTOGRAPHER_PAYOUTS,
+  );
   const { user } = useAuth();
   const photographer = resolveCurrentPhotographer(user);
   const submissions = useAdminPayoutReportStore((s) => s.submissions);
@@ -389,8 +398,13 @@ function PayoutRow({
 }
 
 function TransactionsSlab() {
+  // Live mode prefers GET /me/photographer/billing/transactions (Q-017);
+  // mock-mode falls back to PHOTOGRAPHER_TRANSACTIONS seed. monthTotals lives
+  // in the response envelope but the existing render derives them client-side
+  // from the same items, so both paths agree.
+  const liveTx = usePhotographerTransactions();
   const { data: transactions, isLoading } = useMockLatency(
-    PHOTOGRAPHER_TRANSACTIONS,
+    liveTx ? liveTx.items : PHOTOGRAPHER_TRANSACTIONS,
   );
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.TRANSACTION_INITIAL);
 

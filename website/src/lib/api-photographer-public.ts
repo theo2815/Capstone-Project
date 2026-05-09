@@ -1,0 +1,56 @@
+import { api } from "@/lib/api";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
+import {
+  generatePhotographerPhotos,
+  getPhotographerByHandle,
+  type PhotographerProfile,
+} from "@/lib/photographer-registry";
+import type { MockPhoto } from "@/app/events/[slug]/mock-photos";
+import type { EventDetail } from "@/types/event";
+import type { PaginatedResponse } from "@/types/api";
+
+// Phase F.2 photographer-public backend contract
+//   Q-016 (public gallery + OG metadata) RESOLVED 2026-05-10. See vault decisions.
+//
+//   GET /api/v1/public/photographers/{handle}                              → PhotographerProfile
+//   GET /api/v1/public/photographers/{handle}/events/{slug}/photos?offset=&limit=
+//       → PaginatedResponse<MockPhoto>
+//
+// No Bearer JWT required (public). Server enforces:
+//   • Rate limit: 60 req/min per IP
+//   • Reserved-handle check (returns RESERVED_HANDLE on collision attempts)
+
+export async function fetchPublicPhotographer(
+  handle: string,
+): Promise<PhotographerProfile | null> {
+  if (BACKEND_LIVE) {
+    return api.get<PhotographerProfile>(
+      `/public/photographers/${encodeURIComponent(handle)}`,
+    );
+  }
+  return getPhotographerByHandle(handle);
+}
+
+export interface PublicPhotographerPhotosArgs {
+  offset?: number;
+  limit?: number;
+}
+
+export async function fetchPublicPhotographerEventPhotos(
+  handle: string,
+  eventSlug: string,
+  event: EventDetail,
+  expectedCount: number,
+  args: PublicPhotographerPhotosArgs = {},
+): Promise<MockPhoto[]> {
+  if (BACKEND_LIVE) {
+    const p = new URLSearchParams();
+    p.set("offset", String(args.offset ?? 0));
+    p.set("limit", String(args.limit ?? 24));
+    const res = await api.get<PaginatedResponse<MockPhoto>>(
+      `/public/photographers/${encodeURIComponent(handle)}/events/${encodeURIComponent(eventSlug)}/photos?${p.toString()}`,
+    );
+    return res.items;
+  }
+  return generatePhotographerPhotos(handle, event, expectedCount);
+}
