@@ -15,6 +15,9 @@ import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/store/auth-store";
 import { useToast } from "@/hooks/use-toast";
 import { FieldError } from "@/components/ui/field-error";
+import { ApiError } from "@/lib/api";
+import { updateProfileName, changePassword } from "@/lib/api-account";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   NAME_MAX,
   PASSWORD_MIN,
@@ -119,14 +122,25 @@ function NameSlab({ user, number }: { user: User; number: string }) {
 
     setIsSaving(true);
     try {
-      // TODO(backend): swap setTimeout for `api.put<User>("/me/profile", { name: name.trim() })`
-      // when Spring Boot exposes the profile-update endpoint.
-      await new Promise((r) => setTimeout(r, 600));
-      const next = { ...user, name: name.trim() };
-      setUser(next);
+      if (BACKEND_LIVE) {
+        const updated = await updateProfileName(name.trim());
+        setUser(updated);
+      } else {
+        await new Promise((r) => setTimeout(r, 600));
+        setUser({ ...user, name: name.trim() });
+      }
       showToast({ kind: "success", message: "Name updated." });
-    } catch {
-      setSubmitError("Could not save. Try again.");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const apiMessage = err.errors[0]?.message;
+        if (err.errors[0]?.field === "name") {
+          setNameError(apiMessage ?? "Please check the name.");
+        } else {
+          setSubmitError(apiMessage ?? "Could not save. Try again.");
+        }
+      } else {
+        setSubmitError("Could not save. Try again.");
+      }
     } finally {
       setIsSaving(false);
     }
@@ -256,13 +270,33 @@ function PasswordSlab({ number }: { number: string }) {
 
     setIsSaving(true);
     try {
-      // TODO(backend): swap setTimeout for `api.put("/me/password", { currentPassword: current, newPassword: next })`
-      // when Spring Boot exposes the password-change endpoint.
-      await new Promise((r) => setTimeout(r, 600));
+      if (BACKEND_LIVE) {
+        await changePassword({ currentPassword: current, newPassword: next });
+      } else {
+        await new Promise((r) => setTimeout(r, 600));
+      }
       reset();
       showToast({ kind: "success", message: "Password updated." });
-    } catch {
-      setSubmitError("Could not save. Try again.");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const code = err.errors[0]?.code;
+        const message = err.errors[0]?.message;
+        if (code === "INVALID_CREDENTIALS") {
+          setErrors((prev) => ({
+            ...prev,
+            current: "Current password is incorrect.",
+          }));
+        } else if (code === "SAME_PASSWORD") {
+          setErrors((prev) => ({
+            ...prev,
+            next: "New password must be different from current.",
+          }));
+        } else {
+          setSubmitError(message ?? "Could not save. Try again.");
+        }
+      } else {
+        setSubmitError("Could not save. Try again.");
+      }
     } finally {
       setIsSaving(false);
     }

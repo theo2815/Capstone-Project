@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuthStore } from "@/store/auth-store";
 import { useUserMediaStore } from "@/store/user-media-store";
 import { cn } from "@/lib/utils";
 
@@ -38,8 +39,14 @@ export function AvatarDisc({
   className,
   avatarOverride,
 }: AvatarDiscProps) {
+  // Server-side avatar URL (Q-007 RESOLVED) is canonical. The mock-mode store
+  // is the dev fallback. Either way callers passing `avatarOverride` opt out.
+  const ownAvatarUrl = useAuthStore((s) => s.user?.avatarUrl ?? null);
   const storeAvatar = useUserMediaStore((s) => s.avatar);
-  const avatar = avatarOverride === undefined ? storeAvatar : avatarOverride;
+  const ownAvatar = ownAvatarUrl
+    ? { dataUrl: ownAvatarUrl }
+    : storeAvatar;
+  const avatar = avatarOverride === undefined ? ownAvatar : avatarOverride;
   const sizeClass = SIZE_CLASS[size];
 
   if (avatar) {

@@ -1,9 +1,10 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-// TODO(backend): swap localStorage persist for `/me/avatar` + `/me/selfies` endpoints
-// once Spring Boot Phase B exposes them. State shape mirrors the eventual API contract
-// (see _journal/2026-05-05-selfie-library-design in the vault).
+// Mock-mode source-of-truth for avatar + selfies. In live mode the canonical
+// avatar lives on `auth-store.user.avatarUrl` (Q-007 RESOLVED) and selfies are
+// served via `useSelfiesList()` (Q-006 RESOLVED). This store stays as the
+// dev fallback when `NEXT_PUBLIC_BACKEND_LIVE` is unset.
 
 export const SELFIE_MAX = 5;
 
