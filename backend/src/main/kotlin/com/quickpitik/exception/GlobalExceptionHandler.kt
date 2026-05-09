@@ -2,6 +2,8 @@ package com.quickpitik.exception
 
 import com.quickpitik.common.ApiError
 import com.quickpitik.common.ApiResponse
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.service.ai.AiApiException
 import org.slf4j.LoggerFactory
 import org.springframework.core.Ordered
 import org.springframework.core.annotation.Order
@@ -69,6 +71,19 @@ class GlobalExceptionHandler {
         ResponseEntity.status(HttpStatus.FORBIDDEN).body(
             ApiResponse.failure(ApiError(code = "FORBIDDEN", message = "Access denied")),
         )
+
+    @ExceptionHandler(AiApiException::class)
+    fun handleAiApi(ex: AiApiException): ResponseEntity<ApiResponse<Nothing>> {
+        log.warn("ai-api call failed: status={} code={} message={}", ex.status, ex.aiCode, ex.message)
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.AI_API_UNAVAILABLE,
+                    message = "AI service is temporarily unavailable. Please try again.",
+                ),
+            ),
+        )
+    }
 
     @ExceptionHandler(Exception::class)
     fun handleGeneric(ex: Exception): ResponseEntity<ApiResponse<Nothing>> {
