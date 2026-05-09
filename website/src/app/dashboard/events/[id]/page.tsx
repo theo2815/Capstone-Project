@@ -11,7 +11,13 @@ import {
 } from "@/components/photos/photo-preview-card";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
+import {
+  usePhotographerEventDetail,
+  usePhotographerEventPhotos,
+} from "@/hooks/use-photographer-data";
 import { useToast } from "@/hooks/use-toast";
+import { fetchPhotographerPhotoDownload } from "@/lib/api-photographer";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
 import { ROUTES } from "@/lib/constants";
 import { getEventById } from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
@@ -53,17 +59,22 @@ export default function FocusedSharePage() {
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
 
+  // Live mode prefers GET /me/photographer/events/{id} (Q-014); mock-mode
+  // falls back to the existing PHOTOGRAPHER_EVENTS seed lookup.
+  const liveDetail = usePhotographerEventDetail(id ?? null);
+  const livePhotos = usePhotographerEventPhotos(id ?? null);
+
   // Memoize the synchronous lookup so useMockLatency sees a stable reference
   // per id — without it, every parent re-render hands the hook a fresh object
   // and the effect re-fires unnecessarily.
   const resolved = useMemo(
     () => ({
       event: id ? getEventById(id) : undefined,
-      photographer: id
-        ? PHOTOGRAPHER_EVENTS.find((p) => p.id === id)
-        : undefined,
+      photographer:
+        liveDetail ??
+        (id ? PHOTOGRAPHER_EVENTS.find((p) => p.id === id) : undefined),
     }),
-    [id],
+    [id, liveDetail],
   );
   const { data, isLoading } = useMockLatency(resolved);
 
@@ -89,7 +100,11 @@ export default function FocusedSharePage() {
         <Hero event={event} />
         <ShareHeroBand event={event} />
         <Stats photographer={photographer} />
-        <PhotoGrid event={event} photographer={photographer} />
+        <PhotoGrid
+          event={event}
+          photographer={photographer}
+          livePhotos={livePhotos}
+        />
       </div>
     </main>
   );
@@ -350,13 +365,17 @@ function Stats({ photographer }: { photographer: PhotographerEventSummary }) {
 function PhotoGrid({
   event,
   photographer,
+  livePhotos,
 }: {
   event: ListEvent;
   photographer: PhotographerEventSummary;
+  livePhotos: PhotographerLibraryPhoto[] | null;
 }) {
+  // Live mode prefers GET /me/photographer/events/{id}/photos (Q-014).
+  // Mock-mode falls back to the deterministic library generator.
   const photos = useMemo(
-    () => generatePhotographerLibrary(photographer),
-    [photographer],
+    () => livePhotos ?? generatePhotographerLibrary(photographer),
+    [livePhotos, photographer],
   );
   const total = photos.length;
 
@@ -379,15 +398,36 @@ function PhotoGrid({
       i === null || i === visibleSlice.length - 1 ? i : i + 1,
     );
   }, [visibleSlice.length]);
-  const handleDownload = useCallback(() => {
-    // TODO(backend): swap for `api.get('/me/photographer/photos/{id}/download')`
-    // returning a signed S3 URL once Spring Boot Phase F lands. The owned-mode
-    // mock here just confirms the click — no real file is fetched.
+  const handleDownload = useCallback(async () => {
+    const photoId =
+      openIndex !== null ? visibleSlice[openIndex]?.id : undefined;
+    if (!photoId) return;
+    // Live mode: signed-URL fetch + programmatic <a download> click (Q-015,
+    // 5-min TTL). Mock mode shows the success toast without a real fetch.
+    if (BACKEND_LIVE) {
+      try {
+        const result = await fetchPhotographerPhotoDownload(photoId);
+        if (result?.url) {
+          const a = document.createElement("a");
+          a.href = result.url;
+          a.download = "";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          showToast({ kind: "success", message: "Download started." });
+          return;
+        }
+      } catch (err) {
+        console.error("[photographer/download] failed", err);
+        showToast({ kind: "error", message: "Download failed. Try again." });
+        return;
+      }
+    }
     showToast({
       kind: "success",
       message: "Download started. (mock)",
     });
-  }, [showToast]);
+  }, [openIndex, visibleSlice, showToast]);
 
   const openPhoto = openIndex !== null ? visibleSlice[openIndex] : null;
   const previewItem: PhotoPreviewItem | null = openPhoto

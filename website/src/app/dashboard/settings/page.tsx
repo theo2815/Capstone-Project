@@ -19,6 +19,16 @@ import { useAuth } from "@/hooks/use-auth";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { useDebouncedSave } from "@/hooks/use-debounced-save";
 import { useToast } from "@/hooks/use-toast";
+import { uploadAvatar } from "@/lib/api-avatar";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
+import {
+  postCover,
+  postWatermark,
+  putBrand,
+  putHandle,
+  putRegion,
+  submitVerification,
+} from "@/lib/api-photographer-settings";
 import { useUserMediaStore } from "@/store/user-media-store";
 import {
   ACCEPTED_IMAGE_MIME,
@@ -86,6 +96,16 @@ const REGION_GROUP_ORDER: ReadonlyArray<RegionGroup> = [
 // is intentionally wider than 3.2 so we only flag obviously-wrong shapes, not
 // just imperfect crops.
 const COVER_MIN_ASPECT = 1.4;
+
+// Fire-and-forget for live-mode photographer-settings API calls. Local store
+// updates apply immediately for UI snap; API call runs in the background. On
+// failure we log to console — backend is source of truth on next refresh.
+function fireSettings(label: string, p: Promise<unknown>): void {
+  if (!BACKEND_LIVE) return;
+  void p.catch((err) => {
+    console.error(`[photographer/settings] ${label} backend call failed`, err);
+  });
+}
 
 // Below this fraction of non-opaque pixels in a PNG, treat the file as
 // effectively solid — it'll stamp on photos as a block instead of overlaying.
@@ -187,7 +207,7 @@ function VerificationStatusPanel() {
     // `/admin/verifications`. The 3-second auto-approve mock was removed
     // 2026-05-07 when the admin workspace shipped; the photographer now
     // really does sit in `pending` until a human reviews them.
-    // TODO(backend): wire `POST /me/photographer/verification` once Phase F lands.
+    fireSettings("submitVerification", submitVerification());
   }
 
   if (status === "approved") {
@@ -474,10 +494,11 @@ function PictureSubsection() {
     setBusy(true);
     setError(null);
     try {
-      // TODO(backend): swap for `api.post("/me/avatar", formData)` — server
-      // does the same center-crop + JPEG re-encode this helper does.
+      // Local center-crop stages an instant preview; backend runs the same
+      // pipeline server-side and returns the canonical avatarUrl on auth.
       const dataUrl = await squareCropToDataUrl(file, AVATAR_SIZE_PX);
       setAvatar({ dataUrl, uploadedAt: new Date().toISOString() });
+      fireSettings("uploadAvatar", uploadAvatar(file));
       showToast({ kind: "success", message: "Profile picture updated." });
     } catch (err) {
       setError(imageErrorCopy(err));
@@ -619,10 +640,11 @@ function CoverSubsection() {
     setBusy(true);
     setError(null);
     try {
-      // TODO(backend): swap for `api.post("/me/photographer/cover", formData)`
-      // — server-side will run the same downscale + JPEG re-encode.
+      // Local downscale keeps the optimistic preview snappy; backend re-runs
+      // the same downscale + JPEG re-encode and returns the canonical URL.
       const dataUrl = await fitToDataUrl(file, COVER_MAX_PX, 0.82);
       setCover({ dataUrl, uploadedAt: new Date().toISOString() });
+      fireSettings("postCover", postCover(file));
       showToast({ kind: "success", message: "Cover updated." });
     } catch (err) {
       setError(imageErrorCopy(err));
@@ -729,14 +751,18 @@ function BrandSubsection({
   // Silent commit — auto-save (debounce-pause) writes to the store without
   // toasting so rapid editing doesn't flood the user with "Saved." pings.
   // Explicit Save click runs flush() then surfaces a single confirmation
-  // toast in handleSubmit below.
-  // TODO(backend): swap for `api.put("/me/photographer/brand", draft)`.
+  // toast in handleSubmit below. Live mode debounce-fires PUT /me/photographer/brand.
   const saveBrand = useCallback(
     async (draft: { name: string; bio: string }) => {
-      setBrandName(draft.name.trim());
+      const trimmed = draft.name.trim();
+      setBrandName(trimmed);
       setBio(draft.bio);
+      fireSettings(
+        "putBrand",
+        putBrand({ brandName: trimmed, brandColor, bio: draft.bio }),
+      );
     },
-    [setBrandName, setBio],
+    [setBrandName, setBio, brandColor],
   );
 
   const { save, flush, isSaving } = useDebouncedSave(saveBrand);
@@ -986,11 +1012,11 @@ function WatermarkSlab() {
     setBusy(true);
     setError(null);
     try {
-      // TODO(backend): swap for `api.post("/me/photographer/watermark", formData)`.
-      // Server-side will store the PNG and apply it during upload processing
-      // so runners see the watermark at gallery render time.
+      // Local downscale stages an instant preview; backend re-runs the same
+      // pipeline server-side so the watermark composites at upload time.
       const dataUrl = await fitToPngDataUrl(file, WATERMARK_MAX_PX);
       setWatermark({ dataUrl, uploadedAt: new Date().toISOString() });
+      fireSettings("postWatermark", postWatermark(file));
       showToast({ kind: "success", message: "Watermark updated." });
     } catch (err) {
       setError(imageErrorCopy(err));
@@ -1127,12 +1153,13 @@ function HandleSlab() {
 
   // Silent commit — same pattern as BrandSubsection. Auto-save fires on
   // debounce-pause without toasting; explicit Save click runs flush() then
-  // surfaces a single confirmation toast.
-  // TODO(backend): swap for `api.put("/me/photographer/handle", { handle })`
-  // and check `409 Conflict` for handle already taken across users.
+  // surfaces a single confirmation toast. Live mode debounce-fires
+  // PUT /me/photographer/handle (backend returns 409 on collision; we log,
+  // store stays optimistic, photographer sees error on next refresh).
   const saveHandle = useCallback(
     async (next: string) => {
       setHandle(next);
+      fireSettings("putHandle", putHandle(next));
     },
     [setHandle],
   );
@@ -1329,13 +1356,17 @@ function RegionSlab() {
     // Reset province when region changes — the user must re-pick.
     const next = getRegion(regionCode);
     if (!next) return;
-    setRegion({ regionCode, provinceCode: "" });
+    const updated = { regionCode, provinceCode: "" };
+    setRegion(updated);
+    fireSettings("putRegion", putRegion(updated));
   }
 
   function handlePickProvince(provinceCode: string) {
     if (!region) return;
     if (region.provinceCode === provinceCode) return;
-    setRegion({ regionCode: region.regionCode, provinceCode });
+    const updated = { regionCode: region.regionCode, provinceCode };
+    setRegion(updated);
+    fireSettings("putRegion", putRegion(updated));
     const summary = formatRegionLabel(region.regionCode, provinceCode);
     if (summary) {
       showToast({ kind: "success", message: `Region set · ${summary}` });

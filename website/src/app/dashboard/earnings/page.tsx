@@ -7,6 +7,10 @@ import { Sparkline } from "@/components/dashboard/sparkline";
 import { PlatformCutModal } from "@/components/dashboard/platform-cut-modal";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  usePhotographerEarnings,
+  usePhotographerPerEventEarnings,
+} from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { useMockLatency } from "@/lib/mock-latency";
@@ -29,7 +33,12 @@ export default function EarningsPage() {
 }
 
 function LifetimeSlab() {
-  const { data: e, isLoading } = useMockLatency(PHOTOGRAPHER_EARNINGS);
+  // Live mode prefers GET /me/photographer/earnings (Q-017); mock-mode falls
+  // back to PHOTOGRAPHER_EARNINGS seed.
+  const liveEarnings = usePhotographerEarnings();
+  const { data: e, isLoading } = useMockLatency(
+    liveEarnings ?? PHOTOGRAPHER_EARNINGS,
+  );
   const [cutModalOpen, setCutModalOpen] = useState(false);
 
   if (isLoading || !e) {
@@ -110,7 +119,10 @@ function LifetimeSlab() {
 }
 
 function BreakdownSlab() {
-  const { data: e, isLoading } = useMockLatency(PHOTOGRAPHER_EARNINGS);
+  const liveEarnings = usePhotographerEarnings();
+  const { data: e, isLoading } = useMockLatency(
+    liveEarnings ?? PHOTOGRAPHER_EARNINGS,
+  );
   if (isLoading || !e) {
     return (
       <Slab id="breakdown" number="02" title="Breakdown" caption="Current cycle">
@@ -192,7 +204,26 @@ function BreakdownStat({
 }
 
 function PerEventSlab() {
-  const { data: rawEvents, isLoading } = useMockLatency(PHOTOGRAPHER_EVENTS);
+  // Live mode prefers GET /me/photographer/earnings/per-event (Q-017); the
+  // shape collapses to PhotographerEventSummary so the existing render code
+  // works unchanged. Mock-mode falls back to PHOTOGRAPHER_EVENTS.
+  const livePerEvent = usePhotographerPerEventEarnings();
+  const liveAsSeed = livePerEvent
+    ? livePerEvent.map((row) => ({
+        id: row.eventId,
+        slug: row.eventName,
+        name: row.eventName,
+        date: row.eventDate,
+        location: "",
+        state: "open" as const,
+        photoCount: row.photoCount,
+        salesCount: row.salesCount,
+        revenueKept: row.revenueKept,
+      }))
+    : null;
+  const { data: rawEvents, isLoading } = useMockLatency(
+    liveAsSeed ?? PHOTOGRAPHER_EVENTS,
+  );
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EARNINGS_INITIAL);
 
   if (isLoading || !rawEvents) {

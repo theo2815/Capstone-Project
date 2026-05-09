@@ -112,7 +112,8 @@ function pickNextScheduled(
 
 function payoutMethodLabel(method: PhotographerPayout["method"]): string {
   if (method === "gcash") return "GCash";
-  if (method === "bank") return "bank transfer";
+  if (method === "maya") return "Maya";
+  if (method === "gotyme") return "GoTyme";
   return method;
 }
 
