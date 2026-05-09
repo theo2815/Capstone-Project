@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
-import { Pagination } from "@/components/ui/pagination";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminDisputeCard } from "@/components/admin/admin-dispute-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
@@ -17,7 +18,6 @@ import {
 } from "@/store/admin-dispute-store";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
-import { usePagination } from "@/hooks/use-pagination";
 import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
 import {
   type Dispute,
@@ -147,31 +147,42 @@ export function DisputesQueue() {
   const drawerEscDisabled =
     resolveOpen || denyOpen || escalateOpen || pendingResolve !== null;
 
-  // Phase 7 pagination: read-only history slabs only. Open keeps full
-  // visibility because that's where the triage flow + J/K nav land.
-  const resolvedPagination = usePagination(resolved, 10);
-  const deniedPagination = usePagination(denied, 10);
-  const escalatedPagination = usePagination(escalated, 10);
+  // Pagination — load-more model. Open keeps full visibility because
+  // that's where the triage flow + J/K nav land. Read-only history slabs
+  // start at 10 and grow by 10 per click.
+  const [resolvedLoaded, setResolvedLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
+  const [deniedLoaded, setDeniedLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
+  const [escalatedLoaded, setEscalatedLoaded] = useState(
+    PAGE_SIZE.ADMIN_INITIAL,
+  );
+  const resolvedVisible = useMemo(
+    () => resolved.slice(0, resolvedLoaded),
+    [resolved, resolvedLoaded],
+  );
+  const deniedVisible = useMemo(
+    () => denied.slice(0, deniedLoaded),
+    [denied, deniedLoaded],
+  );
+  const escalatedVisible = useMemo(
+    () => escalated.slice(0, escalatedLoaded),
+    [escalated, escalatedLoaded],
+  );
 
   // Keyboard nav iterates through every dispute slab in render order.
   // Resolve/Deny/Escalate aren't part of the E/R/H/S verb whitelist, so
   // the drawer doesn't register verbs — keystrokes inside the drawer fall
-  // through to ESC + the click-only footer buttons. Use pageItems for the
-  // paginated slabs so J/K only visits rows that are currently visible.
+  // through to ESC + the click-only footer buttons. Use the visible
+  // slices for paginated slabs so J/K only visits rows that are currently
+  // rendered.
   const rowIds = useMemo(
     () =>
       [
         ...open,
-        ...resolvedPagination.pageItems,
-        ...deniedPagination.pageItems,
-        ...escalatedPagination.pageItems,
+        ...resolvedVisible,
+        ...deniedVisible,
+        ...escalatedVisible,
       ].map((d) => d.id),
-    [
-      open,
-      resolvedPagination.pageItems,
-      deniedPagination.pageItems,
-      escalatedPagination.pageItems,
-    ],
+    [open, resolvedVisible, deniedVisible, escalatedVisible],
   );
   const queueNavDisabled = openRow !== null || drawerEscDisabled;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
@@ -259,15 +270,16 @@ export function DisputesQueue() {
         title="Resolved"
         caption="Closed with refund"
         totalCount={resolved.length}
-        rows={resolvedPagination.pageItems}
+        rows={resolvedVisible}
         empty="No resolved disputes yet."
         onOpenRow={handleOpenRow}
         focusedId={focusedId}
-        pagination={{
-          ariaLabel: "Resolved disputes pagination",
-          currentPage: resolvedPagination.currentPage,
-          totalPages: resolvedPagination.totalPages,
-          onPageChange: resolvedPagination.setPage,
+        loadMore={{
+          shown: resolvedVisible.length,
+          total: resolved.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setResolvedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
       <DisputeSlab
@@ -276,15 +288,16 @@ export function DisputesQueue() {
         title="Denied"
         caption="Closed without refund"
         totalCount={denied.length}
-        rows={deniedPagination.pageItems}
+        rows={deniedVisible}
         empty="No denied disputes."
         onOpenRow={handleOpenRow}
         focusedId={focusedId}
-        pagination={{
-          ariaLabel: "Denied disputes pagination",
-          currentPage: deniedPagination.currentPage,
-          totalPages: deniedPagination.totalPages,
-          onPageChange: deniedPagination.setPage,
+        loadMore={{
+          shown: deniedVisible.length,
+          total: denied.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setDeniedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
       <DisputeSlab
@@ -293,15 +306,16 @@ export function DisputesQueue() {
         title="Escalated"
         caption="Pushed to higher review"
         totalCount={escalated.length}
-        rows={escalatedPagination.pageItems}
+        rows={escalatedVisible}
         empty="No escalations."
         onOpenRow={handleOpenRow}
         focusedId={focusedId}
-        pagination={{
-          ariaLabel: "Escalated disputes pagination",
-          currentPage: escalatedPagination.currentPage,
-          totalPages: escalatedPagination.totalPages,
-          onPageChange: escalatedPagination.setPage,
+        loadMore={{
+          shown: escalatedVisible.length,
+          total: escalated.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setEscalatedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
 
@@ -419,7 +433,7 @@ function DisputeSlab({
   empty,
   onOpenRow,
   focusedId,
-  pagination,
+  loadMore,
 }: {
   id: string;
   number: string;
@@ -430,11 +444,11 @@ function DisputeSlab({
   empty: string;
   onOpenRow: (id: string) => void;
   focusedId: string | null;
-  pagination?: {
-    ariaLabel: string;
-    currentPage: number;
-    totalPages: number;
-    onPageChange: (page: number) => void;
+  loadMore?: {
+    shown: number;
+    total: number;
+    increment: number;
+    onLoadMore: () => void;
   };
 }) {
   const noun = totalCount === 1 ? "dispute" : "disputes";
@@ -461,12 +475,12 @@ function DisputeSlab({
               </li>
             ))}
           </ul>
-          {pagination && (
-            <Pagination
-              ariaLabel={pagination.ariaLabel}
-              currentPage={pagination.currentPage}
-              totalPages={pagination.totalPages}
-              onPageChange={pagination.onPageChange}
+          {loadMore && (
+            <LoadMoreButton
+              shown={loadMore.shown}
+              total={loadMore.total}
+              increment={loadMore.increment}
+              onLoadMore={loadMore.onLoadMore}
             />
           )}
         </>

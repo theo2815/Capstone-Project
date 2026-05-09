@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
-import { Pagination } from "@/components/ui/pagination";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { useAdminUserStore } from "@/store/admin-user-store";
@@ -14,7 +15,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useUrlState } from "@/hooks/use-url-state";
-import { usePagination } from "@/hooks/use-pagination";
 import {
   useQueueKeyboardNav,
   useDrawerVerbs,
@@ -176,11 +176,24 @@ export function VerificationsQueue() {
   // decisions slabs are read-only listings, not openable rows.
   const rowIds = useMemo(() => pending.map((p) => p.userId), [pending]);
 
-  // Phase 7 pagination: read-only slabs only. Open queue stays full so
+  // Pagination — load-more model. Open queue stays full visibility so
   // J/K, the bulk-bar, and the drawer flow all see every pending row at
-  // once. 10 rows per page.
-  const incompletePagination = usePagination(incomplete, 10);
-  const decisionsPagination = usePagination(log, 10);
+  // once. Read-only slabs (Incomplete + Recent decisions) start at 10
+  // and grow by 10 per click.
+  const [incompleteLoaded, setIncompleteLoaded] = useState(
+    PAGE_SIZE.ADMIN_INITIAL,
+  );
+  const [decisionsLoaded, setDecisionsLoaded] = useState(
+    PAGE_SIZE.ADMIN_INITIAL,
+  );
+  const incompleteVisible = useMemo(
+    () => incomplete.slice(0, incompleteLoaded),
+    [incomplete, incompleteLoaded],
+  );
+  const decisionsVisible = useMemo(
+    () => log.slice(0, decisionsLoaded),
+    [log, decisionsLoaded],
+  );
   const queueNavDisabled =
     openRow !== null || bulkRejectOpen || drawerRejectOpen;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
@@ -346,7 +359,7 @@ export function VerificationsQueue() {
         ) : (
           <>
             <ul className="space-y-3">
-              {incompletePagination.pageItems.map((row) => (
+              {incompleteVisible.map((row) => (
                 <li
                   key={row.userId}
                   className="flex items-center justify-between gap-4 border-b border-line pb-3"
@@ -367,11 +380,13 @@ export function VerificationsQueue() {
                 </li>
               ))}
             </ul>
-            <Pagination
-              ariaLabel="Incomplete pagination"
-              currentPage={incompletePagination.currentPage}
-              totalPages={incompletePagination.totalPages}
-              onPageChange={incompletePagination.setPage}
+            <LoadMoreButton
+              shown={incompleteVisible.length}
+              total={incomplete.length}
+              increment={PAGE_SIZE.ADMIN_INCREMENT}
+              onLoadMore={() =>
+                setIncompleteLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT)
+              }
             />
           </>
         )}
@@ -391,7 +406,7 @@ export function VerificationsQueue() {
         ) : (
           <>
             <ul className="space-y-3">
-              {decisionsPagination.pageItems.map((entry, i) => {
+              {decisionsVisible.map((entry, i) => {
                 const target = byId.get(entry.userId);
                 return (
                   <li
@@ -425,11 +440,13 @@ export function VerificationsQueue() {
                 );
               })}
             </ul>
-            <Pagination
-              ariaLabel="Recent decisions pagination"
-              currentPage={decisionsPagination.currentPage}
-              totalPages={decisionsPagination.totalPages}
-              onPageChange={decisionsPagination.setPage}
+            <LoadMoreButton
+              shown={decisionsVisible.length}
+              total={log.length}
+              increment={PAGE_SIZE.ADMIN_INCREMENT}
+              onLoadMore={() =>
+                setDecisionsLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT)
+              }
             />
           </>
         )}
