@@ -9,13 +9,15 @@ import {
 import Link from "next/link";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
+import { useAuthStore } from "@/store/auth-store";
+import { useUserMediaStore } from "@/store/user-media-store";
 import type { EventDetail } from "@/types/event";
 import { type MockPhoto } from "./mock-photos";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
 import { SaveButton } from "@/components/events/save-button";
 import {
   BibPanel,
-  SelfiePendingPanel,
+  SelfieSearchPanel,
   type SearchPanelMode,
 } from "@/components/events/bib-search-panels";
 import { FindPhotosModal } from "@/components/events/find-photos-modal";
@@ -26,57 +28,100 @@ import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { RefundModal } from "@/components/orders/refund-modal";
 import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
+import { useEventPhotos } from "@/hooks/use-event-photos";
+import { useEventFacePhotos } from "@/hooks/use-event-face-photos";
+import { useEventLivePhotos } from "@/hooks/use-event-live-photos";
+import { deriveEventState } from "@/lib/event-catalog";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 
 type Mode = "cockpit" | "browse";
 
 interface Props {
   event: EventDetail;
-  photos: MockPhoto[];
+  initialPhotos: MockPhoto[];
 }
 
-export function EventCockpit({ event, photos }: Props) {
+export function EventCockpit({ event, initialPhotos }: Props) {
   const [bibFilter] = useUrlState<string>("bib", "", {
     parse: (raw) => raw.trim().toUpperCase(),
   });
   const [browseFlag] = useUrlState<string>("browse", "");
+  const [faceFlag] = useUrlState<string>("face", "");
   const setUrlBatch = useUrlStateBatch();
 
-  const mode: Mode = bibFilter || browseFlag === "1" ? "browse" : "cockpit";
+  const userId = useAuthStore((s) => s.user?.id);
+  const primarySelfie = useUserMediaStore((s) =>
+    s.selfies.find((sf) => sf.isPrimary),
+  );
+
+  const isFaceMode = faceFlag === "1";
+  const mode: Mode =
+    bibFilter || browseFlag === "1" || isFaceMode ? "browse" : "cockpit";
 
   const [panelMode, setPanelMode] = useState<SearchPanelMode>("bib");
   const [bibInput, setBibInput] = useState(bibFilter);
 
+  // Q-011: bib-keyed cache. Active in cockpit (no filter) and bib-mode browse.
+  const bibPhotos = useEventPhotos({
+    slug: event.slug,
+    bib: bibFilter || undefined,
+    initialItems: initialPhotos,
+    enabled: !isFaceMode,
+  });
+
+  // Q-005 + Q-006: face-keyed cache. Active only in face-mode browse.
+  const facePhotos = useEventFacePhotos({
+    slug: event.slug,
+    userId,
+    selfieId: primarySelfie?.id,
+    enabled: isFaceMode,
+  });
+
+  const visiblePhotos = isFaceMode ? facePhotos.photos : bibPhotos.photos;
+  const visibleTotal = isFaceMode ? facePhotos.total : bibPhotos.total;
+
   const submitBib = (raw: string) => {
     const clean = raw.trim().toUpperCase();
     if (!clean) return;
-    setUrlBatch({ bib: clean, browse: null });
+    setUrlBatch({ bib: clean, browse: null, face: null });
   };
 
   const clearBib = () => {
-    setUrlBatch({ bib: null, browse: "1" });
+    setUrlBatch({ bib: null, browse: "1", face: null });
+  };
+
+  const clearFace = () => {
+    setUrlBatch({ face: null, browse: "1", bib: null });
   };
 
   const switchToBrowse = () => {
     setPanelMode("bib");
-    setUrlBatch({ bib: null, browse: "1" });
+    setUrlBatch({ bib: null, browse: "1", face: null });
   };
 
   const switchToCockpit = () => {
     setBibInput("");
     setPanelMode("bib");
-    setUrlBatch({ bib: null, browse: null });
+    setUrlBatch({ bib: null, browse: null, face: null });
+  };
+
+  const handleFaceSearchSuccess = () => {
+    setUrlBatch({ face: "1", browse: "1", bib: null });
   };
 
   if (mode === "browse") {
     return (
       <BrowseMode
         event={event}
-        photos={photos}
+        photos={visiblePhotos}
+        total={visibleTotal}
         bibFilter={bibFilter}
+        isFaceMode={isFaceMode}
         onBackToCockpit={switchToCockpit}
         onSubmitBib={submitBib}
         onClearBib={clearBib}
+        onClearFace={clearFace}
+        onFaceSearchSuccess={handleFaceSearchSuccess}
       />
     );
   }
@@ -84,13 +129,14 @@ export function EventCockpit({ event, photos }: Props) {
   return (
     <CockpitMode
       event={event}
-      photos={photos}
+      photoCount={event.photoCount}
       bibInput={bibInput}
       onBibChange={setBibInput}
       onSubmit={submitBib}
       panelMode={panelMode}
       onPanelModeChange={setPanelMode}
       onBrowseAll={switchToBrowse}
+      onFaceSearchSuccess={handleFaceSearchSuccess}
     />
   );
 }
@@ -99,22 +145,24 @@ export function EventCockpit({ event, photos }: Props) {
 
 function CockpitMode({
   event,
-  photos,
+  photoCount,
   bibInput,
   onBibChange,
   onSubmit,
   panelMode,
   onPanelModeChange,
   onBrowseAll,
+  onFaceSearchSuccess,
 }: {
   event: EventDetail;
-  photos: MockPhoto[];
+  photoCount: number;
   bibInput: string;
   onBibChange: (v: string) => void;
   onSubmit: (v: string) => void;
   panelMode: SearchPanelMode;
   onPanelModeChange: (m: SearchPanelMode) => void;
   onBrowseAll: () => void;
+  onFaceSearchSuccess: () => void;
 }) {
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -166,12 +214,14 @@ function CockpitMode({
                   onBibChange={onBibChange}
                   onSubmit={handleSubmit}
                   onSwitchToSelfie={() => onPanelModeChange("selfie")}
-                  photoCount={photos.length}
+                  photoCount={photoCount}
                   eventPhotoCount={event.photoCount}
                 />
               ) : (
-                <SelfiePendingPanel
+                <SelfieSearchPanel
+                  eventSlug={event.slug}
                   onSwitchToBib={() => onPanelModeChange("bib")}
+                  onSearchSuccess={onFaceSearchSuccess}
                 />
               )}
             </div>
@@ -185,7 +235,7 @@ function CockpitMode({
             className="mt-10 md:mt-14 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-4 focus-visible:ring-offset-bone"
             style={{ animation: "fade-in 0.6s 0.55s both", opacity: 0 }}
           >
-            Browse all <span className="tnum">{photos.length}</span> photos
+            Browse all <span className="tnum">{photoCount}</span> photos
             <span aria-hidden="true">↓</span>
           </Kicker>
         </div>
@@ -305,38 +355,48 @@ function AboutStrip({ event }: { event: EventDetail }) {
 function BrowseMode({
   event,
   photos,
+  total,
   bibFilter,
+  isFaceMode,
   onBackToCockpit,
   onSubmitBib,
   onClearBib,
+  onClearFace,
+  onFaceSearchSuccess,
 }: {
   event: EventDetail;
   photos: MockPhoto[];
+  total: number;
   bibFilter: string;
+  isFaceMode: boolean;
   onBackToCockpit: () => void;
   onSubmitBib: (b: string) => void;
   onClearBib: () => void;
+  onClearFace: () => void;
+  onFaceSearchSuccess: () => void;
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PHOTO_INITIAL);
   const [isPolicyOpen, setIsPolicyOpen] = useState(false);
 
-  const cleanedQuery = bibFilter.replace(/^B-/i, "").trim().toUpperCase();
-  const isFiltered = cleanedQuery.length > 0;
+  const isBibFilter = bibFilter.trim().length > 0;
+  const isAnyFilter = isBibFilter || isFaceMode;
+  // Photos are already server-filtered by bib (Q-011) or face (Q-005/006).
+  const visible = photos;
 
-  const visible = useMemo(() => {
-    if (!isFiltered) return photos;
-    return photos.filter((p) => {
-      if (!p.bib) return false;
-      const num = p.bib.replace(/^B-/, "");
-      return num.includes(cleanedQuery);
-    });
-  }, [photos, cleanedQuery, isFiltered]);
+  // Q-002: live WebSocket prepend for live-state events. Hook is a no-op when
+  // BACKEND_LIVE=false or event is not live (gated inside).
+  const liveState = deriveEventState(event.date);
+  const live = useEventLivePhotos({
+    slug: event.slug,
+    eventId: event.id,
+    enabled: liveState === "live",
+  });
 
   useEffect(() => {
     setLoadedCount(PAGE_SIZE.PHOTO_INITIAL);
-  }, [cleanedQuery]);
+  }, [bibFilter, isFaceMode]);
 
   const visibleSlice = useMemo(
     () => visible.slice(0, loadedCount),
@@ -349,10 +409,16 @@ function BrowseMode({
     }
   }, [visibleSlice.length, previewIndex]);
 
-  const total = visible.reduce((sum, p) => sum + p.price, 0);
-  const showBuyAll = isFiltered && visible.length > 0;
+  const totalPrice = visible.reduce((sum, p) => sum + p.price, 0);
+  const showBuyAll = isAnyFilter && visible.length > 0;
   const previewPhoto =
     previewIndex !== null ? visibleSlice[previewIndex] ?? null : null;
+
+  const headerKicker = isBibFilter
+    ? `${event.name} · BIB ${bibFilter}`
+    : isFaceMode
+      ? `${event.name} · Selfie match`
+      : `${event.name} · Gallery`;
 
   return (
     <section className="bg-bone min-h-screen flex flex-col">
@@ -373,19 +439,17 @@ function BrowseMode({
             <span>Back</span>
           </Kicker>
           <Kicker as="p" className="mb-4">
-            {isFiltered
-              ? `${event.name} · BIB ${bibFilter}`
-              : `${event.name} · Gallery`}
+            {headerKicker}
           </Kicker>
           <h2 className="font-display text-4xl md:text-6xl font-medium tracking-tight leading-[0.95] text-ink">
-            {isFiltered ? (
+            {isAnyFilter ? (
               visible.length === 0 ? (
                 "No matches yet."
               ) : (
                 <>
                   We found{" "}
                   <span
-                    key={cleanedQuery}
+                    key={`${bibFilter}|${isFaceMode}`}
                     className="text-fresh tnum"
                     style={{
                       animation: "count-up 0.6s 0.05s both",
@@ -394,19 +458,29 @@ function BrowseMode({
                   >
                     {visible.length}
                   </span>{" "}
-                  {visible.length === 1 ? "photo" : "photos"}.
+                  {isFaceMode
+                    ? visible.length === 1
+                      ? "match"
+                      : "matches"
+                    : visible.length === 1
+                      ? "photo"
+                      : "photos"}
+                  .
                 </>
               )
             ) : (
               <>
-                Browse <span className="tnum">{photos.length}</span> photos.
+                Browse <span className="tnum">{total || visible.length}</span>{" "}
+                photos.
               </>
             )}
           </h2>
           <p className="mt-4 font-sans text-base md:text-lg text-ink-soft max-w-md">
-            {isFiltered
-              ? "These are the photos matching your bib. Tap any to add to cart."
-              : "Skim the wall, or open search anytime to find your bib."}
+            {isFaceMode
+              ? "These are the photos that match your saved selfie. Tap any to add to cart."
+              : isBibFilter
+                ? "These are the photos matching your bib. Tap any to add to cart."
+                : "Skim the wall, or open search anytime to find your bib."}
           </p>
           <Kicker
             as="button"
@@ -445,10 +519,14 @@ function BrowseMode({
               />
             </svg>
             <span className="truncate">
-              {isFiltered ? `Search · ${bibFilter}` : "Find your photos"}
+              {isBibFilter
+                ? `Search · ${bibFilter}`
+                : isFaceMode
+                  ? "Search · selfie"
+                  : "Find your photos"}
             </span>
           </Kicker>
-          {isFiltered ? (
+          {isBibFilter ? (
             <Kicker
               as="button"
               type="button"
@@ -458,17 +536,57 @@ function BrowseMode({
               <span>Clear filter</span>
               <span aria-hidden="true">✕</span>
             </Kicker>
+          ) : isFaceMode ? (
+            <Kicker
+              as="button"
+              type="button"
+              onClick={onClearFace}
+              className="shrink-0 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            >
+              <span>Clear filter</span>
+              <span aria-hidden="true">✕</span>
+            </Kicker>
           ) : (
             <Kicker tone="soft" className="shrink-0 hidden sm:inline">
-              <span className="tnum text-ink">{photos.length}</span> photos
+              <span className="tnum text-ink">{total || visible.length}</span>{" "}
+              photos
             </Kicker>
           )}
         </div>
+        {liveState === "live" && (live.newCount > 0 || live.reconnectFailed) && (
+          <div className="max-w-7xl mx-auto px-6 md:px-10 pb-3">
+            {live.reconnectFailed ? (
+              <button
+                type="button"
+                onClick={live.refresh}
+                className="font-mono uppercase tracking-[0.25em] text-[10px] text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
+              >
+                Connection lost · Refresh ↻
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  live.resetNewCount();
+                  if (typeof window !== "undefined") {
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }
+                }}
+                className="font-mono uppercase tracking-[0.25em] text-[10px] text-fresh hover:text-fresh-deep"
+              >
+                <span className="tnum">{live.newCount}</span> new photo
+                {live.newCount === 1 ? "" : "s"} · jump to top ↑
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex-1 flex flex-col">
-        {isFiltered && visible.length === 0 ? (
+        {isBibFilter && visible.length === 0 ? (
           <BibEmptyResult event={event} bib={bibFilter} onClear={onClearBib} />
+        ) : isFaceMode && visible.length === 0 ? (
+          <FaceEmptyResult onClear={onClearFace} />
         ) : (
           <div className="px-6 md:px-10 py-10 md:py-14 pb-20">
             <div className="max-w-7xl mx-auto">
@@ -490,22 +608,30 @@ function BrowseMode({
                 onLoadMore={() =>
                   setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT)
                 }
-                countSuffix={isFiltered ? `· BIB ${bibFilter}` : undefined}
+                countSuffix={
+                  isBibFilter
+                    ? `· BIB ${bibFilter}`
+                    : isFaceMode
+                      ? "· selfie match"
+                      : undefined
+                }
               />
             </div>
           </div>
         )}
       </div>
 
-      {showBuyAll && <BuyAllBar event={event} photos={visible} total={total} />}
+      {showBuyAll && <BuyAllBar event={event} photos={visible} total={totalPrice} />}
 
       {searchOpen && (
         <FindPhotosModal
+          eventSlug={event.slug}
           eyebrow={event.name}
-          photoCount={photos.length}
+          photoCount={total || visible.length}
           eventPhotoCount={event.photoCount}
           onClose={() => setSearchOpen(false)}
           onSubmitBib={onSubmitBib}
+          onSearchByFaceSuccess={onFaceSearchSuccess}
         />
       )}
 
@@ -536,6 +662,32 @@ function BrowseMode({
       )}
 
       <Footer />
+    </section>
+  );
+}
+
+function FaceEmptyResult({ onClear }: { onClear: () => void }) {
+  return (
+    <section className="px-6 md:px-10 py-16 md:py-24 bg-bone min-h-[40vh] flex items-center">
+      <div className="max-w-2xl mx-auto w-full text-center">
+        <Kicker as="p" className="mb-3">
+          No matches yet
+        </Kicker>
+        <p className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight">
+          We didn&apos;t find your face.
+        </p>
+        <p className="font-sans text-base md:text-lg text-ink-soft mt-4">
+          Try adding another selfie angle, or browse the wall while photos roll
+          in.
+        </p>
+        <button
+          type="button"
+          onClick={onClear}
+          className="mt-7 inline-flex items-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[12px] transition-colors"
+        >
+          Browse the wall →
+        </button>
+      </div>
     </section>
   );
 }

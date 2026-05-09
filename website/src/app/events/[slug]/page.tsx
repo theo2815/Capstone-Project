@@ -2,19 +2,25 @@ import { Suspense } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { SiteHeader } from "@/components/layout/site-header";
-import { MOCK_EVENT_DETAILS, getEventBySlug } from "../mock-events";
-import { generateMockPhotos } from "./mock-photos";
+import { fetchEventDetail } from "@/lib/api-events";
+import { fetchEventPhotos } from "@/lib/api-photos";
 import { EventCockpit } from "./event-cockpit";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 
 interface EventPageProps {
   params: Promise<{ slug: string }>;
 }
 
+// Events change daily — dynamic SSR is the canonical render. `generateStaticParams`
+// is intentionally omitted; rebuilding the site for every new event is brittle
+// once /events crosses the demo dataset.
+export const dynamic = "force-dynamic";
+
 export async function generateMetadata({
   params,
 }: EventPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const event = getEventBySlug(slug);
+  const event = await fetchEventDetail(slug);
   if (!event) return { title: "Event not found | QuickPitik" };
   return {
     title: `${event.name} | QuickPitik`,
@@ -22,22 +28,23 @@ export async function generateMetadata({
   };
 }
 
-export async function generateStaticParams() {
-  return Object.keys(MOCK_EVENT_DETAILS).map((slug) => ({ slug }));
-}
-
 export default async function EventPage({ params }: EventPageProps) {
   const { slug } = await params;
-  const event = getEventBySlug(slug);
+  const event = await fetchEventDetail(slug);
   if (!event) notFound();
 
-  const photos = generateMockPhotos(event);
+  // Initial photo seed for first paint. Browse mode refetches via React Query
+  // when the user enters a bib (Q-011 server-side filter).
+  const initialPhotos = await fetchEventPhotos(slug, {
+    offset: 0,
+    limit: PAGE_SIZE.PHOTO_INITIAL * 2,
+  });
 
   return (
     <main className="bg-bone text-ink min-h-screen">
       <SiteHeader />
       <Suspense fallback={<CockpitFallback />}>
-        <EventCockpit event={event} photos={photos} />
+        <EventCockpit event={event} initialPhotos={initialPhotos.items} />
       </Suspense>
     </main>
   );
