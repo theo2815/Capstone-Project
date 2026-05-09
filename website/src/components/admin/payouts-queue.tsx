@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
-import { Pagination } from "@/components/ui/pagination";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminPayoutRow } from "@/components/admin/admin-payout-row";
 import { AdminPayoutBulkBar } from "@/components/admin/admin-payout-bulk-bar";
 import { AdminPayoutBulkApproveModal } from "@/components/admin/admin-payout-bulk-approve-modal";
@@ -17,7 +18,6 @@ import {
 } from "@/store/admin-payout-store";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
-import { usePagination } from "@/hooks/use-pagination";
 import {
   useDrawerVerbs,
   useQueueKeyboardNav,
@@ -189,33 +189,41 @@ export function PayoutsQueue() {
   const drawerEscDisabled =
     bulkApproveOpen || holdTarget !== null || markPaidTarget !== null;
 
-  // Phase 7 pagination: read-only history slabs only. Pending review keeps
-  // full visibility because the bulk-bar + J/K nav target that triage list.
-  const approvedPagination = usePagination(approved, 10);
-  const heldPagination = usePagination(held, 10);
-  const paidPagination = usePagination(paid, 10);
+  // Pagination — load-more model. Pending review keeps full visibility
+  // because the bulk-bar + J/K nav target that triage list. Read-only
+  // history slabs start at 10 and grow by 10 per click.
+  const [approvedLoaded, setApprovedLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
+  const [heldLoaded, setHeldLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
+  const [paidLoaded, setPaidLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
+  const approvedVisible = useMemo(
+    () => approved.slice(0, approvedLoaded),
+    [approved, approvedLoaded],
+  );
+  const heldVisible = useMemo(
+    () => held.slice(0, heldLoaded),
+    [held, heldLoaded],
+  );
+  const paidVisible = useMemo(
+    () => paid.slice(0, paidLoaded),
+    [paid, paidLoaded],
+  );
 
   // Keyboard nav iterates pending → approved → held → paid in render
   // order. Drawer verbs are status-conditional: E approves a pending or
   // held cycle, H opens the Hold reason modal whenever the cycle isn't
   // already on hold. Mark-paid stays click-only — its modal asks for a
   // payment reference string and isn't sensible to trigger from a
-  // single keystroke. Use pageItems for paginated slabs so J/K only
-  // visits visible rows.
+  // single keystroke. Use the visible slices for paginated slabs so J/K
+  // only visits rows currently rendered.
   const rowIds = useMemo(
     () =>
       [
         ...pending,
-        ...approvedPagination.pageItems,
-        ...heldPagination.pageItems,
-        ...paidPagination.pageItems,
+        ...approvedVisible,
+        ...heldVisible,
+        ...paidVisible,
       ].map((c) => c.id),
-    [
-      pending,
-      approvedPagination.pageItems,
-      heldPagination.pageItems,
-      paidPagination.pageItems,
-    ],
+    [pending, approvedVisible, heldVisible, paidVisible],
   );
   const queueNavDisabled = openRow !== null || drawerEscDisabled;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
@@ -379,7 +387,7 @@ export function PayoutsQueue() {
         title="Approved"
         caption="Awaiting payment"
         totalCount={approved.length}
-        rows={approvedPagination.pageItems}
+        rows={approvedVisible}
         empty="No approved cycles waiting on payment."
         selected={selected}
         selectionActive={selectionActive}
@@ -390,11 +398,12 @@ export function PayoutsQueue() {
         onApprove={handleSingleApprove}
         onHold={handleSingleHoldRequest}
         onMarkPaid={handleSingleMarkPaid}
-        pagination={{
-          ariaLabel: "Approved payouts pagination",
-          currentPage: approvedPagination.currentPage,
-          totalPages: approvedPagination.totalPages,
-          onPageChange: approvedPagination.setPage,
+        loadMore={{
+          shown: approvedVisible.length,
+          total: approved.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setApprovedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
       <PayoutSlab
@@ -403,7 +412,7 @@ export function PayoutsQueue() {
         title="Held"
         caption="Paused with reason"
         totalCount={held.length}
-        rows={heldPagination.pageItems}
+        rows={heldVisible}
         empty="No held cycles."
         selected={selected}
         selectionActive={selectionActive}
@@ -414,11 +423,12 @@ export function PayoutsQueue() {
         onApprove={handleSingleApprove}
         onHold={handleSingleHoldRequest}
         onMarkPaid={handleSingleMarkPaid}
-        pagination={{
-          ariaLabel: "Held payouts pagination",
-          currentPage: heldPagination.currentPage,
-          totalPages: heldPagination.totalPages,
-          onPageChange: heldPagination.setPage,
+        loadMore={{
+          shown: heldVisible.length,
+          total: held.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setHeldLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
       <PayoutSlab
@@ -427,7 +437,7 @@ export function PayoutsQueue() {
         title="Paid"
         caption="Settled"
         totalCount={paid.length}
-        rows={paidPagination.pageItems}
+        rows={paidVisible}
         empty="No paid cycles yet."
         selected={selected}
         selectionActive={selectionActive}
@@ -438,11 +448,12 @@ export function PayoutsQueue() {
         onApprove={handleSingleApprove}
         onHold={handleSingleHoldRequest}
         onMarkPaid={handleSingleMarkPaid}
-        pagination={{
-          ariaLabel: "Paid payouts pagination",
-          currentPage: paidPagination.currentPage,
-          totalPages: paidPagination.totalPages,
-          onPageChange: paidPagination.setPage,
+        loadMore={{
+          shown: paidVisible.length,
+          total: paid.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setPaidLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
 
@@ -558,7 +569,7 @@ function PayoutSlab({
   onApprove,
   onHold,
   onMarkPaid,
-  pagination,
+  loadMore,
 }: {
   id: string;
   number: string;
@@ -576,11 +587,11 @@ function PayoutSlab({
   onApprove: (cycle: AdminPayoutCycle) => void;
   onHold: (cycle: AdminPayoutCycle) => void;
   onMarkPaid: (cycle: AdminPayoutCycle) => void;
-  pagination?: {
-    ariaLabel: string;
-    currentPage: number;
-    totalPages: number;
-    onPageChange: (page: number) => void;
+  loadMore?: {
+    shown: number;
+    total: number;
+    increment: number;
+    onLoadMore: () => void;
   };
 }) {
   const noun = totalCount === 1 ? "cycle" : "cycles";
@@ -614,12 +625,12 @@ function PayoutSlab({
               </li>
             ))}
           </ul>
-          {pagination && (
-            <Pagination
-              ariaLabel={pagination.ariaLabel}
-              currentPage={pagination.currentPage}
-              totalPages={pagination.totalPages}
-              onPageChange={pagination.onPageChange}
+          {loadMore && (
+            <LoadMoreButton
+              shown={loadMore.shown}
+              total={loadMore.total}
+              increment={loadMore.increment}
+              onLoadMore={loadMore.onLoadMore}
             />
           )}
         </>

@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Slab } from "@/components/profile-shell";
-import { Pagination } from "@/components/ui/pagination";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { AdminPhotographerCard } from "@/components/admin/admin-photographer-card";
 import {
   ADMIN_USER_SEED,
@@ -15,7 +15,7 @@ import {
   useQueueKeyboardNav,
   useSearchFocusShortcut,
 } from "@/hooks/use-admin-keyboard";
-import { usePagination } from "@/hooks/use-pagination";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 
 // Phase 2a admin Photographers directory. Four slabs (Pending / Approved /
 // Incomplete / Suspended) of <AdminPhotographerCard>s. Search box filters
@@ -82,31 +82,48 @@ export default function AdminPhotographersPage() {
     (u) => u.verificationStatus === "pending" && u.suspendedAt === null,
   ).length;
 
-  // Phase 7 pagination: read-only / non-actionable slabs only. Pending
-  // (the head triage slab) keeps full visibility for J/K nav + bulk-bar
-  // alignment. The other three are review-only directories and paginate
-  // at 10 per page.
-  const approvedPagination = usePagination(approved, 10);
-  const incompletePagination = usePagination(incomplete, 10);
-  const suspendedPagination = usePagination(suspended, 10);
+  // Pagination — load-more model. Pending (the head triage slab) keeps
+  // full visibility for J/K nav + bulk-bar alignment. The other three
+  // are review-only directories and load 10 at a time. A search-query
+  // change resets all three loaded counts so a long load doesn't carry
+  // over a narrow filter.
+  const [approvedLoaded, setApprovedLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
+  const [incompleteLoaded, setIncompleteLoaded] = useState(
+    PAGE_SIZE.ADMIN_INITIAL,
+  );
+  const [suspendedLoaded, setSuspendedLoaded] = useState(
+    PAGE_SIZE.ADMIN_INITIAL,
+  );
+  useEffect(() => {
+    setApprovedLoaded(PAGE_SIZE.ADMIN_INITIAL);
+    setIncompleteLoaded(PAGE_SIZE.ADMIN_INITIAL);
+    setSuspendedLoaded(PAGE_SIZE.ADMIN_INITIAL);
+  }, [query]);
+  const approvedVisible = useMemo(
+    () => approved.slice(0, approvedLoaded),
+    [approved, approvedLoaded],
+  );
+  const incompleteVisible = useMemo(
+    () => incomplete.slice(0, incompleteLoaded),
+    [incomplete, incompleteLoaded],
+  );
+  const suspendedVisible = useMemo(
+    () => suspended.slice(0, suspendedLoaded),
+    [suspended, suspendedLoaded],
+  );
 
-  // Keyboard nav iterates pending + the visible page of each historical
+  // Keyboard nav iterates pending + the visible slice of each historical
   // slab. Enter on a row with a handle navigates to its detail page;
   // rows without a handle ignore Enter the same way the legacy click
   // handler does.
   const visibleRows = useMemo(
     () => [
       ...pending,
-      ...approvedPagination.pageItems,
-      ...incompletePagination.pageItems,
-      ...suspendedPagination.pageItems,
+      ...approvedVisible,
+      ...incompleteVisible,
+      ...suspendedVisible,
     ],
-    [
-      pending,
-      approvedPagination.pageItems,
-      incompletePagination.pageItems,
-      suspendedPagination.pageItems,
-    ],
+    [pending, approvedVisible, incompleteVisible, suspendedVisible],
   );
   const rowIds = useMemo(
     () => visibleRows.map((u) => u.userId),
@@ -169,14 +186,15 @@ export default function AdminPhotographersPage() {
         title="Approved"
         caption="Active on platform"
         totalCount={approved.length}
-        rows={approvedPagination.pageItems}
+        rows={approvedVisible}
         empty="No approved photographers yet."
         focusedId={focusedId}
-        pagination={{
-          ariaLabel: "Approved photographers pagination",
-          currentPage: approvedPagination.currentPage,
-          totalPages: approvedPagination.totalPages,
-          onPageChange: approvedPagination.setPage,
+        loadMore={{
+          shown: approvedVisible.length,
+          total: approved.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setApprovedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
       <DirectorySlab
@@ -185,14 +203,15 @@ export default function AdminPhotographersPage() {
         title="Incomplete"
         caption="Settings still missing fields"
         totalCount={incomplete.length}
-        rows={incompletePagination.pageItems}
+        rows={incompleteVisible}
         empty="No incomplete profiles."
         focusedId={focusedId}
-        pagination={{
-          ariaLabel: "Incomplete photographers pagination",
-          currentPage: incompletePagination.currentPage,
-          totalPages: incompletePagination.totalPages,
-          onPageChange: incompletePagination.setPage,
+        loadMore={{
+          shown: incompleteVisible.length,
+          total: incomplete.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setIncompleteLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
       <DirectorySlab
@@ -201,14 +220,15 @@ export default function AdminPhotographersPage() {
         title="Suspended"
         caption="Frozen accounts"
         totalCount={suspended.length}
-        rows={suspendedPagination.pageItems}
+        rows={suspendedVisible}
         empty="No active suspensions."
         focusedId={focusedId}
-        pagination={{
-          ariaLabel: "Suspended photographers pagination",
-          currentPage: suspendedPagination.currentPage,
-          totalPages: suspendedPagination.totalPages,
-          onPageChange: suspendedPagination.setPage,
+        loadMore={{
+          shown: suspendedVisible.length,
+          total: suspended.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setSuspendedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
     </>
@@ -242,7 +262,7 @@ function DirectorySlab({
   totalCount,
   empty,
   focusedId,
-  pagination,
+  loadMore,
 }: {
   id: string;
   number: string;
@@ -252,11 +272,11 @@ function DirectorySlab({
   totalCount: number;
   empty: string;
   focusedId: string | null;
-  pagination?: {
-    ariaLabel: string;
-    currentPage: number;
-    totalPages: number;
-    onPageChange: (page: number) => void;
+  loadMore?: {
+    shown: number;
+    total: number;
+    increment: number;
+    onLoadMore: () => void;
   };
 }) {
   const noun = totalCount === 1 ? "photographer" : "photographers";
@@ -282,12 +302,12 @@ function DirectorySlab({
               </li>
             ))}
           </ul>
-          {pagination && (
-            <Pagination
-              ariaLabel={pagination.ariaLabel}
-              currentPage={pagination.currentPage}
-              totalPages={pagination.totalPages}
-              onPageChange={pagination.onPageChange}
+          {loadMore && (
+            <LoadMoreButton
+              shown={loadMore.shown}
+              total={loadMore.total}
+              increment={loadMore.increment}
+              onLoadMore={loadMore.onLoadMore}
             />
           )}
         </>

@@ -18,4 +18,6 @@ export const PAGE_SIZE: Readonly<Record<string, number>> = {
   TRANSACTION_INCREMENT: 25,
   STAGED_INITIAL: 50,
   STAGED_INCREMENT: 50,
+  ADMIN_INITIAL: 10,
+  ADMIN_INCREMENT: 10,
 };

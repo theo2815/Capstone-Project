@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Slab } from "@/components/profile-shell";
-import { Pagination } from "@/components/ui/pagination";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminFlagCard } from "@/components/admin/admin-flag-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
@@ -14,7 +15,6 @@ import {
 } from "@/store/admin-flag-store";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
-import { usePagination } from "@/hooks/use-pagination";
 import {
   useDrawerVerbs,
   useQueueKeyboardNav,
@@ -138,31 +138,47 @@ export function FlagsQueue() {
 
   const drawerEscDisabled = drawerHideOpen || drawerEscalateOpen;
 
-  // Phase 7 pagination: read-only history slabs only. Open keeps full
-  // visibility — that's the actionable triage list.
-  const hiddenPagination = usePagination(hidden, 10);
-  const dismissedPagination = usePagination(dismissed, 10);
-  const escalatedPagination = usePagination(escalated, 10);
+  // Pagination — load-more model. Open keeps full visibility — that's
+  // the actionable triage list. Read-only history slabs start at 10 and
+  // grow by 10 per click. A search-query change resets all three loaded
+  // counts so the user doesn't carry a long load over a narrow filter.
+  const [hiddenLoaded, setHiddenLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
+  const [dismissedLoaded, setDismissedLoaded] = useState(
+    PAGE_SIZE.ADMIN_INITIAL,
+  );
+  const [escalatedLoaded, setEscalatedLoaded] = useState(
+    PAGE_SIZE.ADMIN_INITIAL,
+  );
+  useEffect(() => {
+    setHiddenLoaded(PAGE_SIZE.ADMIN_INITIAL);
+    setDismissedLoaded(PAGE_SIZE.ADMIN_INITIAL);
+    setEscalatedLoaded(PAGE_SIZE.ADMIN_INITIAL);
+  }, [query]);
+  const hiddenVisible = useMemo(
+    () => hidden.slice(0, hiddenLoaded),
+    [hidden, hiddenLoaded],
+  );
+  const dismissedVisible = useMemo(
+    () => dismissed.slice(0, dismissedLoaded),
+    [dismissed, dismissedLoaded],
+  );
+  const escalatedVisible = useMemo(
+    () => escalated.slice(0, escalatedLoaded),
+    [escalated, escalatedLoaded],
+  );
 
   // Keyboard nav iterates every flag slab in render order. The drawer
   // wires only the H verb (Hide…) — Dismiss has no corresponding verb in
   // the E/R/H/S whitelist and Escalate is a tertiary action. `/` focuses
-  // the search input from anywhere outside the drawer. Use pageItems for
-  // paginated slabs so J/K only visits visible rows.
+  // the search input from anywhere outside the drawer. Use the visible
+  // slices for paginated slabs so J/K only visits rows currently
+  // rendered.
   const rowIds = useMemo(
     () =>
-      [
-        ...open,
-        ...hiddenPagination.pageItems,
-        ...dismissedPagination.pageItems,
-        ...escalatedPagination.pageItems,
-      ].map((f) => f.id),
-    [
-      open,
-      hiddenPagination.pageItems,
-      dismissedPagination.pageItems,
-      escalatedPagination.pageItems,
-    ],
+      [...open, ...hiddenVisible, ...dismissedVisible, ...escalatedVisible].map(
+        (f) => f.id,
+      ),
+    [open, hiddenVisible, dismissedVisible, escalatedVisible],
   );
   const queueNavDisabled = openRow !== null || drawerEscDisabled;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
@@ -267,15 +283,16 @@ export function FlagsQueue() {
         title="Hidden"
         caption="Photo removed from runner views"
         totalCount={hidden.length}
-        rows={hiddenPagination.pageItems}
+        rows={hiddenVisible}
         empty="No hidden photos."
         onOpenRow={handleOpenRow}
         focusedId={focusedId}
-        pagination={{
-          ariaLabel: "Hidden flags pagination",
-          currentPage: hiddenPagination.currentPage,
-          totalPages: hiddenPagination.totalPages,
-          onPageChange: hiddenPagination.setPage,
+        loadMore={{
+          shown: hiddenVisible.length,
+          total: hidden.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setHiddenLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
       <FlagSlab
@@ -284,15 +301,16 @@ export function FlagsQueue() {
         title="Dismissed"
         caption="False alarms"
         totalCount={dismissed.length}
-        rows={dismissedPagination.pageItems}
+        rows={dismissedVisible}
         empty="No dismissed flags."
         onOpenRow={handleOpenRow}
         focusedId={focusedId}
-        pagination={{
-          ariaLabel: "Dismissed flags pagination",
-          currentPage: dismissedPagination.currentPage,
-          totalPages: dismissedPagination.totalPages,
-          onPageChange: dismissedPagination.setPage,
+        loadMore={{
+          shown: dismissedVisible.length,
+          total: dismissed.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setDismissedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
       <FlagSlab
@@ -301,15 +319,16 @@ export function FlagsQueue() {
         title="Escalated"
         caption="Pushed to higher review"
         totalCount={escalated.length}
-        rows={escalatedPagination.pageItems}
+        rows={escalatedVisible}
         empty="No escalations."
         onOpenRow={handleOpenRow}
         focusedId={focusedId}
-        pagination={{
-          ariaLabel: "Escalated flags pagination",
-          currentPage: escalatedPagination.currentPage,
-          totalPages: escalatedPagination.totalPages,
-          onPageChange: escalatedPagination.setPage,
+        loadMore={{
+          shown: escalatedVisible.length,
+          total: escalated.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setEscalatedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
 
@@ -394,7 +413,7 @@ function FlagSlab({
   onOpenRow,
   focusedId,
   primaryFirst,
-  pagination,
+  loadMore,
 }: {
   id: string;
   number: string;
@@ -406,11 +425,11 @@ function FlagSlab({
   onOpenRow: (id: string) => void;
   focusedId: string | null;
   primaryFirst?: boolean;
-  pagination?: {
-    ariaLabel: string;
-    currentPage: number;
-    totalPages: number;
-    onPageChange: (page: number) => void;
+  loadMore?: {
+    shown: number;
+    total: number;
+    increment: number;
+    onLoadMore: () => void;
   };
 }) {
   const noun = totalCount === 1 ? "flag" : "flags";
@@ -438,12 +457,12 @@ function FlagSlab({
               </li>
             ))}
           </ul>
-          {pagination && (
-            <Pagination
-              ariaLabel={pagination.ariaLabel}
-              currentPage={pagination.currentPage}
-              totalPages={pagination.totalPages}
-              onPageChange={pagination.onPageChange}
+          {loadMore && (
+            <LoadMoreButton
+              shown={loadMore.shown}
+              total={loadMore.total}
+              increment={loadMore.increment}
+              onLoadMore={loadMore.onLoadMore}
             />
           )}
         </>
