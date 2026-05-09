@@ -2,6 +2,7 @@ package com.quickpitik.dto.photos
 
 import com.quickpitik.entity.Photo
 import java.math.BigDecimal
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
@@ -19,12 +20,13 @@ data class PhotoDto(
 )
 
 private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+private val displayZone: ZoneId = ZoneId.of("Asia/Manila")
 
 fun Photo.toDto(thumbnailUrlResolver: (Photo) -> String?): PhotoDto = PhotoDto(
     id = id,
     bib = bibs.minByOrNull { it.bibNumber }?.bibNumber,
     km = km?.toInt(),
-    time = capturedAt?.toLocalTime()?.format(timeFormatter) ?: uploadedAt.toLocalTime().format(timeFormatter),
+    time = (capturedAt ?: uploadedAt).atZoneSameInstant(displayZone).toLocalTime().format(timeFormatter),
     tone = tone,
     span = span.wire,
     price = pricePhp,

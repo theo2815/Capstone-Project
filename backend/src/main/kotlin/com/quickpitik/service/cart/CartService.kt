@@ -1,0 +1,147 @@
+package com.quickpitik.service.cart
+
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.cart.CartItemDto
+import com.quickpitik.entity.CartItemEntity
+import com.quickpitik.entity.CartItemId
+import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.Photo
+import com.quickpitik.exception.ConflictException
+import com.quickpitik.exception.NotFoundException
+import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.CartItemRepository
+import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.service.storage.StorageService
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.UUID
+
+@Service
+@Transactional
+class CartService(
+    private val cartItemRepository: CartItemRepository,
+    private val photoRepository: PhotoRepository,
+    private val eventRepository: EventRepository,
+    private val storageService: StorageService,
+    private val storageProperties: StorageProperties,
+) {
+    @Transactional(readOnly = true)
+    fun list(userId: UUID): List<CartItemDto> {
+        val rows = cartItemRepository.findByUserId(userId)
+        if (rows.isEmpty()) return emptyList()
+        return hydrate(rows)
+    }
+
+    fun add(userId: UUID, photoId: UUID, eventId: UUID): CartItemDto {
+        val photo = photoRepository.findById(photoId).orElseThrow {
+            NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
+        }
+        if (photo.eventId != eventId) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "Photo does not belong to that event",
+                field = "eventId",
+            )
+        }
+        val event = eventRepository.findById(eventId).orElseThrow {
+            NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+        }
+        if (event.status == EventStatus.ARCHIVED) {
+            throw ConflictException(code = ErrorCodes.EVENT_ARCHIVED, message = "Event is archived")
+        }
+        val id = CartItemId(userId = userId, photoId = photoId)
+        val existing = cartItemRepository.findById(id).orElse(null)
+        val saved = if (existing != null) {
+            // Idempotent on photoId — refresh server-canonical price.
+            existing.eventId = eventId
+            existing.pricePhpAtAdd = photo.pricePhp
+            cartItemRepository.save(existing)
+        } else {
+            cartItemRepository.save(
+                CartItemEntity(
+                    id = id,
+                    eventId = eventId,
+                    pricePhpAtAdd = photo.pricePhp,
+                ),
+            )
+        }
+        return hydrate(listOf(saved)).first()
+    }
+
+    fun remove(userId: UUID, photoId: UUID): Boolean =
+        cartItemRepository.deleteByUserIdAndPhotoId(userId, photoId) > 0
+
+    fun clear(userId: UUID): Int = cartItemRepository.deleteAllByUserId(userId)
+
+    fun merge(userId: UUID, incoming: List<Pair<UUID, UUID>>): List<CartItemDto> {
+        val existing = cartItemRepository.findByUserId(userId)
+            .associateBy { it.id.photoId }
+            .toMutableMap()
+        val incomingIds = incoming.map { it.first }.toSet()
+        val photoLookup = photoRepository.findAllById(incomingIds).associateBy { it.id }
+        for ((photoId, eventId) in incoming) {
+            val photo = photoLookup[photoId] ?: continue
+            if (photo.eventId != eventId) continue
+            val key = CartItemId(userId, photoId)
+            val row = existing[photoId]
+            if (row == null) {
+                val saved = cartItemRepository.save(
+                    CartItemEntity(
+                        id = key,
+                        eventId = eventId,
+                        pricePhpAtAdd = photo.pricePhp,
+                    ),
+                )
+                existing[photoId] = saved
+            } else {
+                row.pricePhpAtAdd = photo.pricePhp
+                row.eventId = eventId
+                cartItemRepository.save(row)
+            }
+        }
+        return list(userId)
+    }
+
+    private fun hydrate(rows: List<CartItemEntity>): List<CartItemDto> {
+        if (rows.isEmpty()) return emptyList()
+        val photoIds = rows.map { it.id.photoId }.toSet()
+        val eventIds = rows.map { it.eventId }.toSet()
+        val photos = photoRepository.findAllById(photoIds).associateBy { it.id }
+        val events = eventRepository.findAllById(eventIds).associateBy { it.id }
+        return rows.mapNotNull { row ->
+            val photo = photos[row.id.photoId] ?: return@mapNotNull null
+            val event = events[row.eventId]
+            row.toDto(photo, event)
+        }
+    }
+
+    private fun CartItemEntity.toDto(photo: Photo, event: Event?): CartItemDto = CartItemDto(
+        photoId = id.photoId,
+        eventId = eventId,
+        thumbnailUrl = thumbnailUrlOf(photo),
+        price = pricePhpAtAdd,
+        bib = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber,
+        eventName = event?.name,
+        eventSlug = event?.slug,
+        tone = photo.tone,
+        time = (photo.capturedAt ?: photo.uploadedAt)
+            .atZoneSameInstant(DISPLAY_ZONE)
+            .toLocalTime()
+            .format(TIME_FORMATTER),
+    )
+
+    private fun thumbnailUrlOf(photo: Photo): String {
+        val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key
+        return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
+    }
+
+    private companion object {
+        val TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+        val DISPLAY_ZONE: ZoneId = ZoneId.of("Asia/Manila")
+    }
+}
