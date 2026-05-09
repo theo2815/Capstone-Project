@@ -30,6 +30,12 @@ class GlobalExceptionHandler {
             ApiResponse.failure(ApiError(code = ex.code, message = ex.message ?: "Conflict")),
         )
 
+    @ExceptionHandler(NotFoundException::class)
+    fun handleNotFound(ex: NotFoundException): ResponseEntity<ApiResponse<Nothing>> =
+        ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ApiResponse.failure(ApiError(code = ex.code, message = ex.message ?: "Not found")),
+        )
+
     @ExceptionHandler(ValidationException::class)
     fun handleValidation(ex: ValidationException): ResponseEntity<ApiResponse<Nothing>> =
         ResponseEntity.status(HttpStatus.BAD_REQUEST).body(

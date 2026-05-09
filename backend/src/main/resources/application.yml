@@ -68,6 +68,9 @@ app:
     public-gallery:
       capacity: 60
       refill-period: PT1M
+  platform:
+    photo-price-php: ${PHOTO_PRICE_PHP:125}
+    platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}
 
 logging:
   level:

@@ -50,6 +50,9 @@ class SecurityConfig(
                 ).permitAll()
                 auth.requestMatchers("/error", "/actuator/**").permitAll()
                 auth.requestMatchers("/ws/**").permitAll()
+                auth.requestMatchers(HttpMethod.GET, "/api/v1/events", "/api/v1/events/**").permitAll()
+                auth.requestMatchers(HttpMethod.GET, "/api/v1/regions").permitAll()
+                auth.requestMatchers(HttpMethod.GET, "/api/v1/platform/**").permitAll()
                 auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 auth.anyRequest().authenticated()
             }
