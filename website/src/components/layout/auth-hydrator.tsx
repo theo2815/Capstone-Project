@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useAuthStore } from "@/store/auth-store";
+import { useCartStore } from "@/store/cart-store";
+import { useSavedEventsStore } from "@/store/saved-events-store";
 import {
   clearTokens,
   getAccessToken,
@@ -9,12 +11,20 @@ import {
   setTokens,
 } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/constants";
+import { mergeCart } from "@/lib/api-cart";
+import { mergeSavedEvents } from "@/lib/api-saved-events";
 import type { ApiResponse } from "@/types/api";
 import type { User } from "@/types/user";
 
 export function AuthHydrator() {
   const setUser = useAuthStore((s) => s.setUser);
   const setLoading = useAuthStore((s) => s.setLoading);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const userId = useAuthStore((s) => s.user?.id);
+
+  // One-shot guard so React strict-mode double-mount can't fire merge twice.
+  // Reset on logout (user transition to null) so re-login re-fires.
+  const mergedForUserRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +63,40 @@ export function AuthHydrator() {
       cancelled = true;
     };
   }, [setUser, setLoading]);
+
+  // Guest → authed merge per Q-003. Runs exactly once per signed-in user.
+  // Failure leaves local state intact (do NOT clear) — retried on next mount.
+  useEffect(() => {
+    if (!isAuthenticated || !userId) {
+      // Logout transition — flip stores back to local-only mode and reset
+      // the one-shot guard so the next login can re-merge.
+      useCartStore.getState().setSyncEnabled(false);
+      useSavedEventsStore.getState().setSyncEnabled(false);
+      mergedForUserRef.current = null;
+      return;
+    }
+    if (mergedForUserRef.current === userId) return;
+    mergedForUserRef.current = userId;
+
+    const localItems = useCartStore.getState().items;
+    const localIds = useSavedEventsStore.getState().ids;
+
+    Promise.all([mergeCart(localItems), mergeSavedEvents(localIds)])
+      .then(([mergedItems, mergedIds]) => {
+        useCartStore.getState().setItems(mergedItems);
+        useSavedEventsStore.getState().setIds(mergedIds);
+      })
+      .catch(() => {
+        // Spec rule: do NOT clear local on merge failure. Retry on next load.
+      })
+      .finally(() => {
+        // Flip sync ON regardless of merge outcome — subsequent toggles are
+        // best-effort against the server, and the next mount will retry merge
+        // if this one failed.
+        useCartStore.getState().setSyncEnabled(true);
+        useSavedEventsStore.getState().setSyncEnabled(true);
+      });
+  }, [isAuthenticated, userId]);
 
   return null;
 }

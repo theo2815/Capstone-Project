@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { SiteHeader } from "@/components/layout/site-header";
-import { EVENT_CATALOG } from "@/lib/event-catalog";
+import { fetchEventsList } from "@/lib/api-events";
 import { EventsBrowser } from "./events-browser";
 
 export const metadata: Metadata = {
@@ -10,13 +10,20 @@ export const metadata: Metadata = {
     "Browse marathon and running events in Cebu. Pick your race, find your photos.",
 };
 
-export default function EventsPage() {
+// Events change daily — opt out of static generation. The list is fetched on
+// every request so admin changes (overrides + new events) propagate without
+// a redeploy. See [[backend-integration/events#open-question-tile-clickability]].
+export const dynamic = "force-dynamic";
+
+export default async function EventsPage() {
+  const events = await fetchEventsList();
+
   return (
     <main className="bg-bone text-ink relative">
       <SiteHeader />
 
       <Suspense fallback={null}>
-        <EventsBrowser events={EVENT_CATALOG} />
+        <EventsBrowser events={events} />
       </Suspense>
 
       <Footer />

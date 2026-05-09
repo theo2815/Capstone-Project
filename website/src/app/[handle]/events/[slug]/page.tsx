@@ -369,6 +369,7 @@ function Gallery({
 
       {searchOpen && (
         <FindPhotosModal
+          eventSlug={event.slug}
           eyebrow={`${profile.displayName} · ${event.name}`}
           photoCount={photos.length}
           eventPhotoCount={event.photoCount}

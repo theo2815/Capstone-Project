@@ -207,7 +207,6 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            // TODO(backend): swap for `api.delete("/me/saved-events/${entry.id}")`.
             unsave(entry.id);
             showToast({
               kind: "success",

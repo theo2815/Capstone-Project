@@ -5,8 +5,10 @@ import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store
 // Mock catalog. Lifted out of `app/events/page.tsx` so /profile's Race Log can
 // resolve event metadata by ID without re-importing client modules.
 //
-// TODO(backend): replace with `api.get<Event[]>("/events?...")` paginated; the
-// race log will eventually fetch only the events the user has touched.
+// Used as the mock-fallback source for `lib/api-events.ts` when
+// BACKEND_LIVE=false. When live, `fetchEventsList()` returns server data
+// instead. Race Log derives from saved-events ∪ orders and resolves names via
+// `getEventById()` here today; future Phase E may add a server-side join.
 
 // Lifecycle is now derived from `date` instead of carried in the seed.
 // `UPLOAD_GRACE_DAYS` is the photographer upload window (race day + 3 = 4

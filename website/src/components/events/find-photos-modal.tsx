@@ -10,11 +10,13 @@ import { createPortal } from "react-dom";
 import { useScrollLock } from "@/lib/scroll-lock";
 import {
   BibPanel,
-  SelfiePendingPanel,
+  SelfieSearchPanel,
   type SearchPanelMode,
 } from "./bib-search-panels";
 
 interface FindPhotosModalProps {
+  /** Event slug — passed to the selfie panel for the search-by-face POST. */
+  eventSlug: string;
   /** Display name shown in the eyebrow above the headline. Usually `event.name`. */
   eyebrow: string;
   /** Number of photos in the current scope (event-wide or photographer-scoped). */
@@ -23,6 +25,9 @@ interface FindPhotosModalProps {
   eventPhotoCount: number;
   onClose: () => void;
   onSubmitBib: (b: string) => void;
+  /** Fired after a successful face match. Defaults to closing the modal so
+   *  callers without face-mode UI (e.g. /[handle]/events/[slug]) just dismiss. */
+  onSearchByFaceSuccess?: () => void;
 }
 
 // Portal-mounted "Find your photos" modal. Reused by `event-cockpit` (event-wide
@@ -30,11 +35,13 @@ interface FindPhotosModalProps {
 // matches the project rule that all overlays mount to `document.body` to
 // escape ancestor stacking-context / containing-block traps.
 export function FindPhotosModal({
+  eventSlug,
   eyebrow,
   photoCount,
   eventPhotoCount,
   onClose,
   onSubmitBib,
+  onSearchByFaceSuccess,
 }: FindPhotosModalProps) {
   const [bibInput, setBibInput] = useState("");
   const [panelMode, setPanelMode] = useState<SearchPanelMode>("bib");
@@ -172,7 +179,14 @@ export function FindPhotosModal({
               inputRef={bibInputRef}
             />
           ) : (
-            <SelfiePendingPanel onSwitchToBib={() => setPanelMode("bib")} />
+            <SelfieSearchPanel
+              eventSlug={eventSlug}
+              onSwitchToBib={() => setPanelMode("bib")}
+              onSearchSuccess={() => {
+                if (onSearchByFaceSuccess) onSearchByFaceSuccess();
+                onClose();
+              }}
+            />
           )}
         </div>
       </div>

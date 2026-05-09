@@ -60,8 +60,6 @@ export function SaveButton({
       return;
     }
 
-    // TODO(backend): swap for `api.post("/me/saved-events", { eventId })` /
-    // `api.delete("/me/saved-events/${eventId}")` when Spring Boot Phase B lands.
     const willBeSaved = !isSaved;
     toggle(eventId);
 
