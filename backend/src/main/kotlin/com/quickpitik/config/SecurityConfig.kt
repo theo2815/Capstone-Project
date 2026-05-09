@@ -49,6 +49,7 @@ class SecurityConfig(
                     "/api/v1/auth/reset-password",
                 ).permitAll()
                 auth.requestMatchers("/error", "/actuator/**").permitAll()
+                auth.requestMatchers("/ws/**").permitAll()
                 auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 auth.anyRequest().authenticated()
             }
