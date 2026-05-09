@@ -14,11 +14,19 @@ import {
   useAdminDisputeStore,
   getEffectiveDisputes,
 } from "@/store/admin-dispute-store";
+import {
+  useAdminSalesKpisLive,
+  useAdminSalesByEventLive,
+} from "@/hooks/use-admin-data";
 
-// Admin sales — derivation hooks. Pure read-side. Sources:
+// Admin sales — derivation hooks. Pure read-side. Sources in mock mode:
 //   - ADMIN_PAYOUT_SEED (via store overrides)  → cycle-level itemCount × PRICE
 //   - ADMIN_DISPUTES (via store overrides + submissions) → refund $
 //   - EVENT_CATALOG (via admin-event-overrides store) → events with sales
+//
+// In live mode (NEXT_PUBLIC_BACKEND_LIVE=true), `useSalesKpis` and
+// `useSalesByEvent` prefer server data from `/admin/sales/*`; the derivation
+// stays as fallback when the server query is still pending.
 //
 // Caveat: orders mock has no photographer attribution, so events are scored
 // via "implied GMV" = photoCount × PHOTO_PRICE_PHP. The page surfaces this
@@ -38,7 +46,7 @@ export function useSalesKpis(): SalesKpis {
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
 
-  return useMemo(() => {
+  const derived = useMemo(() => {
     const cycles = getEffectivePayouts(payoutOverrides);
     const totalSalesCount = cycles.reduce((s, c) => s + c.itemCount, 0);
     const gmv = totalSalesCount * PHOTO_PRICE_PHP;
@@ -60,6 +68,11 @@ export function useSalesKpis(): SalesKpis {
       totalSalesCount,
     };
   }, [payoutOverrides, disputeOverrides, disputeSubmissions]);
+
+  // Live mode: prefer server data when present, fall back to derivation while
+  // the query is loading or in mock mode.
+  const live = useAdminSalesKpisLive("ytd");
+  return live ?? derived;
 }
 
 export interface WeeklyGmvPoint {
@@ -172,7 +185,7 @@ export function useSalesByEvent(): SalesEventRow[] {
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
 
-  return useMemo(() => {
+  const derived = useMemo(() => {
     const disputes = getEffectiveDisputes(disputeOverrides, disputeSubmissions);
     const refundsByEvent = new Map<string, number>();
     for (const d of disputes) {
@@ -203,6 +216,10 @@ export function useSalesByEvent(): SalesEventRow[] {
         };
       });
   }, [catalog, disputeOverrides, disputeSubmissions]);
+
+  // Live mode: prefer server data when present, fall back to derivation.
+  const live = useAdminSalesByEventLive();
+  return live ?? derived;
 }
 
 export function useTopEvents(limit: number = 10): SalesEventRow[] {

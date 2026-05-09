@@ -6,16 +6,30 @@ import {
   type PayoutReportReason,
 } from "@/lib/admin-payout-reports";
 import { usePhotographerMessageStore } from "@/store/photographer-message-store";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
+import {
+  acknowledgePayoutReport as apiAcknowledgeReport,
+  resolvePayoutReport as apiResolveReport,
+} from "@/lib/api-admin";
 
-// Mock-only store of admin actions on the payout-reports section. Mirrors
-// the dispute store: submissions[] for runtime-filed reports, overrides{}
-// for sparse status patches, log[] capped at 50 entries.
+// Mock-mode store of admin actions on the payout-reports section. Phase G
+// wiring fires the matching `api-admin` PATCH in the background after the
+// local override is applied — Q-A2 RESOLVED 2026-05-09 means the backend
+// writes the photographer-message insert in the same TX. Photographer-side
+// submitReport() is photographer-scope; admin actions land here.
 //
 // acknowledge() and resolve() each fire a side-effect into the
 // photographer-message-store so the photographer sees a new inbox row
 // reflecting the admin's action. submitReport() is the inverse direction
 // (photographer-side write); it does NOT fire an inbox message — the
 // photographer already saw the report submission.
+
+function fireBackendReportAction(label: string, p: Promise<unknown>): void {
+  if (!BACKEND_LIVE) return;
+  void p.catch((err) => {
+    console.error(`[admin/reports] ${label} backend call failed`, err);
+  });
+}
 
 export type PayoutReportDecision = "submitted" | "acknowledged" | "resolved";
 
@@ -140,6 +154,7 @@ export const useAdminPayoutReportStore = create<AdminPayoutReportStoreState>(
           reportId: id,
         });
       }
+      fireBackendReportAction("acknowledge", apiAcknowledgeReport(id, reply));
     },
     resolve: (id, resolutionNote) => {
       const at = nowIso();
@@ -171,6 +186,10 @@ export const useAdminPayoutReportStore = create<AdminPayoutReportStoreState>(
           reportId: id,
         });
       }
+      fireBackendReportAction(
+        "resolve",
+        apiResolveReport(id, resolutionNote),
+      );
     },
     clear: () => set({ submissions: [], overrides: {}, log: [] }),
   }),

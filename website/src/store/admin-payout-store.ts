@@ -4,17 +4,37 @@ import {
   type AdminPayoutCycle,
 } from "@/lib/admin-payouts";
 import { usePhotographerMessageStore } from "@/store/photographer-message-store";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
+import {
+  approvePayout as apiApprovePayout,
+  holdPayout as apiHoldPayout,
+  markPayoutPaid as apiMarkPayoutPaid,
+  bulkApprovePayouts as apiBulkApprovePayouts,
+  bulkHoldPayouts as apiBulkHoldPayouts,
+} from "@/lib/api-admin";
 
-// Mock-only store of admin actions on the payouts queue. NOT persisted —
-// real backend ships in Phase F. Adds bulk variants on top of the
-// dispute/flag pattern: bulkApprove + bulkHold emit one log entry per
-// included payout id with a shared `groupId` so the activity timeline
-// can collapse them visually if it wants to.
+// Mock-mode store of admin actions on the payouts queue. Phase G wiring
+// fires the matching `api-admin` call in the background after the local
+// override is applied — Q-A1 + Q-A2 + Q-A4 RESOLVED 2026-05-09 means cycle
+// IDs follow `PAY-{YYYY}W{NN}-{HANDLE}` format, photographer-side
+// `payout_held` inbox row is written by the backend in the same TX, and
+// bulk operations carry a server-assigned `group_id` for KPI collapse.
+//
+// The local groupId helper below stays as the mock-mode fallback; in live
+// mode the FE still uses it for visual collapse until the backend response
+// supplies a canonical UUID.
 //
 // Hold + bulkHold also push a "payout_held" message into the
 // photographer-message-store so the affected photographer sees it in their
 // inbox bell. Approve + markPaid are silent — the photographer learns from
 // status flips on /dashboard/billing, not the inbox.
+
+function fireBackendPayoutAction(label: string, p: Promise<unknown>): void {
+  if (!BACKEND_LIVE) return;
+  void p.catch((err) => {
+    console.error(`[admin/payouts] ${label} backend call failed`, err);
+  });
+}
 
 export type PayoutDecision =
   | "approved"
@@ -84,6 +104,7 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
         decidedAt: at,
       }),
     }));
+    fireBackendPayoutAction("approve", apiApprovePayout(payoutId));
   },
   hold: (payoutId, reason) => {
     const at = nowIso();
@@ -115,6 +136,7 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
         payoutCycleId: payoutId,
       });
     }
+    fireBackendPayoutAction("hold", apiHoldPayout(payoutId, reason));
   },
   markPaid: (payoutId, reference) => {
     const at = nowIso();
@@ -136,6 +158,10 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
         decidedAt: at,
       }),
     }));
+    fireBackendPayoutAction(
+      "markPaid",
+      apiMarkPayoutPaid(payoutId, reference),
+    );
   },
   bulkApprove: (payoutIds) => {
     if (payoutIds.length === 0) return;
@@ -162,6 +188,10 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
       }
       return { overrides, log: appendLog(s.log, entries) };
     });
+    fireBackendPayoutAction(
+      "bulkApprove",
+      apiBulkApprovePayouts(payoutIds),
+    );
   },
   bulkHold: (payoutIds, reason) => {
     if (payoutIds.length === 0) return;
@@ -200,6 +230,10 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
         payoutCycleId: id,
       });
     }
+    fireBackendPayoutAction(
+      "bulkHold",
+      apiBulkHoldPayouts(payoutIds, reason),
+    );
   },
   clear: () => set({ overrides: {}, log: [] }),
 }));
