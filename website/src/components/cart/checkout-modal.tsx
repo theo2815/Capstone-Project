@@ -3,12 +3,16 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
 import { useOrdersStore } from "@/store/orders-store";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn } from "@/lib/utils";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
+import { postOrder } from "@/lib/api-orders";
+import { ApiError } from "@/lib/api";
 import type { CartItem } from "@/types/order";
 
 // Build the post-login resume URL: original page + `?checkout=1` flag.
@@ -52,6 +56,7 @@ export function CheckoutModal({
   const total = useCartStore((s) => s.total());
   const clearCart = useCartStore((s) => s.clear);
   const addOrder = useOrdersStore((s) => s.addOrder);
+  const queryClient = useQueryClient();
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const authUser = useAuthStore((s) => s.user);
@@ -74,6 +79,9 @@ export function CheckoutModal({
   );
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
+  // Q-008 RESOLVED: client-generated UUID per payment-method selection.
+  // Re-generates on method change or modal re-entry; backend dedupes for 24 h.
+  const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -84,6 +92,7 @@ export function CheckoutModal({
     setPaymentMethod(null);
     setPaymentError(null);
     setOrderId(null);
+    setIdempotencyKey(null);
   }, [isOpen, isAuthenticated, authUser?.email]);
 
   useScrollLock(isOpen);
@@ -119,21 +128,46 @@ export function CheckoutModal({
     }
   };
 
-  const handlePay = () => {
-    if (!paymentMethod) {
+  const handlePay = async () => {
+    if (!paymentMethod || !idempotencyKey) {
       setPaymentError("Pick a payment method.");
       return;
     }
     setPaymentError(null);
     setStep("processing");
+
+    if (BACKEND_LIVE) {
+      try {
+        const order = await postOrder({
+          items: items.map((i) => ({ photoId: i.photoId, eventId: i.eventId })),
+          paymentMethod,
+          recipientEmail: isAuthenticated ? undefined : email,
+          idempotencyKey,
+        });
+        // Race log derives from saved-events ∪ orders — invalidate both so the
+        // /profile race log picks up the new purchase.
+        queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
+        queryClient.invalidateQueries({ queryKey: ["me", "saved-events"] });
+        setOrderId(order.id);
+        setStep("success");
+      } catch (err) {
+        const message =
+          err instanceof ApiError
+            ? err.message
+            : "Payment failed. Try again in a moment.";
+        setPaymentError(message);
+        setStep("payment");
+      }
+      return;
+    }
+
+    // Mock mode — synthetic split per event so Race Log can derive counts
+    // without a backend round-trip. CheckoutModal is the only mock-mode order
+    // creator; live mode uses postOrder() above.
     setTimeout(() => {
       const id = `QP-${Date.now().toString(36).toUpperCase().slice(-6)}`;
       const method = paymentMethod;
       const paidAt = new Date().toISOString();
-
-      // Group cart by event so Race Log can derive per-event purchase counts.
-      // TODO(backend): swap for `api.post("/orders", ...)` and stop deriving
-      // the race log purchases client-side once Spring Boot Phase E lands.
       const itemsByEvent = new Map<string, CartItem[]>();
       for (const item of items) {
         const list = itemsByEvent.get(item.eventId) ?? [];
@@ -142,10 +176,10 @@ export function CheckoutModal({
       }
       let suffix = 0;
       for (const [eventId, eventItems] of itemsByEvent) {
-        const orderId =
+        const splitId =
           itemsByEvent.size === 1 ? id : `${id}-${++suffix}`;
         addOrder({
-          id: orderId,
+          id: splitId,
           eventId,
           photoIds: eventItems.map((i) => i.photoId),
           total: eventItems.reduce((sum, i) => sum + i.price, 0),
@@ -153,7 +187,6 @@ export function CheckoutModal({
           paidAt,
         });
       }
-
       setOrderId(id);
       setStep("success");
     }, 1600);
@@ -246,6 +279,9 @@ export function CheckoutModal({
               onPaymentChange={(m) => {
                 setPaymentMethod(m);
                 setPaymentError(null);
+                // Q-008: regenerate idempotencyKey on method change. Different
+                // method = different intent, must not dedupe against prior.
+                setIdempotencyKey(crypto.randomUUID());
               }}
               paymentError={paymentError}
               total={total}

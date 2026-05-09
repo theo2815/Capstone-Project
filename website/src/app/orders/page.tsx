@@ -10,7 +10,8 @@ import {
   type JumpSection,
 } from "@/components/profile-shell";
 import { useAuth } from "@/hooks/use-auth";
-import { useOrdersStore, type MockOrder } from "@/store/orders-store";
+import { useOrdersList, useOrderDetail } from "@/hooks/use-orders";
+import { type MockOrder } from "@/store/orders-store";
 import { useToast } from "@/hooks/use-toast";
 import {
   PhotoPreviewCard,
@@ -36,6 +37,17 @@ import {
   formatPaidAt,
 } from "@/lib/format";
 import { cn, formatPrice } from "@/lib/utils";
+
+// Programmatic anchor click — direct hit to the presigned S3 URL avoids the
+// CORS-on-fetch trap. Same idiom for per-photo + bundle.
+function triggerDownload(url: string, filename?: string) {
+  if (typeof document === "undefined") return;
+  const a = document.createElement("a");
+  a.href = url;
+  if (filename) a.download = filename;
+  a.rel = "noopener";
+  a.click();
+}
 
 const JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "spend", label: "Spend" },
@@ -115,7 +127,7 @@ function deriveRunnerHandle(email: string): string {
 }
 
 function SpendSlab() {
-  const orders = useOrdersStore((s) => s.orders);
+  const { orders } = useOrdersList();
   const stats = useMemo(() => computeSpendStats(orders), [orders]);
 
   if (orders.length === 0) {
@@ -186,7 +198,7 @@ function ReceiptsSlab({
 }: {
   onRefundRequest: (order: MockOrder) => void;
 }) {
-  const orders = useOrdersStore((s) => s.orders);
+  const { orders } = useOrdersList();
   const sorted = useMemo(
     () =>
       [...orders].sort((a, b) =>
@@ -244,6 +256,7 @@ function ReceiptRow({
   const [expanded, setExpanded] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const { showToast } = useToast();
+  const { detail } = useOrderDetail(expanded ? order.id : null);
 
   const overrides = useAdminDisputeStore((s) => s.overrides);
   const submissions = useAdminDisputeStore((s) => s.submissions);
@@ -264,24 +277,34 @@ function ReceiptRow({
   const photoCount = photoIds.length;
 
   // Build PhotoPreviewItem[] for the lightbox. Owned mode hides watermark, in-cart
-  // pill, and price-bearing CTAs, so bib/time/price are placeholders here.
-  // TODO(backend): hydrate `imageUrl` (and real bib/time) from `/me/orders/{id}`
-  // once Spring Boot Phase E lands.
-  const previewItems = useMemo<ReadonlyArray<PhotoPreviewItem>>(
-    () =>
-      photoIds.map((id, i) => ({
-        id,
-        bib: null,
-        time: "—",
-        tone: i,
+  // pill, and price-bearing CTAs. Live-mode `detail.photos` carries `previewUrl`
+  // (server-baked watermark) — feed it into PhotoPreviewItem.imageUrl so the
+  // lightbox renders real images instead of the placeholder geometry. Deps
+  // key off `order.photoIds` directly to keep the array reference stable.
+  const previewItems = useMemo<ReadonlyArray<PhotoPreviewItem>>(() => {
+    if (detail?.photos && detail.photos.length > 0) {
+      return detail.photos.map((p, i) => ({
+        id: p.id,
+        bib: p.bib,
+        time: p.time,
+        tone: p.tone ?? i,
         price: 0,
-      })),
-    [photoIds],
-  );
+        imageUrl: p.previewUrl ?? null,
+      }));
+    }
+    return (order.photoIds ?? []).map((id, i) => ({
+      id,
+      bib: null,
+      time: "—",
+      tone: i,
+      price: 0,
+    }));
+  }, [detail?.photos, order.photoIds]);
 
   function handleDownloadAll() {
-    // TODO(backend): swap for a presigned-bundle fetch once Spring Boot Phase E
-    // exposes `/me/orders/${order.id}/download-bundle`.
+    if (detail?.downloadBundleUrl) {
+      triggerDownload(detail.downloadBundleUrl, `${order.id}.zip`);
+    }
     showToast({
       kind: "success",
       message: `Preparing ${photoCount} photo${photoCount === 1 ? "" : "s"}…`,
@@ -289,8 +312,10 @@ function ReceiptRow({
   }
 
   function handleDownloadOne(id: string) {
-    // TODO(backend): swap for a presigned single-photo fetch on
-    // `/me/orders/${order.id}/photos/${id}/download`.
+    const photo = detail?.photos.find((p) => p.id === id);
+    if (photo?.downloadUrl) {
+      triggerDownload(photo.downloadUrl);
+    }
     showToast({
       kind: "success",
       message: `Downloading ${id.replace(/^mock-/, "")}…`,
@@ -370,6 +395,7 @@ function ReceiptRow({
           ) : (
             <PhotoStrip
               photoIds={photoIds}
+              thumbnails={detail?.photos.map((p) => p.thumbnailUrl ?? null)}
               onSelect={(i) => setPreviewIndex(i)}
             />
           )}
@@ -432,33 +458,47 @@ function ReceiptRow({
 
 function PhotoStrip({
   photoIds,
+  thumbnails,
   onSelect,
 }: {
   photoIds: ReadonlyArray<string>;
+  // Aligned with photoIds — `thumbnails[i]` is the URL for `photoIds[i]`,
+  // `null` when missing (mock-mode falls back to ID-chip rendering).
+  thumbnails?: ReadonlyArray<string | null>;
   onSelect: (index: number) => void;
 }) {
-  // TODO(backend): replace abstract tiles with real thumbnail <img> tags once
-  // Spring Boot returns presigned S3 URLs on `/me/orders/{id}` with each photo's
-  // small variant. Until then, show ID chips so the slot has presence.
   const max = 5;
   const visible = photoIds.slice(0, max);
   const overflow = Math.max(0, photoIds.length - max);
 
   return (
     <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
-      {visible.map((id, i) => (
-        <button
-          key={id}
-          type="button"
-          onClick={() => onSelect(i)}
-          aria-label={`Preview ${id.replace(/^mock-/, "")}`}
-          className="aspect-[4/3] bg-bone-deep border border-line rounded-md flex items-center justify-center overflow-hidden hover:border-ink/40 hover:bg-bone transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
-        >
-          <Kicker tnum className="px-2 truncate">
-            {id.replace(/^mock-/, "")}
-          </Kicker>
-        </button>
-      ))}
+      {visible.map((id, i) => {
+        const thumb = thumbnails?.[i] ?? null;
+        return (
+          <button
+            key={id}
+            type="button"
+            onClick={() => onSelect(i)}
+            aria-label={`Preview ${id.replace(/^mock-/, "")}`}
+            className="aspect-[4/3] bg-bone-deep border border-line rounded-md flex items-center justify-center overflow-hidden hover:border-ink/40 hover:bg-bone transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+          >
+            {thumb ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={thumb}
+                alt={id.replace(/^mock-/, "")}
+                className="size-full object-cover"
+                loading="lazy"
+              />
+            ) : (
+              <Kicker tnum className="px-2 truncate">
+                {id.replace(/^mock-/, "")}
+              </Kicker>
+            )}
+          </button>
+        );
+      })}
       {overflow > 0 && (
         <button
           type="button"

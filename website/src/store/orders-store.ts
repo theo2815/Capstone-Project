@@ -1,10 +1,11 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { OrderStatus } from "@/types/order";
 
-// TODO(backend): swap localStorage persist for `/me/orders` endpoints once
-// Spring Boot Phase E (Orders + Payments) lands. Until then, CheckoutModal
-// pushes a MockOrder here on payment success so Race Log can derive
-// "events the user purchased from."
+// Local cache of orders for mock-mode + offline-friendly Race Log derivation.
+// Phase E (2026-05-09): /orders page reads via `useOrdersList()` hook which
+// pulls from /me/orders in live mode and falls back here in mock mode. The
+// CheckoutModal mock branch still pushes a MockOrder here on payment success.
 
 export interface MockOrder {
   id: string;            // e.g. "QP-A1B2C3"
@@ -13,6 +14,12 @@ export interface MockOrder {
   total: number;         // peso total
   paymentMethod: string;
   paidAt: string;        // ISO timestamp
+  // Phase E backend-hydrated optional fields. Server populates these on the
+  // /me/orders list payload; mock seed leaves them undefined and consumers
+  // (label helpers, kicker counts) fall back to local catalog joins.
+  eventName?: string;
+  eventSlug?: string;
+  status?: OrderStatus;
 }
 
 // Demo seed so a fresh user sees Race Log "kept" counts immediately.
@@ -39,6 +46,7 @@ const SEED_ORDERS: ReadonlyArray<MockOrder> = [
 
 interface OrdersState {
   orders: MockOrder[];
+  setOrders: (orders: MockOrder[]) => void;
   addOrder: (order: MockOrder) => void;
   clear: () => void;
 }
@@ -47,6 +55,7 @@ export const useOrdersStore = create<OrdersState>()(
   persist(
     (set) => ({
       orders: [...SEED_ORDERS],
+      setOrders: (orders) => set({ orders }),
       addOrder: (order) =>
         set((state) => ({ orders: [order, ...state.orders] })),
       clear: () => set({ orders: [] }),

@@ -28,6 +28,9 @@ import { useToast } from "@/hooks/use-toast";
 import type { MockOrder } from "@/store/orders-store";
 import { formatLongDate } from "@/lib/format";
 import { formatPrice, cn } from "@/lib/utils";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
+import { submitOrderRefund } from "@/lib/api-orders";
+import { ApiError } from "@/lib/api";
 
 const NOTE_MAX = 500;
 const SUBMIT_LATENCY_MS = 600;
@@ -167,10 +170,26 @@ function RefundRequestModal({
     setIsSubmitting(true);
     setSubmitError(null);
 
+    const photoIds = Array.from(selected);
+    const trimmedNote = note.trim();
+
     try {
-      await new Promise((resolve) => setTimeout(resolve, SUBMIT_LATENCY_MS));
-      const count = selected.size;
-      for (const photoId of selected) {
+      if (BACKEND_LIVE) {
+        // Live: server creates the canonical Dispute records + admin queue rows.
+        // FE still pushes locally so the runner sees pending status immediately;
+        // server-side hydration on hard refresh is a Phase F problem (Q-010).
+        await submitOrderRefund({
+          orderId: order.id,
+          photoIds,
+          reason,
+          note: trimmedNote,
+        });
+      } else {
+        // Mock-mode latency for parity with the live round-trip.
+        await new Promise((resolve) => setTimeout(resolve, SUBMIT_LATENCY_MS));
+      }
+
+      for (const photoId of photoIds) {
         submitDispute({
           orderId: order.id,
           photoId,
@@ -178,7 +197,7 @@ function RefundRequestModal({
           runnerHandle,
           photographerHandle,
           reason,
-          note: note.trim(),
+          note: trimmedNote,
           orderSnapshot: {
             total: order.total,
             paymentMethod: order.paymentMethod,
@@ -192,14 +211,19 @@ function RefundRequestModal({
           },
         });
       }
+      const count = photoIds.length;
       showToast({
         kind: "success",
         message: `Refund request sent for ${count} photo${count === 1 ? "" : "s"}. We'll review within ${REFUND_PROCESSING_DAYS} business day${REFUND_PROCESSING_DAYS === 1 ? "" : "s"}.`,
         duration: 5000,
       });
       onClose();
-    } catch {
-      setSubmitError("We couldn't send your request. Try again in a moment.");
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "We couldn't send your request. Try again in a moment.";
+      setSubmitError(message);
       setIsSubmitting(false);
     }
   }
