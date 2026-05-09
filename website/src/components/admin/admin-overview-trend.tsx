@@ -9,6 +9,7 @@ import {
   totalAmount,
 } from "@/lib/admin-overview-mock";
 import { AdminTrendChart } from "./admin-trend-chart";
+import { useAdminKpiTrend } from "@/hooks/use-admin-data";
 import { cn } from "@/lib/utils";
 
 type TrendMode = "decisions" | "uploads";
@@ -21,11 +22,20 @@ type TrendMode = "decisions" | "uploads";
 export function AdminOverviewTrend() {
   const log = useAdminUserStore((s) => s.log);
   const [mode, setMode] = useState<TrendMode>("decisions");
+  // Live-mode override for decisions: prefer GET /admin/kpis/trend?days=30.
+  // Uploads stay derived (no server endpoint specced).
+  const liveTrend = useAdminKpiTrend(30);
 
   const series = useMemo(() => {
     if (mode === "uploads") return getDailyUploads30d();
+    if (liveTrend) {
+      return liveTrend.map((point) => ({
+        date: point.date,
+        amount: point.decisions,
+      }));
+    }
     return mergeDecisionsWithLog(getDailyDecisionsSeed30d(), log);
-  }, [mode, log]);
+  }, [mode, log, liveTrend]);
 
   const total = useMemo(() => totalAmount(series), [series]);
   const unit = mode === "decisions" ? "decisions" : "uploads";

@@ -7,16 +7,33 @@ import {
   type DisputeReason,
   type DisputeResolution,
 } from "@/lib/admin-disputes";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
+import {
+  resolveDispute as apiResolveDispute,
+  denyDispute as apiDenyDispute,
+  escalateDispute as apiEscalateDispute,
+} from "@/lib/api-admin";
 
-// Mock-only store of admin actions on the disputes queue. NOT persisted —
-// real backend ships in Phase F. Sparse `overrides` map keyed by dispute
-// id; merged view reconstructed per render. Decision log is append-only
-// (capped at 50) so the dispute Activity slab stays bounded.
+// Mock-mode store of admin actions on the disputes queue. Phase G wiring
+// fires the matching `api-admin` call in the background after the local
+// override is applied — Q-A2 RESOLVED 2026-05-09 means the backend writes
+// the dispute_resolved photographer-message insert in the same TX, so the
+// FE only fires the action and lets the photographer's next inbox poll
+// surface the new row.
 //
 // Runner-submitted disputes (post-2026-05-08): submitDispute() pushes a fully-
 // formed Dispute into `submissions[]`. getEffectiveDisputes() concatenates
 // seed + submissions, then layers admin overrides on top. Submissions are NOT
 // keyed in `overrides` because they aren't patches — they're net-new disputes.
+// Runner-side write travels via `submitOrderRefund` in `api-orders.ts` per
+// Phase E wiring; the admin store mirrors locally for the demo.
+
+function fireBackendDisputeAction(label: string, p: Promise<unknown>): void {
+  if (!BACKEND_LIVE) return;
+  void p.catch((err) => {
+    console.error(`[admin/disputes] ${label} backend call failed`, err);
+  });
+}
 
 export type DisputeDecision = "resolved" | "denied" | "escalated";
 
@@ -76,7 +93,7 @@ export const useAdminDisputeStore = create<AdminDisputeStoreState>((set) => ({
   overrides: {},
   submissions: [],
   log: [],
-  resolve: (disputeId, { resolution, refundAmount, reason }) =>
+  resolve: (disputeId, { resolution, refundAmount, reason }) => {
     set((s) => ({
       overrides: {
         ...s.overrides,
@@ -96,8 +113,13 @@ export const useAdminDisputeStore = create<AdminDisputeStoreState>((set) => ({
         reason,
         decidedAt: new Date().toISOString(),
       }),
-    })),
-  deny: (disputeId, reason) =>
+    }));
+    fireBackendDisputeAction(
+      "resolve",
+      apiResolveDispute(disputeId, { resolution, refundAmount, reason }),
+    );
+  },
+  deny: (disputeId, reason) => {
     set((s) => ({
       overrides: {
         ...s.overrides,
@@ -117,8 +139,10 @@ export const useAdminDisputeStore = create<AdminDisputeStoreState>((set) => ({
         reason,
         decidedAt: new Date().toISOString(),
       }),
-    })),
-  escalate: (disputeId, reason) =>
+    }));
+    fireBackendDisputeAction("deny", apiDenyDispute(disputeId, reason));
+  },
+  escalate: (disputeId, reason) => {
     set((s) => ({
       overrides: {
         ...s.overrides,
@@ -135,7 +159,12 @@ export const useAdminDisputeStore = create<AdminDisputeStoreState>((set) => ({
         reason,
         decidedAt: new Date().toISOString(),
       }),
-    })),
+    }));
+    fireBackendDisputeAction(
+      "escalate",
+      apiEscalateDispute(disputeId, reason),
+    );
+  },
   submitDispute: (payload) => {
     const dispute: Dispute = {
       id: makeRunnerDisputeId(),

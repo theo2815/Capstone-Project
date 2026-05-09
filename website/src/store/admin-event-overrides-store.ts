@@ -1,11 +1,17 @@
 import { create } from "zustand";
 import type { ListEvent } from "@/app/events/events-browser";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
+import {
+  createAdminEvent as apiCreateEvent,
+  updateAdminEvent as apiUpdateEvent,
+  deleteAdminEvent as apiDeleteEvent,
+} from "@/lib/api-admin";
 
-// Mock-only Zustand store backing admin CRUD on the EVENT_CATALOG. NOT
-// persisted — overrides reset on page refresh. The real backend is the
-// source of truth once Phase F lands; this store exists only so the
-// admin demo loop (`/admin/events` create/edit/delete → photographer's
-// `/dashboard/upload` reflects it) works end-to-end without backend.
+// Mock-mode Zustand store backing admin CRUD on the EVENT_CATALOG. Phase G
+// wiring fires the matching `api-admin` call in the background after the
+// local mutation — Q-A3 RESOLVED 2026-05-09 means PATCH /admin/events/{id}
+// accepts `{ title?, date?, location? }` only and lifecycle state is
+// derived not stored, so admin edits stay scoped to those three fields.
 //
 // Three layers:
 //   - `submissions`: brand-new events created in the admin UI.
@@ -15,6 +21,13 @@ import type { ListEvent } from "@/app/events/events-browser";
 // Consumers should read through `getCatalogWithOverrides()` /
 // `useEventCatalog()` from `@/lib/event-catalog` — never call
 // `useAdminEventOverridesStore()` directly inside non-admin pages.
+
+function fireBackendEventAction(label: string, p: Promise<unknown>): void {
+  if (!BACKEND_LIVE) return;
+  void p.catch((err) => {
+    console.error(`[admin/events] ${label} backend call failed`, err);
+  });
+}
 
 export type EventOverridePatch = Partial<
   Pick<ListEvent, "name" | "date" | "location" | "city" | "status" | "state">
@@ -72,7 +85,7 @@ export const useAdminEventOverridesStore = create<AdminEventOverridesState>(
           [id]: { ...s.overrides[id], state },
         },
       })),
-    editEvent: (id, patch) =>
+    editEvent: (id, patch) => {
       set((s) => {
         // Patch may target a submission or a seed event. Try submissions first.
         const subIdx = s.submissions.findIndex((e) => e.id === id);
@@ -91,7 +104,19 @@ export const useAdminEventOverridesStore = create<AdminEventOverridesState>(
             [id]: { ...s.overrides[id], ...patch },
           },
         };
-      }),
+      });
+      // Q-A3 PATCH shape: title / date / location only. Other fields stay
+      // mock-only (state is derived; bannerUrl handled in a follow-up upload
+      // endpoint when banner storage lands).
+      const subset = {
+        ...(patch.name !== undefined ? { title: patch.name } : {}),
+        ...(patch.date !== undefined ? { date: patch.date } : {}),
+        ...(patch.location !== undefined ? { location: patch.location } : {}),
+      };
+      if (Object.keys(subset).length > 0) {
+        fireBackendEventAction("editEvent", apiUpdateEvent(id, subset));
+      }
+    },
     createEvent: (input) => {
       const id = `evt-${Date.now().toString(36)}`;
       const slugBase = slugify(input.name) || "event";
@@ -112,20 +137,39 @@ export const useAdminEventOverridesStore = create<AdminEventOverridesState>(
         bannerUrl: input.bannerUrl,
       };
       set((s) => ({ submissions: [event, ...s.submissions] }));
+      fireBackendEventAction(
+        "createEvent",
+        apiCreateEvent({
+          title: event.name,
+          date: event.date,
+          location: event.location,
+          bannerUrl: event.bannerUrl,
+        }),
+      );
       return id;
     },
-    deleteEvent: (id) =>
+    deleteEvent: (id) => {
+      let needsBackendDelete = false;
       set((s) => {
         const subIdx = s.submissions.findIndex((e) => e.id === id);
         if (subIdx >= 0) {
           // Brand-new submission — drop it entirely, no tombstone needed.
           const next = s.submissions.slice();
           next.splice(subIdx, 1);
+          // Submission was never persisted on the backend if create call
+          // hadn't completed yet; live-mode safety: still issue DELETE so a
+          // backend-side row created in flight gets cleaned up.
+          needsBackendDelete = true;
           return { submissions: next };
         }
         if (s.tombstones.includes(id)) return {};
+        needsBackendDelete = true;
         return { tombstones: [...s.tombstones, id] };
-      }),
+      });
+      if (needsBackendDelete) {
+        fireBackendEventAction("deleteEvent", apiDeleteEvent(id));
+      }
+    },
     restoreEvent: (id) =>
       set((s) => ({ tombstones: s.tombstones.filter((t) => t !== id) })),
     clear: () => set({ overrides: {}, submissions: [], tombstones: [] }),

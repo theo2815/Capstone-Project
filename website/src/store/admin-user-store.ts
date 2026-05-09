@@ -5,17 +5,37 @@ import {
 } from "@/lib/admin-user-registry";
 import { useAuthStore } from "@/store/auth-store";
 import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
+import { BACKEND_LIVE } from "@/lib/backend-flag";
+import {
+  approveUser as apiApproveUser,
+  rejectUser as apiRejectUser,
+  resetUserVerification as apiResetUserVerification,
+  suspendUser as apiSuspendUser,
+  unsuspendUser as apiUnsuspendUser,
+  forceEditUser as apiForceEditUser,
+} from "@/lib/api-admin";
 
-// Mock-only store of admin actions on the user directory. NOT persisted —
-// real backend ships in Phase F. Holds a sparse `overrides` map keyed by
-// userId so the seed stays read-only and the merged view is reconstructed
-// per render.
+// Mock-mode store of admin actions on the user directory. Phase G wiring
+// fires the matching `api-admin` call in the background after the local
+// override is applied — Q-A2 RESOLVED 2026-05-09 means the backend writes
+// the cross-domain side-effect (photographer-message insert) in the same
+// TX, so the FE only needs to fire the action and let the photographer's
+// next inbox poll surface the new row. Local override gives the admin UI
+// instant feedback; backend errors log to console for now (rollback is a
+// follow-up if errors surface in real usage).
 //
 // CRITICAL DEMO WIRING — `approve(userId)`, `reject(userId, reason)`, and
 // `resetVerification(userId)` ALSO flip
 // `usePhotographerSettingsStore.verificationStatus` when the target user is
 // the currently-logged-in photographer. That's what makes the admin →
-// photographer dashboard banner loop close end-to-end.
+// photographer dashboard banner loop close end-to-end without server roundtrip.
+
+function fireBackendUserAction(label: string, p: Promise<unknown>): void {
+  if (!BACKEND_LIVE) return;
+  void p.catch((err) => {
+    console.error(`[admin/users] ${label} backend call failed`, err);
+  });
+}
 
 export type DecisionType =
   | "approved"
@@ -101,6 +121,7 @@ export const useAdminUserStore = create<AdminUserStoreState>((set, get) => ({
       }),
     }));
     maybeFlipPhotographerOwnStatus(userId, "approved");
+    fireBackendUserAction("approve", apiApproveUser(userId));
   },
   reject: (userId, reason) => {
     set((s) => ({
@@ -119,8 +140,9 @@ export const useAdminUserStore = create<AdminUserStoreState>((set, get) => ({
       }),
     }));
     maybeFlipPhotographerOwnStatus(userId, "incomplete");
+    fireBackendUserAction("reject", apiRejectUser(userId, reason));
   },
-  suspend: (userId, reason) =>
+  suspend: (userId, reason) => {
     set((s) => ({
       overrides: {
         ...s.overrides,
@@ -136,8 +158,10 @@ export const useAdminUserStore = create<AdminUserStoreState>((set, get) => ({
         reason,
         decidedAt: new Date().toISOString(),
       }),
-    })),
-  unsuspend: (userId) =>
+    }));
+    fireBackendUserAction("suspend", apiSuspendUser(userId, reason));
+  },
+  unsuspend: (userId) => {
     set((s) => ({
       overrides: {
         ...s.overrides,
@@ -153,7 +177,9 @@ export const useAdminUserStore = create<AdminUserStoreState>((set, get) => ({
         reason: null,
         decidedAt: new Date().toISOString(),
       }),
-    })),
+    }));
+    fireBackendUserAction("unsuspend", apiUnsuspendUser(userId));
+  },
   forceEdit: (userId, patch) => {
     const current = get().getRow(userId);
     if (!current) return;
@@ -207,6 +233,7 @@ export const useAdminUserStore = create<AdminUserStoreState>((set, get) => ({
         log,
       };
     });
+    fireBackendUserAction("forceEdit", apiForceEditUser(userId, patch));
   },
   resetVerification: (userId) => {
     set((s) => ({
@@ -225,6 +252,7 @@ export const useAdminUserStore = create<AdminUserStoreState>((set, get) => ({
       }),
     }));
     maybeFlipPhotographerOwnStatus(userId, "incomplete");
+    fireBackendUserAction("resetVerification", apiResetUserVerification(userId));
   },
   clear: () => set({ overrides: {}, log: [] }),
   getRow: (userId) => {

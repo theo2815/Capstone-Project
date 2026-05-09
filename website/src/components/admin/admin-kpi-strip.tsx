@@ -19,6 +19,7 @@ import {
 } from "@/store/admin-payout-store";
 import { ADMIN_USER_SEED } from "@/lib/admin-user-registry";
 import { cn } from "@/lib/utils";
+import { useAdminKpis } from "@/hooks/use-admin-data";
 
 // Compact at-a-glance metrics row. Sits above the inbox queue (Phase 1)
 // and any other admin route that wants a one-line read of every queue.
@@ -47,6 +48,10 @@ export function AdminKpiStrip() {
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
   const flagOverrides = useAdminFlagStore((s) => s.overrides);
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
+  // Live-mode preference: when GET /admin/kpis returns, override the
+  // 4 counts the strip surfaces. Falls back to derivation while loading
+  // or in mock mode.
+  const liveKpis = useAdminKpis();
 
   const entries = useMemo<readonly KpiEntry[]>(() => {
     let pendingVerifications = 0;
@@ -62,16 +67,23 @@ export function AdminKpiStrip() {
       }
     }
 
-    const openDisputes = getEffectiveDisputes(
+    let openDisputes = getEffectiveDisputes(
       disputeOverrides,
       disputeSubmissions,
     ).filter((d) => d.status === "open").length;
-    const openFlags = getEffectiveFlags(flagOverrides).filter(
+    let openFlags = getEffectiveFlags(flagOverrides).filter(
       (f) => f.status === "open",
     ).length;
-    const pendingPayouts = getEffectivePayouts(payoutOverrides).filter(
+    let pendingPayouts = getEffectivePayouts(payoutOverrides).filter(
       (p) => p.status === "pending_review",
     ).length;
+
+    if (liveKpis) {
+      pendingVerifications = liveKpis.pendingVerifications;
+      openDisputes = liveKpis.openDisputes;
+      openFlags = liveKpis.openFlags;
+      pendingPayouts = liveKpis.pendingPayouts;
+    }
 
     const all: KpiEntry[] = [
       {
@@ -112,6 +124,7 @@ export function AdminKpiStrip() {
     disputeSubmissions,
     flagOverrides,
     payoutOverrides,
+    liveKpis,
   ]);
 
   // Pick the priority queue (lowest rank with count > 0). The dot lights
