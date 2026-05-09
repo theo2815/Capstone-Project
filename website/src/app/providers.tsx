@@ -5,6 +5,7 @@ import { Suspense, useState, type ReactNode } from "react";
 import { ToastContainer } from "@/components/ui/toast";
 import { ConfirmationOverlay } from "@/components/ui/confirmation-overlay";
 import { FloatingCart } from "@/components/cart/floating-cart";
+import { CheckoutResumeWatcher } from "@/components/cart/checkout-resume-watcher";
 import { AuthHydrator } from "@/components/layout/auth-hydrator";
 import { OnboardingGate } from "@/components/onboarding/onboarding-gate";
 
@@ -30,6 +31,9 @@ export function Providers({ children }: { children: ReactNode }) {
       <ConfirmationOverlay />
       <Suspense fallback={null}>
         <FloatingCart />
+      </Suspense>
+      <Suspense fallback={null}>
+        <CheckoutResumeWatcher />
       </Suspense>
     </QueryClientProvider>
   );

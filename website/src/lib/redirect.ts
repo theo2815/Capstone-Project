@@ -13,3 +13,12 @@ export function useRedirectTarget(fallback: string = ROUTES.HOME): string {
   const raw = params?.get("redirect");
   return isSafeRedirect(raw) ? raw : fallback;
 }
+
+// Builds the `/login?redirect=...` URL used by `<ProtectedRoute>` and the
+// ApiClient 401 handler. `currentUrl` should be `pathname + search` so the
+// user returns to the exact view they were on. Skips the redirect param
+// entirely when already on `/login` (defense against loops).
+export function buildLoginRedirect(currentUrl: string): string {
+  if (!currentUrl || currentUrl.startsWith(ROUTES.LOGIN)) return ROUTES.LOGIN;
+  return `${ROUTES.LOGIN}?redirect=${encodeURIComponent(currentUrl)}`;
+}
