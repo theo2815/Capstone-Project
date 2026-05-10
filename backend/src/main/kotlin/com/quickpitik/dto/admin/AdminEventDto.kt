@@ -9,6 +9,12 @@ import java.util.UUID
 // Mirrors website/src/app/events/events-browser.tsx ListEvent =
 // Event & { state, city }. Admin uses the same shape so the /admin/events
 // surface can drop into the existing event-tile renderer.
+//
+// `adminOverrides` exposes the per-row override history persisted by
+// AdminEventService.update (Q-A3 / C-5). Each entry shape is
+// `{ at, adminId, before, after }`; the FE can render a history affordance
+// without joining the cross-event admin_decision_log surface. Defaults
+// empty so a new event from POST /admin/events ships with `[]`.
 data class AdminListEventDto(
     val id: UUID,
     val slug: String,
@@ -25,6 +31,7 @@ data class AdminListEventDto(
     val description: String,
     val organizerName: String,
     val categories: List<String>,
+    val adminOverrides: List<Map<String, Any?>> = emptyList(),
 )
 
 // POST /admin/events — body { title, date, location, bannerUrl? }.

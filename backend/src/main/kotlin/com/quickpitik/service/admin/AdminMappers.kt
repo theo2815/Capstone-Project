@@ -52,6 +52,7 @@ internal fun Event.toAdminListDto(): AdminListEventDto =
         description = description,
         organizerName = organizerName,
         categories = categories.sorted(),
+        adminOverrides = adminOverrides,
     )
 
 // Cebu · Central Visayas style label. Codes look like "region-7" / "cebu";
