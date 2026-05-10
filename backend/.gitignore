@@ -45,3 +45,6 @@ src/main/resources/application-prod.yml
 src/main/resources/application-local.yml
 .env
 .env.local
+
+# LocalFsStorageService dev backend writes here (avatars, selfies, covers, watermarks).
+.storage/

@@ -1,0 +1,141 @@
+package com.quickpitik.service.photographer
+
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.common.OffsetLimitPageable
+import com.quickpitik.common.PaginatedResponse
+import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.photographer.CoverSourceDto
+import com.quickpitik.dto.photographer.PhotographerEventCoverageDto
+import com.quickpitik.dto.photographer.PhotographerProfileDto
+import com.quickpitik.dto.photographer.deriveEventState
+import com.quickpitik.dto.photos.PhotoDto
+import com.quickpitik.dto.photos.toDto
+import com.quickpitik.entity.Event
+import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.exception.NotFoundException
+import com.quickpitik.repository.EventPhotographerRepository
+import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.PhotographerSettingsRepository
+import com.quickpitik.repository.UserRepository
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+import java.time.format.DateTimeFormatter
+import java.util.UUID
+
+@Service
+@Transactional(readOnly = true)
+class PublicPhotographerService(
+    private val photographerSettingsRepository: PhotographerSettingsRepository,
+    private val userRepository: UserRepository,
+    private val eventPhotographerRepository: EventPhotographerRepository,
+    private val eventRepository: EventRepository,
+    private val photoRepository: PhotoRepository,
+    private val storageProperties: StorageProperties,
+    private val storageService: com.quickpitik.service.storage.StorageService,
+) {
+    fun getProfile(handle: String): PhotographerProfileDto {
+        val normalized = handle.trim().lowercase()
+        val settings = photographerSettingsRepository.findByHandleIgnoreCase(normalized)
+            ?: throw NotFoundException(
+                code = ErrorCodes.NOT_FOUND,
+                message = "Photographer not found",
+            )
+        val user = userRepository.findById(settings.userId).orElseThrow {
+            // photographer_settings.user_id is FK ON DELETE CASCADE so this is
+            // genuinely unreachable, but the !!-free path beats a runtime NPE.
+            NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photographer not found")
+        }
+
+        val coverage = eventPhotographerRepository
+            .findAllByIdPhotographerId(settings.userId)
+            .filter { it.photoCount > 0 }
+        val eventsById = if (coverage.isEmpty()) {
+            emptyMap()
+        } else {
+            eventRepository
+                .findAllById(coverage.map { it.id.eventId })
+                .filter { it.deletedAt == null }
+                .associateBy(Event::id)
+        }
+        val events = coverage.mapNotNull { ep ->
+            val event = eventsById[ep.id.eventId] ?: return@mapNotNull null
+            PhotographerEventCoverageDto(
+                eventSlug = event.slug,
+                state = deriveEventState(event),
+                photoCount = ep.photoCount,
+                salesCount = ep.salesCount,
+            )
+        }
+
+        val cover = buildCover(settings.coverS3Key, settings.coverGradientFrom, settings.coverGradientTo)
+
+        return PhotographerProfileDto(
+            handle = settings.handle ?: normalized,
+            displayName = settings.brandName?.takeIf { it.isNotBlank() } ?: user.name,
+            brandColor = settings.brandColor,
+            bio = settings.bio,
+            city = settings.city,
+            memberSince = settings.memberSince.format(DateTimeFormatter.ISO_LOCAL_DATE),
+            cover = cover,
+            watermarkLabel = settings.watermarkLabel,
+            events = events,
+        )
+    }
+
+    fun listEventPhotos(
+        handle: String,
+        eventSlug: String,
+        pagination: PaginationParams,
+    ): PaginatedResponse<PhotoDto> {
+        val normalized = handle.trim().lowercase()
+        val settings = photographerSettingsRepository.findByHandleIgnoreCase(normalized)
+            ?: throw NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photographer not found")
+        val event = eventRepository.findBySlugAndDeletedAtIsNull(eventSlug)
+            ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+
+        val page = photoRepository.findPhotographerLibrary(
+            eventId = event.id,
+            photographerId = settings.userId,
+            pageable = OffsetLimitPageable(
+                pagination,
+                org.springframework.data.domain.Sort
+                    .by(org.springframework.data.domain.Sort.Direction.DESC, "uploadedAt")
+                    .and(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.ASC, "id")),
+            ),
+        )
+        if (page.isEmpty) return PaginatedResponse.empty(pagination)
+        // Public gallery shows LIVE photos only; HIDDEN/PROCESSING stay invisible.
+        val visible = page.content.filter { it.status == PhotoStatus.LIVE }
+        return PaginatedResponse(
+            items = visible.map { it.toDto(::resolveWatermarkedUrl) },
+            total = page.totalElements,
+            offset = pagination.offset,
+            limit = pagination.limit,
+        )
+    }
+
+    private fun buildCover(s3Key: String?, gradientFrom: String?, gradientTo: String?): CoverSourceDto? {
+        if (s3Key != null) {
+            return CoverSourceDto(
+                kind = "image",
+                url = storageService.presignedGetUrl(s3Key, storageProperties.presignedTtl.cover),
+            )
+        }
+        if (gradientFrom != null && gradientTo != null) {
+            return CoverSourceDto(kind = "gradient", from = gradientFrom, to = gradientTo)
+        }
+        return null
+    }
+
+    private fun resolveWatermarkedUrl(photo: Photo): String? {
+        // Public gallery serves the watermarked variant when available so the
+        // photographer's brand sticks even on incognito browsing. Falls back
+        // to the thumbnail (also watermarked in the upload pipeline) and only
+        // last to the source key.
+        val key = photo.watermarkS3Key ?: photo.thumbnailS3Key ?: photo.s3Key
+        return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
+    }
+}
