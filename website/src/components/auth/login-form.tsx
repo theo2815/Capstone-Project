@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
 import { ApiError } from "@/lib/api";
-import { useRedirectTarget } from "@/lib/redirect";
+import { useRedirectTarget } from "@/hooks/use-redirect-target";
 import { validateEmail, validatePassword } from "@/lib/auth-validation";
 import { AuthDivider, GoogleButton } from "@/components/auth/google-button";
 import { FieldError } from "@/components/ui/field-error";

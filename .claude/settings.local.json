@@ -117,7 +117,27 @@
       "Bash(pnpm exec *)",
       "PowerShell(pnpm exec *)",
       "PowerShell(npm exec *)",
-      "Bash(awk '/^## 2026-05-08 — Payout operations loop/,/^---$/' \"C:/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/website/decisions.md\")"
+      "Bash(awk '/^## 2026-05-08 — Payout operations loop/,/^---$/' \"C:/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/website/decisions.md\")",
+      "Bash(Get-ChildItem *)",
+      "Bash(awk '/^## 2026-05-09/,/^---$/' \"C:/Users/Theo Cedric Chan/Documents/Obsidian Vault/QuickPitik Vault/website/decisions.md\")",
+      "Bash(awk END{print NR} *)",
+      "PowerShell(pnpm *)",
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(./gradlew.bat compileKotlin)",
+      "Bash(./gradlew.bat compileKotlin --console=plain)",
+      "Bash(./gradlew.bat clean *)",
+      "Bash(./gradlew.bat test *)",
+      "Bash(awk *)",
+      "PowerShell(& \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\backend\\\\gradlew.bat\" -p \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\backend\" compileKotlin --console=plain)",
+      "PowerShell(& \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\backend\\\\gradlew.bat\" -p \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\backend\" compileKotlin --rerun-tasks --console=plain)",
+      "PowerShell(& \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\backend\\\\gradlew.bat\" -p \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\backend\" test --console=plain)",
+      "Read(//c/Users/Theo Cedric Chan/.claude-qp/**)",
+      "Read(//c/Users/Theo Cedric Chan/.claude-qp/projects/**)",
+      "Bash(./gradlew.bat compileKotlin --rerun-tasks --console=plain)",
+      "Bash(./gradlew compileKotlin --quiet)",
+      "Bash(./gradlew test *)",
+      "Bash(./gradlew.bat compileKotlin -q)",
+      "Bash(echo \"exit=$?\")"
     ]
   }
 }
