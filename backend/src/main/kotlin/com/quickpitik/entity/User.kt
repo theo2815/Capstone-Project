@@ -33,6 +33,9 @@ class User(
     @Column(name = "avatar_url")
     var avatarUrl: String? = null,
 
+    @Column(name = "avatar_s3_key", length = 512)
+    var avatarS3Key: String? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 
