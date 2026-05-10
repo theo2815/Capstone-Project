@@ -22,8 +22,9 @@ import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.storage.StorageService
-import com.quickpitik.websocket.EventPhotoSessionRegistry
+import com.quickpitik.websocket.PhotoPublishedEvent
 import org.slf4j.LoggerFactory
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -44,7 +45,7 @@ class PhotoUploadService(
     private val aiApiClient: AiApiClient,
     private val aiApiProperties: AiApiProperties,
     private val watermarkService: WatermarkService,
-    private val sessionRegistry: EventPhotoSessionRegistry,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -204,19 +205,23 @@ class PhotoUploadService(
 
         val thumbnailUrl = storageService.presignedGetUrl(watermarkKey, storageProperties.presignedTtl.thumbnail)
 
-        // WebSocket broadcast — runners on /events/[slug] see new photos
-        // without a manual refresh per Q-002.
-        sessionRegistry.broadcast(
-            eventId = eventId,
-            payload = mapOf(
-                "type" to "photo.published",
-                "photo" to mapOf(
-                    "id" to photoId.toString(),
-                    "bib" to (photo.bibs.minByOrNull { it.bibNumber }?.bibNumber),
-                    "tone" to photo.tone,
-                    "span" to photo.span.wire,
-                    "imageUrl" to thumbnailUrl,
-                    "uploadedAt" to photo.uploadedAt.toString(),
+        // Publish via Spring event so the broadcast fires AFTER_COMMIT
+        // (PhotoPublishedBroadcaster). Inline broadcast risks ghost photos:
+        // runners receive photo.published, a rollback discards the row, the
+        // FE 404s on the next fetch. Q-002.
+        eventPublisher.publishEvent(
+            PhotoPublishedEvent(
+                eventId = eventId,
+                payload = mapOf(
+                    "type" to "photo.published",
+                    "photo" to mapOf(
+                        "id" to photoId.toString(),
+                        "bib" to (photo.bibs.minByOrNull { it.bibNumber }?.bibNumber),
+                        "tone" to photo.tone,
+                        "span" to photo.span.wire,
+                        "imageUrl" to thumbnailUrl,
+                        "uploadedAt" to photo.uploadedAt.toString(),
+                    ),
                 ),
             ),
         )
