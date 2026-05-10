@@ -17,7 +17,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         LEFT JOIN p.bibs b
         WHERE p.eventId = :eventId
           AND p.status = :status
-          AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT(UPPER(:bib), '%'))
+          AND (:bib = '' OR UPPER(b.bibNumber) = UPPER(:bib))
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
         countQuery = """
@@ -25,7 +25,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         LEFT JOIN p.bibs b
         WHERE p.eventId = :eventId
           AND p.status = :status
-          AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT(UPPER(:bib), '%'))
+          AND (:bib = '' OR UPPER(b.bibNumber) = UPPER(:bib))
         """,
     )
     fun searchForEvent(
