@@ -11,6 +11,8 @@ import jakarta.persistence.Id
 import jakarta.persistence.JoinColumn
 import jakarta.persistence.PreUpdate
 import jakarta.persistence.Table
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -79,6 +81,10 @@ class Event(
 
     @Column(name = "deleted_at")
     var deletedAt: OffsetDateTime? = null,
+
+    @Column(name = "admin_overrides", nullable = false, columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    var adminOverrides: List<Map<String, Any?>> = emptyList(),
 ) {
     @PreUpdate
     fun onUpdate() {

@@ -82,28 +82,48 @@ class AdminEventService(
             NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         }
         val changes = mutableMapOf<String, Any?>()
+        val before = mutableMapOf<String, Any?>()
+        val after = mutableMapOf<String, Any?>()
         req.title?.takeIf { it.isNotBlank() }?.let {
-            if (event.name != it) {
-                changes["title"] = mapOf("from" to event.name, "to" to it)
-                event.name = it.trim()
+            val newName = it.trim()
+            if (event.name != newName) {
+                changes["title"] = mapOf("from" to event.name, "to" to newName)
+                before["title"] = event.name
+                after["title"] = newName
+                event.name = newName
             }
         }
         req.date?.takeIf { it.isNotBlank() }?.let {
             val parsed = parseDate(it)
             if (event.date != parsed) {
                 changes["date"] = mapOf("from" to event.date.toString(), "to" to parsed.toString())
+                before["date"] = event.date.toString()
+                after["date"] = parsed.toString()
                 event.date = parsed
             }
         }
         req.location?.takeIf { it.isNotBlank() }?.let {
-            if (event.location != it) {
-                changes["location"] = mapOf("from" to event.location, "to" to it)
-                event.location = it.trim()
+            val newLocation = it.trim()
+            if (event.location != newLocation) {
+                changes["location"] = mapOf("from" to event.location, "to" to newLocation)
+                before["location"] = event.location
+                after["location"] = newLocation
+                event.location = newLocation
             }
         }
         if (changes.isEmpty()) {
             return event.toAdminListDto()
         }
+        // Append the per-row override entry per Q-A3 — replace the list reference
+        // (rather than mutating in place) so Hibernate's dirty-checking notices
+        // the change on the @JdbcTypeCode(SqlTypes.JSON) column.
+        val entry = mapOf(
+            "at" to OffsetDateTime.now().toString(),
+            "adminId" to adminId.toString(),
+            "before" to before.toMap(),
+            "after" to after.toMap(),
+        )
+        event.adminOverrides = event.adminOverrides + entry
         eventRepository.save(event)
         adminDecisionLogService.logEventDecision(
             adminId = adminId,
