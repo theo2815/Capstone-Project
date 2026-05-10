@@ -173,6 +173,13 @@ class AdminUserService(
 
     fun suspend(adminId: UUID, userId: UUID, reason: String): AdminUserRowDto {
         val (user, settings) = loadUserAndSettings(userId)
+        if (user.role == Role.ADMIN) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "Admin accounts cannot be suspended",
+                field = "userId",
+            )
+        }
         user.suspendedAt = OffsetDateTime.now()
         user.suspensionReason = reason
         userRepository.save(user)
@@ -196,6 +203,13 @@ class AdminUserService(
 
     fun unsuspend(adminId: UUID, userId: UUID): AdminUserRowDto {
         val (user, settings) = loadUserAndSettings(userId)
+        if (user.role == Role.ADMIN) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "Admin accounts cannot be suspended",
+                field = "userId",
+            )
+        }
         user.suspendedAt = null
         user.suspensionReason = null
         userRepository.save(user)
