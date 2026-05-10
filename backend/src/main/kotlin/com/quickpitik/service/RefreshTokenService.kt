@@ -50,4 +50,13 @@ class RefreshTokenService(
     fun revokeAllForUser(userId: UUID) {
         refreshTokenRepository.revokeAllForUser(userId, OffsetDateTime.now())
     }
+
+    fun revokeAllForUserExcept(userId: UUID, keepPlaintext: String?) {
+        val keepHash = keepPlaintext?.takeIf { it.isNotBlank() }?.let { OpaqueTokens.hash(it) }
+        if (keepHash == null) {
+            refreshTokenRepository.revokeAllForUser(userId, OffsetDateTime.now())
+            return
+        }
+        refreshTokenRepository.revokeAllForUserExcept(userId, keepHash, OffsetDateTime.now())
+    }
 }

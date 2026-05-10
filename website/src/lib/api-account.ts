@@ -1,9 +1,18 @@
 import { api } from "@/lib/api";
+import { getRefreshToken } from "@/lib/auth";
 import type { User } from "@/types/user";
 
 // Account backend contract (Phase F.1):
-//   PUT /api/v1/me/profile  { name }                                → User
-//   PUT /api/v1/me/password { currentPassword, newPassword }        → unknown (204 or { message })
+//   PUT /api/v1/me/profile  { name }                                              → User
+//   PUT /api/v1/me/password { currentPassword, newPassword, refreshToken? }       → unknown (204 or { message })
+//
+// refreshToken is the local-storage refresh token of the current device. The BE
+// hashes it and skips that one row when revoking — so password change kicks
+// every OTHER session but keeps the user signed in here (plan C-7 / Phase E:
+// "Server revokes all OTHER refresh tokens"). If localStorage was cleared
+// between login and password change, the field is null and the BE falls back to
+// revoking everything — the user gets logged out on this device too once the
+// 15-min access token expires, which is the safe default.
 //
 // Error codes the FE handles inline:
 //   profile:  VALIDATION_ERROR
@@ -19,5 +28,6 @@ export interface ChangePasswordArgs {
 }
 
 export async function changePassword(args: ChangePasswordArgs): Promise<unknown> {
-  return api.put<unknown>("/me/password", args);
+  const refreshToken = getRefreshToken();
+  return api.put<unknown>("/me/password", { ...args, refreshToken });
 }

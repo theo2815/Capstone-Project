@@ -10,4 +10,6 @@ data class PasswordChangeRequest(
     @field:NotBlank(message = "newPassword is required")
     @field:Size(min = 8, max = 128, message = "newPassword must be 8-128 characters")
     val newPassword: String,
+
+    val refreshToken: String? = null,
 )
