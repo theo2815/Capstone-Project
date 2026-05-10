@@ -70,8 +70,12 @@ class AdminUserService(
             emptyMap()
         }
 
+        // L-5 — hoist regions once before the per-row loop. RegionsService.all()
+        // is AtomicReference.get() so each call is O(1), but the per-row dispatch
+        // is still wasted work proportional to page size.
+        val regions = regionsService.all()
         val rows = items
-            .map { hydrateRow(it, settingsByUser[it.id]) }
+            .map { hydrateRow(it, settingsByUser[it.id], regions) }
             .let { rows -> if (statusFilter == null) rows else rows.filter { it.matchesStatus(statusFilter) } }
 
         return PaginatedResponse.of(rows, page.totalElements, params)
@@ -347,14 +351,17 @@ class AdminUserService(
         )
     }
 
-    internal fun hydrateRow(user: User, settings: PhotographerSettings?): AdminUserRowDto {
+    internal fun hydrateRow(
+        user: User,
+        settings: PhotographerSettings?,
+        regions: List<com.quickpitik.dto.reference.RegionDto> = regionsService.all(),
+    ): AdminUserRowDto {
         val verificationStatus = when {
             user.role == Role.PHOTOGRAPHER -> (settings?.verificationStatus ?: VerificationStatus.INCOMPLETE).toWire()
             // Runners are always "approved" per the FE store contract.
             else -> "approved"
         }
         val regionLabel = settings?.let {
-            val regions = regionsService.all()
             val region = regions.firstOrNull { r -> r.code == it.regionCode }
             val province = region?.provinces?.firstOrNull { p -> p.code == it.provinceCode }
             formatRegionLabel(province?.name, region?.name)
