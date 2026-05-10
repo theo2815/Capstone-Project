@@ -104,6 +104,16 @@ class PhotoUploadService(
         val originalKey = "events/$eventId/photos/$photoId/original.jpg"
         val watermarkKey = "events/$eventId/photos/$photoId/watermark.jpg"
 
+        // N-2 — Watermark label resolution chain (most specific first):
+        //   1. settings.watermarkLabel — explicit override the photographer set
+        //      via PUT /me/photographer/watermark when uploading a custom label.
+        //   2. settings.brandName — derived fallback so an unbranded photographer
+        //      still gets *something* recognisable on the public gallery thumbnail.
+        //   3. "QUICKPITIK" — final house-brand fallback. Plan does not mandate
+        //      a specific final value. WatermarkService.drawWatermark also
+        //      falls back to "QUICKPITIK" via .ifBlank { } so the literal lives
+        //      in two places — both layers stay self-sufficient if either
+        //      path ever sees a blank label.
         val watermarkLabel = settings.watermarkLabel?.takeIf { it.isNotBlank() }
             ?: settings.brandName?.takeIf { it.isNotBlank() }
             ?: "QUICKPITIK"
