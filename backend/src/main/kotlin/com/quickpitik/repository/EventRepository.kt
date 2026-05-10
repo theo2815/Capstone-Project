@@ -37,4 +37,38 @@ interface EventRepository : JpaRepository<Event, UUID> {
         @Param("dateTo") dateTo: LocalDate,
         pageable: Pageable,
     ): Page<Event>
+
+    fun countByStatusAndDeletedAtIsNull(status: EventStatus): Long
+
+    // Admin event list — includes DRAFT (admin sees the full pipeline). State
+    // filtering (live / upcoming / open / past) needs the date check, so it
+    // happens service-side. status filter is service-side too since the FE
+    // sends derived state, not raw status.
+    @Query(
+        """
+        SELECT e FROM Event e
+        WHERE e.deletedAt IS NULL
+          AND (:search = '' OR
+               LOWER(e.name) LIKE LOWER(CONCAT('%', :search, '%')) OR
+               LOWER(e.location) LIKE LOWER(CONCAT('%', :search, '%')))
+          AND e.date >= :dateFrom
+          AND e.date <= :dateTo
+        ORDER BY e.date DESC, e.id ASC
+        """,
+        countQuery = """
+        SELECT COUNT(e) FROM Event e
+        WHERE e.deletedAt IS NULL
+          AND (:search = '' OR
+               LOWER(e.name) LIKE LOWER(CONCAT('%', :search, '%')) OR
+               LOWER(e.location) LIKE LOWER(CONCAT('%', :search, '%')))
+          AND e.date >= :dateFrom
+          AND e.date <= :dateTo
+        """,
+    )
+    fun pageForAdmin(
+        @Param("search") search: String,
+        @Param("dateFrom") dateFrom: LocalDate,
+        @Param("dateTo") dateTo: LocalDate,
+        pageable: Pageable,
+    ): Page<Event>
 }

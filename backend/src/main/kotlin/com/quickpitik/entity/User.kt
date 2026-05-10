@@ -36,6 +36,12 @@ class User(
     @Column(name = "avatar_s3_key", length = 512)
     var avatarS3Key: String? = null,
 
+    @Column(name = "suspended_at")
+    var suspendedAt: OffsetDateTime? = null,
+
+    @Column(name = "suspension_reason", length = 500)
+    var suspensionReason: String? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 
