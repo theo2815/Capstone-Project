@@ -56,10 +56,14 @@ class CartService(
         }
         val id = CartItemId(userId = userId, photoId = photoId)
         val existing = cartItemRepository.findById(id).orElse(null)
+        if (existing != null && existing.pricePhpAtAdd.compareTo(photo.pricePhp) != 0) {
+            throw ConflictException(
+                code = ErrorCodes.CART_ITEM_PRICE_CHANGED,
+                message = "Photo price changed from ₱${existing.pricePhpAtAdd} to ₱${photo.pricePhp}.",
+            )
+        }
         val saved = if (existing != null) {
-            // Idempotent on photoId — refresh server-canonical price.
             existing.eventId = eventId
-            existing.pricePhpAtAdd = photo.pricePhp
             cartItemRepository.save(existing)
         } else {
             cartItemRepository.save(
