@@ -90,7 +90,22 @@ class SelfieService(
         return saved.toDto()
     }
 
-    /** DELETE is idempotent — return false (no row removed) instead of 404 when missing. */
+    /**
+     * DELETE is idempotent — return false (no row removed) instead of 404 when missing.
+     *
+     * M-2 — There is a 1-statement gap between the delete+flush and the
+     * subsequent promote-most-recent path. Concurrency is bounded by the
+     * partial unique index `uq_user_selfies_primary_per_user (user_id) WHERE
+     * is_primary = true` — Postgres enforces at-most-one primary per user.
+     * Two concurrent DELETEs on the same user serialize via this transactional
+     * method (Spring + JPA per-call); a concurrent INSERT with isPrimary=true
+     * either commits before our promote (in which case our promote becomes a
+     * no-op when the new row's flush already won) or collides on the unique
+     * index and surfaces a DataIntegrityViolation. In either case we never
+     * leave the row set with two primaries — the worst case is a brief
+     * "zero primaries" window which is also the explicit terminal state when
+     * the runner deletes their last selfie. No SELECT … FOR UPDATE needed.
+     */
     fun delete(userId: UUID, selfieId: UUID): Boolean {
         val selfie = userSelfieRepository.findByIdAndUserId(selfieId, userId) ?: return false
         val wasPrimary = selfie.isPrimary
