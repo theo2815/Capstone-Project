@@ -1,6 +1,7 @@
 package com.quickpitik.repository
 
 import com.quickpitik.entity.AdminDecisionLog
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
@@ -17,6 +18,24 @@ interface AdminDecisionLogRepository : JpaRepository<AdminDecisionLog, UUID> {
         """,
     )
     fun findForUser(@Param("targetUserId") targetUserId: UUID): List<AdminDecisionLog>
+
+    // H-6: capped variant for AdminUserService.detail() — caller passes
+    // PageRequest.of(0, 50) to bound the response so a high-friction
+    // photographer's history doesn't blow up the user-detail payload.
+    // Deep history will get its own paginated endpoint when the FE asks
+    // for one. Same ordering as findForUser so the truncated head is the
+    // most-recent slice.
+    @Query(
+        """
+        SELECT a FROM AdminDecisionLog a
+        WHERE a.targetUserId = :targetUserId
+        ORDER BY a.decidedAt DESC, a.id ASC
+        """,
+    )
+    fun findForUserCapped(
+        @Param("targetUserId") targetUserId: UUID,
+        pageable: Pageable,
+    ): List<AdminDecisionLog>
 
     // Counts logical decisions in the window — collapses bulk groups (same
     // group_id) down to one logical decision per Q-A4. Native SQL because

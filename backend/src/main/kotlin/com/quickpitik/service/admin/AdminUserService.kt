@@ -24,6 +24,7 @@ import com.quickpitik.repository.ReservedHandleRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
+import org.springframework.data.domain.PageRequest
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -79,7 +80,11 @@ class AdminUserService(
     @Transactional(readOnly = true)
     fun detail(userId: UUID): AdminUserDetailDto {
         val (user, settings) = loadUserAndSettings(userId)
-        val log = adminDecisionLogRepository.findForUser(userId)
+        // H-6: cap to most-recent 50 — for a high-friction photographer
+        // the unbounded log used to bloat the response into the
+        // multi-kilobyte range. Deeper history can move to its own
+        // GET /admin/users/{id}/decisions?offset&limit if the FE asks.
+        val log = adminDecisionLogRepository.findForUserCapped(userId, PageRequest.of(0, DECISION_LOG_DETAIL_CAP))
             .map {
                 DecisionLogEntryDto(
                     userId = it.targetUserId ?: userId,
@@ -414,5 +419,8 @@ class AdminUserService(
     private companion object {
         // Same shape as the photographer's own PUT.
         val HANDLE_REGEX = Regex("^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])?$")
+
+        // H-6: cap on rows returned to the admin user-detail page.
+        const val DECISION_LOG_DETAIL_CAP = 50
     }
 }
