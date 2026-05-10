@@ -15,6 +15,7 @@ import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PaymentRepository
+import com.quickpitik.service.earnings.TransactionMintingService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.OffsetDateTime
@@ -36,6 +37,7 @@ class PaymentWebhookService(
     private val orderItemRepository: OrderItemRepository,
     private val paymentRepository: PaymentRepository,
     private val downloadGrantRepository: DownloadGrantRepository,
+    private val transactionMintingService: TransactionMintingService,
 ) {
     fun handle(provider: String, request: PaymentWebhookRequest): PaymentWebhookResponse {
         if (provider.isBlank()) {
@@ -88,6 +90,10 @@ class PaymentWebhookService(
             order.paidAt = now
             orderRepository.save(order)
             mintGrantsIfMissing(order.id, now)
+            // Backstop for orders that flipped to PAID via webhook (rare for
+            // v1 since OrderService already stamps PAID immediately, but keeps
+            // the earnings pipeline correct once real provider webhooks land).
+            transactionMintingService.mintForPaidOrder(order.id)
         }
 
         val grantsAfter = downloadGrantRepository.findByIdOrderId(order.id).size
