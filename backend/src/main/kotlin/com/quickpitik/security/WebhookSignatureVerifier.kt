@@ -23,6 +23,15 @@ import javax.crypto.spec.SecretKeySpec
 // Anti-enumeration: every failure path (missing header, missing wrapper,
 // digest mismatch) emits the same UnauthorizedException — providers learn
 // nothing about which step failed.
+//
+// Limitation (deferred): no timestamp-based anti-replay. The verifier accepts
+// any signed body, so a captured signature can be replayed indefinitely. The
+// application-level (provider, providerRef) UNIQUE on payments dedupes the
+// most common case (same webhook re-sent — see PaymentWebhookService.handle
+// line 64), but a full defense requires signing X-QuickPitik-Timestamp
+// alongside the body and rejecting requests outside a 5-minute window. Land
+// alongside real GCash/Maya/card integration; for v1 the providerRef UNIQUE
+// is the operative replay guard.
 @Component
 class WebhookSignatureVerifier(
     private val properties: PaymentWebhookProperties,
