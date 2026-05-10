@@ -57,6 +57,7 @@ class AdminDecisionLogService(
         reason: String? = null,
         meta: Map<String, Any?>? = null,
         groupId: UUID? = null,
+        idempotencyKey: String? = null,
     ): AdminDecisionLog =
         adminDecisionLogRepository.save(
             AdminDecisionLog(
@@ -66,6 +67,7 @@ class AdminDecisionLogService(
                 reason = reason,
                 meta = meta,
                 groupId = groupId,
+                idempotencyKey = idempotencyKey,
             ),
         )
 

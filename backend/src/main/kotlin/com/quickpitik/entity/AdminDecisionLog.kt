@@ -20,6 +20,11 @@ import java.util.UUID
 // (e.g. force-edit = {field, from, to}; mark-paid = {paymentReference}; etc.)
 // — keeping the column generic here means new decision shapes don't need
 // schema migrations.
+//
+// idempotency_key is opt-in: bulk endpoints stamp the inbound Idempotency-Key
+// header on every per-cycle row so a retry of the same admin intent reuses
+// the cached group_id (and the partial unique on
+// (admin_id, idempotency_key, target_payout_id) gates per-row dedup).
 @Entity
 @Table(name = "admin_decision_log")
 class AdminDecisionLog(
@@ -54,6 +59,9 @@ class AdminDecisionLog(
 
     @Column(name = "group_id")
     val groupId: UUID? = null,
+
+    @Column(name = "idempotency_key", length = 64)
+    val idempotencyKey: String? = null,
 
     @Column(name = "decided_at", nullable = false, updatable = false)
     val decidedAt: OffsetDateTime = OffsetDateTime.now(),
