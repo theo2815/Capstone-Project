@@ -19,6 +19,7 @@ import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -40,6 +41,7 @@ class AdminPayoutService(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val adminDecisionLogService: AdminDecisionLogService,
+    private val adminDecisionLogRepository: AdminDecisionLogRepository,
 ) {
 
     @Transactional(readOnly = true)
@@ -150,13 +152,38 @@ class AdminPayoutService(
         return hydrateOne(cycle)
     }
 
-    fun bulk(adminId: UUID, req: BulkPayoutsRequest): BulkPayoutResultDto {
-        val groupId = UUID.randomUUID()
+    /**
+     * POST /api/v1/admin/payouts/bulk (C-3).
+     *
+     * Idempotent on the inbound `Idempotency-Key` header. A retry with the
+     * same (admin_id, idempotency_key) returns the original group_id and
+     * does NOT re-issue per-cycle audit-log rows or photographer-inbox
+     * messages — every per-item write is gated by the partial unique index
+     * `uq_admin_decision_log_admin_idem_target_payout` so duplicates are
+     * locked out at the DB even under concurrent retries.
+     *
+     * State mutations on the cycle (status / holdReason / settledAt) are
+     * applied unconditionally — they're idempotent under the same final
+     * state, so re-applying them on retry is a no-op. Errors raised by
+     * per-item validation (already-paid, missing-reason, unknown-action)
+     * are caught per-row and reported in the result list, exactly as in
+     * the non-replay path.
+     */
+    fun bulk(adminId: UUID, idempotencyKey: String, req: BulkPayoutsRequest): BulkPayoutResultDto {
+        // Fast path: a prior bulk run with this (admin_id, idempotency_key)
+        // already minted a group_id — reuse it so the dashboard kpi
+        // (`COUNT(DISTINCT group_id)`) still collapses retries into one
+        // logical decision and the FE bulk-undo button has a stable id.
+        val groupId = adminDecisionLogRepository.findGroupIdByAdminAndIdempotencyKey(
+            adminId,
+            idempotencyKey,
+        ) ?: UUID.randomUUID()
+
         val results = req.ids.map { id ->
             try {
                 when (req.action.trim().lowercase()) {
                     "approve" -> {
-                        bulkApprove(adminId, id, groupId)
+                        bulkApprove(adminId, id, groupId, idempotencyKey)
                         BulkPayoutItemResultDto(id = id, ok = true)
                     }
                     "hold" -> {
@@ -166,7 +193,7 @@ class AdminPayoutService(
                                 message = "reason required for hold",
                                 field = "reason",
                             )
-                        bulkHold(adminId, id, reason, groupId)
+                        bulkHold(adminId, id, reason, groupId, idempotencyKey)
                         BulkPayoutItemResultDto(id = id, ok = true)
                     }
                     else -> throw ValidationException(
@@ -186,7 +213,7 @@ class AdminPayoutService(
         return BulkPayoutResultDto(groupId = groupId, results = results)
     }
 
-    private fun bulkApprove(adminId: UUID, payoutId: String, groupId: UUID) {
+    private fun bulkApprove(adminId: UUID, payoutId: String, groupId: UUID, idempotencyKey: String) {
         val cycle = loadCycle(payoutId)
         if (cycle.status == PayoutCycleStatus.PAID) {
             throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION, "Already paid")
@@ -195,11 +222,27 @@ class AdminPayoutService(
         cycle.status = PayoutCycleStatus.PENDING
         cycle.settledAt = cycle.settledAt ?: OffsetDateTime.now()
         payoutCycleRepository.save(cycle)
+
+        // C-3: per-row dedup gate. On a retry, an audit-log row already
+        // exists for (admin, key, payoutId) — skip the second
+        // logPayoutDecision + pushMessage so the photographer inbox
+        // doesn't get a duplicate "approved" notification and the audit
+        // trail stays a single logical decision.
+        if (adminDecisionLogRepository.existsByAdminIdAndIdempotencyKeyAndTargetPayoutId(
+                adminId,
+                idempotencyKey,
+                payoutId,
+            )
+        ) {
+            return
+        }
+
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,
             decision = "approved",
             groupId = groupId,
+            idempotencyKey = idempotencyKey,
         )
         adminDecisionLogService.pushMessage(
             photographerId = cycle.photographerId,
@@ -210,7 +253,13 @@ class AdminPayoutService(
         )
     }
 
-    private fun bulkHold(adminId: UUID, payoutId: String, reason: String, groupId: UUID) {
+    private fun bulkHold(
+        adminId: UUID,
+        payoutId: String,
+        reason: String,
+        groupId: UUID,
+        idempotencyKey: String,
+    ) {
         val cycle = loadCycle(payoutId)
         if (cycle.status == PayoutCycleStatus.PAID) {
             throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION, "Already paid")
@@ -218,12 +267,24 @@ class AdminPayoutService(
         cycle.status = PayoutCycleStatus.HELD
         cycle.holdReason = reason.take(255)
         payoutCycleRepository.save(cycle)
+
+        // C-3: per-row dedup gate, see bulkApprove above.
+        if (adminDecisionLogRepository.existsByAdminIdAndIdempotencyKeyAndTargetPayoutId(
+                adminId,
+                idempotencyKey,
+                payoutId,
+            )
+        ) {
+            return
+        }
+
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,
             decision = "held",
             reason = reason,
             groupId = groupId,
+            idempotencyKey = idempotencyKey,
         )
         adminDecisionLogService.pushMessage(
             photographerId = cycle.photographerId,
