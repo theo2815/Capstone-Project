@@ -38,6 +38,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.earnings.TransactionMintingService
 import com.quickpitik.service.storage.StorageService
+import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -62,6 +63,7 @@ class OrderService(
     private val storageProperties: StorageProperties,
     private val transactionMintingService: TransactionMintingService,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
 
     /**
      * POST /api/v1/orders.
@@ -173,10 +175,19 @@ class OrderService(
 
         // Best-effort: clear the items the runner just bought from their cart.
         // Not transactional with order creation — if it fails the order still stands.
+        // N-1 — log on failure so the "item stuck in cart after purchase" bug
+        // is debuggable without re-running the request under a profiler.
         if (userId != null) {
             request.items.forEach { item ->
                 runCatching {
                     cartItemRepository.deleteByUserIdAndPhotoId(userId, item.photoId)
+                }.onFailure { ex ->
+                    log.warn(
+                        "cart-clear failed for user={} photo={}: {}",
+                        userId,
+                        item.photoId,
+                        ex.message,
+                    )
                 }
             }
         }
