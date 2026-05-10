@@ -29,12 +29,23 @@ export interface PhotographerEventDetail extends PhotographerEventSummary {
   lastUploadAt: string | null;
 }
 
+// aiDetectionStatus surfaces partial failure of the best-effort ai-api
+// faces+bibs pipeline so the upload page can warn the photographer that
+// runners may not be able to find the photo by selfie/bib search yet.
+// Absent (legacy) or "ok" means both subsystems ran cleanly. (H-5)
+export type UploadedPhotoAiDetectionStatus =
+  | "ok"
+  | "faces_unavailable"
+  | "bibs_unavailable"
+  | "none";
+
 export interface UploadedPhoto {
   id: string;
   status: "live";
   uploadedAt: string;
   thumbnailUrl: string;
   span: "default" | "wide";
+  aiDetectionStatus?: UploadedPhotoAiDetectionStatus;
 }
 
 export interface PhotographerEventListArgs {
