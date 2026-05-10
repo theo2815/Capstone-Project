@@ -80,6 +80,16 @@ app:
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
     platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}
+  webhooks:
+    payment:
+      # Production: set PAYMENT_WEBHOOK_HMAC_SECRET to a 256-bit random value,
+      # e.g. `openssl rand -base64 64`, and share it with the provider's
+      # webhook configuration. Provider signs the raw JSON body with this
+      # secret (HMAC-SHA256, lowercase hex) and sends the digest in the
+      # signature-header. WebhookSignatureVerifier rejects any request whose
+      # header is missing, malformed, or fails constant-time comparison.
+      hmac-secret: ${PAYMENT_WEBHOOK_HMAC_SECRET:dev-only-payment-webhook-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random}
+      signature-header: ${PAYMENT_WEBHOOK_SIGNATURE_HEADER:X-QuickPitik-Signature}
 
 logging:
   level:

@@ -23,9 +23,11 @@ import java.util.UUID
 
 /**
  * Provider-stub webhook handler. Real GCash/Maya/card integration deferred —
- * for v1 this lets ops manually drive a PENDING order to PAID via curl. HMAC
- * verification (real-world `X-QuickPitik-Signature`) is a placeholder TODO; the
- * webhook is allow-listed as public in SecurityConfig for the demo.
+ * for v1 this lets ops manually drive a PENDING order to PAID via curl.
+ * Authorization is enforced upstream by `WebhookSignatureVerifier`
+ * (HMAC-SHA256 over the raw body, header `X-QuickPitik-Signature`); the path
+ * is allow-listed in SecurityConfig because the provider speaks server-to-
+ * server with no Bearer JWT.
  *
  * Idempotency: providerRef is unique per (provider, providerRef) so retried
  * webhooks no-op cleanly without double-minting grants.
