@@ -37,6 +37,10 @@ dependencies {
 
 	implementation("software.amazon.awssdk:s3:2.30.21")
 
+	// In-memory rate limiter (single-instance v1; Redis-backed swap is a future
+	// PR per docs/IMPLEMENTATION_PLAN.md scaling notes).
+	implementation("com.bucket4j:bucket4j-core:8.10.1")
+
 	runtimeOnly("org.postgresql:postgresql")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-test")

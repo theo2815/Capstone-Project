@@ -58,4 +58,28 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("aiPersonIds") aiPersonIds: Collection<String>,
         pageable: Pageable,
     ): Page<Photo>
+
+    // Photographer-scoped library: every photo in the event uploaded by this
+    // photographer, regardless of status (the photographer can manage HIDDEN
+    // rows from their dashboard). Sort comes from the Pageable so the caller
+    // can flip newest|oldest without a second query.
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.eventId = :eventId
+          AND p.photographerId = :photographerId
+        """,
+        countQuery = """
+        SELECT COUNT(p) FROM Photo p
+        WHERE p.eventId = :eventId
+          AND p.photographerId = :photographerId
+        """,
+    )
+    fun findPhotographerLibrary(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        pageable: Pageable,
+    ): Page<Photo>
+
+    fun findFirstByIdAndPhotographerId(id: UUID, photographerId: UUID): Photo?
 }

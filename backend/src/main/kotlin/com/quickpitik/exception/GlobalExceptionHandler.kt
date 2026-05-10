@@ -125,6 +125,17 @@ class GlobalExceptionHandler {
         )
     }
 
+    @ExceptionHandler(ApiException::class)
+    fun handleApi(ex: ApiException): ResponseEntity<ApiResponse<Nothing>> {
+        val builder = ResponseEntity.status(ex.status)
+        ex.retryAfterSeconds?.let { builder.header("Retry-After", it.toString()) }
+        return builder.body(
+            ApiResponse.failure(
+                ApiError(code = ex.code, message = ex.message ?: "Error", field = ex.field),
+            ),
+        )
+    }
+
     @ExceptionHandler(Exception::class)
     fun handleGeneric(ex: Exception): ResponseEntity<ApiResponse<Nothing>> {
         log.error("Unhandled exception", ex)

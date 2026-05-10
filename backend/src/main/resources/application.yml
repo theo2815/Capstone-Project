@@ -19,13 +19,13 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: false
-  # Multipart upload limits — avatars / selfies are bounded server-side at 10 MB.
-  # Photographer originals (PR 7) lift this behind a rate limiter; for now we
-  # keep one limit for everything multipart so we don't have to swap profiles.
+  # Multipart upload limits — sized for photographer originals (typical
+  # 8–20 MB JPEGs from a Sony α7 IV / Canon R6). Avatars + selfies stay well
+  # under this. The photographer-upload rate limiter (600/min) caps abuse.
   servlet:
     multipart:
-      max-file-size: 10MB
-      max-request-size: 10MB
+      max-file-size: 25MB
+      max-request-size: 25MB
 
 server:
   port: ${SERVER_PORT:8080}
