@@ -36,6 +36,7 @@ import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.earnings.TransactionMintingService
 import com.quickpitik.service.storage.StorageService
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
@@ -59,6 +60,7 @@ class OrderService(
     private val cartItemRepository: CartItemRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
+    private val transactionMintingService: TransactionMintingService,
 ) {
 
     /**
@@ -169,6 +171,11 @@ class OrderService(
             }
             throw ex
         }
+
+        // Mint earnings rows in the same TX so /me/photographer/earnings sees
+        // the sale immediately. Idempotent at the (order_id, photo_id) unique
+        // index — replays are clean no-ops.
+        created.forEach { transactionMintingService.mintForPaidOrder(it.id) }
 
         // Best-effort: clear the items the runner just bought from their cart.
         // Not transactional with order creation — if it fails the order still stands.

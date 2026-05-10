@@ -1,6 +1,6 @@
 package com.quickpitik.controller
 
-import com.quickpitik.common.PaginatedResponse
+import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.photographer.BrandPatchRequest
 import com.quickpitik.dto.photographer.CreatePayoutRequest
 import com.quickpitik.dto.photographer.CreateSocialRequest
@@ -13,6 +13,7 @@ import com.quickpitik.dto.photographer.RegionPatchRequest
 import com.quickpitik.dto.photographer.SocialLinkDto
 import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
 import com.quickpitik.security.AuthPrincipal
+import com.quickpitik.service.earnings.PayoutCycleService
 import com.quickpitik.service.photographer.PayoutAccountService
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.photographer.SocialLinkService
@@ -52,6 +53,7 @@ class MePhotographerSettingsController(
     private val photographerSettingsService: PhotographerSettingsService,
     private val socialLinkService: SocialLinkService,
     private val payoutAccountService: PayoutAccountService,
+    private val payoutCycleService: PayoutCycleService,
 ) {
     // ─── Brand / Handle / Region ──────────────────────────────────────────
     @PutMapping("/brand")
@@ -137,22 +139,19 @@ class MePhotographerSettingsController(
     }
 
     // ─── Payouts CRUD + primary toggle + QR ───────────────────────────────
-    // Path-overlap dispatch per Q-009: no params → PayoutAccount[];
-    // offset/limit → cycles paginated. PR 9 will populate the cycle branch.
+    // Path-overlap dispatch per Q-009: no params → PayoutAccount[] (settings);
+    // offset/limit → PaginatedResponse<PhotographerPayout> (earnings cycles,
+    // PR 9). One handler so the dispatcher signature stays locked at the
+    // controller surface — the cycle branch resolves to PayoutCycleService.
     @GetMapping("/payouts")
     fun listPayouts(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
     ): Any = if (offset != null || limit != null) {
-        // PR 9 (Phase F.3) fills in PayoutCycleService.list(...). For now the
-        // earnings page is mock-only on the FE so the empty paginated stub
-        // keeps the contract honest without faking data.
-        PaginatedResponse(
-            items = emptyList<Map<String, Any?>>(),
-            total = 0L,
-            offset = offset ?: 0,
-            limit = limit ?: 50,
+        payoutCycleService.list(
+            photographerId = principal.userId,
+            params = PaginationParams.of(offset, limit),
         )
     } else {
         payoutAccountService.list(principal.userId)
