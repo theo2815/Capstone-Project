@@ -140,6 +140,11 @@ class PhotoUploadService(
 
         // Faces — best-effort. A failure here doesn't block the upload; the
         // photo is still searchable by bib number, just not by selfie.
+        // Track outer-try outcome so we can surface degraded search to the
+        // photographer dashboard (H-5). Inner enroll failures are already
+        // logged via runCatching's onFailure and don't change the signal —
+        // an enroll outage usually correlates with a detect outage anyway.
+        var facesOk = true
         try {
             val facesResult = aiApiClient.facesDetect(bytes, contentType, filename)
             facesResult.faces.forEachIndexed { index, _ ->
@@ -157,10 +162,12 @@ class PhotoUploadService(
                 }.onFailure { log.warn("Face enroll failed for {}: {}", personId, it.message) }
             }
         } catch (ex: Exception) {
+            facesOk = false
             log.warn("Faces detect failed for upload {}: {}", photoId, ex.message)
         }
 
         // Bibs — best-effort, filtered by configurable confidence floor.
+        var bibsOk = true
         try {
             val bibsResult = aiApiClient.bibsRecognize(bytes, contentType, filename)
             bibsResult.detections
@@ -179,6 +186,7 @@ class PhotoUploadService(
                     )
                 }
         } catch (ex: Exception) {
+            bibsOk = false
             log.warn("Bibs recognize failed for upload {}: {}", photoId, ex.message)
         }
 
@@ -214,12 +222,20 @@ class PhotoUploadService(
             ),
         )
 
+        val aiDetectionStatus = when {
+            facesOk && bibsOk -> "ok"
+            !facesOk && bibsOk -> "faces_unavailable"
+            facesOk && !bibsOk -> "bibs_unavailable"
+            else -> "none"
+        }
+
         return UploadedPhotoDto(
             id = photoId,
             status = "live",
             uploadedAt = photo.uploadedAt,
             thumbnailUrl = thumbnailUrl,
             span = photo.span.wire,
+            aiDetectionStatus = aiDetectionStatus,
         )
     }
 

@@ -60,12 +60,24 @@ data class PhotographerDownloadDto(
 )
 
 // Mirrors website/src/lib/api-photographer.ts UploadedPhoto.
+//
+// aiDetectionStatus surfaces partial failure of the best-effort ai-api
+// faces+bibs pipeline so the photographer dashboard can show a degraded-
+// search indicator. null on legacy clients / when both subsystems ran clean
+// is treated identically to "ok" (H-5).
+//
+// Wire values:
+//   "ok"                 — faces detect + bibs recognize both succeeded
+//   "faces_unavailable"  — faces detect threw; bibs ran cleanly
+//   "bibs_unavailable"   — bibs recognize threw; faces ran cleanly
+//   "none"               — both threw; runner can find this photo by neither
 data class UploadedPhotoDto(
     val id: UUID,
     val status: String,
     val uploadedAt: OffsetDateTime,
     val thumbnailUrl: String,
     val span: String,
+    val aiDetectionStatus: String? = null,
 )
 
 private val phZone: ZoneId = ZoneId.of("Asia/Manila")
