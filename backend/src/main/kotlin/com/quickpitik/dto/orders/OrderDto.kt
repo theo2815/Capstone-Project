@@ -10,7 +10,8 @@ import java.util.UUID
 
 // POST /orders request body matches website/src/lib/api-orders.ts CreateOrderArgs.
 // items[] may span multiple events; service splits server-side so each Order row
-// stays single-event (keeps MockOrder.eventId honest).
+// stays single-event (keeps MockOrder.eventId honest). Idempotency-Key arrives
+// via the HTTP header (RFC 9110 §9.2.2), not the body — see OrderController.create.
 data class CreateOrderRequest(
     @field:NotEmpty(message = "items must not be empty")
     val items: List<CreateOrderItem> = emptyList(),
@@ -18,8 +19,6 @@ data class CreateOrderRequest(
     val paymentMethod: String = "",
     @field:Email(message = "recipientEmail must be a valid email")
     val recipientEmail: String? = null,
-    @field:NotBlank(message = "idempotencyKey is required")
-    val idempotencyKey: String = "",
 )
 
 data class CreateOrderItem(

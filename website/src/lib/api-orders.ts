@@ -7,8 +7,12 @@ import type { Order, OrderPhotoDetail } from "@/types/order";
 // Orders backend contract (Q-008 idempotency, Q-005 photo URLs RESOLVED 2026-05-09).
 //   GET  /api/v1/me/orders?offset=&limit=    → PaginatedResponse<MockOrder>
 //   GET  /api/v1/me/orders/{id}              → OrderDetail (MockOrder + photos[] + downloadBundleUrl)
-//   POST /api/v1/orders                      { items, paymentMethod, recipientEmail?, idempotencyKey } → Order
+//   POST /api/v1/orders                      { items, paymentMethod, recipientEmail? } + Idempotency-Key header → Order
 //   POST /api/v1/me/orders/{id}/refund       { photoIds, reason, note } → unknown (caller pushes to dispute store)
+//
+// Idempotency-Key arrives as an HTTP header per RFC 9110 §9.2.2 — `postOrder`
+// extracts `idempotencyKey` from the args bag and sends it as a header so the
+// component-facing arg shape stays a single object.
 //
 // ADR addendum: list endpoint MUST return `photoIds[]` alongside `photoCount`
 // so the runner refund modal opens without a detail round-trip. The spec's
@@ -78,7 +82,10 @@ export async function fetchOrderDetail(
 }
 
 export async function postOrder(args: CreateOrderArgs): Promise<Order> {
-  return api.post<Order>("/orders", args);
+  const { idempotencyKey, ...body } = args;
+  return api.post<Order>("/orders", body, {
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
 }
 
 export async function submitOrderRefund(

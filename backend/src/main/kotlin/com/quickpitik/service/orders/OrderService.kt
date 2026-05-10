@@ -70,13 +70,15 @@ class OrderService(
      * FE's MockOrder.eventId shape and keeps refund attribution unambiguous). All
      * created rows share the same idempotency_key so a network retry produces no
      * duplicate charge — the unique index on (idempotency_key, event_id) enforces
-     * this at the DB level.
+     * this at the DB level. The idempotency_key arrives via the Idempotency-Key
+     * HTTP header (RFC 9110 §9.2.2) — the controller validates + parses it before
+     * this method runs, so we trust the parameter here.
      *
      * Real GCash/Maya/card integration is out of scope for v1. Orders are created
      * in PAID state immediately and download_grants are minted in the same TX so
      * the FE can show success + downloads without waiting for a webhook.
      */
-    fun create(userId: UUID?, request: CreateOrderRequest): OrderResponse {
+    fun create(userId: UUID?, request: CreateOrderRequest, idempotencyKey: String): OrderResponse {
         if (request.items.isEmpty()) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
@@ -86,14 +88,6 @@ class OrderService(
         }
 
         val paymentMethod = PaymentMethod.fromWire(request.paymentMethod)
-        val idempotencyKey = request.idempotencyKey.trim()
-        if (idempotencyKey.isEmpty()) {
-            throw ValidationException(
-                code = ErrorCodes.INVALID_IDEMPOTENCY_KEY,
-                message = "idempotencyKey is required",
-                field = "idempotencyKey",
-            )
-        }
 
         val recipientEmail = resolveRecipientEmail(userId, request.recipientEmail)
 

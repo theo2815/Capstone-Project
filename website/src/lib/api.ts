@@ -45,10 +45,15 @@ class ApiClient {
     return this.fetch<T>(path, { method: "GET" });
   }
 
-  async post<T>(path: string, body?: unknown): Promise<T> {
+  async post<T>(
+    path: string,
+    body?: unknown,
+    init?: { headers?: HeadersInit },
+  ): Promise<T> {
     return this.fetch<T>(path, {
       method: "POST",
       body: body instanceof FormData ? body : JSON.stringify(body),
+      headers: init?.headers,
     });
   }
 
