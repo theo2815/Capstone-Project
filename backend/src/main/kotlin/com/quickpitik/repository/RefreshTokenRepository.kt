@@ -22,4 +22,20 @@ interface RefreshTokenRepository : JpaRepository<RefreshToken, UUID> {
         """,
     )
     fun revokeAllForUser(@Param("userId") userId: UUID, @Param("now") now: OffsetDateTime): Int
+
+    @Modifying
+    @Query(
+        """
+        UPDATE RefreshToken rt
+        SET rt.revokedAt = :now
+        WHERE rt.userId = :userId
+          AND rt.revokedAt IS NULL
+          AND rt.tokenHash <> :keepHash
+        """,
+    )
+    fun revokeAllForUserExcept(
+        @Param("userId") userId: UUID,
+        @Param("keepHash") keepHash: String,
+        @Param("now") now: OffsetDateTime,
+    ): Int
 }

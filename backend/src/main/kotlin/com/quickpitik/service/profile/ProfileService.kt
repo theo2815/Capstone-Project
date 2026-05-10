@@ -17,12 +17,15 @@ import java.util.UUID
 /**
  * Account self-edit (PUT /me/profile + PUT /me/password).
  *
- * Password change revokes all of the user's refresh tokens — this kicks
- * sessions on every device including the current one. The current access
- * token (15-min TTL) keeps working until it expires; after that the FE
- * detects the 401, prompts re-login, and the user gets a fresh refresh
- * token. The plan's "keep current session" intent is best served this way
- * given the FE doesn't send the refresh token in the password-change body.
+ * Password change revokes all of the user's refresh tokens EXCEPT the one
+ * the FE sends in `refreshToken` (the current device). Plan Phase E:
+ * "Server revokes all OTHER refresh tokens (keep current session)." The FE
+ * pulls the local refreshToken out of localStorage and includes it in the
+ * PUT /me/password body so the BE can hash it and skip that one row when
+ * revoking. If the body field is null/blank, we fall back to revoking
+ * everything — that path keeps the endpoint usable for clients that
+ * cannot supply the refresh token (e.g. an admin tool, a future device
+ * recovery flow), at the cost of also kicking the current session.
  */
 @Service
 @Transactional
@@ -74,6 +77,6 @@ class ProfileService(
         }
         user.passwordHash = passwordEncoder.encode(request.newPassword)
         userRepository.save(user)
-        refreshTokenService.revokeAllForUser(userId)
+        refreshTokenService.revokeAllForUserExcept(userId, request.refreshToken)
     }
 }
