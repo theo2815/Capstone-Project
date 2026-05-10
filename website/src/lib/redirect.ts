@@ -1,17 +1,14 @@
-import { useSearchParams } from "next/navigation";
 import { ROUTES } from "@/lib/constants";
+
+// Pure helpers — server-safe. Hook variant lives at
+// `hooks/use-redirect-target.ts` so importing `useSearchParams` doesn't leak
+// into the server bundle via `lib/api.ts`.
 
 export function isSafeRedirect(value: string | null | undefined): value is string {
   if (!value) return false;
   if (!value.startsWith("/")) return false;
   if (value.startsWith("//") || value.startsWith("/\\")) return false;
   return true;
-}
-
-export function useRedirectTarget(fallback: string = ROUTES.HOME): string {
-  const params = useSearchParams();
-  const raw = params?.get("redirect");
-  return isSafeRedirect(raw) ? raw : fallback;
 }
 
 // Builds the `/login?redirect=...` URL used by `<ProtectedRoute>` and the
