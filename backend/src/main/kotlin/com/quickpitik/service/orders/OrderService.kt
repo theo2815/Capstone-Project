@@ -214,11 +214,22 @@ class OrderService(
             }
             return user.email
         }
-        val email = requestEmail?.trim().orEmpty()
+        // M-4 — Bean Validation @Email on the controller DTO covers the canonical
+        // path; this is service-boundary defense-in-depth in case a future
+        // controller path bypasses the annotation. Lowercase + trim before
+        // storing so receipt deduplication doesn't fork on Aa@b.com vs aa@b.com.
+        val email = requestEmail?.trim()?.lowercase().orEmpty()
         if (email.isEmpty()) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
                 message = "recipientEmail is required for guest checkout",
+                field = "recipientEmail",
+            )
+        }
+        if (!EMAIL_REGEX.matches(email)) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "recipientEmail must be a valid email address",
                 field = "recipientEmail",
             )
         }
@@ -366,5 +377,9 @@ class OrderService(
     private companion object {
         val TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
         val DISPLAY_ZONE: ZoneId = ZoneId.of("Asia/Manila")
+        // Defensive only — the controller DTO already runs Jakarta @Email via
+        // BeanValidation; this regex catches the residual "looks email-shaped"
+        // case if a future caller bypasses the annotated path.
+        val EMAIL_REGEX: Regex = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
     }
 }
