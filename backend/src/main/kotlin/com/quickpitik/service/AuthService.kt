@@ -75,6 +75,12 @@ class AuthService(
         return userDtoMapper.toDto(user)
     }
 
+    fun logout(refreshToken: String?) {
+        if (!refreshToken.isNullOrBlank()) {
+            refreshTokenService.revoke(refreshToken)
+        }
+    }
+
     private fun buildAuthResponse(user: User): AuthResponse {
         val accessToken = tokenProvider.createAccessToken(user)
         val refreshToken = refreshTokenService.issue(user.id)

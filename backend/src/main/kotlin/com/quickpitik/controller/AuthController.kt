@@ -3,6 +3,7 @@ package com.quickpitik.controller
 import com.quickpitik.dto.auth.AuthResponse
 import com.quickpitik.dto.auth.ForgotPasswordRequest
 import com.quickpitik.dto.auth.LoginRequest
+import com.quickpitik.dto.auth.LogoutRequest
 import com.quickpitik.dto.auth.RefreshRequest
 import com.quickpitik.dto.auth.RegisterRequest
 import com.quickpitik.dto.auth.ResetPasswordRequest
@@ -35,6 +36,12 @@ class AuthController(
     @PostMapping("/refresh")
     fun refresh(@Valid @RequestBody req: RefreshRequest): AuthResponse =
         authService.refresh(req)
+
+    @PostMapping("/logout")
+    fun logout(@RequestBody(required = false) req: LogoutRequest?): Map<String, Boolean> {
+        authService.logout(req?.refreshToken)
+        return mapOf("loggedOut" to true)
+    }
 
     @PostMapping("/forgot-password")
     fun forgotPassword(@Valid @RequestBody req: ForgotPasswordRequest): Map<String, String> {
