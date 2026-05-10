@@ -11,9 +11,12 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.access.AccessDeniedException
 import org.springframework.security.authentication.BadCredentialsException
+import org.springframework.web.HttpMediaTypeNotSupportedException
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.multipart.MaxUploadSizeExceededException
+import org.springframework.web.multipart.MultipartException
 
 @RestControllerAdvice
 @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -70,6 +73,43 @@ class GlobalExceptionHandler {
     fun handleAccessDenied(ex: AccessDeniedException): ResponseEntity<ApiResponse<Nothing>> =
         ResponseEntity.status(HttpStatus.FORBIDDEN).body(
             ApiResponse.failure(ApiError(code = "FORBIDDEN", message = "Access denied")),
+        )
+
+    @ExceptionHandler(MaxUploadSizeExceededException::class)
+    fun handleMaxUploadSize(ex: MaxUploadSizeExceededException): ResponseEntity<ApiResponse<Nothing>> =
+        ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.PAYLOAD_TOO_LARGE,
+                    message = "File too large.",
+                ),
+            ),
+        )
+
+    @ExceptionHandler(MultipartException::class)
+    fun handleMultipart(ex: MultipartException): ResponseEntity<ApiResponse<Nothing>> {
+        // MaxUploadSizeExceededException is a subclass — Spring picks the more specific
+        // handler above. This catches malformed-multipart and the like.
+        log.warn("Multipart parse failed: {}", ex.message)
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "Multipart upload was malformed.",
+                ),
+            ),
+        )
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotSupportedException::class)
+    fun handleUnsupportedMediaType(ex: HttpMediaTypeNotSupportedException): ResponseEntity<ApiResponse<Nothing>> =
+        ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                    message = "Content type not supported.",
+                ),
+            ),
         )
 
     @ExceptionHandler(AiApiException::class)

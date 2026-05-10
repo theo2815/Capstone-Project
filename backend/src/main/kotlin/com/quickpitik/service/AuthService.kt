@@ -5,7 +5,6 @@ import com.quickpitik.dto.auth.LoginRequest
 import com.quickpitik.dto.auth.RefreshRequest
 import com.quickpitik.dto.auth.RegisterRequest
 import com.quickpitik.dto.auth.UserDto
-import com.quickpitik.dto.auth.toDto
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.exception.ConflictException
@@ -14,6 +13,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.security.JwtTokenProvider
+import com.quickpitik.service.profile.UserDtoMapper
 import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
@@ -26,6 +26,7 @@ class AuthService(
     private val passwordEncoder: PasswordEncoder,
     private val tokenProvider: JwtTokenProvider,
     private val refreshTokenService: RefreshTokenService,
+    private val userDtoMapper: UserDtoMapper,
 ) {
     fun register(req: RegisterRequest): AuthResponse {
         if (req.role == Role.ADMIN) {
@@ -63,7 +64,7 @@ class AuthService(
         return AuthResponse(
             accessToken = accessToken,
             refreshToken = newRefreshToken,
-            user = user.toDto(),
+            user = userDtoMapper.toDto(user),
         )
     }
 
@@ -71,12 +72,16 @@ class AuthService(
     fun me(principal: AuthPrincipal): UserDto {
         val user = userRepository.findById(principal.userId)
             .orElseThrow { UnauthorizedException("User not found", "USER_NOT_FOUND") }
-        return user.toDto()
+        return userDtoMapper.toDto(user)
     }
 
     private fun buildAuthResponse(user: User): AuthResponse {
         val accessToken = tokenProvider.createAccessToken(user)
         val refreshToken = refreshTokenService.issue(user.id)
-        return AuthResponse(accessToken = accessToken, refreshToken = refreshToken, user = user.toDto())
+        return AuthResponse(
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            user = userDtoMapper.toDto(user),
+        )
     }
 }
