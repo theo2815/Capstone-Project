@@ -25,6 +25,7 @@ import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -179,36 +180,53 @@ class AdminPayoutService(
             idempotencyKey,
         ) ?: UUID.randomUUID()
 
-        val results = req.ids.map { id ->
-            try {
-                when (req.action.trim().lowercase()) {
-                    "approve" -> {
-                        bulkApprove(adminId, id, groupId, idempotencyKey)
-                        BulkPayoutItemResultDto(id = id, ok = true)
+        val results = try {
+            req.ids.map { id ->
+                try {
+                    when (req.action.trim().lowercase()) {
+                        "approve" -> {
+                            bulkApprove(adminId, id, groupId, idempotencyKey)
+                            BulkPayoutItemResultDto(id = id, ok = true)
+                        }
+                        "hold" -> {
+                            val reason = req.reason
+                                ?: throw ValidationException(
+                                    code = ErrorCodes.VALIDATION_ERROR,
+                                    message = "reason required for hold",
+                                    field = "reason",
+                                )
+                            bulkHold(adminId, id, reason, groupId, idempotencyKey)
+                            BulkPayoutItemResultDto(id = id, ok = true)
+                        }
+                        else -> throw ValidationException(
+                            code = ErrorCodes.INVALID_BULK_ACTION,
+                            message = "action must be approve or hold",
+                            field = "action",
+                        )
                     }
-                    "hold" -> {
-                        val reason = req.reason
-                            ?: throw ValidationException(
-                                code = ErrorCodes.VALIDATION_ERROR,
-                                message = "reason required for hold",
-                                field = "reason",
-                            )
-                        bulkHold(adminId, id, reason, groupId, idempotencyKey)
-                        BulkPayoutItemResultDto(id = id, ok = true)
-                    }
-                    else -> throw ValidationException(
-                        code = ErrorCodes.INVALID_BULK_ACTION,
-                        message = "action must be approve or hold",
-                        field = "action",
-                    )
+                } catch (ex: ValidationException) {
+                    BulkPayoutItemResultDto(id = id, ok = false, error = ex.message)
+                } catch (ex: NotFoundException) {
+                    BulkPayoutItemResultDto(id = id, ok = false, error = ex.message)
+                } catch (ex: ApiException) {
+                    BulkPayoutItemResultDto(id = id, ok = false, error = ex.message)
                 }
-            } catch (ex: ValidationException) {
-                BulkPayoutItemResultDto(id = id, ok = false, error = ex.message)
-            } catch (ex: NotFoundException) {
-                BulkPayoutItemResultDto(id = id, ok = false, error = ex.message)
-            } catch (ex: ApiException) {
-                BulkPayoutItemResultDto(id = id, ok = false, error = ex.message)
             }
+        } catch (ex: DataIntegrityViolationException) {
+            // Concurrent retry with the same Idempotency-Key hit the partial
+            // unique on (admin_id, idempotency_key, target_payout_id) before
+            // the in-flight request committed. Postgres aborts the parent TX
+            // — Spring rolls it back when this throw escapes. The FE's next
+            // retry sees committed rows via the existsBy* fast path inside
+            // bulkApprove / bulkHold and short-circuits to success. Mirrors
+            // the OrderService.create:159 DIE-replay-and-return shape, but
+            // signals retry rather than re-reading because the bulk surface
+            // has no canonical "primary order" to fold the response onto.
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.IDEMPOTENT_REPLAY_IN_PROGRESS,
+                message = "An identical bulk operation is in progress. Retry shortly.",
+            )
         }
         return BulkPayoutResultDto(groupId = groupId, results = results)
     }
