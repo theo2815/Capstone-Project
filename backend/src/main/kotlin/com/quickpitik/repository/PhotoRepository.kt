@@ -81,5 +81,30 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         pageable: Pageable,
     ): Page<Photo>
 
+    // Status-filtered variant for the public gallery, where HIDDEN / PROCESSING
+    // rows must not be returned AND must not inflate `total`. Applying the
+    // status predicate at the query layer keeps the count accurate so the FE's
+    // pagination doesn't jump to phantom pages.
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.eventId = :eventId
+          AND p.photographerId = :photographerId
+          AND p.status = :status
+        """,
+        countQuery = """
+        SELECT COUNT(p) FROM Photo p
+        WHERE p.eventId = :eventId
+          AND p.photographerId = :photographerId
+          AND p.status = :status
+        """,
+    )
+    fun findPhotographerLibraryByStatus(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("status") status: PhotoStatus,
+        pageable: Pageable,
+    ): Page<Photo>
+
     fun findFirstByIdAndPhotographerId(id: UUID, photographerId: UUID): Photo?
 }

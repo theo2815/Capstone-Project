@@ -96,9 +96,14 @@ class PublicPhotographerService(
         val event = eventRepository.findBySlugAndDeletedAtIsNull(eventSlug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
 
-        val page = photoRepository.findPhotographerLibrary(
+        // Public gallery shows LIVE photos only; HIDDEN / PROCESSING stay
+        // invisible. Filter at the query layer so pagination `total` reflects
+        // the visible count — a post-fetch filter would leak phantom pages
+        // (FE shows N items but the next page is short or empty).
+        val page = photoRepository.findPhotographerLibraryByStatus(
             eventId = event.id,
             photographerId = settings.userId,
+            status = PhotoStatus.LIVE,
             pageable = OffsetLimitPageable(
                 pagination,
                 org.springframework.data.domain.Sort
@@ -107,10 +112,8 @@ class PublicPhotographerService(
             ),
         )
         if (page.isEmpty) return PaginatedResponse.empty(pagination)
-        // Public gallery shows LIVE photos only; HIDDEN/PROCESSING stay invisible.
-        val visible = page.content.filter { it.status == PhotoStatus.LIVE }
         return PaginatedResponse(
-            items = visible.map { it.toDto(::resolveWatermarkedUrl) },
+            items = page.content.map { it.toDto(::resolveWatermarkedUrl) },
             total = page.totalElements,
             offset = pagination.offset,
             limit = pagination.limit,
