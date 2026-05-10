@@ -5,6 +5,7 @@ import com.quickpitik.entity.EventStatus
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import java.time.LocalDate
@@ -71,4 +72,11 @@ interface EventRepository : JpaRepository<Event, UUID> {
         @Param("dateTo") dateTo: LocalDate,
         pageable: Pageable,
     ): Page<Event>
+
+    // Atomic counter bump — concurrent uploads must NOT race on read-modify-write
+    // of events.photo_count. The hero number on /events/[slug] under-counts when
+    // two uploads read the same value and both write n+1 instead of n+2 (H-3).
+    @Modifying
+    @Query("UPDATE Event e SET e.photoCount = e.photoCount + 1 WHERE e.id = :id")
+    fun incrementPhotoCount(@Param("id") id: UUID): Int
 }
