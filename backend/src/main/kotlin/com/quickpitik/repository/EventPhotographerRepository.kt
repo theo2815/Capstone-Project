@@ -5,8 +5,10 @@ import com.quickpitik.entity.EventPhotographerId
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.OffsetDateTime
 import java.util.UUID
 
 interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPhotographerId> {
@@ -72,4 +74,29 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         nativeQuery = true,
     )
     fun salesAggregatesByEvent(): List<Array<Any>>
+
+    // Atomic upsert for the per-(event, photographer) upload counters. Replaces
+    // the read-modify-write `findById → orElseGet { new } → save` pattern that
+    // (a) lost concurrent increments on photo_count and (b) crashed with a PK
+    // violation when two first-uploads from the same photographer raced for the
+    // same event (H-3 + M-6). joined_at is left to the column DEFAULT now() on
+    // insert and untouched on conflict — matches @Column(updatable = false) on
+    // the entity. sales_count and revenue_kept_php also rely on column defaults.
+    @Modifying
+    @Query(
+        value = """
+        INSERT INTO event_photographer (event_id, photographer_id, photo_count, first_upload_at, last_upload_at)
+        VALUES (:eventId, :photographerId, 1, :now, :now)
+        ON CONFLICT (event_id, photographer_id) DO UPDATE SET
+            photo_count     = event_photographer.photo_count + 1,
+            first_upload_at = COALESCE(event_photographer.first_upload_at, EXCLUDED.first_upload_at),
+            last_upload_at  = EXCLUDED.last_upload_at
+        """,
+        nativeQuery = true,
+    )
+    fun upsertOnUpload(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("now") now: OffsetDateTime,
+    ): Int
 }

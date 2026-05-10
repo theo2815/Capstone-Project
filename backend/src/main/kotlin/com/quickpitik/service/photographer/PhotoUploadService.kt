@@ -4,8 +4,6 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photographer.UploadedPhotoDto
-import com.quickpitik.entity.EventPhotographer
-import com.quickpitik.entity.EventPhotographerId
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoBibEmbed
@@ -186,22 +184,12 @@ class PhotoUploadService(
 
         photoRepository.save(photo)
 
-        val ep = eventPhotographerRepository
-            .findById(EventPhotographerId(eventId = eventId, photographerId = photographerId))
-            .orElseGet {
-                EventPhotographer(
-                    id = EventPhotographerId(eventId = eventId, photographerId = photographerId),
-                )
-            }
+        // Atomic counter writes — concurrent uploads during a live marathon are
+        // the normal case, not an edge case. The prior read-modify-write pattern
+        // lost increments and could PK-collide on first-upload races (H-3 / M-6).
         val now = OffsetDateTime.now()
-        ep.photoCount += 1
-        ep.lastUploadAt = now
-        if (ep.firstUploadAt == null) ep.firstUploadAt = now
-        eventPhotographerRepository.save(ep)
-
-        // Bump the event-wide counter so /events/[slug] hero stays accurate.
-        event.photoCount += 1
-        eventRepository.save(event)
+        eventPhotographerRepository.upsertOnUpload(eventId, photographerId, now)
+        eventRepository.incrementPhotoCount(eventId)
 
         val thumbnailUrl = storageService.presignedGetUrl(watermarkKey, storageProperties.presignedTtl.thumbnail)
 
