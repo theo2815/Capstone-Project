@@ -51,6 +51,11 @@ class SecurityConfig(
                 ).permitAll()
                 auth.requestMatchers("/error", "/actuator/**").permitAll()
                 auth.requestMatchers("/ws/**").permitAll()
+                // LocalFs storage mount (StaticResourceConfig) — <img> tags
+                // can't carry the bearer token; in prod S3StorageService serves
+                // the same content from a different origin and this rule is a
+                // no-op (no handler registered).
+                auth.requestMatchers(HttpMethod.GET, "/storage/**").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/events", "/api/v1/events/**").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/regions").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/platform/**").permitAll()

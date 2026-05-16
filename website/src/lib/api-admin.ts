@@ -400,28 +400,46 @@ export interface CreateAdminEventArgs {
   title: string;
   date: string;
   location: string;
-  bannerUrl?: string;
+  /** Raw file from the picker. The backend re-encodes to 1920×1440 JPEG
+   *  via EventCoverService — sending the raw file avoids the data-URL
+   *  detour that overflowed banner_url VARCHAR(512) and 500'd the create. */
+  cover?: File | null;
 }
 
 export async function createAdminEvent(
   args: CreateAdminEventArgs,
 ): Promise<ListEvent> {
-  return api.post<ListEvent>("/admin/events", args);
+  const form = new FormData();
+  form.append("title", args.title);
+  form.append("date", args.date);
+  form.append("location", args.location);
+  if (args.cover) form.append("cover", args.cover);
+  return api.post<ListEvent>("/admin/events", form);
 }
 
 export interface UpdateAdminEventPatch {
   title?: string;
   date?: string;
   location?: string;
+  /** New cover file. Wins over `removeCover` when both are present. */
+  cover?: File | null;
+  /** Clear the existing cover key on the server. Ignored if `cover` is set. */
+  removeCover?: boolean;
 }
 
 export async function updateAdminEvent(
   eventId: string,
   patch: UpdateAdminEventPatch,
 ): Promise<ListEvent> {
+  const form = new FormData();
+  if (patch.title !== undefined) form.append("title", patch.title);
+  if (patch.date !== undefined) form.append("date", patch.date);
+  if (patch.location !== undefined) form.append("location", patch.location);
+  if (patch.cover) form.append("cover", patch.cover);
+  if (patch.removeCover) form.append("removeCover", "true");
   return api.fetch<ListEvent>(
     `/admin/events/${encodeURIComponent(eventId)}`,
-    { method: "PATCH", body: JSON.stringify(patch) },
+    { method: "PATCH", body: form },
   );
 }
 

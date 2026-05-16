@@ -1,59 +1,14 @@
 package com.quickpitik.service.admin
 
-import com.quickpitik.dto.admin.AdminListEventDto
-import com.quickpitik.entity.Event
-import com.quickpitik.entity.EventStatus
-import java.time.LocalDate
 import java.time.ZoneId
 
 internal val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
 
-// Mirrors website/src/app/events/events-browser.tsx EventState mapping plus
-// the photographer-side derive in PhotographerEventDtos. Defined here too
-// so admin can use it without a backwards dependency on the photographer
-// package (clean separation by domain).
-internal fun deriveAdminEventState(event: Event, today: LocalDate = LocalDate.now(PH_ZONE)): String =
-    when (event.status) {
-        EventStatus.ACTIVE -> when {
-            event.date.isEqual(today) -> "live"
-            event.date.isAfter(today) -> "upcoming"
-            else -> "open"
-        }
-        EventStatus.COMPLETED -> "open"
-        EventStatus.ARCHIVED -> "past"
-        // Drafts aren't part of the public state machine — admin sees them
-        // as "upcoming" so the row keeps a sensible visual shape until the
-        // admin promotes the row to ACTIVE.
-        EventStatus.DRAFT -> "upcoming"
-    }
-
-// FE expects the city as the part after the comma in `location`. Mirrors the
-// public `cityFromLocation` helper used elsewhere on the runner-facing
-// surfaces; admin parses the same shape so /admin/events tiles render.
-internal fun cityFromLocation(location: String): String {
-    val idx = location.lastIndexOf(", ")
-    return if (idx >= 0) location.substring(idx + 2).trim() else location.trim()
-}
-
-internal fun Event.toAdminListDto(): AdminListEventDto =
-    AdminListEventDto(
-        id = id,
-        slug = slug,
-        name = name,
-        date = date,
-        location = location,
-        bannerUrl = bannerUrl,
-        photoCount = photoCount,
-        participantCount = participantCount,
-        status = status.name,
-        state = deriveAdminEventState(this),
-        city = cityFromLocation(location),
-        pricePerPhoto = pricePerPhoto,
-        description = description,
-        organizerName = organizerName,
-        categories = categories.sorted(),
-        adminOverrides = adminOverrides,
-    )
+// Event → AdminListEventDto lives in EventDtoMapper (events package) — it
+// needs StorageService to presign cover_s3_key, which AdminMappers does not
+// have. The admin-state derive + city-from-location helpers also live in
+// EventDtoMapper.companion so both event and admin surfaces share one
+// implementation.
 
 // Cebu · Central Visayas style label. Codes look like "region-7" / "cebu";
 // the json source has names like "Region VII (Central Visayas)" + province

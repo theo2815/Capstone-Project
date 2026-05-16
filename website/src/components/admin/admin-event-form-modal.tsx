@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import {
   AdminFieldHint,
@@ -10,24 +10,23 @@ import {
 import type { ListEvent } from "@/app/events/events-browser";
 import {
   ACCEPTED_IMAGE_MIME,
-  fitToDataUrl,
   validateImageFile,
 } from "@/lib/image-utils";
 import { cn } from "@/lib/utils";
 
 // Create / edit form modal for admin events. Fields: Title, Location, Date,
-// and an optional cover banner. Cover is a data URL produced via
-// `fitToDataUrl(file, 1920, 0.82)` — matches the photographer cover
-// pipeline so size + quality stay consistent. Empty cover falls back to the
-// dark-text banner already used by the event tile.
+// and an optional cover banner. The cover File is handed back to the caller
+// raw — the backend (EventCoverService) center-crops to 4:3 and re-encodes
+// to JPEG. Sending the bytes through multipart avoids the data-URL detour
+// that overflowed banner_url VARCHAR(512) and 500'd the create.
 //
 // Mode prop selects copy + button label. In `edit` mode the form prefills
-// from the passed `event`; the date input enforces ISO YYYY-MM-DD.
+// from the passed `event`; the date input enforces ISO YYYY-MM-DD. Cover
+// edits over PATCH /admin/events/{id} aren't wired yet — picking a file in
+// edit mode just stages it locally.
 
 const DATE_INPUT_CLS =
   "w-full rounded-2xl border border-line bg-surface px-4 py-3 font-sans text-sm text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh tnum";
-
-const COVER_MAX_PX = 1920;
 
 type Mode = "create" | "edit";
 
@@ -40,8 +39,12 @@ interface AdminEventFormModalProps {
     name: string;
     location: string;
     date: string;
-    bannerUrl?: string;
-  }) => void;
+    cover: File | null;
+    /** True when the user removed an existing cover and didn't pick a new
+     *  file — signals to the caller to send `removeCover` to the backend.
+     *  Always false in create mode (no existing cover to remove). */
+    removeCover: boolean;
+  }) => void | Promise<void>;
 }
 
 export function AdminEventFormModal({
@@ -54,9 +57,19 @@ export function AdminEventFormModal({
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [date, setDate] = useState("");
-  const [bannerUrl, setBannerUrl] = useState<string | undefined>(undefined);
-  const [coverBusy, setCoverBusy] = useState(false);
+  // `coverFile` is a newly picked file. `existingBannerUrl` is the URL
+  // already on the event in edit mode. Preview prefers coverFile.
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [existingBannerUrl, setExistingBannerUrl] = useState<string | undefined>(
+    undefined,
+  );
+  // Snapshot of whether the event had a cover when the modal opened — lets
+  // submit distinguish "user removed an existing cover" from "create mode
+  // with no cover picked." Without this we couldn't tell which case wants
+  // removeCover=true on the PATCH.
+  const [initialHadCover, setInitialHadCover] = useState(false);
   const [coverError, setCoverError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   // Reset / prefill whenever the modal opens or the target event flips.
   useEffect(() => {
@@ -65,16 +78,33 @@ export function AdminEventFormModal({
       setName(event.name);
       setLocation(event.location);
       setDate(event.date);
-      setBannerUrl(event.bannerUrl);
+      setExistingBannerUrl(event.bannerUrl);
+      setInitialHadCover(Boolean(event.bannerUrl));
     } else {
       setName("");
       setLocation("");
       setDate("");
-      setBannerUrl(undefined);
+      setExistingBannerUrl(undefined);
+      setInitialHadCover(false);
     }
+    setCoverFile(null);
     setCoverError(null);
-    setCoverBusy(false);
+    setSubmitting(false);
   }, [open, mode, event]);
+
+  // Object URL preview for newly picked files. Revoke on swap/close so we
+  // don't leak the blob references the browser holds per createObjectURL.
+  const coverPreviewUrl = useMemo(() => {
+    if (!coverFile) return undefined;
+    return URL.createObjectURL(coverFile);
+  }, [coverFile]);
+  useEffect(() => {
+    return () => {
+      if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
+    };
+  }, [coverPreviewUrl]);
+
+  const displayedBannerUrl = coverPreviewUrl ?? existingBannerUrl;
 
   const trimmedName = name.trim();
   const trimmedLocation = location.trim();
@@ -83,20 +113,37 @@ export function AdminEventFormModal({
     trimmedName.length > 0 &&
     trimmedLocation.length > 0 &&
     dateValid &&
-    !coverBusy;
+    !submitting;
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!canSubmit) return;
-    onSubmit({
-      name: trimmedName,
-      location: trimmedLocation,
-      date,
-      bannerUrl,
-    });
+    // User cleared an existing cover (Remove button) and didn't replace it.
+    // The new file branch takes precedence in the parent + backend if the
+    // user actually picked a replacement.
+    const removeCover =
+      initialHadCover && coverFile === null && existingBannerUrl === undefined;
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        name: trimmedName,
+        location: trimmedLocation,
+        date,
+        cover: coverFile,
+        removeCover,
+      });
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   const title = mode === "create" ? "Create event" : "Edit event";
-  const submitLabel = mode === "create" ? "Create event" : "Save changes";
+  const submitLabel = submitting
+    ? mode === "create"
+      ? "Creating…"
+      : "Saving…"
+    : mode === "create"
+      ? "Create event"
+      : "Save changes";
   const intro =
     mode === "create"
       ? "Title, location, and date populate the event card across the app. The cover banner is optional — events without a cover fall back to the dark-text banner."
@@ -143,28 +190,20 @@ export function AdminEventFormModal({
       </div>
 
       <CoverField
-        bannerUrl={bannerUrl}
-        busy={coverBusy}
+        bannerUrl={displayedBannerUrl}
         error={coverError}
-        onPick={async (file) => {
+        onPick={(file) => {
           const validationError = validateImageFile(file);
           if (validationError) {
             setCoverError(validationError);
             return;
           }
-          setCoverBusy(true);
           setCoverError(null);
-          try {
-            const dataUrl = await fitToDataUrl(file, COVER_MAX_PX, 0.82);
-            setBannerUrl(dataUrl);
-          } catch {
-            setCoverError("Could not process this image. Try another.");
-          } finally {
-            setCoverBusy(false);
-          }
+          setCoverFile(file);
         }}
         onRemove={() => {
-          setBannerUrl(undefined);
+          setCoverFile(null);
+          setExistingBannerUrl(undefined);
           setCoverError(null);
         }}
       />
@@ -174,7 +213,6 @@ export function AdminEventFormModal({
 
 interface CoverFieldProps {
   bannerUrl: string | undefined;
-  busy: boolean;
   error: string | null;
   onPick: (file: File) => void;
   onRemove: () => void;
@@ -182,7 +220,6 @@ interface CoverFieldProps {
 
 function CoverField({
   bannerUrl,
-  busy,
   error,
   onPick,
   onRemove,
@@ -219,21 +256,19 @@ function CoverField({
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3 border-t border-line">
           <label
             className={cn(
-              "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink hover:text-fresh transition-colors",
-              busy ? "opacity-60 cursor-wait" : "cursor-pointer",
+              "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink hover:text-fresh transition-colors cursor-pointer",
             )}
           >
-            {busy ? "Processing…" : bannerUrl ? "Replace cover" : "Upload cover"}
+            {bannerUrl ? "Replace cover" : "Upload cover"}
             <input
               ref={inputRef}
               type="file"
               accept={ACCEPTED_IMAGE_MIME.join(",")}
               onChange={handleChange}
-              disabled={busy}
               className="sr-only"
             />
           </label>
-          {bannerUrl && !busy && (
+          {bannerUrl && (
             <button
               type="button"
               onClick={onRemove}

@@ -75,8 +75,28 @@ class LocalFsStorageService(
     }
 
     private fun buildLocalUrl(key: String, ttl: Duration, method: String): String {
-        val base = props.publicBaseUrl?.trimEnd('/') ?: "file://${root.toUri().path.trimEnd('/')}"
-        val encoded = URLEncoder.encode(key, StandardCharsets.UTF_8).replace("+", "%20")
-        return "$base/$encoded?expires=${System.currentTimeMillis() + ttl.toMillis()}&method=$method"
+        // file:// fallbacks are unloadable by browsers from an http page,
+        // and an empty base produces a path-relative URL that resolves
+        // against the FE origin (and 404s on Next.js). Default to the
+        // dev HTTP mount served by StaticResourceConfig — set
+        // STORAGE_PUBLIC_BASE_URL explicitly when running off :8080 or
+        // when fronting LocalFs through a CDN/tunnel.
+        val base = props.publicBaseUrl?.takeIf { it.isNotBlank() }?.trimEnd('/')
+            ?: DEFAULT_DEV_BASE_URL
+        // Encode each segment individually so the slashes between
+        // events / {id} / cover / {file}.jpg stay literal. Tomcat rejects
+        // %2F in path segments (CVE-2007-0450 protection), so encoding the
+        // whole key as one string would 400 the request before the static
+        // handler runs.
+        val encodedPath = key.trimStart('/')
+            .split('/')
+            .joinToString("/") { segment ->
+                URLEncoder.encode(segment, StandardCharsets.UTF_8).replace("+", "%20")
+            }
+        return "$base/$encodedPath?expires=${System.currentTimeMillis() + ttl.toMillis()}&method=$method"
+    }
+
+    private companion object {
+        const val DEFAULT_DEV_BASE_URL = "http://localhost:8080/storage"
     }
 }

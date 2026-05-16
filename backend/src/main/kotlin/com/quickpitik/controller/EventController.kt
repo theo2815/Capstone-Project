@@ -39,6 +39,10 @@ class EventController(
         return eventService.list(statuses, search, city, from, to, pagination)
     }
 
+    // Race-day-only viewing is enforced FE-side: /events/[slug] swaps the
+    // cockpit for an "Opens on [date]" placeholder when the date is in the
+    // future. The endpoint stays a plain getter so admin's "View ↗" works
+    // without the SSR request needing a JWT to opt into a preview mode.
     @GetMapping("/{slug}")
     fun bySlug(@PathVariable slug: String): EventDetailDto =
         eventService.findBySlug(slug)

@@ -13,6 +13,8 @@ import com.quickpitik.entity.EventStatus
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.service.events.EventCoverService
+import com.quickpitik.service.events.EventDtoMapper
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
@@ -25,6 +27,8 @@ import java.util.UUID
 class AdminEventService(
     private val eventRepository: EventRepository,
     private val adminDecisionLogService: AdminDecisionLogService,
+    private val eventDtoMapper: EventDtoMapper,
+    private val eventCoverService: EventCoverService,
 ) {
 
     @Transactional(readOnly = true)
@@ -40,7 +44,7 @@ class AdminEventService(
             pageable = pageable,
         )
         val items = page.content
-            .map { it.toAdminListDto() }
+            .map { eventDtoMapper.toAdminListDto(it) }
             .let { rows ->
                 if (stateFilter.isNullOrBlank()) rows
                 else rows.filter { it.state == stateFilter.trim().lowercase() }
@@ -48,16 +52,24 @@ class AdminEventService(
         return PaginatedResponse.of(items, page.totalElements, params)
     }
 
-    fun create(adminId: UUID, req: CreateAdminEventRequest): AdminListEventDto {
+    fun create(
+        adminId: UUID,
+        req: CreateAdminEventRequest,
+        cover: CoverUpload? = null,
+    ): AdminListEventDto {
         val date = parseDate(req.date)
         val slug = slugify(req.title)
+        // Persist the row first so the cover key can scope to the new
+        // event id (events/{id}/cover/{uuid}.jpg). Saves stay in the same
+        // @Transactional method — a cover-decode failure rolls back the
+        // event row.
         val event = eventRepository.save(
             Event(
                 slug = slug,
                 name = req.title.trim(),
                 date = date,
                 location = req.location.trim(),
-                bannerUrl = req.bannerUrl,
+                bannerUrl = null,
                 photoCount = 0,
                 participantCount = 0,
                 status = EventStatus.ACTIVE,
@@ -68,16 +80,29 @@ class AdminEventService(
                 updatedAt = OffsetDateTime.now(),
             ),
         )
+        if (cover != null) {
+            event.coverS3Key = eventCoverService.upload(event.id, cover.bytes, cover.contentType)
+            eventRepository.save(event)
+        }
         adminDecisionLogService.logEventDecision(
             adminId = adminId,
             targetEventId = event.id,
             decision = "event_created",
             meta = mapOf("title" to req.title, "date" to req.date, "location" to req.location),
         )
-        return event.toAdminListDto()
+        return eventDtoMapper.toAdminListDto(event)
     }
 
-    fun update(adminId: UUID, eventId: UUID, req: UpdateAdminEventRequest): AdminListEventDto {
+    /** Raw image bytes + content type for cover uploads. */
+    data class CoverUpload(val bytes: ByteArray, val contentType: String?)
+
+    fun update(
+        adminId: UUID,
+        eventId: UUID,
+        req: UpdateAdminEventRequest,
+        cover: CoverUpload? = null,
+        removeCover: Boolean = false,
+    ): AdminListEventDto {
         val event = eventRepository.findById(eventId).orElseThrow {
             NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         }
@@ -111,8 +136,27 @@ class AdminEventService(
                 event.location = newLocation
             }
         }
+        // Cover handling — upload wins over remove when both are signalled.
+        // Audit log records the high-level transition (set/none) rather than
+        // the S3 key so the admin-overrides surface stays readable.
+        if (cover != null) {
+            val oldKey = event.coverS3Key
+            event.coverS3Key = eventCoverService.upload(event.id, cover.bytes, cover.contentType)
+            val fromState = if (oldKey.isNullOrBlank()) "none" else "set"
+            changes["cover"] = mapOf("from" to fromState, "to" to "set")
+            before["cover"] = fromState
+            after["cover"] = "set"
+            if (!oldKey.isNullOrBlank()) eventCoverService.delete(oldKey)
+        } else if (removeCover && !event.coverS3Key.isNullOrBlank()) {
+            val oldKey = event.coverS3Key!!
+            event.coverS3Key = null
+            changes["cover"] = mapOf("from" to "set", "to" to "none")
+            before["cover"] = "set"
+            after["cover"] = "none"
+            eventCoverService.delete(oldKey)
+        }
         if (changes.isEmpty()) {
-            return event.toAdminListDto()
+            return eventDtoMapper.toAdminListDto(event)
         }
         // Append the per-row override entry per Q-A3 — replace the list reference
         // (rather than mutating in place) so Hibernate's dirty-checking notices
@@ -131,7 +175,7 @@ class AdminEventService(
             decision = "event_updated",
             meta = changes.toMap(),
         )
-        return event.toAdminListDto()
+        return eventDtoMapper.toAdminListDto(event)
     }
 
     fun delete(adminId: UUID, eventId: UUID): AdminEventDeleteResponseDto {

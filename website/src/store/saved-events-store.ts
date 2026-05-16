@@ -5,12 +5,9 @@ import { postSaveEvent, postUnsaveEvent } from "@/lib/api-saved-events";
 // `localStorage` persists the offline-buffer mode for guests; on auth, the
 // AuthHydrator merge replaces the buffer with the canonical server list and
 // flips `syncEnabled` so subsequent toggles mirror to /me/saved-events.
-//
-// Demo seed so a fresh user sees Race Log work immediately.
-// - "u1" = Cebu Bay Run (upcoming)  → saved-only upcoming row
-// - "1"  = Cebu Marathon (live)     → paired with a seeded order = saved + bought
-// - "6"  = Cebu Night Run 2025      → saved-only past archive row
-const SEED_SAVED_IDS: ReadonlyArray<string> = ["u1", "1", "6"];
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface SavedEventsState {
   ids: string[];
@@ -28,7 +25,7 @@ interface SavedEventsState {
 export const useSavedEventsStore = create<SavedEventsState>()(
   persist(
     (set, get) => ({
-      ids: [...SEED_SAVED_IDS],
+      ids: [],
       syncEnabled: false,
       setSyncEnabled: (syncEnabled) => set({ syncEnabled }),
       setIds: (ids) => set({ ids }),
@@ -70,6 +67,21 @@ export const useSavedEventsStore = create<SavedEventsState>()(
     {
       name: "quickpitik-saved-events",
       partialize: (state) => ({ ids: state.ids }),
+      // Bump on 2026-05-16 to evict the pre-removal demo seed
+      // ("u1", "1", "6") from existing browsers — backend rejects non-UUIDs
+      // on /me/saved-events/merge with a 400.
+      version: 1,
+      migrate: (persisted) => {
+        if (!persisted || typeof persisted !== "object") return { ids: [] };
+        const ids = (persisted as { ids?: unknown }).ids;
+        return {
+          ids: Array.isArray(ids)
+            ? ids.filter(
+                (x): x is string => typeof x === "string" && UUID_RE.test(x),
+              )
+            : [],
+        };
+      },
     },
   ),
 );

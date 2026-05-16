@@ -1,11 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Slab } from "@/components/profile-shell";
 import { AdminEventCard } from "@/components/admin/admin-event-card";
 import { AdminEventFormModal } from "@/components/admin/admin-event-form-modal";
 import { useEventCatalog } from "@/lib/event-catalog";
 import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
+import { useAdminEvents } from "@/hooks/use-admin-data";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
@@ -22,6 +24,11 @@ import type { EventState, ListEvent } from "@/app/events/events-browser";
 //
 // The same `useEventCatalog()` backs /events and /dashboard/upload, so a
 // create/edit/delete here flows into both runner + photographer surfaces.
+
+// Stable empty-array reference so `useEventCatalog`'s memo doesn't churn
+// while the live admin list is loading. Passing a fresh `[]` every render
+// would rebuild the catalog on every paint.
+const EMPTY_SEED: ReadonlyArray<ListEvent> = [];
 
 const SECTIONS: ReadonlyArray<{
   id: string;
@@ -66,10 +73,15 @@ const SECTIONS: ReadonlyArray<{
 ];
 
 export default function AdminEventsPage() {
-  const catalog = useEventCatalog();
+  // Live admin list — the source of truth across refreshes. The local
+  // override store layers optimistic submissions / edits / deletes on top
+  // until the next refetch picks them up from the backend.
+  const liveEvents = useAdminEvents();
+  const catalog = useEventCatalog(liveEvents ?? EMPTY_SEED);
   const createEvent = useAdminEventOverridesStore((s) => s.createEvent);
   const editEvent = useAdminEventOverridesStore((s) => s.editEvent);
   const deleteEvent = useAdminEventOverridesStore((s) => s.deleteEvent);
+  const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { confirm } = useConfirmation();
 
@@ -85,32 +97,62 @@ export default function AdminEventsPage() {
 
   const liveCount = byState(catalog, "live").length;
 
-  function handleCreateSubmit(payload: {
+  async function handleCreateSubmit(payload: {
     name: string;
     location: string;
     date: string;
-    bannerUrl?: string;
+    cover: File | null;
+    removeCover: boolean;
   }) {
-    createEvent(payload);
-    setCreateOpen(false);
-    showToast({ kind: "success", message: `Created · ${payload.name}` });
+    try {
+      await createEvent({
+        name: payload.name,
+        location: payload.location,
+        date: payload.date,
+        cover: payload.cover,
+      });
+      // Refetch the admin list so the optimistic submission gets replaced
+      // by the canonical backend row on the next paint — and so the row
+      // survives a manual refresh.
+      void queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
+      setCreateOpen(false);
+      showToast({ kind: "success", message: `Created · ${payload.name}` });
+    } catch (err) {
+      // Keep the modal open so the admin can retry without losing the
+      // already-typed fields. ApiError carries the backend's user-facing
+      // message; everything else falls back to a generic copy.
+      const message =
+        err instanceof Error && err.message ? err.message : "Could not create event.";
+      showToast({ kind: "error", message });
+    }
   }
 
-  function handleEditSubmit(payload: {
+  async function handleEditSubmit(payload: {
     name: string;
     location: string;
     date: string;
-    bannerUrl?: string;
+    cover: File | null;
+    removeCover: boolean;
   }) {
     if (!editTarget) return;
-    editEvent(editTarget.id, {
-      name: payload.name,
-      location: payload.location,
-      date: payload.date,
-      bannerUrl: payload.bannerUrl,
-    });
-    setEditTarget(null);
-    showToast({ kind: "success", message: `Updated · ${payload.name}` });
+    try {
+      await editEvent(editTarget.id, {
+        name: payload.name,
+        location: payload.location,
+        date: payload.date,
+        cover: payload.cover,
+        removeCover: payload.removeCover,
+      });
+      // Refetch so the new presigned cover URL (or the cleared cover) lands
+      // on the next paint — the local override only carries field changes.
+      void queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
+      setEditTarget(null);
+      showToast({ kind: "success", message: `Updated · ${payload.name}` });
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message ? err.message : "Could not update event.";
+      showToast({ kind: "error", message });
+    }
   }
 
   async function handleDelete(event: ListEvent) {
