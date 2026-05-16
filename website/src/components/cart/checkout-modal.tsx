@@ -6,14 +6,11 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
-import { useOrdersStore } from "@/store/orders-store";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn } from "@/lib/utils";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import { postOrder } from "@/lib/api-orders";
 import { ApiError } from "@/lib/api";
-import type { CartItem } from "@/types/order";
 
 // Build the post-login resume URL: original page + `?checkout=1` flag.
 // `<CheckoutResumeWatcher>` reads the flag on mount and re-opens the modal,
@@ -55,7 +52,6 @@ export function CheckoutModal({
   const items = useCartStore((s) => s.items);
   const total = useCartStore((s) => s.total());
   const clearCart = useCartStore((s) => s.clear);
-  const addOrder = useOrdersStore((s) => s.addOrder);
   const queryClient = useQueryClient();
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -136,60 +132,27 @@ export function CheckoutModal({
     setPaymentError(null);
     setStep("processing");
 
-    if (BACKEND_LIVE) {
-      try {
-        const order = await postOrder({
-          items: items.map((i) => ({ photoId: i.photoId, eventId: i.eventId })),
-          paymentMethod,
-          recipientEmail: isAuthenticated ? undefined : email,
-          idempotencyKey,
-        });
-        // Race log derives from saved-events ∪ orders — invalidate both so the
-        // /profile race log picks up the new purchase.
-        queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
-        queryClient.invalidateQueries({ queryKey: ["me", "saved-events"] });
-        setOrderId(order.id);
-        setStep("success");
-      } catch (err) {
-        const message =
-          err instanceof ApiError
-            ? err.message
-            : "Payment failed. Try again in a moment.";
-        setPaymentError(message);
-        setStep("payment");
-      }
-      return;
-    }
-
-    // Mock mode — synthetic split per event so Race Log can derive counts
-    // without a backend round-trip. CheckoutModal is the only mock-mode order
-    // creator; live mode uses postOrder() above.
-    setTimeout(() => {
-      const id = `QP-${Date.now().toString(36).toUpperCase().slice(-6)}`;
-      const method = paymentMethod;
-      const paidAt = new Date().toISOString();
-      const itemsByEvent = new Map<string, CartItem[]>();
-      for (const item of items) {
-        const list = itemsByEvent.get(item.eventId) ?? [];
-        list.push(item);
-        itemsByEvent.set(item.eventId, list);
-      }
-      let suffix = 0;
-      for (const [eventId, eventItems] of itemsByEvent) {
-        const splitId =
-          itemsByEvent.size === 1 ? id : `${id}-${++suffix}`;
-        addOrder({
-          id: splitId,
-          eventId,
-          photoIds: eventItems.map((i) => i.photoId),
-          total: eventItems.reduce((sum, i) => sum + i.price, 0),
-          paymentMethod: method,
-          paidAt,
-        });
-      }
-      setOrderId(id);
+    try {
+      const order = await postOrder({
+        items: items.map((i) => ({ photoId: i.photoId, eventId: i.eventId })),
+        paymentMethod,
+        recipientEmail: isAuthenticated ? undefined : email,
+        idempotencyKey,
+      });
+      // Race log derives from saved-events ∪ orders — invalidate both so the
+      // /profile race log picks up the new purchase.
+      queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
+      queryClient.invalidateQueries({ queryKey: ["me", "saved-events"] });
+      setOrderId(order.id);
       setStep("success");
-    }, 1600);
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Payment failed. Try again in a moment.";
+      setPaymentError(message);
+      setStep("payment");
+    }
   };
 
   const handleSuccessClose = () => {

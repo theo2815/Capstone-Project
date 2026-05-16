@@ -12,6 +12,7 @@ import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { useQuery } from "@tanstack/react-query";
 import { usePublicPhotographer } from "@/hooks/use-photographer-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { PAGE_SIZE } from "@/lib/pagination-config";
@@ -20,6 +21,7 @@ import { useUiStore } from "@/store/ui-store";
 import { isReservedHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
+import { fetchEventDetail } from "@/lib/api-events";
 import {
   PHOTOGRAPHER_EVENTS,
   type EventState,
@@ -30,13 +32,12 @@ import {
   generatePhotographerPhotos,
   type PhotographerProfile,
 } from "@/lib/photographer-registry";
-import { MOCK_EVENT_DETAILS } from "@/app/events/mock-events";
 import {
   usePhotographerSettingsStore,
   BRAND_COLOR_HEX,
 } from "@/store/photographer-settings-store";
 import type { EventDetail } from "@/types/event";
-import type { MockPhoto } from "@/app/events/[slug]/mock-photos";
+import type { MockPhoto } from "@/types/photo";
 
 // Per-photographer public gallery — what runners land on when they click a
 // watermark URL on a photo. Filtered to only this photographer's photos for
@@ -72,10 +73,13 @@ export default function HandleEventPage() {
 
 function PageBody({ handle, slug }: { handle: string; slug: string }) {
   const settings = usePhotographerSettingsStore();
-  const event = MOCK_EVENT_DETAILS[slug];
+  const { data: event } = useQuery({
+    queryKey: ["events", slug, "detail"],
+    queryFn: () => fetchEventDetail(slug),
+    staleTime: 60_000,
+  });
 
-  // Live mode prefers GET /public/photographers/{handle} (Q-016) for the
-  // non-self path; mock-mode falls back to the registry seed below.
+  // GET /public/photographers/{handle} (Q-016) for the non-self path.
   const isOwnHandle = handle.length > 0 && settings.handle === handle;
   const liveProfile = usePublicPhotographer(isOwnHandle ? null : handle);
 

@@ -1,7 +1,5 @@
 import { api } from "@/lib/api";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
-import { getEventBySlug } from "@/app/events/mock-events";
-import { generateMockPhotos, type MockPhoto } from "@/app/events/[slug]/mock-photos";
+import type { MockPhoto } from "@/types/photo";
 import type { PaginatedResponse } from "@/types/api";
 
 export type Photo = MockPhoto;
@@ -19,11 +17,6 @@ export interface EventPhotosResult {
   limit: number;
 }
 
-function normalizeBib(raw: string | undefined): string {
-  if (!raw) return "";
-  return raw.replace(/^B-/i, "").trim().toUpperCase();
-}
-
 export async function fetchEventPhotos(
   slug: string,
   query: EventPhotosQuery = {},
@@ -31,29 +24,14 @@ export async function fetchEventPhotos(
   const offset = query.offset ?? 0;
   const limit = query.limit ?? 200;
 
-  if (BACKEND_LIVE) {
-    const params = new URLSearchParams();
-    if (query.bib) params.set("bib", query.bib);
-    params.set("offset", String(offset));
-    params.set("limit", String(limit));
-    const res = await api.get<PaginatedResponse<Photo>>(
-      `/events/${encodeURIComponent(slug)}/photos?${params.toString()}`,
-    );
-    return res;
-  }
-
-  // Mock fallback — generate from event seed and apply bib filter client-side.
-  const event = getEventBySlug(slug);
-  if (!event) {
-    return { items: [], total: 0, offset, limit };
-  }
-  const all = generateMockPhotos(event);
-  const cleaned = normalizeBib(query.bib);
-  const filtered = cleaned
-    ? all.filter((p) => p.bib && p.bib.replace(/^B-/, "").includes(cleaned))
-    : all;
-  const slice = filtered.slice(offset, offset + limit);
-  return { items: slice, total: filtered.length, offset, limit };
+  const params = new URLSearchParams();
+  if (query.bib) params.set("bib", query.bib);
+  params.set("offset", String(offset));
+  params.set("limit", String(limit));
+  const res = await api.get<PaginatedResponse<Photo>>(
+    `/events/${encodeURIComponent(slug)}/photos?${params.toString()}`,
+  );
+  return res;
 }
 
 export interface SearchByFaceArgs {
@@ -70,32 +48,20 @@ export async function searchEventByFace(
   const offset = args.offset ?? 0;
   const limit = args.limit ?? 200;
 
-  if (BACKEND_LIVE) {
-    const path = `/events/${encodeURIComponent(slug)}/photos/search-by-face`;
-    if (args.selfieFile) {
-      const form = new FormData();
-      form.append("selfie", args.selfieFile);
-      form.append("offset", String(offset));
-      form.append("limit", String(limit));
-      const res = await api.post<PaginatedResponse<Photo>>(path, form);
-      return res;
-    }
-    if (!args.selfieId) {
-      throw new Error("searchEventByFace requires selfieId or selfieFile");
-    }
-    const res = await api.post<PaginatedResponse<Photo>>(path, {
-      selfieId: args.selfieId,
-      offset,
-      limit,
-    });
-    return res;
+  const path = `/events/${encodeURIComponent(slug)}/photos/search-by-face`;
+  if (args.selfieFile) {
+    const form = new FormData();
+    form.append("selfie", args.selfieFile);
+    form.append("offset", String(offset));
+    form.append("limit", String(limit));
+    return api.post<PaginatedResponse<Photo>>(path, form);
   }
-
-  // Mock fallback — pretend the user's primary selfie matches DEMO_BIB photos.
-  const event = getEventBySlug(slug);
-  if (!event) return { items: [], total: 0, offset, limit };
-  const all = generateMockPhotos(event);
-  const matched = all.filter((p) => p.bib === "B-4082");
-  const slice = matched.slice(offset, offset + limit);
-  return { items: slice, total: matched.length, offset, limit };
+  if (!args.selfieId) {
+    throw new Error("searchEventByFace requires selfieId or selfieFile");
+  }
+  return api.post<PaginatedResponse<Photo>>(path, {
+    selfieId: args.selfieId,
+    offset,
+    limit,
+  });
 }

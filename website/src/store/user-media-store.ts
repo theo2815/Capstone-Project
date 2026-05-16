@@ -1,10 +1,10 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-// Mock-mode source-of-truth for avatar + selfies. In live mode the canonical
-// avatar lives on `auth-store.user.avatarUrl` (Q-007 RESOLVED) and selfies are
-// served via `useSelfiesList()` (Q-006 RESOLVED). This store stays as the
-// dev fallback when `NEXT_PUBLIC_BACKEND_LIVE` is unset.
+// User media types + local persistence. The canonical avatar lives on
+// `auth-store.user.avatarUrl` (Q-007 RESOLVED) and selfies are served via
+// `useSelfiesList()` (Q-006 RESOLVED). This store remains for transient
+// local state and as a typed container for SelfieRef.
 
 export const SELFIE_MAX = 5;
 

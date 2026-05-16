@@ -1,6 +1,5 @@
 import { api } from "@/lib/api";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
-import { useUserMediaStore, type SelfieRef } from "@/store/user-media-store";
+import type { SelfieRef } from "@/store/user-media-store";
 
 // Selfies backend contract (Q-006 RESOLVED 2026-05-09):
 //   GET    /api/v1/me/selfies                         → SelfieRef[] (max 5)
@@ -11,15 +10,9 @@ import { useUserMediaStore, type SelfieRef } from "@/store/user-media-store";
 // Errors handled inline:
 //   SELFIE_REJECTED         — 422 with verbatim ai-api reason ("no face", "too blurry", "multiple faces")
 //   SELFIE_LIMIT_REACHED    — 409 cap=5 reached
-//
-// FE keeps the field name `dataUrl` for now (string is signed S3 URL in live mode,
-// base64 data URL in mock mode). Rename to `imageUrl` deferred to a follow-up commit.
 
 export async function fetchSelfies(): Promise<SelfieRef[]> {
-  if (BACKEND_LIVE) {
-    return api.get<SelfieRef[]>("/me/selfies");
-  }
-  return useUserMediaStore.getState().selfies;
+  return api.get<SelfieRef[]>("/me/selfies");
 }
 
 export async function uploadSelfie(file: File): Promise<SelfieRef> {

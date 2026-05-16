@@ -1,6 +1,5 @@
 import { api } from "@/lib/api";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
-import { useOrdersStore, type MockOrder } from "@/store/orders-store";
+import type { MockOrder } from "@/store/orders-store";
 import type { PaginatedResponse } from "@/types/api";
 import type { Order, OrderPhotoDetail } from "@/types/order";
 
@@ -8,15 +7,9 @@ import type { Order, OrderPhotoDetail } from "@/types/order";
 //   GET  /api/v1/me/orders?offset=&limit=    → PaginatedResponse<MockOrder>
 //   GET  /api/v1/me/orders/{id}              → OrderDetail (MockOrder + photos[] + downloadBundleUrl)
 //   POST /api/v1/orders                      { items, paymentMethod, recipientEmail? } + Idempotency-Key header → Order
-//   POST /api/v1/me/orders/{id}/refund       { photoIds, reason, note } → unknown (caller pushes to dispute store)
+//   POST /api/v1/me/orders/{id}/refund       { photoIds, reason, note } → unknown
 //
-// Idempotency-Key arrives as an HTTP header per RFC 9110 §9.2.2 — `postOrder`
-// extracts `idempotencyKey` from the args bag and sends it as a header so the
-// component-facing arg shape stays a single object.
-//
-// ADR addendum: list endpoint MUST return `photoIds[]` alongside `photoCount`
-// so the runner refund modal opens without a detail round-trip. The spec's
-// original "slimmer" OrderSummary omitted photoIds — FE drives the contract here.
+// Idempotency-Key arrives as an HTTP header per RFC 9110 §9.2.2.
 
 export interface OrderDetail extends MockOrder {
   photos: OrderPhotoDetail[];
@@ -43,42 +36,19 @@ export async function fetchOrders(
   const offset = args.offset ?? 0;
   const limit = args.limit ?? 200;
 
-  if (BACKEND_LIVE) {
-    const params = new URLSearchParams();
-    params.set("offset", String(offset));
-    params.set("limit", String(limit));
-    const res = await api.get<PaginatedResponse<MockOrder>>(
-      `/me/orders?${params.toString()}`,
-    );
-    return res.items;
-  }
-
-  // Mock fallback — read from useOrdersStore. Sort newest-first to match the
-  // /orders page expected order (it sorts again, but stable + cheap).
-  return [...useOrdersStore.getState().orders].sort((a, b) =>
-    (b.paidAt ?? "").localeCompare(a.paidAt ?? ""),
+  const params = new URLSearchParams();
+  params.set("offset", String(offset));
+  params.set("limit", String(limit));
+  const res = await api.get<PaginatedResponse<MockOrder>>(
+    `/me/orders?${params.toString()}`,
   );
+  return res.items;
 }
 
 export async function fetchOrderDetail(
   orderId: string,
 ): Promise<OrderDetail | null> {
-  if (BACKEND_LIVE) {
-    return api.get<OrderDetail>(`/me/orders/${encodeURIComponent(orderId)}`);
-  }
-
-  // Mock fallback — synthesize a thin detail from the existing MockOrder.
-  // photos[] carries placeholders only; PhotoStrip + lightbox fall back to
-  // ID-chip rendering because URL fields are undefined.
-  const order = useOrdersStore.getState().orders.find((o) => o.id === orderId);
-  if (!order) return null;
-  const photos: OrderPhotoDetail[] = order.photoIds.map((id, i) => ({
-    id,
-    bib: null,
-    time: "—",
-    tone: i,
-  }));
-  return { ...order, photos };
+  return api.get<OrderDetail>(`/me/orders/${encodeURIComponent(orderId)}`);
 }
 
 export async function postOrder(args: CreateOrderArgs): Promise<Order> {

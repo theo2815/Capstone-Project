@@ -5,7 +5,6 @@ import {
 } from "@/lib/admin-user-registry";
 import { useAuthStore } from "@/store/auth-store";
 import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   approveUser as apiApproveUser,
   rejectUser as apiRejectUser,
@@ -31,7 +30,6 @@ import {
 // photographer dashboard banner loop close end-to-end without server roundtrip.
 
 function fireBackendUserAction(label: string, p: Promise<unknown>): void {
-  if (!BACKEND_LIVE) return;
   void p.catch((err) => {
     console.error(`[admin/users] ${label} backend call failed`, err);
   });

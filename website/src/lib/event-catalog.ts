@@ -2,15 +2,11 @@ import { useMemo } from "react";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
 import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
 
-// Mock catalog. Lifted out of `app/events/page.tsx` so /profile's Race Log can
-// resolve event metadata by ID without re-importing client modules.
+// Event-catalog helpers. The live source for `/events` is `fetchEventsList()`
+// from `lib/api-events.ts`. This module owns the lifecycle-state derivation
+// (`deriveEventState`, `canUploadToEvent`, `uploadDaysRemaining`) and the
+// admin-override merge (`useEventCatalog` / `getCatalogWithOverrides`).
 //
-// Used as the mock-fallback source for `lib/api-events.ts` when
-// BACKEND_LIVE=false. When live, `fetchEventsList()` returns server data
-// instead. Race Log derives from saved-events ∪ orders and resolves names via
-// `getEventById()` here today; future Phase E may add a server-side join.
-
-// Lifecycle is now derived from `date` instead of carried in the seed.
 // `UPLOAD_GRACE_DAYS` is the photographer upload window (race day + 3 = 4
 // days inclusive). After that the event flips to "open" (gallery for sale).
 // Past `RECENT_TO_ARCHIVE_DAYS` it goes to "past" (archive).
@@ -19,129 +15,7 @@ export const RECENT_TO_ARCHIVE_DAYS = 90;
 
 type SeedEvent = Omit<ListEvent, "state">;
 
-const SEED: ReadonlyArray<SeedEvent> = [
-  {
-    id: "u1",
-    slug: "cebu-bay-run-2026",
-    name: "Cebu Bay Run",
-    date: "2026-05-09",
-    location: "Mactan Channel Bridge",
-    city: "Mactan",
-    photoCount: 0,
-    participantCount: 1500,
-    status: "ACTIVE",
-  },
-  {
-    id: "u2",
-    slug: "it-park-sunrise-5k-2026",
-    name: "IT Park Sunrise 5K",
-    date: "2026-05-17",
-    location: "IT Park, Cebu City",
-    city: "Cebu City",
-    photoCount: 0,
-    participantCount: 800,
-    status: "ACTIVE",
-  },
-  {
-    id: "u3",
-    slug: "cordova-foundation-run-2026",
-    name: "Cordova Foundation Run",
-    date: "2026-06-07",
-    location: "Cordova, Cebu",
-    city: "Cordova",
-    photoCount: 0,
-    participantCount: 600,
-    status: "ACTIVE",
-  },
-  {
-    id: "1",
-    slug: "cebu-marathon-2026",
-    name: "Cebu Marathon 2026",
-    date: "2026-04-28",
-    location: "SRP Boulevard, Cebu City",
-    city: "Cebu City",
-    photoCount: 1240,
-    participantCount: 4800,
-    status: "ACTIVE",
-  },
-  {
-    id: "2",
-    slug: "mactan-sunset-run-2026",
-    name: "Mactan Sunset Run",
-    date: "2026-04-26",
-    location: "Mactan Channel Bridge",
-    city: "Mactan",
-    photoCount: 612,
-    participantCount: 1800,
-    status: "ACTIVE",
-  },
-  {
-    id: "3",
-    slug: "srp-half-marathon-2026",
-    name: "SRP Half-Marathon",
-    date: "2026-04-12",
-    location: "South Road Properties, Cebu",
-    city: "Cebu City",
-    photoCount: 3850,
-    participantCount: 2400,
-    status: "COMPLETED",
-  },
-  {
-    id: "4",
-    slug: "sun-run-cebu-2026",
-    name: "Sun Run Cebu",
-    date: "2026-04-05",
-    location: "IT Park, Cebu City",
-    city: "Cebu City",
-    photoCount: 2120,
-    participantCount: 3100,
-    status: "COMPLETED",
-  },
-  {
-    id: "5",
-    slug: "mactan-coastal-5k-2026",
-    name: "Mactan Coastal 5K",
-    date: "2026-03-29",
-    location: "Mactan, Lapu-Lapu City",
-    city: "Lapu-Lapu",
-    photoCount: 980,
-    participantCount: 1200,
-    status: "COMPLETED",
-  },
-  {
-    id: "6",
-    slug: "cebu-night-run-2025",
-    name: "Cebu City Night Run 2025",
-    date: "2025-12-14",
-    location: "Cebu Business Park",
-    city: "Cebu City",
-    photoCount: 4200,
-    participantCount: 5600,
-    status: "ARCHIVED",
-  },
-  {
-    id: "7",
-    slug: "talisay-10k-2025",
-    name: "Talisay 10K",
-    date: "2025-11-09",
-    location: "Talisay City, Cebu",
-    city: "Talisay",
-    photoCount: 1640,
-    participantCount: 1900,
-    status: "ARCHIVED",
-  },
-  {
-    id: "8",
-    slug: "cordova-bayrun-2025",
-    name: "Cordova Bay Run",
-    date: "2025-10-19",
-    location: "Cordova, Cebu",
-    city: "Cordova",
-    photoCount: 720,
-    participantCount: 950,
-    status: "ARCHIVED",
-  },
-];
+const SEED: ReadonlyArray<SeedEvent> = [];
 
 // Whole-day delta from event date to today. Negative = future, 0 = race day,
 // positive = past. Both sides anchored to local midnight so the boundaries
@@ -191,14 +65,10 @@ export const EVENT_CATALOG: ReadonlyArray<ListEvent> = SEED.map((e) => ({
   state: deriveEventState(e.date),
 }));
 
-// Mocked per-event "photos found of you" counts for the demo Race Log.
-// Real value comes from ai-api face-search results scoped to the event +
-// the user's selfie embeddings (backend Phase D).
-export const MOCK_USER_PHOTOS_FOUND: Record<string, number> = {
-  "1": 12,
-  "3": 8,
-  "6": 4,
-};
+// Per-event "photos found of you" counts. Real values come from ai-api
+// face-search results scoped to the event + the user's selfie embeddings.
+// Empty until that hook lands.
+export const MOCK_USER_PHOTOS_FOUND: Record<string, number> = {};
 
 export function getEventById(id: string): ListEvent | undefined {
   return getCatalogWithOverrides().find((e) => e.id === id);

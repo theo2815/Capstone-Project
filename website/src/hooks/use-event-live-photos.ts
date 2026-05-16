@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { API_BASE_URL } from "@/lib/constants";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import { getAccessToken } from "@/lib/auth";
 import type { EventPhotosResult, Photo } from "@/lib/api-photos";
 
@@ -15,8 +14,8 @@ interface PhotoPublishedMessage {
 interface UseEventLivePhotosArgs {
   slug: string;
   eventId: string;
-  // Caller passes `event.state === "live"`; the hook also gates on BACKEND_LIVE
-  // so the dev-mode mock catalog doesn't try to open a real socket.
+  // Caller passes `event.state === "live"`; the hook only opens a socket
+  // when this is true.
   enabled: boolean;
 }
 
@@ -46,7 +45,7 @@ export function useEventLivePhotos(
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!args.enabled || !BACKEND_LIVE) return;
+    if (!args.enabled) return;
     let cancelled = false;
 
     function clearReconnectTimer() {

@@ -7,7 +7,6 @@ import { Sparkline } from "@/components/dashboard/sparkline";
 import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
-import { useMockLatency } from "@/lib/mock-latency";
 import {
   BRAND_COLOR_HEX,
   usePhotographerSettingsStore,
@@ -166,7 +165,8 @@ function ProfileCard() {
 // hook resolves on first render — no flash, no overhead. Bumping the
 // constant in lib/mock-latency.ts is what reveals this state.
 function EarningsCard() {
-  const { data: e, isLoading } = useMockLatency(PHOTOGRAPHER_EARNINGS);
+  const e = PHOTOGRAPHER_EARNINGS;
+  const isLoading = false;
   if (isLoading || !e) {
     return (
       <CardShell href={ROUTES.DASHBOARD_EARNINGS}>
@@ -192,7 +192,8 @@ function EarningsCard() {
 
 // ─── Events — state-dot rows ──────────────────────────────────────────────
 function EventsCard() {
-  const { data: events, isLoading } = useMockLatency(PHOTOGRAPHER_EVENTS);
+  const events = PHOTOGRAPHER_EVENTS;
+  const isLoading = false;
   if (isLoading || !events) {
     return (
       <CardShell href={ROUTES.DASHBOARD_EVENTS}>

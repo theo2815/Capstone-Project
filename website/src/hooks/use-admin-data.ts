@@ -1,7 +1,6 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   fetchAdminKpis,
   fetchAdminKpiTrend,
@@ -32,12 +31,8 @@ import type {
 } from "@/lib/admin-payout-reports";
 import type { ListEvent } from "@/app/events/events-browser";
 
-// Hybrid hooks for admin reads. Each hook returns canonical server data
-// when `BACKEND_LIVE=true`; in mock mode they return `null` so callers
-// can fall back to their existing store-derived computation. Components
-// pattern-match on `live ?? derived`.
-//
-// React Query keys: ["admin", <domain>, ...]
+// React Query hooks for admin reads.
+// Keys: ["admin", <domain>, ...]
 // Stale time: 60s for queue listings, 30s for KPIs, 60s for sales.
 
 const KPI_STALE_MS = 30_000;
@@ -47,25 +42,23 @@ const SALES_STALE_MS = 60_000;
 // ───────────────────────────────────────────── KPIs
 
 export function useAdminKpis(): AdminKpis | null {
-  const query = useQuery<AdminKpis | null>({
+  const query = useQuery<AdminKpis>({
     queryKey: ["admin", "kpis"],
     queryFn: () => fetchAdminKpis(),
-    enabled: BACKEND_LIVE,
     staleTime: KPI_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 export function useAdminKpiTrend(
   days: number = 30,
 ): AdminTrendPoint[] | null {
-  const query = useQuery<AdminTrendPoint[] | null>({
+  const query = useQuery<AdminTrendPoint[]>({
     queryKey: ["admin", "kpis", "trend", days],
     queryFn: () => fetchAdminKpiTrend(days),
-    enabled: BACKEND_LIVE,
     staleTime: KPI_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Users / verifications
@@ -82,10 +75,9 @@ export function useAdminUsers(
   const query = useQuery<AdminUserRow[]>({
     queryKey: ["admin", "users", args],
     queryFn: () => fetchAdminUsers(args),
-    enabled: BACKEND_LIVE,
     staleTime: LIST_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Disputes
@@ -97,10 +89,9 @@ export function useAdminDisputes(args: {
   const query = useQuery<Dispute[]>({
     queryKey: ["admin", "disputes", args],
     queryFn: () => fetchAdminDisputes(args),
-    enabled: BACKEND_LIVE,
     staleTime: LIST_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Payouts
@@ -112,10 +103,9 @@ export function useAdminPayouts(args: {
   const query = useQuery<AdminPayoutCycle[]>({
     queryKey: ["admin", "payouts", args],
     queryFn: () => fetchAdminPayouts(args),
-    enabled: BACKEND_LIVE,
     staleTime: LIST_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Payout reports
@@ -126,10 +116,9 @@ export function useAdminPayoutReports(args: {
   const query = useQuery<PayoutReport[]>({
     queryKey: ["admin", "payouts", "reports", args],
     queryFn: () => fetchAdminPayoutReports(args),
-    enabled: BACKEND_LIVE,
     staleTime: LIST_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Events catalog
@@ -140,10 +129,9 @@ export function useAdminEvents(args: {
   const query = useQuery<ListEvent[]>({
     queryKey: ["admin", "events", args],
     queryFn: () => fetchAdminEvents(args),
-    enabled: BACKEND_LIVE,
     staleTime: LIST_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Sales
@@ -151,23 +139,21 @@ export function useAdminEvents(args: {
 export function useAdminSalesKpisLive(
   range: AdminSalesRange = "ytd",
 ): AdminSalesKpis | null {
-  const query = useQuery<AdminSalesKpis | null>({
+  const query = useQuery<AdminSalesKpis>({
     queryKey: ["admin", "sales", "kpis", range],
     queryFn: () => fetchAdminSalesKpis(range),
-    enabled: BACKEND_LIVE,
     staleTime: SALES_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 export function useAdminSalesByEventLive(args: {
   order?: "gmv" | "refunds";
 } = {}): AdminSalesEventRow[] | null {
-  const query = useQuery<AdminSalesEventRow[] | null>({
+  const query = useQuery<AdminSalesEventRow[]>({
     queryKey: ["admin", "sales", "by-event", args],
     queryFn: () => fetchAdminSalesByEvent(args),
-    enabled: BACKEND_LIVE,
     staleTime: SALES_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }

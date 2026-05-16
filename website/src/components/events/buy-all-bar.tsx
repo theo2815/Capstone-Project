@@ -5,7 +5,7 @@ import { MAX_CART_ITEMS, useCartStore } from "@/store/cart-store";
 import { FieldError } from "@/components/ui/field-error";
 import { cn } from "@/lib/utils";
 import type { EventDetail } from "@/types/event";
-import type { MockPhoto } from "@/app/events/[slug]/mock-photos";
+import type { MockPhoto } from "@/types/photo";
 
 // Sticky bottom bar shown when a bib filter is active and at least one match
 // exists. Adds every visible photo to the cart in one click. FloatingCart

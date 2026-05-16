@@ -7,7 +7,6 @@ import {
   type DisputeReason,
   type DisputeResolution,
 } from "@/lib/admin-disputes";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   resolveDispute as apiResolveDispute,
   denyDispute as apiDenyDispute,
@@ -29,7 +28,6 @@ import {
 // Phase E wiring; the admin store mirrors locally for the demo.
 
 function fireBackendDisputeAction(label: string, p: Promise<unknown>): void {
-  if (!BACKEND_LIVE) return;
   void p.catch((err) => {
     console.error(`[admin/disputes] ${label} backend call failed`, err);
   });
@@ -203,4 +201,19 @@ export function getEffectiveDisputes(
   const seed = ADMIN_DISPUTES.map((d) => mergeDispute(d, overrides[d.id]));
   const submitted = submissions.map((d) => mergeDispute(d, overrides[d.id]));
   return [...submitted, ...seed];
+}
+
+/**
+ * Merges live server data with local overrides + runner-submitted disputes
+ * for instant feedback after admin actions. Use this in components that
+ * call `useAdminDisputes()` directly.
+ */
+export function mergeDisputesWithOverrides(
+  serverData: ReadonlyArray<Dispute>,
+  overrides: Record<string, Partial<Dispute>>,
+  submissions: ReadonlyArray<Dispute> = [],
+): Dispute[] {
+  const server = serverData.map((d) => mergeDispute(d, overrides[d.id]));
+  const submitted = submissions.map((d) => mergeDispute(d, overrides[d.id]));
+  return [...submitted, ...server];
 }

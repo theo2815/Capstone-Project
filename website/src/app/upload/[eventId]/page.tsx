@@ -20,7 +20,6 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import { useToast } from "@/hooks/use-toast";
 import { uploadPhotographerPhoto } from "@/lib/api-photographer";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import { ROUTES } from "@/lib/constants";
 import {
   UPLOAD_GRACE_DAYS,
@@ -40,15 +39,6 @@ import { cn } from "@/lib/utils";
 // 1500-photo coverage across three parallel tabs.
 
 const BATCH_LIMIT = 500;
-
-// Per-tick failure probability inside the mock upload loop. Real backend will
-// surface actual XHR errors via setEntries — this exists only so the Try-again
-// + Retry-failed affordances have something to retry against in the website-
-// only first pass. With ~6 ticks per file, the per-file fail rate lands around
-// 9 % — enough to surface single-row and bulk retry flows during pre-flight
-// without flooding a normal batch.
-// TODO(backend): remove when api.post + XHR onerror replaces the mock tick.
-const MOCK_UPLOAD_FAIL_PROB = 0.015;
 
 const STATE_LABEL: Record<EventState, string> = {
   live: "LIVE",
@@ -321,105 +311,49 @@ function UploadForm({ event }: { event: ListEvent }) {
 
   // Auto-upload: every queued file flows queued → uploading → done. There's
   // no separate publish step — done == in the gallery (web uploads go straight
-  // to live; blur culling is desktop-only via BatchMyPhotos).
-  //
-  // Live mode (BACKEND_LIVE): one XHR per file (Q-013) with onprogress driving
-  // setEntries. Mock mode keeps the setTimeout tick + transient failure injection.
+  // to live; blur culling is desktop-only via BatchMyPhotos). One XHR per
+  // file (Q-013) with onprogress driving setEntries.
   useEffect(() => {
     const queued = entries.filter((e) => e.status === "queued");
     if (queued.length === 0) return;
 
-    if (BACKEND_LIVE) {
-      queued.forEach((entry) => {
+    queued.forEach((entry) => {
+      setEntries((prev) =>
+        prev.map((p) =>
+          p.id === entry.id ? { ...p, status: "uploading" } : p,
+        ),
+      );
+      uploadPhotographerPhoto(event.id, entry.file, (progress) => {
         setEntries((prev) =>
           prev.map((p) =>
-            p.id === entry.id ? { ...p, status: "uploading" } : p,
+            p.id === entry.id ? { ...p, progress: progress.percent } : p,
           ),
         );
-        uploadPhotographerPhoto(event.id, entry.file, (progress) => {
+      })
+        .then(() => {
           setEntries((prev) =>
             prev.map((p) =>
-              p.id === entry.id ? { ...p, progress: progress.percent } : p,
+              p.id === entry.id
+                ? { ...p, status: "done", progress: 100 }
+                : p,
             ),
           );
         })
-          .then(() => {
-            setEntries((prev) =>
-              prev.map((p) =>
-                p.id === entry.id
-                  ? { ...p, status: "done", progress: 100 }
-                  : p,
-              ),
-            );
-          })
-          .catch((err: Error) => {
-            setEntries((prev) =>
-              prev.map((p) =>
-                p.id === entry.id
-                  ? {
-                      ...p,
-                      status: "error",
-                      error: err.message || "Upload failed.",
-                      progress: 0,
-                      retryable: true,
-                    }
-                  : p,
-              ),
-            );
-          });
-      });
-      return;
-    }
-
-    queued.forEach((entry, index) => {
-      const delay = index * 80;
-      setTimeout(() => {
-        setEntries((prev) =>
-          prev.map((p) =>
-            p.id === entry.id ? { ...p, status: "uploading" } : p,
-          ),
-        );
-
-        let pct = 0;
-        const tick = () => {
-          // Mock a transient network failure mid-upload. See
-          // MOCK_UPLOAD_FAIL_PROB above for the rationale.
-          if (Math.random() < MOCK_UPLOAD_FAIL_PROB) {
-            setEntries((prev) =>
-              prev.map((p) =>
-                p.id === entry.id
-                  ? {
-                      ...p,
-                      status: "error",
-                      error: "Upload failed.",
-                      progress: 0,
-                      retryable: true,
-                    }
-                  : p,
-              ),
-            );
-            return;
-          }
-          pct += Math.random() * 18 + 6;
-          if (pct >= 100) {
-            setEntries((prev) =>
-              prev.map((p) =>
-                p.id === entry.id
-                  ? { ...p, status: "done", progress: 100 }
-                  : p,
-              ),
-            );
-            return;
-          }
+        .catch((err: Error) => {
           setEntries((prev) =>
             prev.map((p) =>
-              p.id === entry.id ? { ...p, progress: pct } : p,
+              p.id === entry.id
+                ? {
+                    ...p,
+                    status: "error",
+                    error: err.message || "Upload failed.",
+                    progress: 0,
+                    retryable: true,
+                  }
+                : p,
             ),
           );
-          setTimeout(tick, 90);
-        };
-        tick();
-      }, delay);
+        });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries.length, retryNonce, event.id]);

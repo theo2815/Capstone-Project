@@ -1,16 +1,16 @@
 import { api } from "@/lib/api";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   PHOTO_PRICE_PHP,
   PHOTOGRAPHER_KEEP_RATE,
   PLATFORM_CUT_RATE,
 } from "@/lib/platform-economics";
 
-// Phase F.2 platform-fees backend contract — see photographer-earnings.md
-//
+// Phase F.2 platform-fees backend contract
 //   GET /api/v1/platform/fees → { photoPricePhp, platformCutRate, photographerKeepRate }
 //
-// On `BACKEND_LIVE=false` the lib/platform-economics.ts constants stand in.
+// PLATFORM_FEES_FALLBACK is the resilience default used when the backend
+// call fails. The constants in platform-economics.ts match the backend's
+// PlatformProperties defaults exactly.
 
 export interface PlatformFees {
   photoPricePhp: number;
@@ -25,6 +25,9 @@ export const PLATFORM_FEES_FALLBACK: PlatformFees = {
 };
 
 export async function fetchPlatformFees(): Promise<PlatformFees | null> {
-  if (!BACKEND_LIVE) return null;
-  return api.get<PlatformFees>("/platform/fees");
+  try {
+    return await api.get<PlatformFees>("/platform/fees");
+  } catch {
+    return null;
+  }
 }
