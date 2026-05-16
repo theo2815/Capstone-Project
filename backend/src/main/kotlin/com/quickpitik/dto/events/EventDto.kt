@@ -1,10 +1,12 @@
 package com.quickpitik.dto.events
 
-import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.UUID
+
+// Conversion lives in EventDtoMapper — it needs StorageService to presign
+// cover_s3_key, which means the mapping is a service, not a plain function.
 
 data class EventDto(
     val id: UUID,
@@ -34,34 +36,4 @@ data class EventDetailDto(
     val pricePerPhoto: BigDecimal,
     val bundlePrice: BigDecimal?,
     val bundleSize: Int?,
-)
-
-fun Event.toListDto(): EventDto = EventDto(
-    id = id,
-    slug = slug,
-    name = name,
-    date = date,
-    location = location,
-    bannerUrl = bannerUrl,
-    photoCount = photoCount,
-    participantCount = participantCount,
-    status = status,
-)
-
-fun Event.toDetailDto(): EventDetailDto = EventDetailDto(
-    id = id,
-    slug = slug,
-    name = name,
-    date = date,
-    location = location,
-    bannerUrl = bannerUrl,
-    photoCount = photoCount,
-    participantCount = participantCount,
-    status = status,
-    description = description,
-    organizerName = organizerName,
-    categories = categories.sorted(),
-    pricePerPhoto = pricePerPhoto,
-    bundlePrice = bundlePrice,
-    bundleSize = bundleSize,
 )

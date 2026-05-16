@@ -5,8 +5,6 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.events.EventDetailDto
 import com.quickpitik.dto.events.EventDto
-import com.quickpitik.dto.events.toDetailDto
-import com.quickpitik.dto.events.toListDto
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.repository.EventRepository
 import org.springframework.stereotype.Service
@@ -17,7 +15,14 @@ import java.time.LocalDate
 @Transactional(readOnly = true)
 class EventService(
     private val eventRepository: EventRepository,
+    private val eventDtoMapper: EventDtoMapper,
 ) {
+    // Date filtering for "race-day-only viewing" lives on the FE: upcoming
+    // events stay visible as cards on /events and the /events/[slug] page
+    // renders an "Opens on [date]" placeholder instead of the full cockpit
+    // until race day. The backend is just a data source — keeping the API
+    // free of viewer-role plumbing also fixes admin preview (the SSR
+    // request has no JWT to opt into a "show upcoming" path).
     fun list(
         statuses: Collection<EventStatus>,
         search: String?,
@@ -37,7 +42,7 @@ class EventService(
             pageable = pageable,
         )
         return PaginatedResponse(
-            items = page.content.map { it.toListDto() },
+            items = page.content.map { eventDtoMapper.toListDto(it) },
             total = page.totalElements,
             offset = pagination.offset,
             limit = pagination.limit,
@@ -45,7 +50,7 @@ class EventService(
     }
 
     fun findBySlug(slug: String): EventDetailDto? =
-        eventRepository.findBySlugAndDeletedAtIsNull(slug)?.toDetailDto()
+        eventRepository.findBySlugAndDeletedAtIsNull(slug)?.let(eventDtoMapper::toDetailDto)
 
     private companion object {
         val LIST_DEFAULT_STATUSES = listOf(EventStatus.ACTIVE, EventStatus.COMPLETED, EventStatus.ARCHIVED)

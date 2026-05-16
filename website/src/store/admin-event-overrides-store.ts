@@ -1,21 +1,21 @@
 import { create } from "zustand";
 import type { ListEvent } from "@/app/events/events-browser";
+import { deriveEventState } from "@/lib/event-catalog";
 import {
   createAdminEvent as apiCreateEvent,
   updateAdminEvent as apiUpdateEvent,
   deleteAdminEvent as apiDeleteEvent,
 } from "@/lib/api-admin";
 
-// Mock-mode Zustand store backing admin CRUD on the EVENT_CATALOG. Phase G
-// wiring fires the matching `api-admin` call in the background after the
-// local mutation — Q-A3 RESOLVED 2026-05-09 means PATCH /admin/events/{id}
-// accepts `{ title?, date?, location? }` only and lifecycle state is
-// derived not stored, so admin edits stay scoped to those three fields.
+// Admin CRUD layer on top of the catalog. After Phase G, the backend is the
+// source of truth for /admin/events listings (server-rendered) — this store
+// only carries optimistic edits made in the current session:
 //
-// Three layers:
-//   - `submissions`: brand-new events created in the admin UI.
-//   - `overrides`:  per-id edit patches over the seed catalog.
-//   - `tombstones`: seed IDs that admin deleted.
+//   - `submissions`: rows created in the current session, awaiting the next
+//     page refetch. Each entry IS the backend response (real id, slug, and
+//     presigned bannerUrl), so the View ↗ link doesn't 404.
+//   - `overrides`:  per-id edit patches mirrored after a successful PATCH.
+//   - `tombstones`: ids the admin deleted; merged out of the seed list.
 //
 // Consumers should read through `getCatalogWithOverrides()` /
 // `useEventCatalog()` from `@/lib/event-catalog` — never call
@@ -30,8 +30,8 @@ function fireBackendEventAction(label: string, p: Promise<unknown>): void {
 export type EventOverridePatch = Partial<
   Pick<ListEvent, "name" | "date" | "location" | "city" | "status" | "state">
 > & {
-  /** Data URL for the cover banner. Pass `undefined` to clear an existing
-   *  cover (the spread-merger reads it as "no banner"). */
+  /** Presigned URL for the cover banner. Pass `undefined` to clear an
+   *  existing cover (the spread-merger reads it as "no banner"). */
   bannerUrl?: string;
 };
 
@@ -39,7 +39,9 @@ export interface CreateEventInput {
   name: string;
   date: string;
   location: string;
-  bannerUrl?: string;
+  /** Raw cover file picked from disk. Uploaded as multipart; the backend
+   *  re-encodes to JPEG and returns the presigned URL on the response. */
+  cover?: File | null;
 }
 
 interface AdminEventOverridesState {
@@ -48,20 +50,23 @@ interface AdminEventOverridesState {
   tombstones: ReadonlyArray<string>;
   /** @deprecated state is derived from date — kept for callers still in flight. */
   setEventState: (id: string, state: ListEvent["state"]) => void;
-  editEvent: (id: string, patch: EventOverridePatch) => void;
-  createEvent: (input: CreateEventInput) => string;
+  /** Returns a promise that resolves on backend ack so the caller can
+   *  invalidate the admin-events query and pick up the new presigned
+   *  cover URL. Rejects with the backend's ApiError on failure. */
+  editEvent: (
+    id: string,
+    patch: EventOverridePatch & {
+      cover?: File | null;
+      removeCover?: boolean;
+    },
+  ) => Promise<void>;
+  /** Awaits the backend POST so the id/slug/bannerUrl in the optimistic row
+   *  match the persisted record. Rejects on backend failure — callers should
+   *  surface a toast and keep the form open. */
+  createEvent: (input: CreateEventInput) => Promise<ListEvent>;
   deleteEvent: (id: string) => void;
   restoreEvent: (id: string) => void;
   clear: () => void;
-}
-
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-");
 }
 
 // Pull a coarse city from the location field. "IT Park, Cebu City" → "Cebu City".
@@ -84,14 +89,17 @@ export const useAdminEventOverridesStore = create<AdminEventOverridesState>(
         },
       })),
     editEvent: (id, patch) => {
+      // Strip transient cover/removeCover before merging into the local store
+      // — those are upload signals, not row state. The new presigned bannerUrl
+      // arrives via the post-PATCH refetch.
+      const { cover, removeCover, ...localPatch } = patch;
       set((s) => {
-        // Patch may target a submission or a seed event. Try submissions first.
         const subIdx = s.submissions.findIndex((e) => e.id === id);
         if (subIdx >= 0) {
           const next = s.submissions.slice();
-          const merged = { ...next[subIdx], ...patch };
-          if (patch.location && !patch.city) {
-            merged.city = deriveCity(patch.location);
+          const merged = { ...next[subIdx], ...localPatch };
+          if (localPatch.location && !localPatch.city) {
+            merged.city = deriveCity(localPatch.location);
           }
           next[subIdx] = merged;
           return { submissions: next };
@@ -99,52 +107,38 @@ export const useAdminEventOverridesStore = create<AdminEventOverridesState>(
         return {
           overrides: {
             ...s.overrides,
-            [id]: { ...s.overrides[id], ...patch },
+            [id]: { ...s.overrides[id], ...localPatch },
           },
         };
       });
-      // Q-A3 PATCH shape: title / date / location only. Other fields stay
-      // mock-only (state is derived; bannerUrl handled in a follow-up upload
-      // endpoint when banner storage lands).
       const subset = {
         ...(patch.name !== undefined ? { title: patch.name } : {}),
         ...(patch.date !== undefined ? { date: patch.date } : {}),
         ...(patch.location !== undefined ? { location: patch.location } : {}),
+        ...(cover ? { cover } : {}),
+        ...(removeCover ? { removeCover: true } : {}),
       };
-      if (Object.keys(subset).length > 0) {
-        fireBackendEventAction("editEvent", apiUpdateEvent(id, subset));
-      }
+      if (Object.keys(subset).length === 0) return Promise.resolve();
+      return apiUpdateEvent(id, subset).then(() => undefined);
     },
-    createEvent: (input) => {
-      const id = `evt-${Date.now().toString(36)}`;
-      const slugBase = slugify(input.name) || "event";
-      const slug = `${slugBase}-${id.slice(-4)}`;
-      const event: ListEvent = {
-        id,
-        slug,
-        name: input.name.trim(),
+    createEvent: async (input) => {
+      // Backend is the source of truth for id/slug — local heuristics
+      // produced a different slug from the server, so the admin card's
+      // View ↗ link 404'd against /events/{backend-slug}. Awaiting the
+      // POST means the optimistic row is the real row.
+      const created = await apiCreateEvent({
+        title: input.name.trim(),
         date: input.date,
         location: input.location.trim(),
-        city: deriveCity(input.location.trim()),
-        photoCount: 0,
-        participantCount: 0,
-        status: "ACTIVE",
-        // Catalog mergers recompute state from date, but we set a sensible
-        // default here so direct readers see the right pill.
-        state: "upcoming",
-        bannerUrl: input.bannerUrl,
+        cover: input.cover ?? null,
+      });
+      const event: ListEvent = {
+        ...created,
+        city: deriveCity(created.location),
+        state: deriveEventState(created.date),
       };
       set((s) => ({ submissions: [event, ...s.submissions] }));
-      fireBackendEventAction(
-        "createEvent",
-        apiCreateEvent({
-          title: event.name,
-          date: event.date,
-          location: event.location,
-          bannerUrl: event.bannerUrl,
-        }),
-      );
-      return id;
+      return event;
     },
     deleteEvent: (id) => {
       let needsBackendDelete = false;

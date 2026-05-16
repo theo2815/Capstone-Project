@@ -118,6 +118,12 @@ function mergeAdminCatalog(
       merged.state = deriveEventState(merged.date);
       return merged;
     });
+  // Once the post-create refetch surfaces the row in `seed`, the local
+  // optimistic submission becomes a duplicate. Drop submissions whose id
+  // already appears in seed so React sees one card per event-id and the
+  // "two children with the same key" warning stays quiet.
+  const seedIds = new Set(patched.map((e) => e.id));
+  const optimistic = submissions.filter((e) => !seedIds.has(e.id));
   // Submissions go in front so they sort naturally with the rest.
-  return [...submissions, ...patched];
+  return [...optimistic, ...patched];
 }

@@ -40,6 +40,9 @@ class Event(
     @Column(name = "banner_url")
     var bannerUrl: String? = null,
 
+    @Column(name = "cover_s3_key")
+    var coverS3Key: String? = null,
+
     @Column(name = "photo_count", nullable = false)
     var photoCount: Int = 0,
 

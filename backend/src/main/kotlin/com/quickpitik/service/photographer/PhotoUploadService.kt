@@ -28,7 +28,9 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.util.UUID
 import kotlin.random.Random
 
@@ -56,6 +58,19 @@ class PhotoUploadService(
                 status = HttpStatus.UNPROCESSABLE_ENTITY,
                 code = ErrorCodes.EVENT_NOT_UPLOADABLE,
                 message = "This event is not accepting uploads.",
+            )
+        }
+        // Photographer upload window is race day + 3 days (4 days inclusive,
+        // Asia/Manila). Outside that window the gallery is open for sale
+        // (or future-dated and not yet opened to runners) and new uploads
+        // are closed — mirrors website/src/lib/event-catalog.ts
+        // canUploadToEvent so the FE upload tile and the backend agree.
+        val today = LocalDate.now(PH_ZONE)
+        if (today.isBefore(event.date) || today.isAfter(event.date.plusDays(UPLOAD_GRACE_DAYS - 1L))) {
+            throw ApiException(
+                status = HttpStatus.UNPROCESSABLE_ENTITY,
+                code = ErrorCodes.EVENT_NOT_UPLOADABLE,
+                message = "Upload window for this event has closed.",
             )
         }
         val settings = photographerSettingsRepository.findById(photographerId).orElse(null)
@@ -252,5 +267,7 @@ class PhotoUploadService(
     private companion object {
         val UPLOADABLE_STATUSES: Set<EventStatus> = setOf(EventStatus.ACTIVE, EventStatus.COMPLETED)
         val ALLOWED_CONTENT_TYPES: Set<String> = setOf("image/jpeg", "image/png", "image/webp")
+        val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
+        const val UPLOAD_GRACE_DAYS = 4
     }
 }
