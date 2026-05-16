@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
-import { useAdminUserStore } from "@/store/admin-user-store";
+import { useAdminUsersData } from "@/lib/admin-users-data";
 import {
   useAdminDisputeStore,
   getEffectiveDisputes,
@@ -17,7 +17,6 @@ import {
   useAdminPayoutStore,
   getEffectivePayouts,
 } from "@/store/admin-payout-store";
-import { ADMIN_USER_SEED } from "@/lib/admin-user-registry";
 import { cn } from "@/lib/utils";
 import { useAdminKpis } from "@/hooks/use-admin-data";
 
@@ -43,21 +42,19 @@ interface KpiEntry {
 }
 
 export function AdminKpiStrip() {
-  const userOverrides = useAdminUserStore((s) => s.overrides);
+  const { rows: userRows } = useAdminUsersData();
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
   const flagOverrides = useAdminFlagStore((s) => s.overrides);
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
   // Live-mode preference: when GET /admin/kpis returns, override the
-  // 4 counts the strip surfaces. Falls back to derivation while loading
-  // or in mock mode.
+  // 4 counts the strip surfaces. Falls back to derivation from the merged
+  // admin users hook while the kpis endpoint is still loading.
   const liveKpis = useAdminKpis();
 
   const entries = useMemo<readonly KpiEntry[]>(() => {
     let pendingVerifications = 0;
-    for (const row of ADMIN_USER_SEED) {
-      const patch = userOverrides[row.userId];
-      const eff = patch ? { ...row, ...patch } : row;
+    for (const eff of userRows) {
       if (
         eff.role === "PHOTOGRAPHER" &&
         eff.verificationStatus === "pending" &&
@@ -119,7 +116,7 @@ export function AdminKpiStrip() {
       ? all
       : all.filter((e) => e.label !== "Flags");
   }, [
-    userOverrides,
+    userRows,
     disputeOverrides,
     disputeSubmissions,
     flagOverrides,

@@ -1,15 +1,13 @@
 "use client";
 
 import { useMemo } from "react";
-import {
-  ADMIN_USER_SEED,
-  type AdminUserRow,
-} from "@/lib/admin-user-registry";
+import { type AdminUserRow } from "@/lib/admin-user-registry";
 import {
   useAdminUserStore,
   type DecisionLogEntry,
   type DecisionType,
 } from "@/store/admin-user-store";
+import { useAdminUsersData } from "@/lib/admin-users-data";
 
 interface AdminDecisionsTimelineProps {
   /** Cap on entries rendered. Defaults to 10 (Overview compact view). */
@@ -29,17 +27,16 @@ export function AdminDecisionsTimeline({
   userId,
   emptyCopy = "No decisions on file yet.",
 }: AdminDecisionsTimelineProps) {
-  const overrides = useAdminUserStore((s) => s.overrides);
+  const { rows } = useAdminUsersData();
   const log = useAdminUserStore((s) => s.log);
 
   const byId = useMemo(() => {
     const map = new Map<string, AdminUserRow>();
-    for (const row of ADMIN_USER_SEED) {
-      const patch = overrides[row.userId];
-      map.set(row.userId, patch ? { ...row, ...patch } : row);
+    for (const row of rows) {
+      map.set(row.userId, row);
     }
     return map;
-  }, [overrides]);
+  }, [rows]);
 
   const visible = useMemo(() => {
     const filtered = userId ? log.filter((e) => e.userId === userId) : log;

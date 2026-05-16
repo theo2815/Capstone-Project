@@ -9,12 +9,14 @@ import {
   type ChangeEvent,
   type FormEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { CharCounter } from "@/components/ui/char-counter";
 import { Dropdown, DropdownItem } from "@/components/ui/dropdown";
 import { FieldError } from "@/components/ui/field-error";
 import { Kicker } from "@/components/ui/kicker";
+import { Modal } from "@/components/ui/modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { useDebouncedSave } from "@/hooks/use-debounced-save";
@@ -27,12 +29,16 @@ import {
   putHandle,
   putRegion,
   submitVerification,
+  withdrawVerification,
 } from "@/lib/api-photographer-settings";
+import { usePhotographerVerificationSync } from "@/lib/photographer-verification-sync";
+import { useAdminUserStore } from "@/store/admin-user-store";
+import { useAuthStore } from "@/store/auth-store";
 import { useUserMediaStore } from "@/store/user-media-store";
+import type { AdminUserRow } from "@/lib/admin-user-registry";
 import {
   ACCEPTED_IMAGE_MIME,
   ImageProcessingError,
-  detectPngTransparency,
   fitToDataUrl,
   fitToPngDataUrl,
   inspectImageDimensions,
@@ -63,6 +69,7 @@ import {
   type PayoutMethod,
   type SocialLink,
   type SocialPlatform,
+  type VerificationStatus,
 } from "@/store/photographer-settings-store";
 import { cn } from "@/lib/utils";
 
@@ -105,9 +112,98 @@ function fireSettings(label: string, p: Promise<unknown>): void {
   });
 }
 
-// Below this fraction of non-opaque pixels in a PNG, treat the file as
-// effectively solid — it'll stamp on photos as a block instead of overlaying.
-const WATERMARK_TRANSPARENCY_FLOOR = 0.05;
+// Mirror a fresh "Submit for review" into the admin store so the
+// /admin/verifications queue shows the row. Phase F backend will receive
+// the submit POST and emit a server-rendered row on the admin's next poll;
+// in mock mode, we have to bridge the two stores ourselves. Returns null
+// when there's no authenticated session (defensive — caller bails).
+function buildAdminSubmissionRow(): AdminUserRow | null {
+  const sessionUser = useAuthStore.getState().user;
+  if (!sessionUser) return null;
+  const settings = usePhotographerSettingsStore.getState();
+  const regionLabel = settings.region
+    ? formatRegionLabel(settings.region.regionCode, settings.region.provinceCode)
+    : null;
+  return {
+    userId: sessionUser.id,
+    role: "PHOTOGRAPHER",
+    email: sessionUser.email,
+    name: sessionUser.name,
+    brandName: settings.brandName.trim() || null,
+    handle: settings.handle.trim() || null,
+    region: regionLabel,
+    // City isn't a separate field in photographer-settings yet — fall back to
+    // the region label so the admin row still shows a location string.
+    city: regionLabel ?? "—",
+    createdAt: sessionUser.createdAt,
+    verificationStatus: "pending",
+    suspendedAt: null,
+    suspensionReason: null,
+    settingsSnapshot: {
+      hasCover: !!settings.cover,
+      hasBrandName: settings.brandName.trim().length > 0,
+      hasWatermark: !!settings.watermark,
+      hasHandle: settings.handle.trim().length >= 3,
+      hasRegion: !!settings.region,
+      socialCount: settings.socials.filter((s) => s.url.trim().length > 0)
+        .length,
+      payoutCount: settings.payouts.length,
+    },
+  };
+}
+
+function mirrorSubmissionToAdminStore(): void {
+  const row = buildAdminSubmissionRow();
+  if (!row) return;
+  useAdminUserStore.getState().upsertSubmission(row);
+}
+
+// Phase 1 — consume the BE submitVerification response instead of fire-and-
+// forget. Three outcomes per the controller + DTO:
+//   1. { status: "pending" }                 — accepted; row in DB is PENDING.
+//   2. { status: "incomplete", missing[] }   — soft-reject; nothing written.
+//   3. throws (ApiError or network)          — hard failure; nothing written.
+// Returns whether the BE accepted, so callers (the nudge modal) can decide
+// to close their own UI or stay open for a retry.
+async function submitForReview(opts: {
+  setStatus: (s: VerificationStatus) => void;
+  showToast: (t: { kind: "info" | "success" | "error"; message: string }) => void;
+}): Promise<{ submitted: boolean }> {
+  try {
+    const response = await submitVerification();
+    if (response.status === "pending") {
+      opts.setStatus("pending");
+      mirrorSubmissionToAdminStore();
+      opts.showToast({
+        kind: "info",
+        message: "Submitted for review. We'll let you know.",
+      });
+      return { submitted: true };
+    }
+    if (response.status === "incomplete") {
+      const missingLabel =
+        response.missing && response.missing.length > 0
+          ? response.missing.join(", ")
+          : "some required fields";
+      opts.showToast({
+        kind: "error",
+        message: `Can't submit yet — missing ${missingLabel}.`,
+      });
+      return { submitted: false };
+    }
+    // Defensive: BE shouldn't return "approved" from /verification, but if it
+    // ever does, sync local state so the dashboard banner reflects it.
+    opts.setStatus(response.status);
+    return { submitted: false };
+  } catch (err) {
+    console.error("[photographer/settings] submitVerification failed", err);
+    opts.showToast({
+      kind: "error",
+      message: "Couldn't submit — check your connection and try again.",
+    });
+    return { submitted: false };
+  }
+}
 
 // Map our typed image-processing errors to user-facing copy. Falls back to a
 // generic message when the error is a plain Error or unknown.
@@ -173,8 +269,14 @@ function validateSocialUrl(
 }
 
 export default function SettingsPage() {
+  // Phase 4 — keep verificationStatus in sync with the BE so admin
+  // approve/reject decisions show up here without a manual refresh.
+  // Pulls on mount, on focus, and every 30s while pending.
+  usePhotographerVerificationSync();
+
   return (
     <>
+      <PendingEditWatcher />
       <VerificationStatusPanel />
       <PublicProfileSlab />
       <WatermarkSlab />
@@ -182,7 +284,217 @@ export default function SettingsPage() {
       <RegionSlab />
       <SocialSlab />
       <PayoutSlab />
+      <ReadyToSubmitNudge />
     </>
+  );
+}
+
+// While status === "pending", keep the admin store's snapshot in sync with
+// the photographer's live edits, and auto-flip back to "incomplete" if any
+// required field is removed. The photographer is allowed to keep editing
+// after they've submitted (a sealed-envelope model would be cleaner but
+// makes "I have a typo, can I fix it?" require admin support churn), so
+// the admin always sees the latest snapshot. If they delete a required
+// field while pending, the application can't stay pending — drop it from
+// the admin queue and put the photographer back in the "Not yet verified"
+// state so they re-submit when fixed.
+function PendingEditWatcher() {
+  const status = usePhotographerSettingsStore((s) => s.verificationStatus);
+  const setStatus = usePhotographerSettingsStore(
+    (s) => s.setVerificationStatus,
+  );
+  const complete = useAllRequiredFilled();
+  // Subscribe to every snapshot-contributing field so this effect re-fires
+  // on any settings change. The `useAllRequiredFilled` boolean alone isn't
+  // enough — if the photographer edits a non-gating detail (brand name,
+  // bio, social URL) the boolean stays true and the effect wouldn't
+  // re-mirror without these explicit subscriptions.
+  const cover = usePhotographerSettingsStore((s) => s.cover);
+  const brandName = usePhotographerSettingsStore((s) => s.brandName);
+  const bio = usePhotographerSettingsStore((s) => s.bio);
+  const brandColor = usePhotographerSettingsStore((s) => s.brandColor);
+  const watermark = usePhotographerSettingsStore((s) => s.watermark);
+  const handle = usePhotographerSettingsStore((s) => s.handle);
+  const region = usePhotographerSettingsStore((s) => s.region);
+  const socials = usePhotographerSettingsStore((s) => s.socials);
+  const payouts = usePhotographerSettingsStore((s) => s.payouts);
+  const avatar = useUserMediaStore((s) => s.avatar);
+
+  useEffect(() => {
+    if (status !== "pending") return;
+    const sessionUser = useAuthStore.getState().user;
+    if (!sessionUser) return;
+    if (!complete) {
+      useAdminUserStore.getState().revokeSubmission(sessionUser.id);
+      setStatus("incomplete");
+      return;
+    }
+    mirrorSubmissionToAdminStore();
+  }, [
+    status,
+    complete,
+    cover,
+    brandName,
+    bio,
+    brandColor,
+    watermark,
+    handle,
+    region,
+    socials,
+    payouts,
+    avatar,
+    setStatus,
+  ]);
+
+  return null;
+}
+
+// Auto-opens once when the photographer fills the last required field, so
+// they don't have to scroll back to the top to find the Submit button.
+// Dismissing the modal replaces it with a sticky pill bottom-right that
+// stays visible until they submit (or un-complete the form, in which case
+// the nudge resets so it can fire again on next completion).
+function ReadyToSubmitNudge() {
+  const status = usePhotographerSettingsStore((s) => s.verificationStatus);
+  const setStatus = usePhotographerSettingsStore(
+    (s) => s.setVerificationStatus,
+  );
+  const { showToast } = useToast();
+
+  const complete = useAllRequiredFilled();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const wasCompleteRef = useRef(false);
+
+  useEffect(() => {
+    if (status !== "incomplete") return;
+    const wasComplete = wasCompleteRef.current;
+    wasCompleteRef.current = complete;
+    // Auto-open on the rising edge only (false → true). If the photographer
+    // dismissed already and the form is still complete, don't re-open.
+    if (!wasComplete && complete && !dismissed) {
+      setModalOpen(true);
+    }
+    // Re-arm: if they drop below complete after dismissing, allow the modal
+    // to fire again the next time they fill everything in.
+    if (!complete && dismissed) {
+      setDismissed(false);
+    }
+  }, [complete, status, dismissed]);
+
+  // Clear nudge state when the photographer leaves the incomplete branch
+  // (submitted for review, or admin approved).
+  useEffect(() => {
+    if (status !== "incomplete") {
+      setModalOpen(false);
+      setDismissed(false);
+      wasCompleteRef.current = false;
+    }
+  }, [status]);
+
+  async function handleSubmit() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const result = await submitForReview({ setStatus, showToast });
+      // Only dismiss the modal on accepted submit. On incomplete/network
+      // failure, keep it open so the photographer can retry or see context
+      // before navigating away.
+      if (result.submitted) setModalOpen(false);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleDismiss() {
+    setDismissed(true);
+    setModalOpen(false);
+  }
+
+  if (status !== "incomplete") return null;
+
+  const showPill = complete && dismissed && !modalOpen;
+
+  return (
+    <>
+      <Modal isOpen={modalOpen} onClose={handleDismiss} title="Ready for review">
+        <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+          You&apos;ve filled everything in.
+        </p>
+        <p className="font-sans text-base text-slate mt-3 max-w-md">
+          Submit your settings so we can verify you. Reviews take 1–2 business
+          days. You&apos;ll be able to upload as soon as we&apos;re done.
+        </p>
+        <div className="mt-7 flex flex-wrap items-center gap-4">
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {submitting ? "Submitting…" : "Submit for review"}
+            <span aria-hidden="true">→</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleDismiss}
+            className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
+          >
+            Maybe later
+          </button>
+        </div>
+      </Modal>
+      {showPill && <ReadyToSubmitPill onClick={() => setModalOpen(true)} />}
+    </>
+  );
+}
+
+function ReadyToSubmitPill({ onClick }: { onClick: () => void }) {
+  // Portals to body so it escapes any transform-context ancestor (mirrors the
+  // Modal/Dropdown portal pattern — see notes/ui-pitfalls.md).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  if (!mounted) return null;
+  return createPortal(
+    <button
+      type="button"
+      onClick={onClick}
+      className="fixed bottom-6 right-6 z-50 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2"
+    >
+      <span aria-hidden="true" className="size-2 rounded-full bg-bone" />
+      Submit for review
+      <span aria-hidden="true">→</span>
+    </button>,
+    document.body,
+  );
+}
+
+// Subscribes to every required field so consumers re-render whenever any
+// changes. The store's `isComplete()` getter alone won't trigger updates —
+// Zustand only fires re-renders when the subscribed slice (the function
+// reference) changes, not when the underlying fields change. Profile
+// picture lives in useUserMediaStore (shared with the runner account flow).
+function useAllRequiredFilled(): boolean {
+  const avatar = useUserMediaStore((s) => s.avatar);
+  const cover = usePhotographerSettingsStore((s) => s.cover);
+  const brandName = usePhotographerSettingsStore((s) => s.brandName);
+  const watermark = usePhotographerSettingsStore((s) => s.watermark);
+  const handle = usePhotographerSettingsStore((s) => s.handle);
+  const region = usePhotographerSettingsStore((s) => s.region);
+  const socials = usePhotographerSettingsStore((s) => s.socials);
+  const payouts = usePhotographerSettingsStore((s) => s.payouts);
+  return (
+    avatar !== null &&
+    cover !== null &&
+    brandName.trim().length > 0 &&
+    watermark !== null &&
+    handle.trim().length > 0 &&
+    region !== null &&
+    socials.some((sl) => sl.url.trim().length > 0) &&
+    payouts.some((p) => p.isPrimary)
   );
 }
 
@@ -191,21 +503,62 @@ function VerificationStatusPanel() {
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
   );
-  const isComplete = usePhotographerSettingsStore((s) => s.isComplete);
   const { showToast } = useToast();
-  const complete = isComplete();
+  const { confirm } = useConfirmation();
+  const complete = useAllRequiredFilled();
+  const [submitting, setSubmitting] = useState(false);
 
-  function handleSubmit() {
-    setStatus("pending");
-    showToast({
-      kind: "info",
-      message: "Submitted for review. We'll let you know.",
+  async function handleSubmit() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      // Admin approval is the only path to "approved" — handled in
+      // `/admin/verifications`. The photographer sits in `pending` until a
+      // human reviews them. Phase 1 wires the real BE call: the helper
+      // flips local state only after the BE confirms.
+      await submitForReview({ setStatus, showToast });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleWithdraw() {
+    const ok = await confirm({
+      title: "Withdraw application?",
+      message:
+        "Your submission will be removed from the admin queue and your status returns to incomplete. Your settings stay saved — you can edit and resubmit anytime.",
+      confirmLabel: "Withdraw",
+      cancelLabel: "Keep waiting",
+      danger: true,
     });
-    // Admin approval is the only path to "approved" — handled in
-    // `/admin/verifications`. The 3-second auto-approve mock was removed
-    // 2026-05-07 when the admin workspace shipped; the photographer now
-    // really does sit in `pending` until a human reviews them.
-    fireSettings("submitVerification", submitVerification());
+    if (!ok) return;
+    try {
+      const response = await withdrawVerification();
+      const sessionUser = useAuthStore.getState().user;
+      if (sessionUser) {
+        // Drop the optimistic submission row from the admin store mirror.
+        useAdminUserStore.getState().revokeSubmission(sessionUser.id);
+      }
+      // BE returns the new status — use it directly. Should always be
+      // "incomplete" after a successful withdraw; defensive narrow anyway.
+      const next =
+        response.status === "approved" ||
+        response.status === "pending" ||
+        response.status === "incomplete"
+          ? response.status
+          : "incomplete";
+      setStatus(next);
+      showToast({
+        kind: "info",
+        message: "Application withdrawn.",
+      });
+    } catch (err) {
+      console.error("[photographer/settings] withdrawVerification failed", err);
+      showToast({
+        kind: "error",
+        message: "Couldn't withdraw — check your connection and try again.",
+      });
+    }
   }
 
   if (status === "approved") {
@@ -233,8 +586,18 @@ function VerificationStatusPanel() {
         </p>
         <p className="font-sans text-sm text-slate mt-2 max-w-md">
           Reviews take 1–2 business days. You&apos;ll be able to upload as soon
-          as we&apos;re done.
+          as we&apos;re done. Edits below stay live — the admin always sees your
+          latest changes.
         </p>
+        <div className="mt-5">
+          <button
+            type="button"
+            onClick={handleWithdraw}
+            className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
+          >
+            Withdraw application
+          </button>
+        </div>
       </div>
     );
   }
@@ -248,18 +611,22 @@ function VerificationStatusPanel() {
         Fill in every section, then submit for review.
       </p>
       <p className="font-sans text-sm text-slate mt-2 max-w-md">
-        Cover, brand, watermark, public URL, region, at least one social link,
-        and at least one payout account are required so we can verify you and
-        send your sales. Profile picture is optional.
+        Profile picture, cover, brand, watermark, public URL, region, at least
+        one social link, and at least one payout account are required so we can
+        verify you and send your sales. Bio is optional.
       </p>
       <button
         type="button"
         onClick={handleSubmit}
-        disabled={!complete}
+        disabled={!complete || submitting}
         className="mt-5 inline-flex items-center gap-2 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        {complete ? "Submit for review" : "Fill the required fields"}
-        {complete && <span aria-hidden="true">→</span>}
+        {!complete
+          ? "Fill the required fields"
+          : submitting
+            ? "Submitting…"
+            : "Submit for review"}
+        {complete && !submitting && <span aria-hidden="true">→</span>}
       </button>
     </div>
   );
@@ -955,41 +1322,6 @@ function WatermarkSlab() {
       return;
     }
 
-    // Watermark is PNG-only (JPEG/WebP can't preserve the transparency the
-    // overlay needs). The accept attr filters the OS picker, but a drag-drop
-    // or programmatic pick can still bypass it — so check explicitly.
-    if (file.type !== "image/png") {
-      setError(
-        "Use a transparent PNG. JPEG and WebP can't preserve transparency for the overlay.",
-      );
-      return;
-    }
-
-    // Detect alpha coverage before committing — solid-bg PNGs would stamp
-    // photos as a block. User can override (some photographers want a solid
-    // brand bar), so this is a soft confirmation, not a hard error.
-    let alphaCoverage: number;
-    try {
-      const probe = await detectPngTransparency(file);
-      alphaCoverage = probe.alphaCoverage;
-    } catch (err) {
-      setError(imageErrorCopy(err));
-      return;
-    }
-
-    if (alphaCoverage < WATERMARK_TRANSPARENCY_FLOOR) {
-      const ok = await confirm({
-        title: "This watermark has no transparency.",
-        message:
-          "It will stamp your photos as a solid block. Continue, or upload a PNG with a transparent background?",
-        confirmLabel: "Use it anyway",
-      });
-      if (!ok) {
-        setError(null);
-        return;
-      }
-    }
-
     // Replacement confirmation — unique to watermark because it retroactively
     // affects how runners perceive the brand on the gallery (already-stamped
     // photos won't re-stamp, but new uploads will use the new mark; warn so
@@ -1012,7 +1344,12 @@ function WatermarkSlab() {
     try {
       // Local downscale stages an instant preview; backend re-runs the same
       // pipeline server-side so the watermark composites at upload time.
-      const dataUrl = await fitToPngDataUrl(file, WATERMARK_MAX_PX);
+      // PNG preserves transparency for the preview; JPEG/WebP fall through to
+      // fitToDataUrl which encodes JPEG (no alpha channel needed).
+      const dataUrl =
+        file.type === "image/png"
+          ? await fitToPngDataUrl(file, WATERMARK_MAX_PX)
+          : await fitToDataUrl(file, WATERMARK_MAX_PX);
       setWatermark({ dataUrl, uploadedAt: new Date().toISOString() });
       fireSettings("postWatermark", postWatermark(file));
       showToast({ kind: "success", message: "Watermark updated." });
@@ -1046,7 +1383,8 @@ function WatermarkSlab() {
       <div className="space-y-5">
         <p className="font-sans text-sm text-slate max-w-md">
           Runners see your watermark on every photo before they buy — that&apos;s
-          how they find you. Use a transparent PNG so it overlays cleanly.
+          how they find you. A transparent PNG overlays cleanly, but a logo
+          with a solid background works too.
         </p>
 
         <div className="rounded-2xl overflow-hidden bg-bone-deep border border-line aspect-[3/2] relative">
@@ -1085,7 +1423,7 @@ function WatermarkSlab() {
             <input
               ref={inputRef}
               type="file"
-              accept="image/png"
+              accept="image/png,image/jpeg,image/webp"
               onChange={handlePick}
               disabled={busy}
               aria-describedby={error ? "watermark-error" : undefined}
@@ -1105,7 +1443,7 @@ function WatermarkSlab() {
           )}
 
           <p className="font-sans text-sm text-slate-soft basis-full md:basis-auto">
-            PNG with transparency recommended · downscaled to 600px wide · 8 MB max.
+            PNG, JPEG, or WebP · downscaled to 600px wide · 8 MB max.
           </p>
         </div>
 
@@ -1742,6 +2080,7 @@ function validatePayoutNumber(method: PayoutMethod, raw: string): string | null 
 function PayoutSlab() {
   const payouts = usePhotographerSettingsStore((s) => s.payouts);
   const addPayout = usePhotographerSettingsStore((s) => s.addPayout);
+  const updatePayout = usePhotographerSettingsStore((s) => s.updatePayout);
   const setPrimaryPayout = usePhotographerSettingsStore(
     (s) => s.setPrimaryPayout,
   );
@@ -1750,8 +2089,13 @@ function PayoutSlab() {
   const { confirm } = useConfirmation();
 
   const [draftMethod, setDraftMethod] = useState<PayoutMethod | null>(null);
+  // Only one row may be in edit mode at a time — opening Edit on another row
+  // collapses any in-flight edit. Adding a new account also closes any open
+  // edit to avoid two forms competing for the photographer's attention.
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   function handlePickMethod(method: PayoutMethod) {
+    setEditingId(null);
     setDraftMethod((current) => (current === method ? null : method));
   }
 
@@ -1768,6 +2112,28 @@ function PayoutSlab() {
       message: `${PAYOUT_METHOD_LABEL[input.method]} account added${
         payouts.length === 0 ? " · set as primary" : ""
       }.`,
+    });
+  }
+
+  function handleStartEdit(id: string) {
+    setDraftMethod(null);
+    setEditingId(id);
+  }
+
+  function handleUpdate(
+    id: string,
+    method: PayoutMethod,
+    input: {
+      accountNumber: string;
+      accountName: string;
+      qr: { dataUrl: string; uploadedAt: string } | null;
+    },
+  ) {
+    updatePayout(id, input);
+    setEditingId(null);
+    showToast({
+      kind: "success",
+      message: `${PAYOUT_METHOD_LABEL[method]} account updated.`,
     });
   }
 
@@ -1863,16 +2229,36 @@ function PayoutSlab() {
               Your accounts
             </Kicker>
             <ul className="space-y-3">
-              {payouts.map((account) => (
-                <PayoutCard
-                  key={account.id}
-                  account={account}
-                  onMakePrimary={() =>
-                    handleMakePrimary(account.id, account.method)
-                  }
-                  onRemove={() => handleRemove(account.id, account.method)}
-                />
-              ))}
+              {payouts.map((account) =>
+                editingId === account.id ? (
+                  <li key={account.id}>
+                    <PayoutForm
+                      method={account.method}
+                      initial={{
+                        accountName: account.accountName,
+                        accountNumber: account.accountNumber,
+                        qr: account.qr,
+                      }}
+                      submitLabel="Update account"
+                      titleLabel={`Edit ${PAYOUT_METHOD_LABEL[account.method]} account`}
+                      onCancel={() => setEditingId(null)}
+                      onSave={(input) =>
+                        handleUpdate(account.id, account.method, input)
+                      }
+                    />
+                  </li>
+                ) : (
+                  <PayoutCard
+                    key={account.id}
+                    account={account}
+                    onEdit={() => handleStartEdit(account.id)}
+                    onMakePrimary={() =>
+                      handleMakePrimary(account.id, account.method)
+                    }
+                    onRemove={() => handleRemove(account.id, account.method)}
+                  />
+                ),
+              )}
             </ul>
             <Kicker as="p" tone="soft" tnum>
               {payouts.length} account{payouts.length === 1 ? "" : "s"} ·{" "}
@@ -1889,6 +2275,16 @@ function PayoutSlab() {
 
 interface PayoutFormProps {
   method: PayoutMethod;
+  /** Pre-fill values for edit mode. Omitted for add mode. */
+  initial?: {
+    accountName: string;
+    accountNumber: string;
+    qr: { dataUrl: string; uploadedAt: string } | null;
+  };
+  /** Defaults to "Save account" (add mode). Pass "Update account" for edit. */
+  submitLabel?: string;
+  /** Header label inside the form card. Defaults to "New {method} account". */
+  titleLabel?: string;
   onCancel: () => void;
   onSave: (input: {
     method: PayoutMethod;
@@ -1898,13 +2294,23 @@ interface PayoutFormProps {
   }) => void;
 }
 
-function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
+function PayoutForm({
+  method,
+  initial,
+  submitLabel = "Save account",
+  titleLabel,
+  onCancel,
+  onSave,
+}: PayoutFormProps) {
   const { showToast } = useToast();
-  const [accountName, setAccountName] = useState("");
+  const isEdit = !!initial;
+  const [accountName, setAccountName] = useState(initial?.accountName ?? "");
   const [nameTouched, setNameTouched] = useState(false);
-  const [accountNumber, setAccountNumber] = useState("");
+  const [accountNumber, setAccountNumber] = useState(
+    initial?.accountNumber ?? "",
+  );
   const [qr, setQr] = useState<{ dataUrl: string; uploadedAt: string } | null>(
-    null,
+    initial?.qr ?? null,
   );
   const [busy, setBusy] = useState(false);
   const [qrError, setQrError] = useState<string | null>(null);
@@ -1985,13 +2391,16 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
             className="size-2 rounded-full"
             style={{ backgroundColor: PAYOUT_METHOD_HEX[method] }}
           />
-          New {PAYOUT_METHOD_LABEL[method]} account
+          {titleLabel ?? `New ${PAYOUT_METHOD_LABEL[method]} account`}
         </p>
         <button
           type="button"
           onClick={() => {
             onCancel();
-            showToast({ kind: "info", message: "New account discarded." });
+            showToast({
+              kind: "info",
+              message: isEdit ? "Edit discarded." : "New account discarded.",
+            });
           }}
           className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
         >
@@ -2162,7 +2571,7 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
           disabled={!canSave}
           className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
         >
-          Save account
+          {submitLabel}
           <span aria-hidden="true">→</span>
         </button>
       </div>
@@ -2172,11 +2581,17 @@ function PayoutForm({ method, onCancel, onSave }: PayoutFormProps) {
 
 interface PayoutCardProps {
   account: PayoutAccount;
+  onEdit: () => void;
   onMakePrimary: () => void;
   onRemove: () => void;
 }
 
-function PayoutCard({ account, onMakePrimary, onRemove }: PayoutCardProps) {
+function PayoutCard({
+  account,
+  onEdit,
+  onMakePrimary,
+  onRemove,
+}: PayoutCardProps) {
   const formatted = formatPayoutNumber(account.method, account.accountNumber);
 
   return (
@@ -2231,6 +2646,13 @@ function PayoutCard({ account, onMakePrimary, onRemove }: PayoutCardProps) {
             Make primary
           </button>
         )}
+        <button
+          type="button"
+          onClick={onEdit}
+          className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
+        >
+          Edit
+        </button>
         <button
           type="button"
           onClick={onRemove}

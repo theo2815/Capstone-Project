@@ -189,13 +189,29 @@ export async function postPayoutQr(
   );
 }
 
-// ───────────────────────────────────────────── Verification submit
+// ───────────────────────────────────────────── Verification submit + status
 
 export interface VerificationSubmitResponse {
   status: VerificationStatus;
-  missing?: string[];
+  missing?: string[] | null;
 }
 
 export async function submitVerification(): Promise<VerificationSubmitResponse> {
   return api.post<VerificationSubmitResponse>("/me/photographer/verification");
+}
+
+// Phase 4 — read-only status poll. Used by the photographer's settings page
+// to detect admin approve/reject decisions across sessions without forcing
+// a full page refresh. Symmetric with the POST above; never writes.
+export async function fetchVerificationStatus(): Promise<VerificationSubmitResponse> {
+  return api.get<VerificationSubmitResponse>("/me/photographer/verification");
+}
+
+// Phase 5 — photographer-side rescind. Flips a PENDING (or APPROVED) row
+// back to INCOMPLETE so the photographer can edit + re-submit, or just
+// remove themselves from the admin queue entirely. Idempotent.
+export async function withdrawVerification(): Promise<VerificationSubmitResponse> {
+  return api.post<VerificationSubmitResponse>(
+    "/me/photographer/verification/withdraw",
+  );
 }

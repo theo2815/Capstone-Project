@@ -197,8 +197,16 @@ class MePhotographerSettingsController(
         contentType = file.contentType,
     )
 
-    // ─── Verification submit ──────────────────────────────────────────────
+    // ─── Verification submit + status read ────────────────────────────────
+    @GetMapping("/verification")
+    fun getVerification(@AuthenticationPrincipal principal: AuthPrincipal): VerificationSubmitResponseDto =
+        photographerSettingsService.getVerificationStatus(principal.userId)
+
     @PostMapping("/verification")
     fun submitVerification(@AuthenticationPrincipal principal: AuthPrincipal): VerificationSubmitResponseDto =
         photographerSettingsService.submitVerification(principal.userId)
+
+    @PostMapping("/verification/withdraw")
+    fun withdrawVerification(@AuthenticationPrincipal principal: AuthPrincipal): VerificationSubmitResponseDto =
+        photographerSettingsService.withdrawVerification(principal.userId)
 }

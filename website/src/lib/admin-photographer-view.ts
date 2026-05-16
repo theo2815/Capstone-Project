@@ -1,17 +1,23 @@
 "use client";
 
 import { useMemo } from "react";
-import {
-  ADMIN_USER_SEED,
-  type AdminUserRow,
-} from "@/lib/admin-user-registry";
+import { type AdminUserRow } from "@/lib/admin-user-registry";
 import {
   PHOTOGRAPHER_REGISTRY,
   getPhotographerByHandle,
   type CoverSource,
   type PhotographerProfile,
 } from "@/lib/photographer-registry";
-import { useAdminUserStore, type DecisionLogEntry } from "@/store/admin-user-store";
+import {
+  useAdminUserStore,
+  type DecisionLogEntry,
+} from "@/store/admin-user-store";
+import {
+  getAdminUsersDataSnapshot,
+  useAdminUsersData,
+} from "@/lib/admin-users-data";
+import { useAdminPhotographerSettings } from "@/lib/admin-photographer-settings-data";
+import { type AdminPhotographerSettingsResponse } from "@/lib/api-admin";
 import { useAuthStore } from "@/store/auth-store";
 import {
   usePhotographerSettingsStore,
@@ -107,23 +113,65 @@ function seedToEffective(
   };
 }
 
+// F-NEW-1 — convert the BE admin-photographer-settings shape to the
+// FE-internal EffectivePhotographerSettings used by the drawer + detail
+// page. `source: "live"` semantically means "authoritative from the
+// backend" (whether the BE row or the photographer's in-progress edits) —
+// distinct from `"seed"` which is the mock fallback.
+function beToEffective(
+  be: AdminPhotographerSettingsResponse,
+): EffectivePhotographerSettings {
+  const cover: EffectivePhotographerSettings["cover"] =
+    be.cover?.url
+      ? { kind: "image", url: be.cover.url }
+      : be.cover?.gradientFrom && be.cover?.gradientTo
+        ? {
+            kind: "gradient",
+            from: be.cover.gradientFrom,
+            to: be.cover.gradientTo,
+          }
+        : null;
+  const watermark: EffectivePhotographerSettings["watermark"] =
+    be.watermark?.dataUrl
+      ? { kind: "image", dataUrl: be.watermark.dataUrl }
+      : be.watermark?.label
+        ? { kind: "label", label: be.watermark.label }
+        : null;
+  return {
+    brandName: be.brandName ?? "",
+    brandColor: (be.brandColor as BrandColor) ?? "none",
+    bio: be.bio,
+    handle: be.handle ?? "",
+    cover,
+    watermark,
+    region: be.region
+      ? {
+          regionCode: be.region.regionCode,
+          provinceCode: be.region.provinceCode,
+        }
+      : null,
+    socials: be.socials,
+    payouts: be.payouts,
+    source: "live",
+  };
+}
+
 // Non-reactive: useful for one-shot reads (server components, useEffect, etc).
 // React components should prefer the hook below so override mutations re-render.
 export function getAdminPhotographerView(
   handle: string,
 ): AdminPhotographerView | null {
-  const overrides = useAdminUserStore.getState().overrides;
+  const submissions = useAdminUserStore.getState().submissions;
   const log = useAdminUserStore.getState().log;
-  const effective = ADMIN_USER_SEED.map((row) => {
-    const patch = overrides[row.userId];
-    return patch ? { ...row, ...patch } : row;
-  });
+  const effective = getAdminUsersDataSnapshot();
   const row = findRowByHandle(handle, effective);
   if (!row) return null;
   const profile = getPhotographerByHandle(handle);
   const sessionUser = useAuthStore.getState().user;
   const isSelf = !!sessionUser && sessionUser.id === row.userId;
-  const liveSettings = isSelf ? usePhotographerSettingsStore.getState() : null;
+  const isSubmission = !!submissions[row.userId];
+  const liveSettings =
+    isSelf || isSubmission ? usePhotographerSettingsStore.getState() : null;
   const seed = getPhotographerSettingsSeed(row.userId);
   const effectiveSettings: EffectivePhotographerSettings | null = liveSettings
     ? liveToEffective(liveSettings)
@@ -131,16 +179,23 @@ export function getAdminPhotographerView(
       ? seedToEffective(seed)
       : null;
   const decisions = log.filter((e) => e.userId === row.userId);
-  return { row, profile, liveSettings, effectiveSettings, decisions };
+  return {
+    row,
+    profile,
+    liveSettings: isSelf ? liveSettings : null,
+    effectiveSettings,
+    decisions,
+  };
 }
 
-// Reactive subscriber. Subscribes to the stable underlying state (never
-// `getXxx()` selectors) and derives the merged view via useMemo so React 19's
+// Reactive subscriber. Subscribes to the merged admin user data + decision
+// log; derives the merged view via useMemo so React 19's
 // useSyncExternalStore Object.is comparison stays stable.
 export function useAdminPhotographerView(
   handle: string,
 ): AdminPhotographerView | null {
-  const overrides = useAdminUserStore((s) => s.overrides);
+  const { rows: effective } = useAdminUsersData();
+  const submissions = useAdminUserStore((s) => s.submissions);
   const log = useAdminUserStore((s) => s.log);
   const sessionUser = useAuthStore((s) => s.user);
   // Subscribe to the WHOLE settings slice — when own status flips via admin
@@ -148,21 +203,19 @@ export function useAdminPhotographerView(
   const liveSettings = usePhotographerSettingsStore();
 
   return useMemo<AdminPhotographerView | null>(() => {
-    const effective = ADMIN_USER_SEED.map((row) => {
-      const patch = overrides[row.userId];
-      return patch ? { ...row, ...patch } : row;
-    });
     const row = findRowByHandle(handle, effective);
     if (!row) return null;
     const profile = getPhotographerByHandle(handle);
     const isSelf = !!sessionUser && sessionUser.id === row.userId;
     const decisions = log.filter((e) => e.userId === row.userId);
+    const isSubmission = !!submissions[row.userId];
     const seed = getPhotographerSettingsSeed(row.userId);
-    const effectiveSettings: EffectivePhotographerSettings | null = isSelf
-      ? liveToEffective(liveSettings)
-      : seed
-        ? seedToEffective(seed)
-        : null;
+    const effectiveSettings: EffectivePhotographerSettings | null =
+      isSelf || isSubmission
+        ? liveToEffective(liveSettings)
+        : seed
+          ? seedToEffective(seed)
+          : null;
     return {
       row,
       profile,
@@ -170,24 +223,46 @@ export function useAdminPhotographerView(
       effectiveSettings,
       decisions,
     };
-  }, [handle, overrides, log, sessionUser, liveSettings]);
+  }, [handle, effective, submissions, log, sessionUser, liveSettings]);
 }
 
 // Reactive lookup of effective settings for a single userId. Used by the
 // verifications drawer (which knows the row's userId, not its handle) so it
 // can render the same cover/watermark/public-URL/socials/payouts sections
-// as /admin/photographers/[handle].
+// as /admin/photographers/[handle]. Resolution order:
+//   1. live (when isSelf, OR when the row is a self-submission) — always
+//      reflects in-flight edits, which matches the design intent: edits
+//      stay live until admin approves/rejects. Demo assumption: one
+//      photographer per browser session.
+//   2. BE-fetched admin settings (F-NEW-1) — authoritative for every
+//      other photographer the admin reviews.
+//   3. mock seed — last-ditch fallback while the BE fetch is in flight or
+//      if it errored; empty post-Phase-5 cleanup so usually returns null.
+//   4. null
 export function useEffectivePhotographerSettings(
   userId: string,
 ): EffectivePhotographerSettings | null {
   const sessionUser = useAuthStore((s) => s.user);
   const liveSettings = usePhotographerSettingsStore();
+  const submissions = useAdminUserStore((s) => s.submissions);
+
+  const isSelf = !!sessionUser && sessionUser.id === userId;
+  const isSubmission = !!submissions[userId];
+  const useLocal = isSelf || isSubmission;
+
+  // Always call the hook — pass null to skip the fetch when we already have
+  // the data locally (session photographer's own row or a fresh submission
+  // mirrored from /dashboard/settings).
+  const { data: adminBeSettings } = useAdminPhotographerSettings(
+    useLocal ? null : userId,
+  );
+
   return useMemo<EffectivePhotographerSettings | null>(() => {
-    const isSelf = !!sessionUser && sessionUser.id === userId;
-    if (isSelf) return liveToEffective(liveSettings);
+    if (useLocal) return liveToEffective(liveSettings);
+    if (adminBeSettings) return beToEffective(adminBeSettings);
     const seed = getPhotographerSettingsSeed(userId);
     return seed ? seedToEffective(seed) : null;
-  }, [userId, sessionUser, liveSettings]);
+  }, [userId, useLocal, liveSettings, adminBeSettings]);
 }
 
 // Synthetic gradient for photographers who don't have a PhotographerProfile

@@ -5,11 +5,8 @@ import { useRouter } from "next/navigation";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { AdminPhotographerCard } from "@/components/admin/admin-photographer-card";
-import {
-  ADMIN_USER_SEED,
-  type AdminUserRow,
-} from "@/lib/admin-user-registry";
-import { useAdminUserStore } from "@/store/admin-user-store";
+import { type AdminUserRow } from "@/lib/admin-user-registry";
+import { useAdminUsersData } from "@/lib/admin-users-data";
 import { ROUTES } from "@/lib/constants";
 import {
   useQueueKeyboardNav,
@@ -26,21 +23,10 @@ import { PAGE_SIZE } from "@/lib/pagination-config";
 // between slabs without a refresh.
 
 export default function AdminPhotographersPage() {
-  // Subscribe to stable underlying state — never `getXxx()` selectors
-  // (Phase 1 infinite-loop trap).
-  const overrides = useAdminUserStore((s) => s.overrides);
+  const { rows: effective, loading, error, refetch } = useAdminUsersData();
   const [query, setQuery] = useState("");
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-
-  const effective = useMemo<AdminUserRow[]>(
-    () =>
-      ADMIN_USER_SEED.map((row) => {
-        const patch = overrides[row.userId];
-        return patch ? { ...row, ...patch } : row;
-      }),
-    [overrides],
-  );
 
   const photographers = useMemo(
     () => effective.filter((u) => u.role === "PHOTOGRAPHER"),

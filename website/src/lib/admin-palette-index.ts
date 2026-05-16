@@ -1,8 +1,5 @@
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
-import {
-  ADMIN_USER_SEED,
-  type AdminUserRow,
-} from "@/lib/admin-user-registry";
+import { type AdminUserRow } from "@/lib/admin-user-registry";
 import {
   ADMIN_DISPUTES,
   DISPUTE_REASON_LABEL,
@@ -77,7 +74,9 @@ export const PALETTE_KIND_ORDER: ReadonlyArray<PaletteEntryKind> = [
 ];
 
 export interface PaletteSnapshots {
-  userOverrides: Record<string, Partial<AdminUserRow>>;
+  /** Merged admin user pool — already includes server rows + optimistic
+   *  overrides + submissions. See lib/admin-users-data.ts. */
+  userPool: AdminUserRow[];
   disputeOverrides: Record<string, Partial<Dispute>>;
   flagOverrides: Record<string, Partial<Flag>>;
   payoutOverrides: Record<string, Partial<AdminPayoutCycle>>;
@@ -177,13 +176,6 @@ const PAGE_SEEDS: ReadonlyArray<PageSeed> = [
   },
 ];
 
-function mergeRow(
-  base: AdminUserRow,
-  patch: Partial<AdminUserRow> | undefined,
-): AdminUserRow {
-  return patch ? { ...base, ...patch } : base;
-}
-
 function buildPageEntries(): PaletteEntry[] {
   return PAGE_SEEDS.map((p) => ({
     id: p.id,
@@ -196,14 +188,12 @@ function buildPageEntries(): PaletteEntry[] {
 }
 
 function buildVerificationEntries(
-  userOverrides: Record<string, Partial<AdminUserRow>>,
+  userPool: AdminUserRow[],
 ): PaletteEntry[] {
   // Only photographers in pending or incomplete state appear — approved
   // photographers are reachable via the photographer entries below, and
   // suspended ones via the directory. Keeps the queue scope tight.
-  const photographers = ADMIN_USER_SEED.filter(
-    (u) => u.role === "PHOTOGRAPHER",
-  ).map((u) => mergeRow(u, userOverrides[u.userId]));
+  const photographers = userPool.filter((u) => u.role === "PHOTOGRAPHER");
   const reviewable = photographers.filter(
     (u) =>
       (u.verificationStatus === "pending" ||
@@ -326,11 +316,9 @@ function buildPayoutEntries(
 }
 
 function buildPhotographerEntries(
-  userOverrides: Record<string, Partial<AdminUserRow>>,
+  userPool: AdminUserRow[],
 ): PaletteEntry[] {
-  const photographers = ADMIN_USER_SEED.filter(
-    (u) => u.role === "PHOTOGRAPHER",
-  ).map((u) => mergeRow(u, userOverrides[u.userId]));
+  const photographers = userPool.filter((u) => u.role === "PHOTOGRAPHER");
   return photographers.map((u) => {
     const subjectLabel = u.brandName ?? u.name;
     const isSuspended = u.suspendedAt !== null;
@@ -373,13 +361,13 @@ export function buildPaletteIndex(
 ): PaletteEntry[] {
   return [
     ...buildPageEntries(),
-    ...buildVerificationEntries(snapshots.userOverrides),
+    ...buildVerificationEntries(snapshots.userPool),
     ...buildDisputeEntries(snapshots.disputeOverrides),
     ...(ADMIN_FLAGS_ENABLED
       ? buildFlagEntries(snapshots.flagOverrides)
       : []),
     ...buildPayoutEntries(snapshots.payoutOverrides),
-    ...buildPhotographerEntries(snapshots.userOverrides),
+    ...buildPhotographerEntries(snapshots.userPool),
   ];
 }
 

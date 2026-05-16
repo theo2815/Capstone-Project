@@ -2,6 +2,7 @@ package com.quickpitik.controller
 
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.dto.admin.AdminPhotographerSettingsDto
 import com.quickpitik.dto.admin.AdminUserDetailDto
 import com.quickpitik.dto.admin.AdminUserRowDto
 import com.quickpitik.dto.admin.ForceEditUserPatchRequest
@@ -42,6 +43,10 @@ class AdminUsersController(
     @GetMapping("/{userId}")
     fun detail(@PathVariable userId: UUID): AdminUserDetailDto =
         adminUserService.detail(userId)
+
+    @GetMapping("/{userId}/settings")
+    fun photographerSettings(@PathVariable userId: UUID): AdminPhotographerSettingsDto =
+        adminUserService.photographerSettings(userId)
 
     @PostMapping("/{userId}/approve")
     fun approve(

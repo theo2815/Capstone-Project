@@ -4,11 +4,20 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.admin.AdminPhotographerCoverDto
+import com.quickpitik.dto.admin.AdminPhotographerRegionDto
+import com.quickpitik.dto.admin.AdminPhotographerSettingsDto
+import com.quickpitik.dto.admin.AdminPhotographerWatermarkDto
 import com.quickpitik.dto.admin.AdminUserDetailDto
 import com.quickpitik.dto.admin.AdminUserRowDto
 import com.quickpitik.dto.admin.DecisionLogEntryDto
 import com.quickpitik.dto.admin.ForceEditUserPatchRequest
 import com.quickpitik.dto.admin.PhotographerSettingsSnapshotDto
+import com.quickpitik.dto.photographer.PayoutAccountDto
+import com.quickpitik.dto.photographer.PayoutQrDto
+import com.quickpitik.dto.photographer.SocialLinkDto
+import com.quickpitik.dto.photographer.toDto
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
@@ -42,6 +51,8 @@ class AdminUserService(
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val regionsService: RegionsService,
     private val adminDecisionLogService: AdminDecisionLogService,
+    private val storageService: com.quickpitik.service.storage.StorageService,
+    private val storageProperties: StorageProperties,
 ) {
 
     @Transactional(readOnly = true)
@@ -114,6 +125,70 @@ class AdminUserService(
             suspensionReason = row.suspensionReason,
             settingsSnapshot = row.settingsSnapshot,
             decisionLog = log,
+        )
+    }
+
+    // F-NEW-1 — full photographer-settings read for the admin review surfaces
+    // (verifications drawer + /admin/photographers/[handle]). Returns
+    // presigned URLs for cover/watermark/payout-QR so the admin can preview
+    // the actual media the photographer uploaded. 404s for non-photographer
+    // users so the FE doesn't render an empty review pane.
+    @Transactional(readOnly = true)
+    fun photographerSettings(userId: UUID): AdminPhotographerSettingsDto {
+        val (user, settings) = loadUserAndSettings(userId)
+        val s = requirePhotographerSettings(user, settings)
+
+        val region = if (!s.regionCode.isNullOrBlank() && !s.provinceCode.isNullOrBlank()) {
+            AdminPhotographerRegionDto(
+                regionCode = s.regionCode!!,
+                provinceCode = s.provinceCode!!,
+                city = s.city,
+            )
+        } else null
+
+        val cover = if (s.coverS3Key != null || s.coverGradientFrom != null || s.coverGradientTo != null) {
+            AdminPhotographerCoverDto(
+                url = s.coverS3Key?.let {
+                    storageService.presignedGetUrl(it, storageProperties.presignedTtl.cover)
+                },
+                gradientFrom = s.coverGradientFrom,
+                gradientTo = s.coverGradientTo,
+            )
+        } else null
+
+        val watermark = if (s.watermarkS3Key != null || s.watermarkLabel != null) {
+            AdminPhotographerWatermarkDto(
+                dataUrl = s.watermarkS3Key?.let {
+                    storageService.presignedGetUrl(it, storageProperties.presignedTtl.watermark)
+                },
+                label = s.watermarkLabel,
+            )
+        } else null
+
+        val socials: List<SocialLinkDto> = socialLinkRepository
+            .findAllByUserIdOrderByCreatedAtAsc(userId)
+            .map { it.toDto() }
+
+        val payouts: List<PayoutAccountDto> = payoutAccountRepository
+            .findAllByUserIdOrderByCreatedAtAsc(userId)
+            .map { account ->
+                val qrUrl = account.qrS3Key?.let {
+                    storageService.presignedGetUrl(it, storageProperties.presignedTtl.cover)
+                }
+                account.toDto(qrUrl = qrUrl, qrUploadedAt = account.createdAt)
+            }
+
+        return AdminPhotographerSettingsDto(
+            userId = userId.toString(),
+            handle = s.handle,
+            brandName = s.brandName,
+            brandColor = s.brandColor,
+            bio = s.bio,
+            region = region,
+            cover = cover,
+            watermark = watermark,
+            socials = socials,
+            payouts = payouts,
         )
     }
 

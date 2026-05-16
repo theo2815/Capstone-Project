@@ -10,8 +10,7 @@ import {
   type DisputeLogEntry,
   mergeDispute,
 } from "@/store/admin-dispute-store";
-import { useAdminUserStore } from "@/store/admin-user-store";
-import { ADMIN_USER_SEED } from "@/lib/admin-user-registry";
+import { useAdminUsersData } from "@/lib/admin-users-data";
 
 // Reactive merged view used by the dispute detail page.
 //
@@ -33,27 +32,23 @@ export function useAdminDisputeView(
 ): AdminDisputeView | null {
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
   const log = useAdminDisputeStore((s) => s.log);
-  const userOverrides = useAdminUserStore((s) => s.overrides);
+  const { rows: userPool } = useAdminUsersData();
 
   return useMemo(() => {
     const base = ADMIN_DISPUTES.find((d) => d.id === disputeId);
     if (!base) return null;
     const dispute = mergeDispute(base, disputeOverrides[disputeId]);
 
-    const photogRow = ADMIN_USER_SEED.find(
+    const photogRow = userPool.find(
       (u) => u.handle === dispute.photographerHandle,
     );
-    const photogPatch = photogRow ? userOverrides[photogRow.userId] : undefined;
-    const merged = photogRow
-      ? { ...photogRow, ...(photogPatch ?? {}) }
-      : null;
     const photographerName =
-      merged?.brandName ?? merged?.name ?? `@${dispute.photographerHandle}`;
+      photogRow?.brandName ?? photogRow?.name ?? `@${dispute.photographerHandle}`;
 
     const decisions = log
       .filter((e) => e.disputeId === disputeId)
       .slice(0, 20);
 
     return { dispute, photographerName, decisions };
-  }, [disputeId, disputeOverrides, userOverrides, log]);
+  }, [disputeId, disputeOverrides, userPool, log]);
 }

@@ -1,6 +1,10 @@
 import { api } from "@/lib/api";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
 import type {
+  PayoutAccount,
+  SocialLink,
+} from "@/store/photographer-settings-store";
+import type {
   Dispute,
   DisputeResolution,
 } from "@/lib/admin-disputes";
@@ -127,6 +131,51 @@ export async function fetchAdminUserDetail(
 ): Promise<AdminUserDetail | null> {
   return api.get<AdminUserDetail>(
     `/admin/users/${encodeURIComponent(userId)}`,
+  );
+}
+
+// F-NEW-1 — full photographer-settings read for admin review surfaces.
+// Returns presigned URLs for cover/watermark/payout-QR so the admin can
+// preview the actual media a photographer uploaded.
+
+export interface AdminPhotographerSettingsRegion {
+  regionCode: string;
+  provinceCode: string;
+  city: string | null;
+}
+
+export interface AdminPhotographerSettingsCover {
+  url: string | null;
+  gradientFrom: string | null;
+  gradientTo: string | null;
+}
+
+export interface AdminPhotographerSettingsWatermark {
+  /** Named `dataUrl` to match the FE's WatermarkPreview shape inherited
+   *  from the localStorage prototype; with backend storage the value is a
+   *  presigned URL. Null when only a label was set. */
+  dataUrl: string | null;
+  label: string | null;
+}
+
+export interface AdminPhotographerSettingsResponse {
+  userId: string;
+  handle: string | null;
+  brandName: string | null;
+  brandColor: string;
+  bio: string;
+  region: AdminPhotographerSettingsRegion | null;
+  cover: AdminPhotographerSettingsCover | null;
+  watermark: AdminPhotographerSettingsWatermark | null;
+  socials: SocialLink[];
+  payouts: PayoutAccount[];
+}
+
+export async function fetchAdminPhotographerSettings(
+  userId: string,
+): Promise<AdminPhotographerSettingsResponse> {
+  return api.get<AdminPhotographerSettingsResponse>(
+    `/admin/users/${encodeURIComponent(userId)}/settings`,
   );
 }
 

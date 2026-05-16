@@ -10,10 +10,10 @@ import {
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/modal";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
-import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAdminDisputeStore } from "@/store/admin-dispute-store";
 import { useAdminFlagStore } from "@/store/admin-flag-store";
 import { useAdminPayoutStore } from "@/store/admin-payout-store";
+import { useAdminUsersData } from "@/lib/admin-users-data";
 import {
   buildPaletteIndex,
   fuzzyScore,
@@ -47,7 +47,7 @@ export function CommandPalette() {
   const recents = useAdminPaletteStore((s) => s.recents);
   const pushRecent = useAdminPaletteStore((s) => s.pushRecent);
 
-  const userOverrides = useAdminUserStore((s) => s.overrides);
+  const { rows: userPool } = useAdminUsersData();
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
   const flagOverrides = useAdminFlagStore((s) => s.overrides);
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
@@ -62,12 +62,12 @@ export function CommandPalette() {
   const index = useMemo(
     () =>
       buildPaletteIndex({
-        userOverrides,
+        userPool,
         disputeOverrides,
         flagOverrides,
         payoutOverrides,
       }),
-    [userOverrides, disputeOverrides, flagOverrides, payoutOverrides],
+    [userPool, disputeOverrides, flagOverrides, payoutOverrides],
   );
 
   const indexById = useMemo(() => {
