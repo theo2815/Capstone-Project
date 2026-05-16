@@ -1,7 +1,6 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   fetchPhotographerEvents,
   fetchPhotographerEventDetail,
@@ -38,14 +37,11 @@ import type {
   PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
 import type { PhotographerProfile } from "@/lib/photographer-registry";
-import type { MockPhoto } from "@/app/events/[slug]/mock-photos";
+import type { MockPhoto } from "@/types/photo";
 import type { EventDetail } from "@/types/event";
 
-// Hybrid hooks for photographer reads. Each hook returns canonical server
-// data when `BACKEND_LIVE=true`; in mock mode the hook returns `null` so
-// callers fall back to existing store/mock derivations.
-//
-// React Query keys: ["photographer", <domain>, ...]
+// React Query hooks for photographer reads.
+// Keys: ["photographer", <domain>, ...]
 // Stale times: events 60s, earnings 5min, transactions 60s, public 5min.
 
 const EVENTS_STALE_MS = 60_000;
@@ -60,10 +56,9 @@ export function usePhotographerEvents(
   const query = useQuery<PhotographerEventSummary[]>({
     queryKey: ["photographer", "events", args],
     queryFn: () => fetchPhotographerEvents(args),
-    enabled: BACKEND_LIVE,
     staleTime: EVENTS_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 export function usePhotographerEventDetail(
@@ -73,10 +68,10 @@ export function usePhotographerEventDetail(
     queryKey: ["photographer", "events", eventId],
     queryFn: () =>
       eventId ? fetchPhotographerEventDetail(eventId) : Promise.resolve(null),
-    enabled: BACKEND_LIVE && !!eventId,
+    enabled: !!eventId,
     staleTime: EVENTS_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 export function usePhotographerEventPhotos(
@@ -88,10 +83,10 @@ export function usePhotographerEventPhotos(
       eventId
         ? fetchPhotographerEventPhotos(eventId)
         : Promise.resolve([]),
-    enabled: BACKEND_LIVE && !!eventId,
+    enabled: !!eventId,
     staleTime: EVENTS_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Earnings
@@ -100,20 +95,18 @@ export function usePhotographerEarnings(): PhotographerEarnings | null {
   const query = useQuery<PhotographerEarnings | null>({
     queryKey: ["photographer", "earnings"],
     queryFn: () => fetchPhotographerEarnings(),
-    enabled: BACKEND_LIVE,
     staleTime: EARNINGS_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 export function usePhotographerPerEventEarnings(): PerEventEarning[] | null {
   const query = useQuery<PerEventEarning[]>({
     queryKey: ["photographer", "earnings", "per-event"],
     queryFn: () => fetchPerEventEarnings(),
-    enabled: BACKEND_LIVE,
     staleTime: EARNINGS_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Payouts
@@ -122,10 +115,9 @@ export function usePhotographerPayouts(): PhotographerPayout[] | null {
   const query = useQuery<PhotographerPayout[]>({
     queryKey: ["photographer", "payouts"],
     queryFn: () => fetchPhotographerPayouts(),
-    enabled: BACKEND_LIVE,
     staleTime: EARNINGS_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 export function usePhotographerPayoutReports(args: {
@@ -134,10 +126,9 @@ export function usePhotographerPayoutReports(args: {
   const query = useQuery<PayoutReport[] | null>({
     queryKey: ["photographer", "payouts", "reports", args],
     queryFn: () => fetchPhotographerPayoutReports(args),
-    enabled: BACKEND_LIVE,
     staleTime: EARNINGS_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Transactions
@@ -146,10 +137,9 @@ export function usePhotographerTransactions(): TransactionsResponse | null {
   const query = useQuery<TransactionsResponse>({
     queryKey: ["photographer", "transactions"],
     queryFn: () => fetchPhotographerTransactions(),
-    enabled: BACKEND_LIVE,
     staleTime: EARNINGS_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Public profile
@@ -161,10 +151,10 @@ export function usePublicPhotographer(
     queryKey: ["photographer", "public", handle],
     queryFn: () =>
       handle ? fetchPublicPhotographer(handle) : Promise.resolve(null),
-    enabled: BACKEND_LIVE && !!handle,
+    enabled: !!handle,
     staleTime: PUBLIC_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 export function usePublicPhotographerPhotos(
@@ -186,10 +176,10 @@ export function usePublicPhotographerPhotos(
             args,
           )
         : Promise.resolve([]),
-    enabled: BACKEND_LIVE && !!handle && !!eventSlug && !!event,
+    enabled: !!handle && !!eventSlug && !!event,
     staleTime: PUBLIC_STALE_MS,
   });
-  return BACKEND_LIVE ? query.data ?? null : null;
+  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Platform fees
@@ -198,9 +188,7 @@ export function usePlatformFees(): PlatformFees {
   const query = useQuery<PlatformFees | null>({
     queryKey: ["platform", "fees"],
     queryFn: () => fetchPlatformFees(),
-    enabled: BACKEND_LIVE,
     staleTime: PUBLIC_STALE_MS,
   });
-  if (BACKEND_LIVE && query.data) return query.data;
-  return PLATFORM_FEES_FALLBACK;
+  return query.data ?? PLATFORM_FEES_FALLBACK;
 }

@@ -48,24 +48,7 @@ export const PAYOUT_REPORT_STATUS_LABEL: Record<PayoutReportStatus, string> = {
 // One demo report so the admin section has content on first paint without
 // the photographer needing to file one. Tied to a paid cycle (the most
 // common report shape: "you marked it paid but money never landed").
-export const ADMIN_PAYOUT_REPORTS: ReadonlyArray<PayoutReport> = [
-  {
-    id: "RPT-SEED-001",
-    payoutCycleId: "PAY-2026W14-CEBUSTRIDE",
-    photographerId: "photog-cebustride",
-    photographerName: "Cebu Stride",
-    handle: "cebustride",
-    reason: "not_received",
-    note:
-      "Reference shows MY-32C887 settled Apr 8 but Maya statement has no incoming. Checked twice across both linked numbers.",
-    status: "open",
-    reportedAt: "2026-04-09T03:42:00.000Z",
-    acknowledgedAt: null,
-    acknowledgeReply: null,
-    resolvedAt: null,
-    resolutionNote: null,
-  },
-];
+export const ADMIN_PAYOUT_REPORTS: ReadonlyArray<PayoutReport> = [];
 
 export function mergeReport(
   base: PayoutReport,

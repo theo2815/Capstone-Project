@@ -14,8 +14,9 @@ import { AdminDenyDisputeModal } from "@/components/admin/admin-deny-dispute-mod
 import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
 import {
   useAdminDisputeStore,
-  getEffectiveDisputes,
+  mergeDisputesWithOverrides,
 } from "@/store/admin-dispute-store";
+import { useAdminDisputes } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
@@ -85,6 +86,7 @@ export function DisputesQueue() {
   const resolve = useAdminDisputeStore((s) => s.resolve);
   const deny = useAdminDisputeStore((s) => s.deny);
   const escalate = useAdminDisputeStore((s) => s.escalate);
+  const serverDisputes = useAdminDisputes() ?? [];
   const { showToast } = useToast();
 
   const [rowId, setRowId] = useUrlState<string>("row", "");
@@ -96,8 +98,8 @@ export function DisputesQueue() {
   );
 
   const effective = useMemo(
-    () => getEffectiveDisputes(overrides, submissions),
-    [overrides, submissions],
+    () => mergeDisputesWithOverrides(serverDisputes, overrides, submissions),
+    [serverDisputes, overrides, submissions],
   );
 
   const byId = useMemo(() => {
@@ -399,28 +401,30 @@ export function DisputesQueue() {
 export function useOpenDisputesCount(): number {
   const overrides = useAdminDisputeStore((s) => s.overrides);
   const submissions = useAdminDisputeStore((s) => s.submissions);
+  const serverDisputes = useAdminDisputes() ?? [];
   return useMemo(
     () =>
-      getEffectiveDisputes(overrides, submissions).filter(
+      mergeDisputesWithOverrides(serverDisputes, overrides, submissions).filter(
         (d) => d.status === "open",
       ).length,
-    [overrides, submissions],
+    [serverDisputes, overrides, submissions],
   );
 }
 
 export function useRefundedThisWeekTotal(): number {
   const overrides = useAdminDisputeStore((s) => s.overrides);
   const submissions = useAdminDisputeStore((s) => s.submissions);
+  const serverDisputes = useAdminDisputes() ?? [];
   return useMemo(() => {
     const cutoff = Date.now() - SEVEN_DAYS_MS;
-    return getEffectiveDisputes(overrides, submissions)
+    return mergeDisputesWithOverrides(serverDisputes, overrides, submissions)
       .filter((d) => {
         if (d.status !== "resolved" || d.refundAmount === null) return false;
         const t = new Date(d.resolvedAt ?? "").getTime();
         return Number.isFinite(t) && t >= cutoff;
       })
       .reduce((acc, d) => acc + (d.refundAmount ?? 0), 0);
-  }, [overrides, submissions]);
+  }, [serverDisputes, overrides, submissions]);
 }
 
 function DisputeSlab({

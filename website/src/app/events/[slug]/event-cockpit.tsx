@@ -12,7 +12,7 @@ import { useUiStore } from "@/store/ui-store";
 import { useAuthStore } from "@/store/auth-store";
 import { useUserMediaStore } from "@/store/user-media-store";
 import type { EventDetail } from "@/types/event";
-import { type MockPhoto } from "./mock-photos";
+import { type MockPhoto } from "@/types/photo";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
 import { SaveButton } from "@/components/events/save-button";
 import {
@@ -385,8 +385,8 @@ function BrowseMode({
   // Photos are already server-filtered by bib (Q-011) or face (Q-005/006).
   const visible = photos;
 
-  // Q-002: live WebSocket prepend for live-state events. Hook is a no-op when
-  // BACKEND_LIVE=false or event is not live (gated inside).
+  // Q-002: live WebSocket prepend for live-state events. Hook is a no-op
+  // when the event is not in the live state (gated inside).
   const liveState = deriveEventState(event.date);
   const live = useEventLivePhotos({
     slug: event.slug,

@@ -1,12 +1,9 @@
 import { create } from "zustand";
 import {
-  ADMIN_PAYOUT_REPORTS,
   PAYOUT_REPORT_REASON_LABEL,
   type PayoutReport,
   type PayoutReportReason,
 } from "@/lib/admin-payout-reports";
-import { usePhotographerMessageStore } from "@/store/photographer-message-store";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   acknowledgePayoutReport as apiAcknowledgeReport,
   resolvePayoutReport as apiResolveReport,
@@ -25,7 +22,6 @@ import {
 // photographer already saw the report submission.
 
 function fireBackendReportAction(label: string, p: Promise<unknown>): void {
-  if (!BACKEND_LIVE) return;
   void p.catch((err) => {
     console.error(`[admin/reports] ${label} backend call failed`, err);
   });
@@ -75,24 +71,8 @@ function appendLog(
   return [entry, ...prev].slice(0, 50);
 }
 
-// Look up enough metadata to fill the inbox-message body when admin acts on
-// a report. We call useAdminPayoutReportStore.getState() ourselves rather
-// than passing the full report through the action — keeps the API ergonomic
-// (admin UI passes id + reply text only).
-function findReport(
-  submissions: ReadonlyArray<PayoutReport>,
-  overrides: Record<string, Partial<PayoutReport>>,
-  id: string,
-): PayoutReport | undefined {
-  const submitted = submissions.find((r) => r.id === id);
-  if (submitted) return { ...submitted, ...overrides[id] };
-  const seed = ADMIN_PAYOUT_REPORTS.find((r) => r.id === id);
-  if (!seed) return undefined;
-  return { ...seed, ...overrides[id] };
-}
-
 export const useAdminPayoutReportStore = create<AdminPayoutReportStoreState>(
-  (set, get) => ({
+  (set) => ({
     submissions: [],
     overrides: {},
     log: [],
@@ -126,7 +106,6 @@ export const useAdminPayoutReportStore = create<AdminPayoutReportStoreState>(
     },
     acknowledge: (id, reply) => {
       const at = nowIso();
-      const report = findReport(get().submissions, get().overrides, id);
       set((s) => ({
         overrides: {
           ...s.overrides,
@@ -144,21 +123,11 @@ export const useAdminPayoutReportStore = create<AdminPayoutReportStoreState>(
           decidedAt: at,
         }),
       }));
-      if (report) {
-        usePhotographerMessageStore.getState().addMessage({
-          photographerId: report.photographerId,
-          kind: "report_acknowledged",
-          title: "Admin acknowledged your report",
-          body: reply,
-          payoutCycleId: report.payoutCycleId,
-          reportId: id,
-        });
-      }
+      // Backend writes photographer-message in the same TX (Q-A2 RESOLVED).
       fireBackendReportAction("acknowledge", apiAcknowledgeReport(id, reply));
     },
     resolve: (id, resolutionNote) => {
       const at = nowIso();
-      const report = findReport(get().submissions, get().overrides, id);
       set((s) => ({
         overrides: {
           ...s.overrides,
@@ -176,16 +145,7 @@ export const useAdminPayoutReportStore = create<AdminPayoutReportStoreState>(
           decidedAt: at,
         }),
       }));
-      if (report) {
-        usePhotographerMessageStore.getState().addMessage({
-          photographerId: report.photographerId,
-          kind: "report_resolved",
-          title: "Your report was resolved",
-          body: resolutionNote,
-          payoutCycleId: report.payoutCycleId,
-          reportId: id,
-        });
-      }
+      // Backend writes photographer-message in the same TX (Q-A2 RESOLVED).
       fireBackendReportAction(
         "resolve",
         apiResolveReport(id, resolutionNote),

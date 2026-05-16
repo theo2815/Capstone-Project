@@ -15,7 +15,6 @@ import {
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate, formatMonthYear } from "@/lib/format";
-import { useMockLatency } from "@/lib/mock-latency";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
@@ -74,9 +73,8 @@ function PayoutsSlab() {
   // Live mode prefers GET /me/photographer/payouts (Q-A1 + Q-E1); mock-mode
   // falls back to PHOTOGRAPHER_PAYOUTS seed.
   const livePayouts = usePhotographerPayouts();
-  const { data: payouts, isLoading } = useMockLatency(
-    livePayouts ?? PHOTOGRAPHER_PAYOUTS,
-  );
+  const payouts = livePayouts ?? PHOTOGRAPHER_PAYOUTS;
+  const isLoading = false;
   const { user } = useAuth();
   const photographer = resolveCurrentPhotographer(user);
   const submissions = useAdminPayoutReportStore((s) => s.submissions);
@@ -403,9 +401,8 @@ function TransactionsSlab() {
   // in the response envelope but the existing render derives them client-side
   // from the same items, so both paths agree.
   const liveTx = usePhotographerTransactions();
-  const { data: transactions, isLoading } = useMockLatency(
-    liveTx ? liveTx.items : PHOTOGRAPHER_TRANSACTIONS,
-  );
+  const transactions = liveTx ? liveTx.items : PHOTOGRAPHER_TRANSACTIONS;
+  const isLoading = false;
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.TRANSACTION_INITIAL);
 
   // Memos must run on every render — using `?? []` so the loading branch

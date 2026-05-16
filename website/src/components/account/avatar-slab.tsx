@@ -8,16 +8,12 @@ import { useUserMediaStore } from "@/store/user-media-store";
 import { useToast } from "@/hooks/use-toast";
 import { ApiError } from "@/lib/api";
 import { uploadAvatar, deleteAvatar } from "@/lib/api-avatar";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   ACCEPTED_IMAGE_MIME,
-  squareCropToDataUrl,
   validateImageFile,
 } from "@/lib/image-utils";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { FieldError } from "@/components/ui/field-error";
-
-const AVATAR_SIZE_PX = 512;
 
 export function AvatarSlab() {
   const { user } = useAuth();
@@ -30,10 +26,7 @@ export function AvatarSlab() {
 
   if (!user) return null;
 
-  // In live mode, the canonical avatar lives on `user.avatarUrl`. The store
-  // remains the mock-mode source-of-truth; the union here lets the "Replace /
-  // Remove" CTAs surface as soon as either source has an image.
-  const hasAvatar = BACKEND_LIVE ? !!user.avatarUrl : !!storeAvatar;
+  const hasAvatar = !!user.avatarUrl;
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -49,15 +42,9 @@ export function AvatarSlab() {
     setBusy(true);
     setError(null);
     try {
-      if (BACKEND_LIVE) {
-        const updated = await uploadAvatar(file);
-        setUser(updated);
-        // Drop any leftover mock-mode store avatar so the UI tracks user.avatarUrl.
-        if (storeAvatar) setAvatar(null);
-      } else {
-        const dataUrl = await squareCropToDataUrl(file, AVATAR_SIZE_PX);
-        setAvatar({ dataUrl, uploadedAt: new Date().toISOString() });
-      }
+      const updated = await uploadAvatar(file);
+      setUser(updated);
+      if (storeAvatar) setAvatar(null);
       showToast({ kind: "success", message: "Profile picture updated." });
     } catch (err) {
       if (err instanceof ApiError) {
@@ -72,21 +59,17 @@ export function AvatarSlab() {
 
   async function handleRemove() {
     setError(null);
-    if (BACKEND_LIVE) {
-      try {
-        const updated = await deleteAvatar();
-        setUser(updated);
-        if (storeAvatar) setAvatar(null);
-      } catch (err) {
-        setError(
-          err instanceof ApiError
-            ? (err.errors[0]?.message ?? "Could not remove the picture.")
-            : "Could not remove the picture. Try again.",
-        );
-        return;
-      }
-    } else {
-      setAvatar(null);
+    try {
+      const updated = await deleteAvatar();
+      setUser(updated);
+      if (storeAvatar) setAvatar(null);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? (err.errors[0]?.message ?? "Could not remove the picture.")
+          : "Could not remove the picture. Try again.",
+      );
+      return;
     }
     showToast({ kind: "success", message: "Profile picture removed." });
   }

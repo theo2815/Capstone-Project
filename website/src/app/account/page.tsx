@@ -17,7 +17,6 @@ import { useToast } from "@/hooks/use-toast";
 import { FieldError } from "@/components/ui/field-error";
 import { ApiError } from "@/lib/api";
 import { updateProfileName, changePassword } from "@/lib/api-account";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   NAME_MAX,
   PASSWORD_MIN,
@@ -122,13 +121,8 @@ function NameSlab({ user, number }: { user: User; number: string }) {
 
     setIsSaving(true);
     try {
-      if (BACKEND_LIVE) {
-        const updated = await updateProfileName(name.trim());
-        setUser(updated);
-      } else {
-        await new Promise((r) => setTimeout(r, 600));
-        setUser({ ...user, name: name.trim() });
-      }
+      const updated = await updateProfileName(name.trim());
+      setUser(updated);
       showToast({ kind: "success", message: "Name updated." });
     } catch (err) {
       if (err instanceof ApiError) {
@@ -270,11 +264,7 @@ function PasswordSlab({ number }: { number: string }) {
 
     setIsSaving(true);
     try {
-      if (BACKEND_LIVE) {
-        await changePassword({ currentPassword: current, newPassword: next });
-      } else {
-        await new Promise((r) => setTimeout(r, 600));
-      }
+      await changePassword({ currentPassword: current, newPassword: next });
       reset();
       showToast({ kind: "success", message: "Password updated." });
     } catch (err) {

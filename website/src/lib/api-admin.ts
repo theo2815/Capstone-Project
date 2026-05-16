@@ -1,20 +1,16 @@
 import { api } from "@/lib/api";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
-import { ADMIN_USER_SEED, type AdminUserRow } from "@/lib/admin-user-registry";
-import {
-  ADMIN_DISPUTES,
-  type Dispute,
-  type DisputeResolution,
+import type { AdminUserRow } from "@/lib/admin-user-registry";
+import type {
+  Dispute,
+  DisputeResolution,
 } from "@/lib/admin-disputes";
-import {
-  ADMIN_PAYOUT_SEED,
-  type AdminPayoutCycle,
-  type AdminPayoutStatus,
+import type {
+  AdminPayoutCycle,
+  AdminPayoutStatus,
 } from "@/lib/admin-payouts";
-import {
-  ADMIN_PAYOUT_REPORTS,
-  type PayoutReport,
-  type PayoutReportStatus,
+import type {
+  PayoutReport,
+  PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
 import type { ListEvent } from "@/app/events/events-browser";
 import type { DecisionLogEntry } from "@/store/admin-user-store";
@@ -77,15 +73,13 @@ export interface AdminTrendPoint {
   payouts: number;
 }
 
-export async function fetchAdminKpis(): Promise<AdminKpis | null> {
-  if (!BACKEND_LIVE) return null;
+export async function fetchAdminKpis(): Promise<AdminKpis> {
   return api.get<AdminKpis>("/admin/kpis");
 }
 
 export async function fetchAdminKpiTrend(
   days: number = 30,
-): Promise<AdminTrendPoint[] | null> {
-  if (!BACKEND_LIVE) return null;
+): Promise<AdminTrendPoint[]> {
   return api.get<AdminTrendPoint[]>(`/admin/kpis/trend?days=${days}`);
 }
 
@@ -122,26 +116,18 @@ function buildUsersQs(args: AdminUserListArgs): string {
 export async function fetchAdminUsers(
   args: AdminUserListArgs = {},
 ): Promise<AdminUserRow[]> {
-  if (BACKEND_LIVE) {
-    const res = await api.get<PaginatedResponse<AdminUserRow>>(
-      `/admin/users?${buildUsersQs(args)}`,
-    );
-    return res.items;
-  }
-  return ADMIN_USER_SEED.slice();
+  const res = await api.get<PaginatedResponse<AdminUserRow>>(
+    `/admin/users?${buildUsersQs(args)}`,
+  );
+  return res.items;
 }
 
 export async function fetchAdminUserDetail(
   userId: string,
 ): Promise<AdminUserDetail | null> {
-  if (BACKEND_LIVE) {
-    return api.get<AdminUserDetail>(
-      `/admin/users/${encodeURIComponent(userId)}`,
-    );
-  }
-  const row = ADMIN_USER_SEED.find((u) => u.userId === userId);
-  if (!row) return null;
-  return { ...row, decisionLog: [] };
+  return api.get<AdminUserDetail>(
+    `/admin/users/${encodeURIComponent(userId)}`,
+  );
 }
 
 export async function approveUser(userId: string): Promise<AdminUserRow> {
@@ -226,13 +212,10 @@ function buildDisputesQs(args: AdminDisputeListArgs): string {
 export async function fetchAdminDisputes(
   args: AdminDisputeListArgs = {},
 ): Promise<Dispute[]> {
-  if (BACKEND_LIVE) {
-    const res = await api.get<PaginatedResponse<Dispute>>(
-      `/admin/disputes?${buildDisputesQs(args)}`,
-    );
-    return res.items;
-  }
-  return ADMIN_DISPUTES.slice();
+  const res = await api.get<PaginatedResponse<Dispute>>(
+    `/admin/disputes?${buildDisputesQs(args)}`,
+  );
+  return res.items;
 }
 
 export interface ResolveDisputeArgs {
@@ -292,13 +275,10 @@ function buildPayoutsQs(args: AdminPayoutListArgs): string {
 export async function fetchAdminPayouts(
   args: AdminPayoutListArgs = {},
 ): Promise<AdminPayoutCycle[]> {
-  if (BACKEND_LIVE) {
-    const res = await api.get<PaginatedResponse<AdminPayoutCycle>>(
-      `/admin/payouts?${buildPayoutsQs(args)}`,
-    );
-    return res.items;
-  }
-  return ADMIN_PAYOUT_SEED.slice();
+  const res = await api.get<PaginatedResponse<AdminPayoutCycle>>(
+    `/admin/payouts?${buildPayoutsQs(args)}`,
+  );
+  return res.items;
 }
 
 export async function approvePayout(
@@ -365,17 +345,14 @@ export interface AdminPayoutReportListArgs {
 export async function fetchAdminPayoutReports(
   args: AdminPayoutReportListArgs = {},
 ): Promise<PayoutReport[]> {
-  if (BACKEND_LIVE) {
-    const p = new URLSearchParams();
-    if (args.status) p.set("status", args.status);
-    p.set("offset", String(args.offset ?? 0));
-    p.set("limit", String(args.limit ?? 50));
-    const res = await api.get<PaginatedResponse<PayoutReport>>(
-      `/admin/payouts/reports?${p.toString()}`,
-    );
-    return res.items;
-  }
-  return ADMIN_PAYOUT_REPORTS.slice();
+  const p = new URLSearchParams();
+  if (args.status) p.set("status", args.status);
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? 50));
+  const res = await api.get<PaginatedResponse<PayoutReport>>(
+    `/admin/payouts/reports?${p.toString()}`,
+  );
+  return res.items;
 }
 
 export async function acknowledgePayoutReport(
@@ -409,7 +386,6 @@ export interface AdminEventListArgs {
 export async function fetchAdminEvents(
   args: AdminEventListArgs = {},
 ): Promise<ListEvent[]> {
-  if (!BACKEND_LIVE) return [];
   const p = new URLSearchParams();
   if (args.state) p.set("state", args.state);
   p.set("offset", String(args.offset ?? 0));
@@ -472,8 +448,7 @@ export interface AdminSalesKpis {
 
 export async function fetchAdminSalesKpis(
   range: AdminSalesRange = "ytd",
-): Promise<AdminSalesKpis | null> {
-  if (!BACKEND_LIVE) return null;
+): Promise<AdminSalesKpis> {
   return api.get<AdminSalesKpis>(`/admin/sales/kpis?range=${range}`);
 }
 
@@ -499,8 +474,7 @@ export interface AdminSalesByEventArgs {
 
 export async function fetchAdminSalesByEvent(
   args: AdminSalesByEventArgs = {},
-): Promise<AdminSalesEventRow[] | null> {
-  if (!BACKEND_LIVE) return null;
+): Promise<AdminSalesEventRow[]> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? 50));

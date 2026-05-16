@@ -5,7 +5,7 @@ import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
 import { cn } from "@/lib/utils";
 import type { EventDetail } from "@/types/event";
-import type { MockPhoto } from "@/app/events/[slug]/mock-photos";
+import type { MockPhoto } from "@/types/photo";
 
 const TONE_COLORS = [
   "var(--ink)",

@@ -1,11 +1,6 @@
 import { api } from "@/lib/api";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
-import {
-  generatePhotographerPhotos,
-  getPhotographerByHandle,
-  type PhotographerProfile,
-} from "@/lib/photographer-registry";
-import type { MockPhoto } from "@/app/events/[slug]/mock-photos";
+import type { PhotographerProfile } from "@/lib/photographer-registry";
+import type { MockPhoto } from "@/types/photo";
 import type { EventDetail } from "@/types/event";
 import type { PaginatedResponse } from "@/types/api";
 
@@ -23,12 +18,9 @@ import type { PaginatedResponse } from "@/types/api";
 export async function fetchPublicPhotographer(
   handle: string,
 ): Promise<PhotographerProfile | null> {
-  if (BACKEND_LIVE) {
-    return api.get<PhotographerProfile>(
-      `/public/photographers/${encodeURIComponent(handle)}`,
-    );
-  }
-  return getPhotographerByHandle(handle);
+  return api.get<PhotographerProfile>(
+    `/public/photographers/${encodeURIComponent(handle)}`,
+  );
 }
 
 export interface PublicPhotographerPhotosArgs {
@@ -39,18 +31,15 @@ export interface PublicPhotographerPhotosArgs {
 export async function fetchPublicPhotographerEventPhotos(
   handle: string,
   eventSlug: string,
-  event: EventDetail,
-  expectedCount: number,
+  _event: EventDetail,
+  _expectedCount: number,
   args: PublicPhotographerPhotosArgs = {},
 ): Promise<MockPhoto[]> {
-  if (BACKEND_LIVE) {
-    const p = new URLSearchParams();
-    p.set("offset", String(args.offset ?? 0));
-    p.set("limit", String(args.limit ?? 24));
-    const res = await api.get<PaginatedResponse<MockPhoto>>(
-      `/public/photographers/${encodeURIComponent(handle)}/events/${encodeURIComponent(eventSlug)}/photos?${p.toString()}`,
-    );
-    return res.items;
-  }
-  return generatePhotographerPhotos(handle, event, expectedCount);
+  const p = new URLSearchParams();
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? 24));
+  const res = await api.get<PaginatedResponse<MockPhoto>>(
+    `/public/photographers/${encodeURIComponent(handle)}/events/${encodeURIComponent(eventSlug)}/photos?${p.toString()}`,
+  );
+  return res.items;
 }

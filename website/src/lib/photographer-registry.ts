@@ -10,7 +10,7 @@
 
 import type { EventState } from "@/lib/photographer-mock";
 import type { BrandColor } from "@/store/photographer-settings-store";
-import type { MockPhoto } from "@/app/events/[slug]/mock-photos";
+import type { MockPhoto } from "@/types/photo";
 import type { EventDetail } from "@/types/event";
 
 export type CoverSource =
@@ -40,74 +40,7 @@ export interface PhotographerProfile {
   events: ReadonlyArray<PhotographerEventCoverage>;
 }
 
-export const PHOTOGRAPHER_REGISTRY: ReadonlyArray<PhotographerProfile> = [
-  {
-    handle: "paksitphotos",
-    displayName: "Paksit Photos",
-    brandColor: "amber",
-    bio: "Cebu-based race photographer. Bridge climbs, finish-line tape, golden-hour bib portraits. Shooting since 2019.",
-    city: "Cebu City",
-    memberSince: "2024-06-12",
-    cover: { kind: "gradient", from: "#D97706", to: "#7C2D12" },
-    watermarkLabel: "PAKSIT",
-    events: [
-      {
-        eventSlug: "cebu-marathon-2026",
-        state: "live",
-        photoCount: 412,
-        salesCount: 28,
-      },
-      {
-        eventSlug: "srp-half-marathon-2026",
-        state: "open",
-        photoCount: 285,
-        salesCount: 12,
-      },
-      {
-        eventSlug: "mactan-coastal-5k-2026",
-        state: "open",
-        photoCount: 198,
-        salesCount: 9,
-      },
-      {
-        eventSlug: "cebu-night-run-2025",
-        state: "past",
-        photoCount: 1120,
-        salesCount: 47,
-      },
-    ],
-  },
-  {
-    handle: "cebustride",
-    displayName: "Cebu Stride Co.",
-    brandColor: "indigo",
-    bio: "Two-photographer team covering Cebu road races since 2022. Action-first, candid, no posed shots.",
-    city: "Mandaue",
-    memberSince: "2025-01-08",
-    cover: { kind: "gradient", from: "#4F46E5", to: "#1E1B4B" },
-    watermarkLabel: "CSC",
-    events: [
-      {
-        eventSlug: "mactan-sunset-run-2026",
-        state: "open",
-        photoCount: 280,
-        salesCount: 18,
-      },
-      {
-        eventSlug: "sun-run-cebu-2026",
-        state: "past",
-        photoCount: 845,
-        salesCount: 32,
-      },
-      {
-        eventSlug: "talisay-10k-2025",
-        state: "past",
-        photoCount: 612,
-        salesCount: 21,
-      },
-    ],
-  },
-];
+export const PHOTOGRAPHER_REGISTRY: ReadonlyArray<PhotographerProfile> = [];
 
 const REGISTRY_BY_HANDLE: Record<string, PhotographerProfile> =
   Object.fromEntries(PHOTOGRAPHER_REGISTRY.map((p) => [p.handle, p]));

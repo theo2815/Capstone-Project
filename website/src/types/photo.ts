@@ -8,6 +8,18 @@ export interface Photo {
   photographerName: string;
 }
 
+export interface MockPhoto {
+  id: string;
+  bib: string | null;
+  km: number | null;
+  time: string;
+  tone: number;
+  span: "default" | "wide";
+  price: number;
+  imageUrl?: string | null;
+  alt?: string;
+}
+
 export interface PhotoTag {
   type: "FACE" | "BIB";
   value: string;

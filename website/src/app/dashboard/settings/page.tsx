@@ -20,7 +20,6 @@ import { useConfirmation } from "@/hooks/use-confirmation";
 import { useDebouncedSave } from "@/hooks/use-debounced-save";
 import { useToast } from "@/hooks/use-toast";
 import { uploadAvatar } from "@/lib/api-avatar";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   postCover,
   postWatermark,
@@ -97,11 +96,10 @@ const REGION_GROUP_ORDER: ReadonlyArray<RegionGroup> = [
 // just imperfect crops.
 const COVER_MIN_ASPECT = 1.4;
 
-// Fire-and-forget for live-mode photographer-settings API calls. Local store
-// updates apply immediately for UI snap; API call runs in the background. On
+// Fire-and-forget for photographer-settings API calls. Local store updates
+// apply immediately for UI snap; API call runs in the background. On
 // failure we log to console — backend is source of truth on next refresh.
 function fireSettings(label: string, p: Promise<unknown>): void {
-  if (!BACKEND_LIVE) return;
   void p.catch((err) => {
     console.error(`[photographer/settings] ${label} backend call failed`, err);
   });

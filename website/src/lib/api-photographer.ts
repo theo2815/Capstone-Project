@@ -1,13 +1,9 @@
 import { api } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import { API_BASE_URL } from "@/lib/constants";
-import {
-  PHOTOGRAPHER_EVENTS,
-  generatePhotographerLibrary,
-  getPhotographerEventById,
-  type PhotographerEventSummary,
-  type PhotographerLibraryPhoto,
+import type {
+  PhotographerEventSummary,
+  PhotographerLibraryPhoto,
 } from "@/lib/photographer-mock";
 import type { PaginatedResponse } from "@/types/api";
 
@@ -57,35 +53,22 @@ export interface PhotographerEventListArgs {
 export async function fetchPhotographerEvents(
   args: PhotographerEventListArgs = {},
 ): Promise<PhotographerEventSummary[]> {
-  if (BACKEND_LIVE) {
-    const p = new URLSearchParams();
-    if (args.withUploads) p.set("withUploads", "true");
-    p.set("offset", String(args.offset ?? 0));
-    p.set("limit", String(args.limit ?? 24));
-    const res = await api.get<PaginatedResponse<PhotographerEventSummary>>(
-      `/me/photographer/events?${p.toString()}`,
-    );
-    return res.items;
-  }
-  // Mock fallback — covered-events filter is the headline use case.
-  const seed = PHOTOGRAPHER_EVENTS.slice();
-  if (args.withUploads) {
-    return seed.filter((e) => e.photoCount > 0);
-  }
-  return seed;
+  const p = new URLSearchParams();
+  if (args.withUploads) p.set("withUploads", "true");
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? 24));
+  const res = await api.get<PaginatedResponse<PhotographerEventSummary>>(
+    `/me/photographer/events?${p.toString()}`,
+  );
+  return res.items;
 }
 
 export async function fetchPhotographerEventDetail(
   eventId: string,
 ): Promise<PhotographerEventDetail | null> {
-  if (BACKEND_LIVE) {
-    return api.get<PhotographerEventDetail>(
-      `/me/photographer/events/${encodeURIComponent(eventId)}`,
-    );
-  }
-  const summary = getPhotographerEventById(eventId);
-  if (!summary) return null;
-  return { ...summary, firstUploadAt: null, lastUploadAt: null };
+  return api.get<PhotographerEventDetail>(
+    `/me/photographer/events/${encodeURIComponent(eventId)}`,
+  );
 }
 
 export interface PhotographerEventPhotosArgs {
@@ -98,19 +81,14 @@ export async function fetchPhotographerEventPhotos(
   eventId: string,
   args: PhotographerEventPhotosArgs = {},
 ): Promise<PhotographerLibraryPhoto[]> {
-  if (BACKEND_LIVE) {
-    const p = new URLSearchParams();
-    p.set("offset", String(args.offset ?? 0));
-    p.set("limit", String(args.limit ?? 120));
-    if (args.order) p.set("order", args.order);
-    const res = await api.get<PaginatedResponse<PhotographerLibraryPhoto>>(
-      `/me/photographer/events/${encodeURIComponent(eventId)}/photos?${p.toString()}`,
-    );
-    return res.items;
-  }
-  const summary = getPhotographerEventById(eventId);
-  if (!summary) return [];
-  return generatePhotographerLibrary(summary);
+  const p = new URLSearchParams();
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? 120));
+  if (args.order) p.set("order", args.order);
+  const res = await api.get<PaginatedResponse<PhotographerLibraryPhoto>>(
+    `/me/photographer/events/${encodeURIComponent(eventId)}/photos?${p.toString()}`,
+  );
+  return res.items;
 }
 
 export interface PhotographerDownloadResponse {
@@ -121,7 +99,6 @@ export interface PhotographerDownloadResponse {
 export async function fetchPhotographerPhotoDownload(
   photoId: string,
 ): Promise<PhotographerDownloadResponse | null> {
-  if (!BACKEND_LIVE) return null;
   return api.get<PhotographerDownloadResponse>(
     `/me/photographer/photos/${encodeURIComponent(photoId)}/download`,
   );
@@ -141,11 +118,6 @@ export function uploadPhotographerPhoto(
   onProgress?: (event: UploadProgressEvent) => void,
 ): Promise<UploadedPhoto> {
   return new Promise((resolve, reject) => {
-    if (!BACKEND_LIVE) {
-      reject(new Error("BACKEND_LIVE=false — caller drives mock upload"));
-      return;
-    }
-
     const xhr = new XMLHttpRequest();
     const url = `${API_BASE_URL}/me/photographer/events/${encodeURIComponent(eventId)}/photos`;
     const token = getAccessToken();

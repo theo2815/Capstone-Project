@@ -4,7 +4,6 @@ import { useState, type ChangeEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   SELFIE_MAX,
-  useUserMediaStore,
   type SelfieRef,
 } from "@/store/user-media-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
@@ -15,20 +14,13 @@ import {
   deleteSelfie,
   setPrimarySelfie,
 } from "@/lib/api-selfies";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   ACCEPTED_IMAGE_MIME,
-  fitToDataUrl,
   validateImageFile,
 } from "@/lib/image-utils";
 
-const SELFIE_LONG_EDGE_PX = 1024;
-
 export function SelfieLibrary() {
   const { selfies } = useSelfiesList();
-  const addSelfieMock = useUserMediaStore((s) => s.addSelfie);
-  const removeSelfieMock = useUserMediaStore((s) => s.removeSelfie);
-  const setPrimaryMock = useUserMediaStore((s) => s.setPrimary);
   const queryClient = useQueryClient();
   const { showToast } = useToast();
 
@@ -72,44 +64,29 @@ export function SelfieLibrary() {
           continue;
         }
 
-        if (BACKEND_LIVE) {
-          try {
-            await uploadSelfie(file);
-            addedCount++;
-          } catch (err) {
-            if (err instanceof ApiError) {
-              const code = err.errors[0]?.code;
-              if (code === "SELFIE_LIMIT_REACHED") {
-                capHit = true;
-                break;
-              }
-              if (!firstSkipReason) {
-                firstSkipReason = `${file.name}: ${err.errors[0]?.message ?? "Selfie rejected."}`;
-              }
-              continue;
+        try {
+          await uploadSelfie(file);
+          addedCount++;
+        } catch (err) {
+          if (err instanceof ApiError) {
+            const code = err.errors[0]?.code;
+            if (code === "SELFIE_LIMIT_REACHED") {
+              capHit = true;
+              break;
             }
             if (!firstSkipReason) {
-              firstSkipReason = `${file.name}: Could not upload.`;
+              firstSkipReason = `${file.name}: ${err.errors[0]?.message ?? "Selfie rejected."}`;
             }
+            continue;
           }
-        } else {
-          const dataUrl = await fitToDataUrl(file, SELFIE_LONG_EDGE_PX);
-          addSelfieMock({
-            id: crypto.randomUUID(),
-            dataUrl,
-            uploadedAt: new Date().toISOString(),
-            isPrimary: false,
-            qualityScore: 0.92,
-          });
-          addedCount++;
+          if (!firstSkipReason) {
+            firstSkipReason = `${file.name}: Could not upload.`;
+          }
         }
       }
 
-      if (BACKEND_LIVE && addedCount > 0) {
-        invalidateSelfieDependents();
-      }
-
       if (addedCount > 0) {
+        invalidateSelfieDependents();
         showToast({
           kind: "success",
           message:
@@ -136,39 +113,31 @@ export function SelfieLibrary() {
   }
 
   async function handleRemove(id: string) {
-    if (BACKEND_LIVE) {
-      try {
-        await deleteSelfie(id);
-        invalidateSelfieDependents();
-      } catch (err) {
-        setError(
-          err instanceof ApiError
-            ? (err.errors[0]?.message ?? "Could not remove the selfie.")
-            : "Could not remove the selfie.",
-        );
-        return;
-      }
-    } else {
-      removeSelfieMock(id);
+    try {
+      await deleteSelfie(id);
+      invalidateSelfieDependents();
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? (err.errors[0]?.message ?? "Could not remove the selfie.")
+          : "Could not remove the selfie.",
+      );
+      return;
     }
     showToast({ kind: "success", message: "Selfie removed." });
   }
 
   async function handleSetPrimary(id: string) {
-    if (BACKEND_LIVE) {
-      try {
-        await setPrimarySelfie(id);
-        invalidateSelfieDependents();
-      } catch (err) {
-        setError(
-          err instanceof ApiError
-            ? (err.errors[0]?.message ?? "Could not set primary.")
-            : "Could not set primary. Try again.",
-        );
-        return;
-      }
-    } else {
-      setPrimaryMock(id);
+    try {
+      await setPrimarySelfie(id);
+      invalidateSelfieDependents();
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? (err.errors[0]?.message ?? "Could not set primary.")
+          : "Could not set primary. Try again.",
+      );
+      return;
     }
     showToast({ kind: "success", message: "Set as primary selfie." });
   }
@@ -280,7 +249,7 @@ function SelfieTile({
 }) {
   return (
     <div className="group relative aspect-square rounded-2xl overflow-hidden bg-ink">
-      {/* eslint-disable-next-line @next/next/no-img-element -- selfie URLs (signed S3 in live, base64 in mock) outside Next image-domain config. */}
+      {/* eslint-disable-next-line @next/next/no-img-element -- selfie URLs are signed S3 outside Next image-domain config. */}
       <img
         src={selfie.dataUrl}
         alt=""

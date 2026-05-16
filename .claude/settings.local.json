@@ -137,7 +137,16 @@
       "Bash(./gradlew compileKotlin --quiet)",
       "Bash(./gradlew test *)",
       "Bash(./gradlew.bat compileKotlin -q)",
-      "Bash(echo \"exit=$?\")"
+      "Bash(echo \"exit=$?\")",
+      "Bash(netstat -ano)",
+      "Bash(findstr \":8080\")",
+      "Bash(./gradlew.bat bootRun)",
+      "PowerShell(cd 'C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\website'; Get-ChildItem -Path src/lib -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'mock|seed|registry' } | Select-Object Name)",
+      "Bash(taskkill //PID 21892 //F)",
+      "Bash(python3 -c \"import sys, json; d=json.load\\(sys.stdin\\); print\\('count:', len\\(d['data']['items']\\)\\); [print\\(' -', i['name'], i['date']\\) for i in d['data']['items']]\")",
+      "Bash(taskkill //PID 1284 //F)",
+      "Bash(tasklist)",
+      "Bash(taskkill //PID 28356 //F)"
     ]
   }
 }

@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import type { ListEvent } from "@/app/events/events-browser";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   createAdminEvent as apiCreateEvent,
   updateAdminEvent as apiUpdateEvent,
@@ -23,7 +22,6 @@ import {
 // `useAdminEventOverridesStore()` directly inside non-admin pages.
 
 function fireBackendEventAction(label: string, p: Promise<unknown>): void {
-  if (!BACKEND_LIVE) return;
   void p.catch((err) => {
     console.error(`[admin/events] ${label} backend call failed`, err);
   });

@@ -28,12 +28,10 @@ import { useToast } from "@/hooks/use-toast";
 import type { MockOrder } from "@/store/orders-store";
 import { formatLongDate } from "@/lib/format";
 import { formatPrice, cn } from "@/lib/utils";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import { submitOrderRefund } from "@/lib/api-orders";
 import { ApiError } from "@/lib/api";
 
 const NOTE_MAX = 500;
-const SUBMIT_LATENCY_MS = 600;
 const REASON_ORDER: ReadonlyArray<DisputeReason> = [
   "wrong_runner",
   "low_quality",
@@ -174,20 +172,15 @@ function RefundRequestModal({
     const trimmedNote = note.trim();
 
     try {
-      if (BACKEND_LIVE) {
-        // Live: server creates the canonical Dispute records + admin queue rows.
-        // FE still pushes locally so the runner sees pending status immediately;
-        // server-side hydration on hard refresh is a Phase F problem (Q-010).
-        await submitOrderRefund({
-          orderId: order.id,
-          photoIds,
-          reason,
-          note: trimmedNote,
-        });
-      } else {
-        // Mock-mode latency for parity with the live round-trip.
-        await new Promise((resolve) => setTimeout(resolve, SUBMIT_LATENCY_MS));
-      }
+      // Server creates the canonical Dispute records + admin queue rows.
+      // FE still pushes locally so the runner sees pending status immediately;
+      // server-side hydration on hard refresh is a Phase F problem (Q-010).
+      await submitOrderRefund({
+        orderId: order.id,
+        photoIds,
+        reason,
+        note: trimmedNote,
+      });
 
       for (const photoId of photoIds) {
         submitDispute({

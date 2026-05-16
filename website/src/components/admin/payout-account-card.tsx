@@ -1,10 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
 import { Kicker } from "@/components/ui/kicker";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { payoutMethodLabel, type AdminPayoutCycle } from "@/lib/admin-payouts";
-import { isMockQrUrl, mockQrSvgString } from "@/lib/mock-qr";
 import { formatPrice } from "@/lib/utils";
 
 // "TRANSFER TO" reference card — surfaces the photographer's payout account
@@ -76,31 +74,12 @@ interface PayoutQrBlockProps {
 function PayoutQrBlock({
   qr,
   accountName,
-  accountNumber,
-  method,
   cycleId,
 }: PayoutQrBlockProps) {
-  const isMock = isMockQrUrl(qr.dataUrl);
-  const payload = `${method}:${accountNumber}:${accountName}`;
-
-  // For mock placeholders, render the SVG inline. For real uploads (Phase F)
-  // the dataUrl is a data: URI — render as <img>.
-  const svgString = useMemo(
-    () => (isMock ? mockQrSvgString(payload, 6) : null),
-    [isMock, payload],
-  );
-
   function handleDownload() {
     const fileSafeName = accountName.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
-    const fileName = `qr-${cycleId}-${fileSafeName}`;
-    if (svgString) {
-      const blob = new Blob([svgString], { type: "image/svg+xml" });
-      const url = URL.createObjectURL(blob);
-      triggerDownload(url, `${fileName}.svg`);
-      setTimeout(() => URL.revokeObjectURL(url), 200);
-    } else {
-      triggerDownload(qr.dataUrl, `${fileName}.png`);
-    }
+    const fileName = `qr-${cycleId}-${fileSafeName}.png`;
+    triggerDownload(qr.dataUrl, fileName);
   }
 
   return (
@@ -110,22 +89,13 @@ function PayoutQrBlock({
       </Kicker>
       <div className="flex flex-col items-center gap-3">
         <div className="size-44 rounded-xl border border-line bg-bone p-2 flex items-center justify-center">
-          {svgString ? (
-            <div
-              className="size-full"
-              role="img"
-              aria-label={`Payment QR code for ${accountName}`}
-              dangerouslySetInnerHTML={{ __html: svgString }}
-            />
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element -- mock data URL
-            <img
-              src={qr.dataUrl}
-              alt={`Payment QR code for ${accountName}`}
-              className="size-full object-contain"
-              draggable={false}
-            />
-          )}
+          {/* eslint-disable-next-line @next/next/no-img-element -- signed S3 URL outside Next image-domain config. */}
+          <img
+            src={qr.dataUrl}
+            alt={`Payment QR code for ${accountName}`}
+            className="size-full object-contain"
+            draggable={false}
+          />
         </div>
         <button
           type="button"

@@ -13,7 +13,6 @@ import {
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
-import { useMockLatency } from "@/lib/mock-latency";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
   PHOTOGRAPHER_EARNINGS,
@@ -36,9 +35,8 @@ function LifetimeSlab() {
   // Live mode prefers GET /me/photographer/earnings (Q-017); mock-mode falls
   // back to PHOTOGRAPHER_EARNINGS seed.
   const liveEarnings = usePhotographerEarnings();
-  const { data: e, isLoading } = useMockLatency(
-    liveEarnings ?? PHOTOGRAPHER_EARNINGS,
-  );
+  const e = liveEarnings ?? PHOTOGRAPHER_EARNINGS;
+  const isLoading = false;
   const [cutModalOpen, setCutModalOpen] = useState(false);
 
   if (isLoading || !e) {
@@ -120,9 +118,8 @@ function LifetimeSlab() {
 
 function BreakdownSlab() {
   const liveEarnings = usePhotographerEarnings();
-  const { data: e, isLoading } = useMockLatency(
-    liveEarnings ?? PHOTOGRAPHER_EARNINGS,
-  );
+  const e = liveEarnings ?? PHOTOGRAPHER_EARNINGS;
+  const isLoading = false;
   if (isLoading || !e) {
     return (
       <Slab id="breakdown" number="02" title="Breakdown" caption="Current cycle">
@@ -221,9 +218,8 @@ function PerEventSlab() {
         revenueKept: row.revenueKept,
       }))
     : null;
-  const { data: rawEvents, isLoading } = useMockLatency(
-    liveAsSeed ?? PHOTOGRAPHER_EVENTS,
-  );
+  const rawEvents = liveAsSeed ?? PHOTOGRAPHER_EVENTS;
+  const isLoading = false;
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EARNINGS_INITIAL);
 
   if (isLoading || !rawEvents) {

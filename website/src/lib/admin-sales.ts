@@ -19,14 +19,11 @@ import {
   useAdminSalesByEventLive,
 } from "@/hooks/use-admin-data";
 
-// Admin sales — derivation hooks. Pure read-side. Sources in mock mode:
-//   - ADMIN_PAYOUT_SEED (via store overrides)  → cycle-level itemCount × PRICE
-//   - ADMIN_DISPUTES (via store overrides + submissions) → refund $
-//   - EVENT_CATALOG (via admin-event-overrides store) → events with sales
+// Admin sales — derivation hooks. Pure read-side.
 //
-// In live mode (NEXT_PUBLIC_BACKEND_LIVE=true), `useSalesKpis` and
-// `useSalesByEvent` prefer server data from `/admin/sales/*`; the derivation
-// stays as fallback when the server query is still pending.
+// `useSalesKpis` and `useSalesByEvent` prefer server data from
+// `/admin/sales/*`; local derivation from store overrides stays as a
+// fallback when the server query is still pending.
 //
 // Caveat: orders mock has no photographer attribution, so events are scored
 // via "implied GMV" = photoCount × PHOTO_PRICE_PHP. The page surfaces this

@@ -17,11 +17,9 @@ import {
 } from "@/hooks/use-photographer-data";
 import { useToast } from "@/hooks/use-toast";
 import { fetchPhotographerPhotoDownload } from "@/lib/api-photographer";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import { ROUTES } from "@/lib/constants";
 import { getEventById } from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
-import { useMockLatency } from "@/lib/mock-latency";
 import {
   PHOTOGRAPHER_EVENTS,
   generatePhotographerLibrary,
@@ -76,7 +74,8 @@ export default function FocusedSharePage() {
     }),
     [id, liveDetail],
   );
-  const { data, isLoading } = useMockLatency(resolved);
+  const data = resolved;
+  const isLoading = false;
 
   // Show skeleton while the (mock-latency-gated) lookup is in flight. Once
   // resolved with no event / no photographer / no uploads → 404.
@@ -402,31 +401,23 @@ function PhotoGrid({
     const photoId =
       openIndex !== null ? visibleSlice[openIndex]?.id : undefined;
     if (!photoId) return;
-    // Live mode: signed-URL fetch + programmatic <a download> click (Q-015,
-    // 5-min TTL). Mock mode shows the success toast without a real fetch.
-    if (BACKEND_LIVE) {
-      try {
-        const result = await fetchPhotographerPhotoDownload(photoId);
-        if (result?.url) {
-          const a = document.createElement("a");
-          a.href = result.url;
-          a.download = "";
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          showToast({ kind: "success", message: "Download started." });
-          return;
-        }
-      } catch (err) {
-        console.error("[photographer/download] failed", err);
-        showToast({ kind: "error", message: "Download failed. Try again." });
+    // Signed-URL fetch + programmatic <a download> click (Q-015, 5-min TTL).
+    try {
+      const result = await fetchPhotographerPhotoDownload(photoId);
+      if (result?.url) {
+        const a = document.createElement("a");
+        a.href = result.url;
+        a.download = "";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showToast({ kind: "success", message: "Download started." });
         return;
       }
+    } catch (err) {
+      console.error("[photographer/download] failed", err);
+      showToast({ kind: "error", message: "Download failed. Try again." });
     }
-    showToast({
-      kind: "success",
-      message: "Download started. (mock)",
-    });
   }, [openIndex, visibleSlice, showToast]);
 
   const openPhoto = openIndex !== null ? visibleSlice[openIndex] : null;

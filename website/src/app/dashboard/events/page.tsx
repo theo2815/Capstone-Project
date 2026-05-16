@@ -13,7 +13,6 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { TileSkeleton } from "@/components/ui/skeleton";
 import { usePhotographerEvents } from "@/hooks/use-photographer-data";
 import { getEventById } from "@/lib/event-catalog";
-import { useMockLatency } from "@/lib/mock-latency";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { PHOTOGRAPHER_EVENTS } from "@/lib/photographer-mock";
 
@@ -25,8 +24,8 @@ export default function DashboardEventsPage() {
   // Live mode prefers GET /me/photographer/events?withUploads=true (Q-014);
   // mock-mode falls back to the existing PHOTOGRAPHER_EVENTS seed.
   const liveEvents = usePhotographerEvents({ withUploads: true });
-  const seedFallback = liveEvents ?? PHOTOGRAPHER_EVENTS;
-  const { data: rawEvents, isLoading } = useMockLatency(seedFallback);
+  const rawEvents = liveEvents ?? PHOTOGRAPHER_EVENTS;
+  const isLoading = false;
 
   const covered = useMemo(
     () =>

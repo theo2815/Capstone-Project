@@ -1,13 +1,8 @@
 import { api } from "@/lib/api";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
-import {
-  PHOTOGRAPHER_EARNINGS,
-  PHOTOGRAPHER_EVENTS,
-  PHOTOGRAPHER_PAYOUTS,
-  PHOTOGRAPHER_TRANSACTIONS,
-  type PhotographerEarnings,
-  type PhotographerPayout,
-  type PhotographerTransaction,
+import type {
+  PhotographerEarnings,
+  PhotographerPayout,
+  PhotographerTransaction,
 } from "@/lib/photographer-mock";
 import type {
   PayoutReport,
@@ -34,7 +29,6 @@ import type { PaginatedResponse } from "@/types/api";
 export async function fetchPhotographerEarnings(): Promise<
   PhotographerEarnings | null
 > {
-  if (!BACKEND_LIVE) return PHOTOGRAPHER_EARNINGS;
   return api.get<PhotographerEarnings>("/me/photographer/earnings");
 }
 
@@ -55,23 +49,13 @@ export interface PerEventEarningsArgs {
 export async function fetchPerEventEarnings(
   args: PerEventEarningsArgs = {},
 ): Promise<PerEventEarning[]> {
-  if (BACKEND_LIVE) {
-    const p = new URLSearchParams();
-    p.set("offset", String(args.offset ?? 0));
-    p.set("limit", String(args.limit ?? 8));
-    const res = await api.get<PaginatedResponse<PerEventEarning>>(
-      `/me/photographer/earnings/per-event?${p.toString()}`,
-    );
-    return res.items;
-  }
-  return PHOTOGRAPHER_EVENTS.filter((e) => e.revenueKept > 0).map((e) => ({
-    eventId: e.id,
-    eventName: e.name,
-    eventDate: e.date,
-    photoCount: e.photoCount,
-    salesCount: e.salesCount,
-    revenueKept: e.revenueKept,
-  }));
+  const p = new URLSearchParams();
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? 8));
+  const res = await api.get<PaginatedResponse<PerEventEarning>>(
+    `/me/photographer/earnings/per-event?${p.toString()}`,
+  );
+  return res.items;
 }
 
 // ───────────────────────────────────────────── Payouts
@@ -79,16 +63,13 @@ export async function fetchPerEventEarnings(
 export async function fetchPhotographerPayouts(
   args: { offset?: number; limit?: number } = {},
 ): Promise<PhotographerPayout[]> {
-  if (BACKEND_LIVE) {
-    const p = new URLSearchParams();
-    p.set("offset", String(args.offset ?? 0));
-    p.set("limit", String(args.limit ?? 50));
-    const res = await api.get<PaginatedResponse<PhotographerPayout>>(
-      `/me/photographer/payouts?${p.toString()}`,
-    );
-    return res.items;
-  }
-  return PHOTOGRAPHER_PAYOUTS.slice();
+  const p = new URLSearchParams();
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? 50));
+  const res = await api.get<PaginatedResponse<PhotographerPayout>>(
+    `/me/photographer/payouts?${p.toString()}`,
+  );
+  return res.items;
 }
 
 export interface SubmitPayoutReportArgs {
@@ -114,7 +95,6 @@ export interface PhotographerPayoutReportsArgs {
 export async function fetchPhotographerPayoutReports(
   args: PhotographerPayoutReportsArgs = {},
 ): Promise<PayoutReport[] | null> {
-  if (!BACKEND_LIVE) return null;
   const p = new URLSearchParams();
   if (args.cycleId) p.set("cycleId", args.cycleId);
   if (args.status) p.set("status", args.status);
@@ -139,27 +119,10 @@ export async function fetchPhotographerTransactions(
   const offset = args.offset ?? 0;
   const limit = args.limit ?? 25;
 
-  if (BACKEND_LIVE) {
-    const p = new URLSearchParams();
-    p.set("offset", String(offset));
-    p.set("limit", String(limit));
-    return api.get<TransactionsResponse>(
-      `/me/photographer/billing/transactions?${p.toString()}`,
-    );
-  }
-
-  // Mock fallback — derive monthTotals client-side so callers get one shape.
-  const items = PHOTOGRAPHER_TRANSACTIONS.slice(offset, offset + limit);
-  const monthTotals: Record<string, number> = {};
-  for (const tx of PHOTOGRAPHER_TRANSACTIONS) {
-    const monthKey = tx.paidAt.slice(0, 7);
-    monthTotals[monthKey] = (monthTotals[monthKey] ?? 0) + tx.amountKept;
-  }
-  return {
-    items,
-    total: PHOTOGRAPHER_TRANSACTIONS.length,
-    offset,
-    limit,
-    monthTotals,
-  };
+  const p = new URLSearchParams();
+  p.set("offset", String(offset));
+  p.set("limit", String(limit));
+  return api.get<TransactionsResponse>(
+    `/me/photographer/billing/transactions?${p.toString()}`,
+  );
 }

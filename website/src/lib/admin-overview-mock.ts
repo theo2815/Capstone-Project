@@ -1,15 +1,9 @@
 import type { DecisionLogEntry } from "@/store/admin-user-store";
 
-// Mock daily-activity series for /admin Overview's 30-day trend chart.
-// TWO modes are exposed:
-//   - getDailyUploads30d()  → fully mocked, "platform health" framing
-//   - getDailyDecisionsSeed30d() → seed series for daily decisions; the live
-//     log from useAdminUserStore is merged in at render time so the chart
-//     reflects the admin's real actions.
-//
-// All series end on TODAY (caller's clock) and span 30 entries inclusive.
-// Backend will replace both with `GET /admin/metrics/daily?from=...&to=...`
-// in Phase F.
+// Daily-activity series for /admin Overview's 30-day trend chart.
+// Backend serves both via `/admin/kpis/trend?days=30`. These helpers return
+// zero-filled 30-entry skeletons that the live trend hook can overlay onto
+// until the queue-listing hooks finish wiring the live decision log path.
 
 export interface DailyMetric {
   date: string; // YYYY-MM-DD
@@ -36,61 +30,25 @@ function dayOffset(iso: string, n: number): string {
   return formatDate(d);
 }
 
-// Mulberry32 — deterministic seeded RNG so the mock series stays stable across
-// re-renders (otherwise the chart would re-shuffle every paint).
-function mulberry32(seed: number) {
-  let s = seed;
-  return () => {
-    s = (s + 0x6d2b79f5) | 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+function emptySeries(): DailyMetric[] {
+  const today = todayIso();
+  const out: DailyMetric[] = [];
+  for (let i = DAYS - 1; i >= 0; i--) {
+    out.push({ date: dayOffset(today, -i), amount: 0 });
+  }
+  return out;
 }
 
-// 30-day uploads series. Range 100–600. Weekend dip (Sat/Sun ~50% of weekday).
-// Slight upward trend over the window.
+// 30-day uploads series. Live data lives in the backend trend endpoint;
+// this returns a zero-filled skeleton until callers swap to the hook.
 export function getDailyUploads30d(): DailyMetric[] {
-  const today = todayIso();
-  const out: DailyMetric[] = [];
-  const rng = mulberry32(0x517a9b);
-  for (let i = DAYS - 1; i >= 0; i--) {
-    const iso = dayOffset(today, -i);
-    const d = new Date(iso + "T00:00:00");
-    const dow = d.getDay(); // 0 = Sun, 6 = Sat
-    const isWeekend = dow === 0 || dow === 6;
-    const base = 240 + (DAYS - i) * 4; // gentle uptrend
-    const noise = Math.floor(rng() * 220);
-    const amount = Math.max(
-      80,
-      Math.round((base + noise) * (isWeekend ? 0.55 : 1)),
-    );
-    out.push({ date: iso, amount });
-  }
-  return out;
+  return emptySeries();
 }
 
-// 30-day seed for decisions. Range 0–4. Today + last 6 days deliberately set
-// to 0 so live `log` entries fill them in; older days carry plausible historic
-// counts so the chart never reads as "empty platform".
+// 30-day seed for decisions. Live admin actions get merged in via
+// `mergeDecisionsWithLog` so the chart reflects the current session.
 export function getDailyDecisionsSeed30d(): DailyMetric[] {
-  const today = todayIso();
-  const out: DailyMetric[] = [];
-  const rng = mulberry32(0x91da42);
-  for (let i = DAYS - 1; i >= 0; i--) {
-    const iso = dayOffset(today, -i);
-    const isRecent = i < 7; // last 7 days (incl. today) reserved for live log
-    if (isRecent) {
-      out.push({ date: iso, amount: 0 });
-      continue;
-    }
-    // Older days: most days 0–2, occasional spike to 3–4.
-    const r = rng();
-    const amount = r < 0.45 ? 0 : r < 0.8 ? 1 + Math.floor(rng() * 2) : 3 + Math.floor(rng() * 2);
-    out.push({ date: iso, amount });
-  }
-  return out;
+  return emptySeries();
 }
 
 // Merge live decision log entries into a 30-day seed. Each entry that falls
@@ -114,7 +72,7 @@ export function mergeDecisionsWithLog(
   }));
 }
 
-// Sum helper — used by the chart caption ("47 decisions · last 30 days").
+// Sum helper — used by the chart caption.
 export function totalAmount(series: ReadonlyArray<DailyMetric>): number {
   return series.reduce((sum, d) => sum + d.amount, 0);
 }

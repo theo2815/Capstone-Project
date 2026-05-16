@@ -18,7 +18,7 @@ export interface PhotographerEarnings {
   thisMonth: number;
   payoutPending: number;
   /** Next scheduled payout date, ISO. */
-  payoutScheduledFor: string;
+  payoutScheduledFor: string | null;
   /** 12 weeks chronological (oldest first, newest last). */
   weeklySeries: ReadonlyArray<WeeklyRevenuePoint>;
   thisWeekSold: number;
@@ -56,99 +56,27 @@ export interface PhotographerEventSummary {
 }
 
 export const PHOTOGRAPHER_EARNINGS: PhotographerEarnings = {
-  lifetimeKept: 24850,
-  thisWeek: 4250,
-  thisMonth: 12400,
-  payoutPending: 3800,
-  payoutScheduledFor: "2026-05-08",
-  thisWeekSold: 12,
-  thisMonthSold: 48,
-  // Twelve weeks ramping into the current week — Cebu Marathon and SRP Half-
-  // Marathon push the last 4 weeks up significantly. Demo-flavored, not random.
-  weeklySeries: [
-    { weekOf: "2026-02-16", amount: 620 },
-    { weekOf: "2026-02-23", amount: 540 },
-    { weekOf: "2026-03-02", amount: 880 },
-    { weekOf: "2026-03-09", amount: 720 },
-    { weekOf: "2026-03-16", amount: 1100 },
-    { weekOf: "2026-03-23", amount: 940 },
-    { weekOf: "2026-03-30", amount: 1320 },
-    { weekOf: "2026-04-06", amount: 1180 },
-    { weekOf: "2026-04-13", amount: 2400 },
-    { weekOf: "2026-04-20", amount: 1980 },
-    { weekOf: "2026-04-27", amount: 3050 },
-    { weekOf: "2026-05-04", amount: 4250 },
-  ],
+  lifetimeKept: 0,
+  thisWeek: 0,
+  thisMonth: 0,
+  payoutPending: 0,
+  payoutScheduledFor: null,
+  thisWeekSold: 0,
+  thisMonthSold: 0,
+  weeklySeries: [],
 };
 
 export const PHOTOGRAPHER_PIPELINE: PhotographerPipeline = {
-  activeEventId: "1", // Cebu Marathon (matches EVENT_CATALOG)
-  uploaded: 847,
-  live: 847,
-  lastUploadDisplay: "12 sec ago",
-  lastSaleDisplay: "3 min ago",
+  activeEventId: null,
+  uploaded: 0,
+  live: 0,
+  lastUploadDisplay: null,
+  lastSaleDisplay: null,
 };
-
 // The photographer's covered events — a subset of EVENT_CATALOG (most events
 // in the catalog are organized by other photographers / organizers in real
 // data). Listed newest-first by date.
-export const PHOTOGRAPHER_EVENTS: ReadonlyArray<PhotographerEventSummary> = [
-  {
-    id: "u1",
-    slug: "cebu-bay-run-2026",
-    name: "Cebu Bay Run",
-    date: "2026-05-09",
-    location: "Mactan Channel Bridge",
-    state: "upcoming",
-    photoCount: 0,
-    salesCount: 0,
-    revenueKept: 0,
-  },
-  {
-    id: "1",
-    slug: "cebu-marathon-2026",
-    name: "Cebu Marathon 2026",
-    date: "2026-04-28",
-    location: "SRP Boulevard, Cebu City",
-    state: "live",
-    photoCount: 847,
-    salesCount: 12,
-    revenueKept: 960,
-  },
-  {
-    id: "3",
-    slug: "srp-half-marathon-2026",
-    name: "SRP Half-Marathon",
-    date: "2026-04-12",
-    location: "South Road Properties, Cebu",
-    state: "open",
-    photoCount: 612,
-    salesCount: 4,
-    revenueKept: 320,
-  },
-  {
-    id: "5",
-    slug: "mactan-coastal-5k-2026",
-    name: "Mactan Coastal 5K",
-    date: "2026-03-29",
-    location: "Mactan, Lapu-Lapu City",
-    state: "open",
-    photoCount: 480,
-    salesCount: 18,
-    revenueKept: 1440,
-  },
-  {
-    id: "6",
-    slug: "cebu-night-run-2025",
-    name: "Cebu City Night Run 2025",
-    date: "2025-12-14",
-    location: "Cebu Business Park",
-    state: "past",
-    photoCount: 1820,
-    salesCount: 64,
-    revenueKept: 5120,
-  },
-];
+export const PHOTOGRAPHER_EVENTS: ReadonlyArray<PhotographerEventSummary> = [];
 
 export function getPhotographerEventById(
   id: string,
@@ -294,161 +222,9 @@ export interface PhotographerTransaction {
 
 // Most recent first. 6 cycles total — 4 paid, 1 pending, 1 scheduled. Adds up
 // to ~₱24,850 lifetime when combined with seed earnings on the dashboard.
-export const PHOTOGRAPHER_PAYOUTS: ReadonlyArray<PhotographerPayout> = [
-  {
-    id: "PAY-2026W19-CEBUSTRIDE",
-    weekOf: "2026-05-04",
-    amount: 3800,
-    status: "scheduled",
-    settledAt: "2026-05-08T08:00:00.000Z",
-    method: "gcash",
-    reference: null,
-  },
-  {
-    id: "PAY-2026W18-CEBUSTRIDE",
-    weekOf: "2026-04-27",
-    amount: 3050,
-    status: "pending",
-    settledAt: "2026-05-01T08:00:00.000Z",
-    method: "gcash",
-    reference: null,
-  },
-  {
-    id: "PAY-2026W17-CEBUSTRIDE",
-    weekOf: "2026-04-20",
-    amount: 1980,
-    status: "paid",
-    settledAt: "2026-04-24T09:14:00.000Z",
-    method: "gcash",
-    reference: "GC-A1B2C3D4",
-  },
-  {
-    id: "PAY-2026W16-CEBUSTRIDE",
-    weekOf: "2026-04-13",
-    amount: 2400,
-    status: "paid",
-    settledAt: "2026-04-17T09:08:00.000Z",
-    method: "gcash",
-    reference: "GC-E5F6G7H8",
-  },
-  {
-    id: "PAY-2026W15-CEBUSTRIDE",
-    weekOf: "2026-04-06",
-    amount: 1180,
-    status: "paid",
-    settledAt: "2026-04-10T09:21:00.000Z",
-    method: "gcash",
-    reference: "GC-J9K0L1M2",
-  },
-  {
-    id: "PAY-2026W14-CEBUSTRIDE",
-    weekOf: "2026-03-30",
-    amount: 1320,
-    status: "paid",
-    settledAt: "2026-04-03T09:11:00.000Z",
-    method: "gcash",
-    reference: "GC-N3O4P5Q6",
-  },
-];
+export const PHOTOGRAPHER_PAYOUTS: ReadonlyArray<PhotographerPayout> = [];
 
 // Most recent first. Mix of buyers and events to populate the ledger
 // realistically. Total roughly matches this-week earnings (₱4,250 across 12
 // sales = avg ₱354/sale, but real spread varies).
-export const PHOTOGRAPHER_TRANSACTIONS: ReadonlyArray<PhotographerTransaction> = [
-  {
-    id: "TX-2026-1124",
-    paidAt: "2026-05-06T09:18:00.000Z",
-    eventId: "1",
-    photoId: "mock-cm-141",
-    buyer: "Aira S.",
-    amountKept: 80,
-  },
-  {
-    id: "TX-2026-1119",
-    paidAt: "2026-05-05T18:42:00.000Z",
-    eventId: "1",
-    photoId: "mock-cm-87",
-    buyer: "Mark P.",
-    amountKept: 80,
-  },
-  {
-    id: "TX-2026-1112",
-    paidAt: "2026-05-05T11:03:00.000Z",
-    eventId: "1",
-    photoId: "mock-cm-52",
-    buyer: "Joelle R.",
-    amountKept: 320, // bundle of 4
-  },
-  {
-    id: "TX-2026-1108",
-    paidAt: "2026-05-04T22:11:00.000Z",
-    eventId: "5",
-    photoId: "mock-mc-22",
-    buyer: "Karl V.",
-    amountKept: 80,
-  },
-  {
-    id: "TX-2026-1104",
-    paidAt: "2026-05-04T15:55:00.000Z",
-    eventId: "1",
-    photoId: "mock-cm-203",
-    buyer: "Hannah B.",
-    amountKept: 80,
-  },
-  {
-    id: "TX-2026-1098",
-    paidAt: "2026-05-03T20:17:00.000Z",
-    eventId: "5",
-    photoId: "mock-mc-89",
-    buyer: "Don V.",
-    amountKept: 80,
-  },
-  {
-    id: "TX-2026-1092",
-    paidAt: "2026-05-03T13:24:00.000Z",
-    eventId: "1",
-    photoId: "mock-cm-66",
-    buyer: "Trish L.",
-    amountKept: 240,
-  },
-  {
-    id: "TX-2026-1085",
-    paidAt: "2026-05-02T19:00:00.000Z",
-    eventId: "3",
-    photoId: "mock-srp-77",
-    buyer: "Ricky D.",
-    amountKept: 80,
-  },
-  {
-    id: "TX-2026-1077",
-    paidAt: "2026-05-02T10:48:00.000Z",
-    eventId: "5",
-    photoId: "mock-mc-44",
-    buyer: "Carla M.",
-    amountKept: 160,
-  },
-  {
-    id: "TX-2026-1069",
-    paidAt: "2026-05-01T17:32:00.000Z",
-    eventId: "1",
-    photoId: "mock-cm-19",
-    buyer: "Dennis O.",
-    amountKept: 80,
-  },
-  {
-    id: "TX-2026-1062",
-    paidAt: "2026-05-01T12:10:00.000Z",
-    eventId: "5",
-    photoId: "mock-mc-12",
-    buyer: "Patrice U.",
-    amountKept: 80,
-  },
-  {
-    id: "TX-2026-1054",
-    paidAt: "2026-04-30T21:44:00.000Z",
-    eventId: "1",
-    photoId: "mock-cm-8",
-    buyer: "Lindsay K.",
-    amountKept: 80,
-  },
-];
+export const PHOTOGRAPHER_TRANSACTIONS: ReadonlyArray<PhotographerTransaction> = [];

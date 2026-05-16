@@ -1,5 +1,4 @@
 import { api } from "@/lib/api";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import type {
   BrandColor,
   PayoutAccount,
@@ -57,7 +56,6 @@ export interface ApiRegion {
 }
 
 export async function fetchRegions(): Promise<ApiRegion[] | null> {
-  if (!BACKEND_LIVE) return null;
   return api.get<ApiRegion[]>("/regions");
 }
 
@@ -70,17 +68,14 @@ export interface BrandPatch {
 }
 
 export async function putBrand(patch: BrandPatch): Promise<void> {
-  if (!BACKEND_LIVE) return;
   await api.put<unknown>("/me/photographer/brand", patch);
 }
 
 export async function putHandle(handle: string): Promise<void> {
-  if (!BACKEND_LIVE) return;
   await api.put<unknown>("/me/photographer/handle", { handle });
 }
 
 export async function putRegion(region: PhotographerRegion): Promise<void> {
-  if (!BACKEND_LIVE) return;
   await api.put<unknown>("/me/photographer/region", region);
 }
 
@@ -101,22 +96,17 @@ async function postMultipart(
   return api.post<MediaUploadResponse>(path, fd);
 }
 
-export async function postCover(file: File): Promise<MediaUploadResponse | null> {
-  if (!BACKEND_LIVE) return null;
+export async function postCover(file: File): Promise<MediaUploadResponse> {
   return postMultipart("/me/photographer/cover", file);
 }
 
-export async function postWatermark(
-  file: File,
-): Promise<MediaUploadResponse | null> {
-  if (!BACKEND_LIVE) return null;
+export async function postWatermark(file: File): Promise<MediaUploadResponse> {
   return postMultipart("/me/photographer/watermark", file);
 }
 
 // ───────────────────────────────────────────── Socials CRUD
 
-export async function fetchSocials(): Promise<SocialLink[] | null> {
-  if (!BACKEND_LIVE) return null;
+export async function fetchSocials(): Promise<SocialLink[]> {
   return api.get<SocialLink[]>("/me/photographer/socials");
 }
 
@@ -138,14 +128,12 @@ export async function patchSocial(
 }
 
 export async function deleteSocial(id: string): Promise<void> {
-  if (!BACKEND_LIVE) return;
   await api.delete<unknown>(`/me/photographer/socials/${encodeURIComponent(id)}`);
 }
 
 // ───────────────────────────────────────────── Payouts CRUD + primary
 
-export async function fetchPayoutAccounts(): Promise<PayoutAccount[] | null> {
-  if (!BACKEND_LIVE) return null;
+export async function fetchPayoutAccounts(): Promise<PayoutAccount[]> {
   return api.get<PayoutAccount[]>("/me/photographer/payouts");
 }
 
@@ -177,7 +165,6 @@ export async function patchPayoutAccount(
 }
 
 export async function deletePayoutAccount(id: string): Promise<void> {
-  if (!BACKEND_LIVE) return;
   await api.delete<unknown>(`/me/photographer/payouts/${encodeURIComponent(id)}`);
 }
 
@@ -193,8 +180,7 @@ export async function patchPrimaryPayout(
 export async function postPayoutQr(
   id: string,
   file: File,
-): Promise<PayoutAccount | null> {
-  if (!BACKEND_LIVE) return null;
+): Promise<PayoutAccount> {
   const fd = new FormData();
   fd.append("file", file);
   return api.post<PayoutAccount>(
@@ -210,9 +196,6 @@ export interface VerificationSubmitResponse {
   missing?: string[];
 }
 
-export async function submitVerification(): Promise<
-  VerificationSubmitResponse | null
-> {
-  if (!BACKEND_LIVE) return null;
+export async function submitVerification(): Promise<VerificationSubmitResponse> {
   return api.post<VerificationSubmitResponse>("/me/photographer/verification");
 }

@@ -3,8 +3,6 @@ import {
   ADMIN_PAYOUT_SEED,
   type AdminPayoutCycle,
 } from "@/lib/admin-payouts";
-import { usePhotographerMessageStore } from "@/store/photographer-message-store";
-import { BACKEND_LIVE } from "@/lib/backend-flag";
 import {
   approvePayout as apiApprovePayout,
   holdPayout as apiHoldPayout,
@@ -30,7 +28,6 @@ import {
 // status flips on /dashboard/billing, not the inbox.
 
 function fireBackendPayoutAction(label: string, p: Promise<unknown>): void {
-  if (!BACKEND_LIVE) return;
   void p.catch((err) => {
     console.error(`[admin/payouts] ${label} backend call failed`, err);
   });
@@ -126,16 +123,8 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
         decidedAt: at,
       }),
     }));
-    const cycle = ADMIN_PAYOUT_SEED.find((p) => p.id === payoutId);
-    if (cycle) {
-      usePhotographerMessageStore.getState().addMessage({
-        photographerId: cycle.photographerId,
-        kind: "payout_held",
-        title: "Payout held — review pending",
-        body: reason,
-        payoutCycleId: payoutId,
-      });
-    }
+    // The photographer-message insert happens server-side in the same TX
+    // as the hold action (Q-A2 RESOLVED). Photographer sees it on next poll.
     fireBackendPayoutAction("hold", apiHoldPayout(payoutId, reason));
   },
   markPaid: (payoutId, reference) => {
@@ -218,18 +207,8 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
       }
       return { overrides, log: appendLog(s.log, entries) };
     });
-    const inbox = usePhotographerMessageStore.getState();
-    for (const id of payoutIds) {
-      const cycle = ADMIN_PAYOUT_SEED.find((p) => p.id === id);
-      if (!cycle) continue;
-      inbox.addMessage({
-        photographerId: cycle.photographerId,
-        kind: "payout_held",
-        title: "Payout held — review pending",
-        body: reason,
-        payoutCycleId: id,
-      });
-    }
+    // Backend writes photographer-message rows in the same TX as the bulk
+    // hold (Q-A2 RESOLVED).
     fireBackendPayoutAction(
       "bulkHold",
       apiBulkHoldPayouts(payoutIds, reason),
@@ -249,4 +228,15 @@ export function getEffectivePayouts(
   overrides: Record<string, Partial<AdminPayoutCycle>>,
 ): AdminPayoutCycle[] {
   return ADMIN_PAYOUT_SEED.map((p) => mergePayout(p, overrides[p.id]));
+}
+
+/**
+ * Merges live server data with local overrides for instant feedback after
+ * admin actions. Use this in components that call `useAdminPayouts()` directly.
+ */
+export function mergePayoutsWithOverrides(
+  serverData: ReadonlyArray<AdminPayoutCycle>,
+  overrides: Record<string, Partial<AdminPayoutCycle>>,
+): AdminPayoutCycle[] {
+  return serverData.map((p) => mergePayout(p, overrides[p.id]));
 }
