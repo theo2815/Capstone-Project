@@ -8,6 +8,7 @@ import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { useAdminUserStore } from "@/store/admin-user-store";
+import { useAdminUsersData } from "@/lib/admin-users-data";
 import {
   notifyVerificationApproved,
   notifyVerificationRejected,
@@ -26,7 +27,6 @@ import {
   usePhotographerSettingsStore,
 } from "@/store/photographer-settings-store";
 import {
-  ADMIN_USER_SEED,
   type AdminUserRow,
   type PhotographerSettingsSnapshot,
 } from "@/lib/admin-user-registry";
@@ -72,11 +72,9 @@ const SNAPSHOT_FIELDS: ReadonlyArray<{
 ];
 
 export function VerificationsQueue() {
-  // Subscribe to the stable underlying state. Selectors that return new
-  // arrays on each call (e.g. `s.getPendingPhotographers()`) break under
-  // React 19's useSyncExternalStore — every Object.is comparison fails,
-  // triggering an infinite re-render loop. Derive in useMemo instead.
-  const overrides = useAdminUserStore((s) => s.overrides);
+  // Server data + optimistic overrides/submissions merged in a single hook.
+  // The decision log + mutation actions still live in useAdminUserStore.
+  const { rows: effective, loading, error, refetch } = useAdminUsersData();
   const log = useAdminUserStore((s) => s.log);
   const approve = useAdminUserStore((s) => s.approve);
   const reject = useAdminUserStore((s) => s.reject);
@@ -86,15 +84,6 @@ export function VerificationsQueue() {
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const [drawerRejectOpen, setDrawerRejectOpen] = useState(false);
   const [rowId, setRowId] = useUrlState<string>("row", "");
-
-  const effective = useMemo<AdminUserRow[]>(
-    () =>
-      ADMIN_USER_SEED.map((row) => {
-        const patch = overrides[row.userId];
-        return patch ? { ...row, ...patch } : row;
-      }),
-    [overrides],
-  );
 
   const pending = useMemo(
     () =>
@@ -315,8 +304,32 @@ export function VerificationsQueue() {
       : {},
   });
 
+  // First-load indicator: only surface the spinner/error when we have no
+  // cached rows to show. After the initial fetch lands, the SWR-style cache
+  // keeps the queue visible while background revalidations run.
+  const showFirstLoad = loading && effective.length === 0;
+  const showError = !!error && effective.length === 0;
+
   return (
     <>
+      {(showFirstLoad || showError) && (
+        <div className="rounded-2xl border border-line bg-bone-deep/40 px-5 py-4 font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+          {showFirstLoad
+            ? "Loading admin queue…"
+            : (
+              <span className="inline-flex items-center gap-3">
+                <span>Couldn&apos;t load queue — {error}</span>
+                <button
+                  type="button"
+                  onClick={() => void refetch()}
+                  className="text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
+                >
+                  Retry
+                </button>
+              </span>
+            )}
+        </div>
+      )}
       <Slab
         id="open-queue"
         number="01"
@@ -529,21 +542,19 @@ export function VerificationsQueue() {
 // Pending count is also exported so headers (inbox / verifications) can
 // show "N waiting" without re-deriving from the store.
 export function usePendingVerificationsCount(): number {
-  const overrides = useAdminUserStore((s) => s.overrides);
+  const { rows } = useAdminUsersData();
   return useMemo(() => {
     let count = 0;
-    for (const row of ADMIN_USER_SEED) {
-      const patch = overrides[row.userId];
-      const effective = patch ? { ...row, ...patch } : row;
+    for (const row of rows) {
       if (
-        effective.role === "PHOTOGRAPHER" &&
-        effective.verificationStatus === "pending"
+        row.role === "PHOTOGRAPHER" &&
+        row.verificationStatus === "pending"
       ) {
         count += 1;
       }
     }
     return count;
-  }, [overrides]);
+  }, [rows]);
 }
 
 function PendingRow({

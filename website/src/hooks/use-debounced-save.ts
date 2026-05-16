@@ -64,29 +64,33 @@ export function useDebouncedSave<T>(
     }
   }, []);
 
-  const runSave = useCallback(async (value: T) => {
+  // Drain loop. Recursion + a conditional finally used to leave isSaving=true
+  // stuck-on when a coalesced save() landed between the try's queue-check and
+  // the finally's queue-check (the queued value would sit forever, never
+  // fired, because the running runSave had already exited). Now: loop until
+  // queue is empty, then always clear isSaving unconditionally.
+  const runSave = useCallback(async (initialValue: T) => {
     setIsSaving(true);
     setIsPending(false);
     setError(null);
-    try {
-      await saveFnRef.current(value);
+    let cur: T = initialValue;
+    while (true) {
+      try {
+        await saveFnRef.current(cur);
+      } catch (err) {
+        if (isMountedRef.current) {
+          setError(err instanceof Error ? err : new Error("Save failed."));
+        }
+        break;
+      }
       if (!isMountedRef.current) return;
-      // If a coalesced save was queued during this run, fire it once and reset.
       const queued = queuedValueRef.current;
       queuedValueRef.current = null;
-      if (queued) {
-        await runSave(queued.value);
-        return;
-      }
-    } catch (err) {
-      if (!isMountedRef.current) return;
-      setError(
-        err instanceof Error ? err : new Error("Save failed."),
-      );
-    } finally {
-      if (isMountedRef.current && queuedValueRef.current === null) {
-        setIsSaving(false);
-      }
+      if (!queued) break;
+      cur = queued.value;
+    }
+    if (isMountedRef.current) {
+      setIsSaving(false);
     }
   }, []);
 

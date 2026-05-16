@@ -150,7 +150,10 @@
       "PowerShell(Test-Path *)",
       "PowerShell(Set-Location \"C:\\\\Users\\\\Theo Cedric Chan\\\\documents\\\\Start up project\\\\capstone-project\\\\backend\"; .\\\\gradlew.bat compileKotlin --console=plain --quiet; if \\($?\\) { Write-Output \"compileKotlin OK\" } else { Write-Output \"compileKotlin FAILED \\(exit $LASTEXITCODE\\)\" })",
       "PowerShell($test = \"http://localhost:8080/storage/events/0fecea27-82d9-452e-94a3-df4d3dfbb0f6/cover/998e753c-b019-4af4-9ab8-408ef0418bd4.jpg\"; try { $resp = Invoke-WebRequest -Uri $test -UseBasicParsing -ErrorAction Stop; \"STATUS: $\\($resp.StatusCode\\)  BYTES: $\\($resp.RawContentLength\\)  CT: $\\($resp.Headers.'Content-Type'\\)\" } catch { \"ERROR: $\\($_.Exception.Message\\)`nSTATUS: $\\($_.Exception.Response.StatusCode.value__\\)\" })",
-      "PowerShell($enc = \"http://localhost:8080/storage/events%2Fcadac9a4-d5dd-40c5-8f0d-5c79b922e790%2Fcover%2Ff4f75aac-1286-4dd5-a86d-bab14d5834a4.jpg\"; try { $r = Invoke-WebRequest -Uri $enc -UseBasicParsing -ErrorAction Stop; \"ENC OK: $\\($r.StatusCode\\)\" } catch { \"ENC ERROR: $\\($_.Exception.Response.StatusCode.value__\\) $\\($_.Exception.Message\\)\" })"
+      "PowerShell($enc = \"http://localhost:8080/storage/events%2Fcadac9a4-d5dd-40c5-8f0d-5c79b922e790%2Fcover%2Ff4f75aac-1286-4dd5-a86d-bab14d5834a4.jpg\"; try { $r = Invoke-WebRequest -Uri $enc -UseBasicParsing -ErrorAction Stop; \"ENC OK: $\\($r.StatusCode\\)\" } catch { \"ENC ERROR: $\\($_.Exception.Response.StatusCode.value__\\) $\\($_.Exception.Message\\)\" })",
+      "Bash(xargs cat)",
+      "Bash(./gradlew compileKotlin)",
+      "Bash(./gradlew bootRun)"
     ]
   }
 }

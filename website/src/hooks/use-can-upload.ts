@@ -1,6 +1,7 @@
 "use client";
 
 import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
+import { useUserMediaStore } from "@/store/user-media-store";
 
 export type UploadGateState =
   | { kind: "ok" }
@@ -11,6 +12,7 @@ export type UploadGateState =
 // by upload pages to gate the form, and by the dashboard overview / event
 // pages to show the verification banner.
 export function useCanUpload(): UploadGateState {
+  const avatar = useUserMediaStore((s) => s.avatar);
   const cover = usePhotographerSettingsStore((s) => s.cover);
   const brandName = usePhotographerSettingsStore((s) => s.brandName);
   const watermark = usePhotographerSettingsStore((s) => s.watermark);
@@ -26,6 +28,8 @@ export function useCanUpload(): UploadGateState {
 
   // Incomplete state — surface which field is still missing so the banner
   // can name it. Order matches the Settings page slab order.
+  if (avatar === null)
+    return { kind: "incomplete", missingLabel: "profile picture" };
   if (cover === null) return { kind: "incomplete", missingLabel: "cover banner" };
   if (brandName.trim().length === 0)
     return { kind: "incomplete", missingLabel: "brand name" };

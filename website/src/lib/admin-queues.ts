@@ -1,8 +1,22 @@
-import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAdminDisputeStore, getEffectiveDisputes } from "@/store/admin-dispute-store";
 import { useAdminFlagStore, getEffectiveFlags } from "@/store/admin-flag-store";
 import { useAdminPayoutStore, getEffectivePayouts } from "@/store/admin-payout-store";
+import { getAdminUsersDataSnapshot } from "@/lib/admin-users-data";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
+
+function countPendingPhotographers(): number {
+  let count = 0;
+  for (const row of getAdminUsersDataSnapshot()) {
+    if (
+      row.role === "PHOTOGRAPHER" &&
+      row.verificationStatus === "pending" &&
+      row.suspendedAt === null
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
 
 // One-fresh-per-viewport rule: at most ONE rail row carries the breathing
 // fresh attention dot. Priority order:
@@ -52,8 +66,7 @@ export function getAdminAttentionTarget(): AdminAttentionTarget | null {
   // the new daily home for the verifications queue (Phase 1 admin redesign).
   // /admin/verifications still exists as a deep-link route but no longer
   // appears in the rail.
-  const pendingVerifications =
-    useAdminUserStore.getState().getPendingPhotographers().length;
+  const pendingVerifications = countPendingPhotographers();
   if (pendingVerifications > 0) {
     return {
       href: ROUTES.ADMIN_INBOX,
@@ -106,7 +119,7 @@ export function getAdminQueueCounts(): AdminQueueCounts {
   const payouts = getEffectivePayouts(payoutOverrides).filter(
     (p) => p.status === "pending_review",
   ).length;
-  const inbox = useAdminUserStore.getState().getPendingPhotographers().length;
+  const inbox = countPendingPhotographers();
 
   return {
     inbox,

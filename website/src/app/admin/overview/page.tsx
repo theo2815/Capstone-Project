@@ -6,6 +6,7 @@ import { AdminStatTile } from "@/components/admin/admin-stat-tile";
 import { AdminOverviewTrend } from "@/components/admin/admin-overview-trend";
 import { AdminDecisionsTimeline } from "@/components/admin/admin-decisions-timeline";
 import { useAdminUserStore } from "@/store/admin-user-store";
+import { useAdminUsersData } from "@/lib/admin-users-data";
 import {
   useAdminDisputeStore,
   getEffectiveDisputes,
@@ -19,10 +20,7 @@ import {
   getEffectivePayouts,
 } from "@/store/admin-payout-store";
 import { useEventCatalog } from "@/lib/event-catalog";
-import {
-  ADMIN_USER_SEED,
-  type AdminUserRow,
-} from "@/lib/admin-user-registry";
+import { type AdminUserRow } from "@/lib/admin-user-registry";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -37,22 +35,13 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 // trap.
 
 export default function AdminOverviewPage() {
-  const userOverrides = useAdminUserStore((s) => s.overrides);
+  const { rows: effective } = useAdminUsersData();
   const userLog = useAdminUserStore((s) => s.log);
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
   const flagOverrides = useAdminFlagStore((s) => s.overrides);
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
   const catalog = useEventCatalog();
-
-  const effective = useMemo<AdminUserRow[]>(
-    () =>
-      ADMIN_USER_SEED.map((row) => {
-        const patch = userOverrides[row.userId];
-        return patch ? { ...row, ...patch } : row;
-      }),
-    [userOverrides],
-  );
 
   const kpis = useMemo(() => {
     const photographers = effective.filter((u) => u.role === "PHOTOGRAPHER");

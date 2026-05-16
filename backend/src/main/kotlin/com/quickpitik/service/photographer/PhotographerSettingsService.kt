@@ -249,6 +249,33 @@ class PhotographerSettingsService(
         )
     }
 
+    // ─── Verification status read ─────────────────────────────────────────
+    // Read-only sibling of submitVerification. Used by the FE to poll for
+    // admin-side decisions (approve/reject) without re-attempting submit.
+    // Returns INCOMPLETE for photographers who haven't created a settings
+    // row yet — equivalent to "nothing filled in".
+    @Transactional(readOnly = true)
+    fun getVerificationStatus(userId: UUID): VerificationSubmitResponseDto {
+        val settings = photographerSettingsRepository.findById(userId).orElse(null)
+        val status = settings?.verificationStatus ?: VerificationStatus.INCOMPLETE
+        return VerificationSubmitResponseDto(status = status.toWire())
+    }
+
+    // ─── Verification withdraw ────────────────────────────────────────────
+    // Photographer-side rescind: lets a PENDING photographer pull their own
+    // submission off the admin queue without waiting for an admin decision.
+    // Flips status back to INCOMPLETE. No-op (idempotent) when status is
+    // already INCOMPLETE — calling withdraw twice doesn't error.
+    fun withdrawVerification(userId: UUID): VerificationSubmitResponseDto {
+        val settings = getOrCreate(userId)
+        if (settings.verificationStatus == VerificationStatus.PENDING ||
+            settings.verificationStatus == VerificationStatus.APPROVED) {
+            settings.verificationStatus = VerificationStatus.INCOMPLETE
+            photographerSettingsRepository.save(settings)
+        }
+        return VerificationSubmitResponseDto(status = settings.verificationStatus.toWire())
+    }
+
     // ─── Verification submit ──────────────────────────────────────────────
     // Returns 200 OK in both branches so the FE can read both `status` and
     // `missing` from the typed body. The plan called for 422 + missing[], but
@@ -275,17 +302,53 @@ class PhotographerSettingsService(
         return VerificationSubmitResponseDto(status = settings.verificationStatus.toWire())
     }
 
-    // Used by the controller to pre-build the missing list when an attempt
-    // fails so the 422 carries the structured `missing[]` array.
+    // P1-F1 — required-field check now matches the FE's useAllRequiredFilled
+    // set exactly: profile picture, cover banner, brand name, watermark,
+    // public handle, region, ≥1 social link, ≥1 payout account. Both the
+    // FE button gate and the BE submit gate enforce the same surface so a
+    // curl-side bypass can't push an under-filled photographer to PENDING.
+    //
+    // Order matches the FE list so toast copy reads top-to-bottom on the
+    // page. Labels are user-facing — the FE joins them into the toast text
+    // verbatim, so changes here update the photographer-facing message.
     @Transactional(readOnly = true)
     fun collectMissing(userId: UUID, settings: PhotographerSettings? = null): IncompleteFields {
         val s = settings ?: photographerSettingsRepository.findById(userId).orElse(null)
+        val user = userRepository.findById(userId).orElse(null)
         val missing = mutableListOf<String>()
+
+        // Avatar — User.avatar_s3_key OR avatar_url. Stored on the user row,
+        // not photographer_settings; the FE pulls it from useUserMediaStore
+        // which mirrors the same backing data.
+        if (user?.avatarS3Key.isNullOrBlank() && user?.avatarUrl.isNullOrBlank()) {
+            missing.add("profile picture")
+        }
+        // Cover banner — require an uploaded image, not just a gradient
+        // fallback (FE useAllRequiredFilled checks for CoverMedia, which
+        // only exists when an actual file was uploaded).
+        if (s?.coverS3Key.isNullOrBlank()) {
+            missing.add("cover banner")
+        }
+        if (s?.brandName.isNullOrBlank()) {
+            missing.add("brand name")
+        }
+        // Watermark — same as cover: require an uploaded image, not just a
+        // label placeholder.
+        if (s?.watermarkS3Key.isNullOrBlank()) {
+            missing.add("watermark")
+        }
+        if (s?.handle.isNullOrBlank()) {
+            missing.add("public handle")
+        }
         if (s == null || s.regionCode.isNullOrBlank() || s.provinceCode.isNullOrBlank()) {
             missing.add("region")
         }
-        if (socialLinkRepository.countByUserId(userId) == 0L) missing.add("socials")
-        if (payoutAccountRepository.countByUserId(userId) == 0L) missing.add("payouts")
+        if (socialLinkRepository.countByUserId(userId) == 0L) {
+            missing.add("social link")
+        }
+        if (payoutAccountRepository.countByUserId(userId) == 0L) {
+            missing.add("payout account")
+        }
         return IncompleteFields(missing = missing)
     }
 
