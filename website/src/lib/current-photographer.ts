@@ -1,35 +1,33 @@
 import type { User } from "@/types/user";
 
-// Mock-only mapping from auth user → photographer mock-id used by:
-//   • photographer-message-store filters (whose inbox is this?)
-//   • admin-payout-report-store.submitReport (who's filing?)
+// Resolves the session user's photographer identity for surfaces that
+// filter content by photographerId — notification bell, billing rail,
+// file-report modal. Before the 2026-05-17 BE migration this hardcoded
+// "photog-cebustride" for every photographer so the mock seed data lit
+// up the bell; that mapping silently broke notifications for real BE
+// users (their photographerId was their real UUID but the bell filtered
+// by the mock id and never matched).
 //
-// In the mock seed data (admin-payouts.ts, admin-payout-reports.ts), the
-// held cycle + the seed report both belong to "photog-cebustride", so we
-// resolve any logged-in photographer to that id — the demo flow then has
-// continuous content (seed message visible, seed report visible, plus any
-// runtime admin action on cebustride cycles lands in the same inbox).
-//
-// Phase F replaces this with `user.photographerId` once the backend wires
-// the User type to the photographers table.
-
-export const DEMO_PHOTOGRAPHER_ID = "photog-cebustride";
-export const DEMO_PHOTOGRAPHER_NAME = "Cebu Stride";
-export const DEMO_PHOTOGRAPHER_HANDLE = "cebustride";
+// Now: returns the session user's real id + name. Handle is best-effort
+// from the photographer-settings store when the caller passes it in (the
+// store reflects the photographer's most recent /dashboard/settings put);
+// when the caller doesn't have it on hand, leave it null and the surface
+// falls back to the brand/name display.
 
 export interface CurrentPhotographer {
   id: string;
   name: string;
-  handle: string;
+  handle: string | null;
 }
 
 export function resolveCurrentPhotographer(
   user: User | null,
+  handle: string | null = null,
 ): CurrentPhotographer | null {
   if (!user || user.role !== "PHOTOGRAPHER") return null;
   return {
-    id: DEMO_PHOTOGRAPHER_ID,
-    name: DEMO_PHOTOGRAPHER_NAME,
-    handle: DEMO_PHOTOGRAPHER_HANDLE,
+    id: user.id,
+    name: user.name,
+    handle: handle?.trim() || null,
   };
 }

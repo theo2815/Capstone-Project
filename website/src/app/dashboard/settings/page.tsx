@@ -2,14 +2,19 @@
 
 import Link from "next/link";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { Check } from "lucide-react";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { CharCounter } from "@/components/ui/char-counter";
@@ -19,11 +24,20 @@ import { Kicker } from "@/components/ui/kicker";
 import { Modal } from "@/components/ui/modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useConfirmation } from "@/hooks/use-confirmation";
-import { useDebouncedSave } from "@/hooks/use-debounced-save";
 import { useToast } from "@/hooks/use-toast";
 import { uploadAvatar } from "@/lib/api-avatar";
 import {
+  deletePayoutAccount,
+  deleteSocial,
+  fetchPayoutAccounts,
+  fetchSocials,
+  patchPayoutAccount,
+  patchPrimaryPayout,
+  patchSocial,
   postCover,
+  postPayoutAccount,
+  postPayoutQr,
+  postSocial,
   postWatermark,
   putBrand,
   putHandle,
@@ -31,7 +45,6 @@ import {
   submitVerification,
   withdrawVerification,
 } from "@/lib/api-photographer-settings";
-import { usePhotographerVerificationSync } from "@/lib/photographer-verification-sync";
 import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAuthStore } from "@/store/auth-store";
 import { useUserMediaStore } from "@/store/user-media-store";
@@ -103,13 +116,719 @@ const REGION_GROUP_ORDER: ReadonlyArray<RegionGroup> = [
 // just imperfect crops.
 const COVER_MIN_ASPECT = 1.4;
 
-// Fire-and-forget for photographer-settings API calls. Local store updates
-// apply immediately for UI snap; API call runs in the background. On
-// failure we log to console — backend is source of truth on next refresh.
-function fireSettings(label: string, p: Promise<unknown>): void {
-  void p.catch((err) => {
-    console.error(`[photographer/settings] ${label} backend call failed`, err);
+// ─────────────────────────────────────────────────────────────────────────
+// Edit-mode context
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Why this exists: the page used to auto-save on every keystroke / file pick
+// / dropdown change, which left photographers asking "did that save? did I
+// commit something I didn't want to?". The new contract is explicit — every
+// slab is read-only until the floating Edit pill is clicked, and Save fans
+// out the dirty per-field endpoints in parallel (no new bulk endpoint —
+// existing `putBrand` / `putHandle` / `putRegion` / `postCover` /
+// `postWatermark` / `uploadAvatar` cover everything wired today).
+//
+// Pending File stash: media slabs (avatar/cover/watermark) used to fire the
+// upload synchronously on file pick. Now the local preview still updates
+// (data-URL in the store for instant feedback) but the File handle gets
+// stashed here so Save can POST it. Cancel drops the stash.
+//
+// Snapshot: taken on beginEdit, restored on cancelEdit. Lets the photographer
+// scrap an in-flight edit without their local store drifting from the
+// backend. Covers both photographer-settings-store and user-media-store
+// (avatar lives there, shared with the runner account flow).
+
+type PendingFileSlot = "avatar" | "cover" | "watermark";
+
+interface EditModeSnapshot {
+  cover: ReturnType<typeof usePhotographerSettingsStore.getState>["cover"];
+  brandName: string;
+  brandColor: BrandColor;
+  bio: string;
+  watermark: ReturnType<typeof usePhotographerSettingsStore.getState>["watermark"];
+  handle: string;
+  region: ReturnType<typeof usePhotographerSettingsStore.getState>["region"];
+  socials: SocialLink[];
+  payouts: PayoutAccount[];
+  avatar: ReturnType<typeof useUserMediaStore.getState>["avatar"];
+}
+
+interface EditModeContextValue {
+  editing: boolean;
+  saving: boolean;
+  beginEdit: () => void;
+  saveEdit: () => Promise<void>;
+  cancelEdit: () => void;
+  setPendingFile: (slot: PendingFileSlot, file: File | null) => void;
+}
+
+const EditModeContext = createContext<EditModeContextValue | null>(null);
+
+function useEditMode(): EditModeContextValue {
+  const ctx = useContext(EditModeContext);
+  if (!ctx) {
+    throw new Error("useEditMode must be used inside <EditModeProvider>");
+  }
+  return ctx;
+}
+
+// QR images are stored as data URLs in the local payout store so the preview
+// can render synchronously, but `POST /me/photographer/payouts/{id}/qr`
+// wants a multipart file. Convert at Save time.
+function dataUrlToFile(dataUrl: string, filename: string): File {
+  const [meta, b64] = dataUrl.split(",", 2);
+  const mime = meta?.match(/data:([^;]+)/)?.[1] ?? "image/png";
+  const bytes = atob(b64 ?? "");
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new File([arr], filename, { type: mime });
+}
+
+function takeSnapshot(): EditModeSnapshot {
+  const s = usePhotographerSettingsStore.getState();
+  const m = useUserMediaStore.getState();
+  return {
+    cover: s.cover,
+    brandName: s.brandName,
+    brandColor: s.brandColor,
+    bio: s.bio,
+    watermark: s.watermark,
+    handle: s.handle,
+    region: s.region,
+    // Deep-clone arrays so future mutations to the store don't leak into the
+    // snapshot we'd restore on Cancel.
+    socials: s.socials.map((x) => ({ ...x })),
+    payouts: s.payouts.map((p) => ({ ...p, qr: p.qr ? { ...p.qr } : null })),
+    avatar: m.avatar ? { ...m.avatar } : null,
+  };
+}
+
+function restoreSnapshot(snap: EditModeSnapshot): void {
+  const s = usePhotographerSettingsStore.setState;
+  s({
+    cover: snap.cover,
+    brandName: snap.brandName,
+    brandColor: snap.brandColor,
+    bio: snap.bio,
+    watermark: snap.watermark,
+    handle: snap.handle,
+    region: snap.region,
+    socials: snap.socials,
+    payouts: snap.payouts,
   });
+  useUserMediaStore.getState().setAvatar(snap.avatar);
+}
+
+function EditModeProvider({ children }: { children: ReactNode }) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const snapshotRef = useRef<EditModeSnapshot | null>(null);
+  const pendingFilesRef = useRef<Record<PendingFileSlot, File | null>>({
+    avatar: null,
+    cover: null,
+    watermark: null,
+  });
+  // Mirror `editing` into a ref so async closures (hydration) can read the
+  // current value without re-running on every state flip.
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const { showToast } = useToast();
+
+  // One-shot hydration of socials + payouts from the BE on mount. Reconciles
+  // the localStorage-persisted store against the server's truth, then
+  // proactively POSTs any local-only rows so legacy localStorage state from
+  // before BE wiring (Phase F.2 ADR 2026-05-10) doesn't strand the
+  // photographer with "chip says complete but submit returns missing."
+  // Gated on `!editing` at the moment of setState so a mid-flight Edit
+  // click doesn't clobber the user's in-flight snapshot — in that race the
+  // migration defers to next page load.
+  const hydratedRef = useRef(false);
+  useEffect(() => {
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
+    (async () => {
+      let beSocials: SocialLink[] | null = null;
+      let bePayouts: PayoutAccount[] | null = null;
+      try {
+        [beSocials, bePayouts] = await Promise.all([
+          fetchSocials(),
+          fetchPayoutAccounts(),
+        ]);
+      } catch (err) {
+        console.warn(
+          "[photographer/settings] hydration fetch failed; keeping local state",
+          err,
+        );
+        return;
+      }
+      if (!beSocials || !bePayouts) return;
+
+      const local = usePhotographerSettingsStore.getState();
+      const beSocialIds = new Set(beSocials.map((s) => s.id));
+      const bePayoutIds = new Set(bePayouts.map((p) => p.id));
+      const unsyncedSocials = local.socials.filter(
+        (s) => !beSocialIds.has(s.id) && s.url.trim().length > 0,
+      );
+      const unsyncedPayouts = local.payouts.filter(
+        (p) => !bePayoutIds.has(p.id),
+      );
+
+      const [socialResults, payoutResults] = await Promise.all([
+        Promise.allSettled(
+          unsyncedSocials.map((s) => postSocial(s.platform, s.url.trim())),
+        ),
+        Promise.allSettled(
+          unsyncedPayouts.map((p) =>
+            postPayoutAccount({
+              method: p.method,
+              accountNumber: p.accountNumber,
+              accountName: p.accountName,
+            }),
+          ),
+        ),
+      ]);
+
+      if (editingRef.current) {
+        // User entered edit mode mid-fetch. Skipping the store rewrite
+        // avoids clobbering their snapshot; the migration will retry on
+        // the next page load. Any POSTs that already succeeded are
+        // server-side rows now and the user will see them after refresh.
+        console.warn(
+          "[photographer/settings] hydration completed during edit — store update skipped to preserve snapshot.",
+        );
+        return;
+      }
+
+      const mergedSocials: SocialLink[] = [...beSocials];
+      socialResults.forEach((r, i) => {
+        if (r.status === "fulfilled") {
+          mergedSocials.push(r.value);
+        } else {
+          console.error(
+            "[photographer/settings] hydration social POST failed",
+            r.reason,
+          );
+          mergedSocials.push(unsyncedSocials[i]);
+        }
+      });
+
+      const mergedPayouts: PayoutAccount[] = [...bePayouts];
+      const qrUploads: Array<{ payoutId: string; file: File }> = [];
+      payoutResults.forEach((r, i) => {
+        if (r.status === "fulfilled") {
+          mergedPayouts.push(r.value);
+          const localQr = unsyncedPayouts[i].qr;
+          if (localQr) {
+            qrUploads.push({
+              payoutId: r.value.id,
+              file: dataUrlToFile(localQr.dataUrl, `qr-${r.value.id}.png`),
+            });
+          }
+        } else {
+          console.error(
+            "[photographer/settings] hydration payout POST failed",
+            r.reason,
+          );
+          mergedPayouts.push(unsyncedPayouts[i]);
+        }
+      });
+
+      usePhotographerSettingsStore.setState({
+        socials: mergedSocials,
+        payouts: mergedPayouts,
+      });
+
+      qrUploads.forEach(({ payoutId, file }) => {
+        void postPayoutQr(payoutId, file).catch((err) => {
+          console.error(
+            `[photographer/settings] hydration QR upload failed for ${payoutId}`,
+            err,
+          );
+        });
+      });
+    })();
+  }, []);
+
+  const beginEdit = useCallback(() => {
+    snapshotRef.current = takeSnapshot();
+    pendingFilesRef.current = { avatar: null, cover: null, watermark: null };
+    setEditing(true);
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    if (snapshotRef.current) {
+      restoreSnapshot(snapshotRef.current);
+    }
+    snapshotRef.current = null;
+    pendingFilesRef.current = { avatar: null, cover: null, watermark: null };
+    setEditing(false);
+    showToast({ kind: "info", message: "Edits discarded." });
+  }, [showToast]);
+
+  const setPendingFile = useCallback(
+    (slot: PendingFileSlot, file: File | null) => {
+      pendingFilesRef.current = { ...pendingFilesRef.current, [slot]: file };
+    },
+    [],
+  );
+
+  const saveEdit = useCallback(async () => {
+    if (saving) return;
+    const snap = snapshotRef.current;
+    if (!snap) return;
+    setSaving(true);
+
+    const settings = usePhotographerSettingsStore.getState();
+    const pending = pendingFilesRef.current;
+
+    // Build the BE call list by diffing snapshot ↔ current store. Only fire
+    // the endpoints whose source data actually changed — keeps the network
+    // chatter proportional to what the photographer touched.
+    //
+    // `onSuccess` runs after a fulfilled task and mutates both the live store
+    // and the snapshot. This is what lets retries stay idempotent — once a
+    // socials/payouts POST has succeeded, the server-assigned id replaces the
+    // local UUID in the snapshot, so a subsequent retry won't see it as a
+    // still-pending "added" row and double-POST.
+    interface SaveTask {
+      label: string;
+      run: () => Promise<unknown>;
+      onSuccess?: (result: unknown) => void;
+    }
+    const tasks: SaveTask[] = [];
+
+    const brandDirty =
+      snap.brandName !== settings.brandName ||
+      snap.brandColor !== settings.brandColor ||
+      snap.bio !== settings.bio;
+    if (brandDirty) {
+      tasks.push({
+        label: "Brand",
+        run: () =>
+          putBrand({
+            brandName: settings.brandName.trim(),
+            brandColor: settings.brandColor,
+            bio: settings.bio,
+          }),
+      });
+    }
+
+    if (snap.handle !== settings.handle && settings.handle.trim().length > 0) {
+      tasks.push({
+        label: "Public URL",
+        run: () => putHandle(settings.handle.trim().toLowerCase()),
+      });
+    }
+
+    const regionDirty =
+      JSON.stringify(snap.region) !== JSON.stringify(settings.region);
+    if (regionDirty && settings.region) {
+      tasks.push({
+        label: "Region",
+        run: () => putRegion(settings.region!),
+      });
+    }
+
+    if (pending.cover) {
+      tasks.push({ label: "Cover", run: () => postCover(pending.cover!) });
+    }
+    if (pending.watermark) {
+      tasks.push({
+        label: "Watermark",
+        run: () => postWatermark(pending.watermark!),
+      });
+    }
+    if (pending.avatar) {
+      tasks.push({
+        label: "Profile picture",
+        run: () => uploadAvatar(pending.avatar!),
+      });
+    }
+
+    // ── Socials diff ────────────────────────────────────────────────────
+    // Three buckets: added (new local rows with non-empty URL), updated (id
+    // exists in both but URL changed), removed (id only in snapshot, or URL
+    // was cleared on an existing row — BE rejects empty URLs, so treat that
+    // as DELETE). Empty placeholder rows that the photographer added then
+    // never typed into are skipped entirely.
+    const snapSocialsById = new Map(snap.socials.map((s) => [s.id, s]));
+    const currentSocialsById = new Map(
+      settings.socials.map((s) => [s.id, s]),
+    );
+
+    for (const s of settings.socials) {
+      const prev = snapSocialsById.get(s.id);
+      const trimmedUrl = s.url.trim();
+      if (!prev) {
+        if (trimmedUrl.length === 0) continue;
+        tasks.push({
+          label: "Social link",
+          run: () => postSocial(s.platform, trimmedUrl),
+          onSuccess: (result) => {
+            const serverRow = result as SocialLink;
+            // Swap the local UUID for the server id in the live store.
+            usePhotographerSettingsStore.setState((prev) => ({
+              socials: prev.socials.map((row) =>
+                row.id === s.id ? { ...row, id: serverRow.id } : row,
+              ),
+            }));
+            // Mirror to the snapshot so a retry won't re-POST this row.
+            snap.socials = [...snap.socials, { ...serverRow }];
+          },
+        });
+      } else if (prev.url !== s.url) {
+        if (trimmedUrl.length === 0) {
+          tasks.push({
+            label: "Social link",
+            run: () => deleteSocial(s.id),
+            onSuccess: () => {
+              snap.socials = snap.socials.filter((x) => x.id !== s.id);
+              usePhotographerSettingsStore.setState((prev) => ({
+                socials: prev.socials.filter((x) => x.id !== s.id),
+              }));
+            },
+          });
+        } else {
+          tasks.push({
+            label: "Social link",
+            run: () => patchSocial(s.id, trimmedUrl),
+            onSuccess: () => {
+              const row = snap.socials.find((x) => x.id === s.id);
+              if (row) row.url = trimmedUrl;
+            },
+          });
+        }
+      }
+    }
+
+    for (const s of snap.socials) {
+      if (!currentSocialsById.has(s.id)) {
+        tasks.push({
+          label: "Social link",
+          run: () => deleteSocial(s.id),
+          onSuccess: () => {
+            snap.socials = snap.socials.filter((x) => x.id !== s.id);
+          },
+        });
+      }
+    }
+
+    // ── Payouts diff ────────────────────────────────────────────────────
+    // Added rows POST first to obtain a server id; QR (if any) uploads via
+    // a follow-on `POST /payouts/{id}/qr` call. Existing rows PATCH on
+    // account-number / account-name changes, POST QR on QR add/replace,
+    // PATCH primary when the primary toggle flips. Note: there is no
+    // "remove QR" endpoint server-side; removing a QR locally has no BE
+    // effect until the photographer uploads a replacement (acceptable v1
+    // limitation per notes/photographer-settings-backend.md §3).
+    const snapPayoutsById = new Map(snap.payouts.map((p) => [p.id, p]));
+    const currentPayoutsById = new Map(
+      settings.payouts.map((p) => [p.id, p]),
+    );
+    const newPrimary = settings.payouts.find((p) => p.isPrimary);
+    const oldPrimary = snap.payouts.find((p) => p.isPrimary);
+
+    for (const p of settings.payouts) {
+      const prev = snapPayoutsById.get(p.id);
+      if (!prev) {
+        // New payout. POST creates the row server-side; if the user attached
+        // a QR locally, a second call uploads it. We queue the QR upload
+        // synchronously inside onSuccess so the dependent ordering holds
+        // regardless of how Promise.allSettled interleaves elsewhere.
+        const localId = p.id;
+        tasks.push({
+          label: "Payout account",
+          run: () =>
+            postPayoutAccount({
+              method: p.method,
+              accountNumber: p.accountNumber,
+              accountName: p.accountName,
+            }),
+          onSuccess: (result) => {
+            const serverRow = result as PayoutAccount;
+            usePhotographerSettingsStore.setState((prev) => ({
+              payouts: prev.payouts.map((row) =>
+                row.id === localId
+                  ? {
+                      ...row,
+                      id: serverRow.id,
+                      isPrimary: serverRow.isPrimary,
+                    }
+                  : row,
+              ),
+            }));
+            snap.payouts = [
+              ...snap.payouts,
+              {
+                ...serverRow,
+                qr: p.qr ? { ...p.qr } : null,
+              },
+            ];
+            if (p.qr) {
+              const file = dataUrlToFile(p.qr.dataUrl, `qr-${serverRow.id}.png`);
+              void postPayoutQr(serverRow.id, file).catch((err) => {
+                console.error(
+                  "[photographer/settings] QR upload after payout POST failed",
+                  err,
+                );
+              });
+            }
+          },
+        });
+      } else {
+        const accountChanged =
+          prev.accountNumber !== p.accountNumber ||
+          prev.accountName !== p.accountName;
+        if (accountChanged) {
+          tasks.push({
+            label: "Payout account",
+            run: () =>
+              patchPayoutAccount(p.id, {
+                accountNumber: p.accountNumber,
+                accountName: p.accountName,
+              }),
+            onSuccess: () => {
+              const row = snap.payouts.find((x) => x.id === p.id);
+              if (row) {
+                row.accountNumber = p.accountNumber;
+                row.accountName = p.accountName;
+              }
+            },
+          });
+        }
+        // QR added or replaced — only POST if the data URL changed.
+        const qrChanged =
+          (prev.qr?.dataUrl ?? null) !== (p.qr?.dataUrl ?? null) && !!p.qr;
+        if (qrChanged && p.qr) {
+          tasks.push({
+            label: "Payout QR",
+            run: () => {
+              const file = dataUrlToFile(p.qr!.dataUrl, `qr-${p.id}.png`);
+              return postPayoutQr(p.id, file);
+            },
+            onSuccess: () => {
+              const row = snap.payouts.find((x) => x.id === p.id);
+              if (row) row.qr = p.qr ? { ...p.qr } : null;
+            },
+          });
+        }
+      }
+    }
+
+    for (const p of snap.payouts) {
+      if (!currentPayoutsById.has(p.id)) {
+        tasks.push({
+          label: "Payout account",
+          run: () => deletePayoutAccount(p.id),
+          onSuccess: () => {
+            snap.payouts = snap.payouts.filter((x) => x.id !== p.id);
+          },
+        });
+      }
+    }
+
+    // Primary change — fire once if the chosen-primary id flipped, AND the
+    // new primary is an existing server-side row (a newly-added payout
+    // becomes primary via the POST response, not a separate PATCH).
+    if (
+      newPrimary &&
+      newPrimary.id !== oldPrimary?.id &&
+      snapPayoutsById.has(newPrimary.id)
+    ) {
+      tasks.push({
+        label: "Primary payout",
+        run: () => patchPrimaryPayout(newPrimary.id),
+        onSuccess: () => {
+          snap.payouts = snap.payouts.map((row) => ({
+            ...row,
+            isPrimary: row.id === newPrimary.id,
+          }));
+        },
+      });
+    }
+
+    try {
+      const results = await Promise.allSettled(
+        tasks.map(({ run }) => run()),
+      );
+
+      // Run onSuccess callbacks for fulfilled tasks. These mutate the store
+      // + snapshot so partial-success retries stay idempotent (e.g. a
+      // socials POST that succeeded last attempt won't fire again).
+      results.forEach((r, i) => {
+        if (r.status === "fulfilled" && tasks[i].onSuccess) {
+          try {
+            tasks[i].onSuccess!(r.value);
+          } catch (err) {
+            console.error(
+              `[photographer/settings] onSuccess hook threw for ${tasks[i].label}`,
+              err,
+            );
+          }
+        }
+      });
+
+      const failures = results
+        .map((r, i) => ({ r, label: tasks[i].label }))
+        .filter((x) => x.r.status === "rejected");
+
+      if (failures.length === 0) {
+        snapshotRef.current = null;
+        pendingFilesRef.current = {
+          avatar: null,
+          cover: null,
+          watermark: null,
+        };
+        setEditing(false);
+        showToast({
+          kind: "success",
+          message:
+            tasks.length === 0
+              ? "No changes to save."
+              : "Settings saved.",
+        });
+      } else {
+        // Stay in edit mode so the photographer can retry / fix the failure.
+        for (const { label, r } of failures) {
+          console.error(
+            `[photographer/settings] save failed for ${label}`,
+            (r as PromiseRejectedResult).reason,
+          );
+        }
+        // Dedupe labels — multiple socials failing reads cleaner as
+        // "Couldn't save Social link." than "Social link, Social link."
+        const labels = Array.from(
+          new Set(failures.map((f) => f.label)),
+        ).join(", ");
+        showToast({
+          kind: "error",
+          message: `Couldn't save ${labels}. Check your connection and try again.`,
+        });
+      }
+    } finally {
+      setSaving(false);
+    }
+  }, [saving, showToast]);
+
+  const value = useMemo<EditModeContextValue>(
+    () => ({
+      editing,
+      saving,
+      beginEdit,
+      saveEdit,
+      cancelEdit,
+      setPendingFile,
+    }),
+    [editing, saving, beginEdit, saveEdit, cancelEdit, setPendingFile],
+  );
+
+  return (
+    <EditModeContext.Provider value={value}>
+      {children}
+    </EditModeContext.Provider>
+  );
+}
+
+// Sticky floating pill — Save + Cancel when editing, fallback Edit entry
+// when there's no banner Edit button (i.e. status !== "incomplete").
+// Portal'd to document.body for the same transform-context reasons as the
+// existing ReadyToSubmitPill (see notes/ui-pitfalls.md).
+//
+// Why the conditional Edit entry: when the verification banner is showing
+// "Submit for review" (status === "incomplete"), we want the Edit button
+// living right beside Submit so the photographer sees both actions in one
+// place. The floating pill would duplicate that. In "pending" and
+// "approved" states the banner has no Submit, so the floating pill is the
+// only Edit entry. Save + Cancel always float during editing regardless of
+// status — they're too important to lose to scroll.
+function EditModePill() {
+  const { editing, saving, beginEdit, saveEdit, cancelEdit } = useEditMode();
+  const status = usePhotographerSettingsStore((s) => s.verificationStatus);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  if (!mounted) return null;
+
+  // Read-only Edit entry only when the banner isn't already rendering one.
+  const showFloatingEditEntry = !editing && status !== "incomplete";
+
+  // Nothing to render when not editing AND banner owns the Edit button.
+  if (!editing && !showFloatingEditEntry) return null;
+
+  return createPortal(
+    <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3">
+      {editing ? (
+        <>
+          <button
+            type="button"
+            onClick={cancelEdit}
+            disabled={saving}
+            className="font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-5 rounded-full shadow-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void saveEdit()}
+            disabled={saving}
+            className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {saving ? "Saving…" : "Save changes"}
+            {!saving && <span aria-hidden="true">→</span>}
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={beginEdit}
+          className="font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2"
+        >
+          Edit settings
+          <span aria-hidden="true">→</span>
+        </button>
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+// Per-slab completion chip — sits at the top of each slab body, reads live
+// from the store so it flips as the photographer fills fields (no save
+// needed). Amber dot + "REQUIRED" until satisfied; tiny fresh dot + check +
+// "COMPLETE" once satisfied. The fresh state qualifies under the design
+// system's "tiny dots/indicators" exclusion for the one-fresh-per-viewport
+// rule, so six chips can show fresh at once without flooding the accent.
+function SlabStatusChip({ ready }: { ready: boolean }) {
+  if (ready) {
+    return (
+      <div className="inline-flex items-center gap-2 mb-5">
+        <span
+          aria-hidden="true"
+          className="size-1.5 rounded-full bg-fresh shrink-0"
+        />
+        <Check
+          aria-hidden="true"
+          className="size-3.5 text-fresh shrink-0"
+          strokeWidth={2.5}
+        />
+        <Kicker as="span" tone="active">
+          Complete
+        </Kicker>
+      </div>
+    );
+  }
+  return (
+    <div className="inline-flex items-center gap-2 mb-5">
+      <span
+        aria-hidden="true"
+        className="size-1.5 rounded-full bg-warning shrink-0"
+      />
+      <Kicker as="span" className="text-warning">
+        Required
+      </Kicker>
+    </div>
+  );
 }
 
 // Mirror a fresh "Submit for review" into the admin store so the
@@ -129,6 +848,7 @@ function buildAdminSubmissionRow(): AdminUserRow | null {
     role: "PHOTOGRAPHER",
     email: sessionUser.email,
     name: sessionUser.name,
+    avatarUrl: sessionUser.avatarUrl ?? null,
     brandName: settings.brandName.trim() || null,
     handle: settings.handle.trim() || null,
     region: regionLabel,
@@ -269,13 +989,12 @@ function validateSocialUrl(
 }
 
 export default function SettingsPage() {
-  // Phase 4 — keep verificationStatus in sync with the BE so admin
-  // approve/reject decisions show up here without a manual refresh.
-  // Pulls on mount, on focus, and every 30s while pending.
-  usePhotographerVerificationSync();
+  // Verification sync lives in DashboardShell — single mount across every
+  // /dashboard/* page so the suspended banner + approve/reject decisions
+  // surface here without a manual refresh.
 
   return (
-    <>
+    <EditModeProvider>
       <PendingEditWatcher />
       <VerificationStatusPanel />
       <PublicProfileSlab />
@@ -285,7 +1004,8 @@ export default function SettingsPage() {
       <SocialSlab />
       <PayoutSlab />
       <ReadyToSubmitNudge />
-    </>
+      <EditModePill />
+    </EditModeProvider>
   );
 }
 
@@ -299,6 +1019,7 @@ export default function SettingsPage() {
 // the admin queue and put the photographer back in the "Not yet verified"
 // state so they re-submit when fixed.
 function PendingEditWatcher() {
+  const { editing } = useEditMode();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -322,6 +1043,11 @@ function PendingEditWatcher() {
 
   useEffect(() => {
     if (status !== "pending") return;
+    // Pause the auto-withdraw + admin-mirror loop while the photographer is
+    // mid-edit. Otherwise transient field clears during an edit (e.g. wiping
+    // the brand name to retype it) would yank their pending submission. Save
+    // commits trigger the rest of the page to re-evaluate.
+    if (editing) return;
     const sessionUser = useAuthStore.getState().user;
     if (!sessionUser) return;
     if (!complete) {
@@ -333,6 +1059,7 @@ function PendingEditWatcher() {
   }, [
     status,
     complete,
+    editing,
     cover,
     brandName,
     bio,
@@ -355,6 +1082,7 @@ function PendingEditWatcher() {
 // stays visible until they submit (or un-complete the form, in which case
 // the nudge resets so it can fire again on next completion).
 function ReadyToSubmitNudge() {
+  const { editing } = useEditMode();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -369,6 +1097,10 @@ function ReadyToSubmitNudge() {
 
   useEffect(() => {
     if (status !== "incomplete") return;
+    // Don't pop the nudge while the photographer is still editing — they
+    // haven't committed yet, and the modal would compete for attention with
+    // the floating Edit/Save pill. Re-evaluates after Save closes edit mode.
+    if (editing) return;
     const wasComplete = wasCompleteRef.current;
     wasCompleteRef.current = complete;
     // Auto-open on the rising edge only (false → true). If the photographer
@@ -381,7 +1113,7 @@ function ReadyToSubmitNudge() {
     if (!complete && dismissed) {
       setDismissed(false);
     }
-  }, [complete, status, dismissed]);
+  }, [complete, status, dismissed, editing]);
 
   // Clear nudge state when the photographer leaves the incomplete branch
   // (submitted for review, or admin approved).
@@ -414,7 +1146,10 @@ function ReadyToSubmitNudge() {
 
   if (status !== "incomplete") return null;
 
-  const showPill = complete && dismissed && !modalOpen;
+  // Suppress the nudge pill while editing — the floating Edit/Save pill owns
+  // the bottom-right slot and both at once would crowd the corner. After
+  // Save the nudge re-evaluates and may resurface.
+  const showPill = complete && dismissed && !modalOpen && !editing;
 
   return (
     <>
@@ -453,21 +1188,38 @@ function ReadyToSubmitNudge() {
 function ReadyToSubmitPill({ onClick }: { onClick: () => void }) {
   // Portals to body so it escapes any transform-context ancestor (mirrors the
   // Modal/Dropdown portal pattern — see notes/ui-pitfalls.md).
+  //
+  // Edit button rides alongside the Submit pill so the photographer can drop
+  // back into edit mode without scrolling all the way up to the banner. Same
+  // pairing principle as VerificationStatusPanel: wherever Submit is visible,
+  // Edit sits beside it. The floating EditModePill stays suppressed in this
+  // state (it early-returns null when status === "incomplete" && !editing).
+  const { beginEdit } = useEditMode();
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
   }, []);
   if (!mounted) return null;
   return createPortal(
-    <button
-      type="button"
-      onClick={onClick}
-      className="fixed bottom-6 right-6 z-50 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2"
-    >
-      <span aria-hidden="true" className="size-2 rounded-full bg-bone" />
-      Submit for review
-      <span aria-hidden="true">→</span>
-    </button>,
+    <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3">
+      <button
+        type="button"
+        onClick={beginEdit}
+        className="font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-5 rounded-full shadow-lg transition-colors inline-flex items-center gap-2"
+      >
+        Edit settings
+        <span aria-hidden="true">→</span>
+      </button>
+      <button
+        type="button"
+        onClick={onClick}
+        className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2"
+      >
+        <span aria-hidden="true" className="size-2 rounded-full bg-bone" />
+        Submit for review
+        <span aria-hidden="true">→</span>
+      </button>
+    </div>,
     document.body,
   );
 }
@@ -499,6 +1251,7 @@ function useAllRequiredFilled(): boolean {
 }
 
 function VerificationStatusPanel() {
+  const { editing, beginEdit } = useEditMode();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -615,19 +1368,35 @@ function VerificationStatusPanel() {
         one social link, and at least one payout account are required so we can
         verify you and send your sales. Bio is optional.
       </p>
-      <button
-        type="button"
-        onClick={handleSubmit}
-        disabled={!complete || submitting}
-        className="mt-5 inline-flex items-center gap-2 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        {!complete
-          ? "Fill the required fields"
-          : submitting
-            ? "Submitting…"
-            : "Submit for review"}
-        {complete && !submitting && <span aria-hidden="true">→</span>}
-      </button>
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={!complete || submitting || editing}
+          className="inline-flex items-center gap-2 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {editing
+            ? "Save your changes first"
+            : !complete
+              ? "Fill the required fields"
+              : submitting
+                ? "Submitting…"
+                : "Submit for review"}
+          {!editing && complete && !submitting && (
+            <span aria-hidden="true">→</span>
+          )}
+        </button>
+        {!editing && (
+          <button
+            type="button"
+            onClick={beginEdit}
+            className="inline-flex items-center gap-2 font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-6 rounded-full transition-colors"
+          >
+            Edit settings
+            <span aria-hidden="true">→</span>
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -642,14 +1411,18 @@ function VerificationStatusPanel() {
 // below xl, preview stacks above the controls.
 
 function PublicProfileSlab() {
-  // Brand drafts live up here so the preview can read in-flight typing for
-  // display name + bio without committing to the persisted store. Cover,
-  // accent color, and avatar already commit on click/upload, so the preview
-  // reads those straight from the store.
+  // Edit-mode contract: inputs commit to the store on every keystroke and
+  // the LivePreview subscribes directly. Cancel restores from the snapshot
+  // taken at Edit-click, so there's no risk of "I typed this but didn't
+  // mean to commit." We don't buffer drafts up here anymore.
+
+  // Readiness pulls each required piece directly from its store so the chip
+  // re-renders the moment any of them changes (no save needed).
+  const avatar = useUserMediaStore((s) => s.avatar);
+  const cover = usePhotographerSettingsStore((s) => s.cover);
   const brandName = usePhotographerSettingsStore((s) => s.brandName);
-  const bio = usePhotographerSettingsStore((s) => s.bio);
-  const [nameDraft, setNameDraft] = useState(brandName);
-  const [bioDraft, setBioDraft] = useState(bio);
+  const ready =
+    avatar !== null && cover !== null && brandName.trim().length > 0;
 
   return (
     <Slab
@@ -658,9 +1431,10 @@ function PublicProfileSlab() {
       title="Public profile"
       caption="How runners see you on quickpitik.com"
     >
+      <SlabStatusChip ready={ready} />
       <div className="xl:grid xl:grid-cols-[minmax(0,360px)_1fr] xl:gap-12">
         <div className="max-w-md xl:max-w-none xl:sticky xl:top-24 xl:self-start">
-          <LivePreview nameDraft={nameDraft} bioDraft={bioDraft} />
+          <LivePreview />
         </div>
         <div className="mt-10 xl:mt-0">
           <PictureSubsection />
@@ -668,12 +1442,7 @@ function PublicProfileSlab() {
             <CoverSubsection />
           </div>
           <div className="border-t border-line/60 mt-12 pt-12">
-            <BrandSubsection
-              nameDraft={nameDraft}
-              setNameDraft={setNameDraft}
-              bioDraft={bioDraft}
-              setBioDraft={setBioDraft}
-            />
+            <BrandSubsection />
           </div>
         </div>
       </div>
@@ -696,17 +1465,12 @@ function SubHeading({ label, caption }: { label: string; caption?: string }) {
   );
 }
 
-interface LivePreviewProps {
-  /** In-flight display-name draft from BrandSubsection (preview is informational; nothing is persisted until Save). */
-  nameDraft: string;
-  /** In-flight bio draft from BrandSubsection. */
-  bioDraft: string;
-}
-
-function LivePreview({ nameDraft, bioDraft }: LivePreviewProps) {
+function LivePreview() {
   const { user } = useAuth();
   const cover = usePhotographerSettingsStore((s) => s.cover);
+  const brandName = usePhotographerSettingsStore((s) => s.brandName);
   const brandColor = usePhotographerSettingsStore((s) => s.brandColor);
+  const bio = usePhotographerSettingsStore((s) => s.bio);
   const handle = usePhotographerSettingsStore((s) => s.handle);
 
   const accent =
@@ -716,7 +1480,7 @@ function LivePreview({ nameDraft, bioDraft }: LivePreviewProps) {
   const trimmedHandle = handle.trim();
   const handleValid =
     trimmedHandle.length > 0 && validateHandle(trimmedHandle) === null;
-  const trimmedName = nameDraft.trim();
+  const trimmedName = brandName.trim();
   const displayName = trimmedName || "Photographer";
   // AvatarDisc reads from useUserMediaStore directly (no override) so the
   // preview reflects the live profile picture as soon as it's uploaded.
@@ -809,9 +1573,9 @@ function LivePreview({ nameDraft, bioDraft }: LivePreviewProps) {
           )}
         </div>
 
-        {bioDraft.trim() && (
+        {bio.trim() && (
           <p className="font-sans text-sm text-ink-soft mt-2 leading-relaxed line-clamp-3">
-            {bioDraft}
+            {bio}
           </p>
         )}
 
@@ -836,6 +1600,7 @@ function LivePreview({ nameDraft, bioDraft }: LivePreviewProps) {
 // ─────────────────────────────────────────────────────────────────────────
 
 function PictureSubsection() {
+  const { editing, setPendingFile } = useEditMode();
   const { user } = useAuth();
   const avatar = useUserMediaStore((s) => s.avatar);
   const setAvatar = useUserMediaStore((s) => s.setAvatar);
@@ -859,12 +1624,15 @@ function PictureSubsection() {
     setBusy(true);
     setError(null);
     try {
-      // Local center-crop stages an instant preview; backend runs the same
-      // pipeline server-side and returns the canonical avatarUrl on auth.
+      // Local center-crop stages an instant preview; the actual upload runs
+      // on Save (the File handle is stashed on the EditMode context).
       const dataUrl = await squareCropToDataUrl(file, AVATAR_SIZE_PX);
       setAvatar({ dataUrl, uploadedAt: new Date().toISOString() });
-      fireSettings("uploadAvatar", uploadAvatar(file));
-      showToast({ kind: "success", message: "Profile picture updated." });
+      setPendingFile("avatar", file);
+      showToast({
+        kind: "info",
+        message: "Profile picture ready — click Save to upload.",
+      });
     } catch (err) {
       setError(imageErrorCopy(err));
     } finally {
@@ -881,6 +1649,7 @@ function PictureSubsection() {
     });
     if (!ok) return;
     setAvatar(null);
+    setPendingFile("avatar", null);
     setError(null);
     showToast({ kind: "success", message: "Profile picture removed." });
   }
@@ -895,8 +1664,12 @@ function PictureSubsection() {
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
           <label
             className={cn(
-              "font-sans text-sm font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-2.5 px-5 rounded-full transition-colors inline-flex items-center gap-2",
-              busy ? "opacity-60 cursor-wait" : "cursor-pointer",
+              "font-sans text-sm font-medium border border-ink text-ink py-2.5 px-5 rounded-full transition-colors inline-flex items-center gap-2",
+              busy
+                ? "opacity-60 cursor-wait"
+                : !editing
+                  ? "opacity-40 cursor-not-allowed"
+                  : "hover:bg-ink hover:text-bone cursor-pointer",
             )}
           >
             {busy
@@ -910,13 +1683,13 @@ function PictureSubsection() {
               type="file"
               accept={ACCEPTED_IMAGE_MIME.join(",")}
               onChange={handlePick}
-              disabled={busy}
+              disabled={busy || !editing}
               aria-describedby={error ? "picture-error" : undefined}
               aria-invalid={error ? true : undefined}
               className="sr-only"
             />
           </label>
-          {avatar && !busy && (
+          {avatar && !busy && editing && (
             <button
               type="button"
               onClick={handleRemove}
@@ -957,6 +1730,7 @@ function PictureSubsection() {
 // ─────────────────────────────────────────────────────────────────────────
 
 function CoverSubsection() {
+  const { editing, setPendingFile } = useEditMode();
   const cover = usePhotographerSettingsStore((s) => s.cover);
   const setCover = usePhotographerSettingsStore((s) => s.setCover);
   const { showToast } = useToast();
@@ -1005,12 +1779,15 @@ function CoverSubsection() {
     setBusy(true);
     setError(null);
     try {
-      // Local downscale keeps the optimistic preview snappy; backend re-runs
-      // the same downscale + JPEG re-encode and returns the canonical URL.
+      // Local downscale keeps the optimistic preview snappy; the upload
+      // fires on Save via the EditMode context stash.
       const dataUrl = await fitToDataUrl(file, COVER_MAX_PX, 0.82);
       setCover({ dataUrl, uploadedAt: new Date().toISOString() });
-      fireSettings("postCover", postCover(file));
-      showToast({ kind: "success", message: "Cover updated." });
+      setPendingFile("cover", file);
+      showToast({
+        kind: "info",
+        message: "Cover ready — click Save to upload.",
+      });
     } catch (err) {
       setError(imageErrorCopy(err));
     } finally {
@@ -1027,6 +1804,7 @@ function CoverSubsection() {
     });
     if (!ok) return;
     setCover(null);
+    setPendingFile("cover", null);
     setError(null);
     showToast({ kind: "success", message: "Cover removed." });
   }
@@ -1037,8 +1815,12 @@ function CoverSubsection() {
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         <label
           className={cn(
-            "font-sans text-sm font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-2.5 px-5 rounded-full transition-colors inline-flex items-center gap-2",
-            busy ? "opacity-60 cursor-wait" : "cursor-pointer",
+            "font-sans text-sm font-medium border border-ink text-ink py-2.5 px-5 rounded-full transition-colors inline-flex items-center gap-2",
+            busy
+              ? "opacity-60 cursor-wait"
+              : !editing
+                ? "opacity-40 cursor-not-allowed"
+                : "hover:bg-ink hover:text-bone cursor-pointer",
           )}
         >
           {busy ? "Processing…" : cover ? "Replace cover" : "Upload cover"}
@@ -1048,13 +1830,13 @@ function CoverSubsection() {
             type="file"
             accept={ACCEPTED_IMAGE_MIME.join(",")}
             onChange={handlePick}
-            disabled={busy}
+            disabled={busy || !editing}
             aria-describedby={error ? "cover-error" : undefined}
             aria-invalid={error ? true : undefined}
             className="sr-only"
           />
         </label>
-        {cover && !busy && (
+        {cover && !busy && editing && (
           <button
             type="button"
             onClick={handleRemove}
@@ -1087,85 +1869,30 @@ function CoverSubsection() {
 // Sub-section 01c — Brand
 // ─────────────────────────────────────────────────────────────────────────
 
-interface BrandSubsectionProps {
-  nameDraft: string;
-  setNameDraft: (value: string) => void;
-  bioDraft: string;
-  setBioDraft: (value: string) => void;
-}
-
-function BrandSubsection({
-  nameDraft,
-  setNameDraft,
-  bioDraft,
-  setBioDraft,
-}: BrandSubsectionProps) {
+function BrandSubsection() {
+  const { editing } = useEditMode();
   const brandName = usePhotographerSettingsStore((s) => s.brandName);
   const setBrandName = usePhotographerSettingsStore((s) => s.setBrandName);
   const brandColor = usePhotographerSettingsStore((s) => s.brandColor);
   const setBrandColor = usePhotographerSettingsStore((s) => s.setBrandColor);
   const bio = usePhotographerSettingsStore((s) => s.bio);
   const setBio = usePhotographerSettingsStore((s) => s.setBio);
-  const { showToast } = useToast();
 
   // Track touch so an unfilled name on first render doesn't shout at the
   // user — the error only appears after they've interacted (blur or first
   // edit) and the field is still invalid.
   const [nameTouched, setNameTouched] = useState(false);
 
-  // Silent commit — auto-save (debounce-pause) writes to the store without
-  // toasting so rapid editing doesn't flood the user with "Saved." pings.
-  // Explicit Save click runs flush() then surfaces a single confirmation
-  // toast in handleSubmit below. Live mode debounce-fires PUT /me/photographer/brand.
-  const saveBrand = useCallback(
-    async (draft: { name: string; bio: string }) => {
-      const trimmed = draft.name.trim();
-      setBrandName(trimmed);
-      setBio(draft.bio);
-      fireSettings(
-        "putBrand",
-        putBrand({ brandName: trimmed, brandColor, bio: draft.bio }),
-      );
-    },
-    [setBrandName, setBio, brandColor],
-  );
-
-  const { save, flush, isSaving } = useDebouncedSave(saveBrand);
-
-  const dirty = nameDraft.trim() !== brandName || bioDraft !== bio;
-  const nameHasNewline = /[\r\n]/.test(nameDraft);
-  const validName =
-    nameDraft.trim().length > 0 &&
-    nameDraft.trim().length <= BRAND_NAME_MAX &&
-    !nameHasNewline;
-  const validBio = bioDraft.length <= BIO_MAX;
+  const nameHasNewline = /[\r\n]/.test(brandName);
   const nameError =
-    nameTouched && nameDraft.trim().length === 0
+    nameTouched && brandName.trim().length === 0
       ? "Display name is required."
       : nameTouched && nameHasNewline
         ? "Display name can't contain a line break."
         : null;
 
-  // Schedule a debounced auto-save whenever the draft is dirty AND valid.
-  // Invalid drafts (empty / too long / newline) hold until the user fixes
-  // them; the explicit Save button still runs through flush().
-  useEffect(() => {
-    if (dirty && validName && validBio) {
-      save({ name: nameDraft, bio: bioDraft });
-    }
-  }, [dirty, validName, validBio, nameDraft, bioDraft, save]);
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!dirty || !validName || !validBio) return;
-    await flush();
-    showToast({ kind: "success", message: "Brand saved." });
-  }
-
-  const saving = isSaving;
-
   return (
-    <form onSubmit={handleSubmit}>
+    <div>
       <SubHeading label="Brand" caption="Display name · accent · bio" />
       <div className="space-y-7">
         <div className="flex flex-col gap-2">
@@ -1174,24 +1901,25 @@ function BrandSubsection({
           </label>
           <input
             id="brand-name"
-            value={nameDraft}
+            value={brandName}
             onChange={(e) => {
-              setNameDraft(e.target.value);
+              setBrandName(e.target.value);
               if (!nameTouched) setNameTouched(true);
             }}
             onBlur={() => setNameTouched(true)}
             placeholder="Cebu Coastline Photo"
             maxLength={BRAND_NAME_MAX}
             required
+            disabled={!editing}
             aria-describedby={
               nameError ? "brand-name-error" : "brand-name-counter"
             }
             aria-invalid={nameError ? true : undefined}
-            className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-4 text-lg text-ink placeholder:text-slate-soft transition-colors"
+            className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-4 text-lg text-ink placeholder:text-slate-soft transition-colors disabled:text-ink disabled:cursor-not-allowed"
           />
           <CharCounter
             id="brand-name-counter"
-            current={nameDraft.trim().length}
+            current={brandName.trim().length}
             max={BRAND_NAME_MAX}
           />
           <FieldError
@@ -1210,22 +1938,16 @@ function BrandSubsection({
                 <button
                   key={color}
                   type="button"
-                  onClick={() => {
-                    setBrandColor(color);
-                    if (color !== brandColor) {
-                      showToast({
-                        kind: "success",
-                        message: `Accent set to ${BRAND_COLOR_LABEL[color]}.`,
-                      });
-                    }
-                  }}
+                  onClick={() => setBrandColor(color)}
+                  disabled={!editing}
                   aria-pressed={isActive}
                   aria-label={BRAND_COLOR_LABEL[color]}
                   className={cn(
-                    "relative size-10 rounded-full border-2 transition-all",
+                    "relative size-10 rounded-full border-2 transition-all disabled:cursor-not-allowed",
                     isActive
                       ? "border-ink scale-110"
                       : "border-line hover:border-slate",
+                    !editing && !isActive && "opacity-50",
                   )}
                   style={{
                     backgroundColor:
@@ -1261,40 +1983,18 @@ function BrandSubsection({
           </label>
           <textarea
             id="brand-bio"
-            value={bioDraft}
-            onChange={(e) => setBioDraft(e.target.value)}
+            value={bio}
+            onChange={(e) => setBio(e.target.value)}
             placeholder="Cebu marathon photographer. Three years on the road."
             rows={3}
             maxLength={BIO_MAX}
-            className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors resize-none"
+            disabled={!editing}
+            className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors resize-none disabled:text-ink disabled:cursor-not-allowed"
           />
-          <CharCounter current={bioDraft.length} max={BIO_MAX} />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <button
-            type="submit"
-            disabled={!dirty || !validName || !validBio || saving}
-            className="font-sans text-sm font-medium bg-fresh hover:bg-fresh-deep text-bone py-2.5 px-5 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
-          >
-            {saving ? "Saving…" : "Save brand"}
-            {!saving && <span aria-hidden="true">→</span>}
-          </button>
-          {dirty && !saving && (
-            <button
-              type="button"
-              onClick={() => {
-                setNameDraft(brandName);
-                setBioDraft(bio);
-              }}
-              className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
-            >
-              Reset
-            </button>
-          )}
+          <CharCounter current={bio.length} max={BIO_MAX} />
         </div>
       </div>
-    </form>
+    </div>
   );
 }
 
@@ -1303,6 +2003,7 @@ function BrandSubsection({
 // ─────────────────────────────────────────────────────────────────────────
 
 function WatermarkSlab() {
+  const { editing, setPendingFile } = useEditMode();
   const watermark = usePhotographerSettingsStore((s) => s.watermark);
   const setWatermark = usePhotographerSettingsStore((s) => s.setWatermark);
   const { showToast } = useToast();
@@ -1342,17 +2043,19 @@ function WatermarkSlab() {
     setBusy(true);
     setError(null);
     try {
-      // Local downscale stages an instant preview; backend re-runs the same
-      // pipeline server-side so the watermark composites at upload time.
-      // PNG preserves transparency for the preview; JPEG/WebP fall through to
-      // fitToDataUrl which encodes JPEG (no alpha channel needed).
+      // Local downscale stages an instant preview; upload fires on Save via
+      // the EditMode context stash. PNG preserves transparency for the
+      // preview; JPEG/WebP fall through to fitToDataUrl which encodes JPEG.
       const dataUrl =
         file.type === "image/png"
           ? await fitToPngDataUrl(file, WATERMARK_MAX_PX)
           : await fitToDataUrl(file, WATERMARK_MAX_PX);
       setWatermark({ dataUrl, uploadedAt: new Date().toISOString() });
-      fireSettings("postWatermark", postWatermark(file));
-      showToast({ kind: "success", message: "Watermark updated." });
+      setPendingFile("watermark", file);
+      showToast({
+        kind: "info",
+        message: "Watermark ready — click Save to upload.",
+      });
     } catch (err) {
       setError(imageErrorCopy(err));
     } finally {
@@ -1369,9 +2072,12 @@ function WatermarkSlab() {
     });
     if (!ok) return;
     setWatermark(null);
+    setPendingFile("watermark", null);
     setError(null);
     showToast({ kind: "success", message: "Watermark removed." });
   }
+
+  const ready = watermark !== null;
 
   return (
     <Slab
@@ -1380,6 +2086,7 @@ function WatermarkSlab() {
       title="Watermark"
       caption="Stamped on every photo you upload"
     >
+      <SlabStatusChip ready={ready} />
       <div className="space-y-5">
         <p className="font-sans text-sm text-slate max-w-md">
           Runners see your watermark on every photo before they buy — that&apos;s
@@ -1410,8 +2117,12 @@ function WatermarkSlab() {
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <label
             className={cn(
-              "font-sans text-base font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2",
-              busy ? "opacity-60 cursor-wait" : "cursor-pointer",
+              "font-sans text-base font-medium border border-ink text-ink py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2",
+              busy
+                ? "opacity-60 cursor-wait"
+                : !editing
+                  ? "opacity-40 cursor-not-allowed"
+                  : "hover:bg-ink hover:text-bone cursor-pointer",
             )}
           >
             {busy
@@ -1425,14 +2136,14 @@ function WatermarkSlab() {
               type="file"
               accept="image/png,image/jpeg,image/webp"
               onChange={handlePick}
-              disabled={busy}
+              disabled={busy || !editing}
               aria-describedby={error ? "watermark-error" : undefined}
               aria-invalid={error ? true : undefined}
               className="sr-only"
             />
           </label>
 
-          {watermark && !busy && (
+          {watermark && !busy && editing && (
             <button
               type="button"
               onClick={handleRemove}
@@ -1482,35 +2193,19 @@ function SamplePhoto() {
 // ─────────────────────────────────────────────────────────────────────────
 
 function HandleSlab() {
+  const { editing } = useEditMode();
   const handle = usePhotographerSettingsStore((s) => s.handle);
   const setHandle = usePhotographerSettingsStore((s) => s.setHandle);
   const { showToast } = useToast();
-  const [draft, setDraft] = useState(handle);
 
-  // Silent commit — same pattern as BrandSubsection. Auto-save fires on
-  // debounce-pause without toasting; explicit Save click runs flush() then
-  // surfaces a single confirmation toast. Live mode debounce-fires
-  // PUT /me/photographer/handle (backend returns 409 on collision; we log,
-  // store stays optimistic, photographer sees error on next refresh).
-  const saveHandle = useCallback(
-    async (next: string) => {
-      setHandle(next);
-      fireSettings("putHandle", putHandle(next));
-    },
-    [setHandle],
-  );
-
-  const { save, flush, isSaving } = useDebouncedSave(saveHandle);
-
-  const validation = validateHandle(draft);
-  const dirty = draft.trim().toLowerCase() !== handle;
+  const validation = validateHandle(handle);
   const valid = validation === null;
 
-  const previewUrl = draft.trim()
-    ? `quickpitik.com/${draft.trim().toLowerCase()}`
+  const previewUrl = handle.trim()
+    ? `quickpitik.com/${handle.trim().toLowerCase()}`
     : "quickpitik.com/your-handle";
 
-  const previewHref = valid ? `/${draft.trim().toLowerCase()}` : "#";
+  const previewHref = valid ? `/${handle.trim().toLowerCase()}` : "#";
 
   const copy = useCallback(async () => {
     if (!valid) return;
@@ -1525,23 +2220,7 @@ function HandleSlab() {
     }
   }, [previewUrl, valid, showToast]);
 
-  // Schedule a debounced auto-save when the draft is dirty AND valid. Invalid
-  // drafts hold (FieldError surfaces them); explicit Save button still runs
-  // through flush().
-  useEffect(() => {
-    if (dirty && valid) {
-      save(draft);
-    }
-  }, [dirty, valid, draft, save]);
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!dirty || !valid) return;
-    await flush();
-    showToast({ kind: "success", message: "Public URL updated." });
-  }
-
-  const saving = isSaving;
+  const ready = handle.trim().length > 0 && valid;
 
   return (
     <Slab
@@ -1550,7 +2229,8 @@ function HandleSlab() {
       title="Public URL"
       caption="The address runners visit"
     >
-      <form onSubmit={handleSubmit} className="space-y-7">
+      <SlabStatusChip ready={ready} />
+      <div className="space-y-7">
         <div className="flex flex-col gap-2">
           <label htmlFor="handle" className="font-sans text-sm text-slate">
             Handle
@@ -1561,31 +2241,25 @@ function HandleSlab() {
             </span>
             <input
               id="handle"
-              value={draft}
-              onChange={(e) =>
-                // Lowercase only (canonical form for the URL — this is
-                // normalization, not auto-correct of invalid characters).
-                // Anything else the user types — spaces, emoji, > 32 chars —
-                // stays in the field and surfaces via <FieldError> below so
-                // the user can see what they typed and fix it themselves.
-                setDraft(e.target.value.toLowerCase())
-              }
+              value={handle}
+              onChange={(e) => setHandle(e.target.value.toLowerCase())}
               placeholder="your-handle"
               autoComplete="off"
               spellCheck={false}
               required
+              disabled={!editing}
               aria-describedby={
-                validation && draft.length > 0
+                validation && handle.length > 0
                   ? "handle-error"
                   : "handle-hint"
               }
               aria-invalid={
-                validation && draft.length > 0 ? true : undefined
+                validation && handle.length > 0 ? true : undefined
               }
-              className="flex-1 min-w-0 bg-transparent focus:outline-none py-4 text-lg font-mono text-ink placeholder:text-slate-soft"
+              className="flex-1 min-w-0 bg-transparent focus:outline-none py-4 text-lg font-mono text-ink placeholder:text-slate-soft disabled:text-ink disabled:cursor-not-allowed"
             />
           </div>
-          {draft.length === 0 ? (
+          {handle.length === 0 ? (
             <p
               id="handle-hint"
               className="font-sans text-sm text-slate-soft"
@@ -1639,27 +2313,7 @@ function HandleSlab() {
             </a>
           </div>
         </div>
-
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <button
-            type="submit"
-            disabled={!dirty || !valid || saving}
-            className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
-          >
-            {saving ? "Saving…" : "Save URL"}
-            {!saving && <span aria-hidden="true">→</span>}
-          </button>
-          {dirty && !saving && (
-            <button
-              type="button"
-              onClick={() => setDraft(handle)}
-              className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
-            >
-              Reset
-            </button>
-          )}
-        </div>
-      </form>
+      </div>
     </Slab>
   );
 }
@@ -1669,9 +2323,9 @@ function HandleSlab() {
 // ─────────────────────────────────────────────────────────────────────────
 
 function RegionSlab() {
+  const { editing } = useEditMode();
   const region = usePhotographerSettingsStore((s) => s.region);
   const setRegion = usePhotographerSettingsStore((s) => s.setRegion);
-  const { showToast } = useToast();
 
   const selectedRegion = region ? getRegion(region.regionCode) : undefined;
   const selectedProvince =
@@ -1692,22 +2346,25 @@ function RegionSlab() {
     // Reset province when region changes — the user must re-pick.
     const next = getRegion(regionCode);
     if (!next) return;
-    const updated = { regionCode, provinceCode: "" };
-    setRegion(updated);
-    fireSettings("putRegion", putRegion(updated));
+    setRegion({ regionCode, provinceCode: "" });
   }
 
   function handlePickProvince(provinceCode: string) {
     if (!region) return;
     if (region.provinceCode === provinceCode) return;
-    const updated = { regionCode: region.regionCode, provinceCode };
-    setRegion(updated);
-    fireSettings("putRegion", putRegion(updated));
-    const summary = formatRegionLabel(region.regionCode, provinceCode);
-    if (summary) {
-      showToast({ kind: "success", message: `Region set · ${summary}` });
-    }
+    setRegion({ regionCode: region.regionCode, provinceCode });
   }
+
+  // Ready when a region is picked AND (the region has no provinces OR a
+  // province is picked). Stale codes count as unset since the photographer
+  // still needs to re-pick.
+  const ready =
+    !!region &&
+    !!selectedRegion &&
+    !staleRegion &&
+    (selectedRegion.provinces.length === 0
+      ? true
+      : !!selectedProvince && !staleProvince);
 
   return (
     <Slab
@@ -1716,6 +2373,7 @@ function RegionSlab() {
       title="Region"
       caption="Where you cover events"
     >
+      <SlabStatusChip ready={ready} />
       <div className="space-y-7">
         <p className="font-sans text-sm text-slate max-w-md">
           Helps runners surface local photographers and lets organizers invite
@@ -1725,48 +2383,61 @@ function RegionSlab() {
         <div className="grid md:grid-cols-2 gap-5 md:gap-7">
           <div className="flex flex-col gap-2">
             <span className="font-sans text-sm text-slate">Region</span>
-            <Dropdown
-              align="left"
-              ariaLabel="Pick a region"
-              className="w-full"
-              panelClassName="max-h-80 overflow-y-auto w-[min(28rem,calc(100vw-2rem))]"
-              trigger={
-                <span
-                  aria-describedby={staleRegion ? "region-error" : undefined}
-                  aria-invalid={staleRegion ? true : undefined}
-                  className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left transition-colors hover:border-slate"
-                >
+            {editing ? (
+              <Dropdown
+                align="left"
+                ariaLabel="Pick a region"
+                className="w-full"
+                panelClassName="max-h-80 overflow-y-auto w-[min(28rem,calc(100vw-2rem))]"
+                trigger={
                   <span
-                    className={cn(
-                      "truncate text-lg",
-                      selectedRegion ? "text-ink" : "text-slate-soft",
-                    )}
+                    aria-describedby={staleRegion ? "region-error" : undefined}
+                    aria-invalid={staleRegion ? true : undefined}
+                    className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left transition-colors hover:border-slate"
                   >
-                    {selectedRegion?.name ?? "Pick a region"}
-                  </span>
-                  <span aria-hidden="true" className="text-slate shrink-0">
-                    ▾
-                  </span>
-                </span>
-              }
-            >
-              {REGION_GROUP_ORDER.map((group) => (
-                <div key={group} className="pt-2 first:pt-0">
-                  <Kicker as="p" tone="soft" className="px-4 py-2">
-                    {REGION_GROUP_LABEL[group]}
-                  </Kicker>
-                  {PH_REGIONS.filter((r) => r.group === group).map((r) => (
-                    <DropdownItem
-                      key={r.code}
-                      onClick={() => handlePickRegion(r.code)}
-                      active={region?.regionCode === r.code}
+                    <span
+                      className={cn(
+                        "truncate text-lg",
+                        selectedRegion ? "text-ink" : "text-slate-soft",
+                      )}
                     >
-                      {r.name}
-                    </DropdownItem>
-                  ))}
-                </div>
-              ))}
-            </Dropdown>
+                      {selectedRegion?.name ?? "Pick a region"}
+                    </span>
+                    <span aria-hidden="true" className="text-slate shrink-0">
+                      ▾
+                    </span>
+                  </span>
+                }
+              >
+                {REGION_GROUP_ORDER.map((group) => (
+                  <div key={group} className="pt-2 first:pt-0">
+                    <Kicker as="p" tone="soft" className="px-4 py-2">
+                      {REGION_GROUP_LABEL[group]}
+                    </Kicker>
+                    {PH_REGIONS.filter((r) => r.group === group).map((r) => (
+                      <DropdownItem
+                        key={r.code}
+                        onClick={() => handlePickRegion(r.code)}
+                        active={region?.regionCode === r.code}
+                      >
+                        {r.name}
+                      </DropdownItem>
+                    ))}
+                  </div>
+                ))}
+              </Dropdown>
+            ) : (
+              <span className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left cursor-not-allowed">
+                <span
+                  className={cn(
+                    "truncate text-lg",
+                    selectedRegion ? "text-ink" : "text-slate-soft",
+                  )}
+                >
+                  {selectedRegion?.name ?? "Not set"}
+                </span>
+              </span>
+            )}
             <FieldError
               message={
                 staleRegion
@@ -1780,7 +2451,7 @@ function RegionSlab() {
 
           <div className="flex flex-col gap-2">
             <span className="font-sans text-sm text-slate">Province</span>
-            {selectedRegion ? (
+            {editing && selectedRegion ? (
               <Dropdown
                 align="left"
                 ariaLabel="Pick a province"
@@ -1822,9 +2493,20 @@ function RegionSlab() {
                 ))}
               </Dropdown>
             ) : (
-              <span className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left text-lg text-slate-soft cursor-not-allowed">
-                <span className="truncate">Pick a region first</span>
-                <span aria-hidden="true">▾</span>
+              <span className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left cursor-not-allowed">
+                <span
+                  className={cn(
+                    "truncate text-lg",
+                    selectedProvince ? "text-ink" : "text-slate-soft",
+                  )}
+                >
+                  {selectedProvince?.name ??
+                    (editing
+                      ? "Pick a region first"
+                      : selectedRegion
+                        ? "Not set"
+                        : "Not set")}
+                </span>
               </span>
             )}
             <FieldError
@@ -1854,6 +2536,7 @@ function RegionSlab() {
 // ─────────────────────────────────────────────────────────────────────────
 
 function SocialSlab() {
+  const { editing } = useEditMode();
   const socials = usePhotographerSettingsStore((s) => s.socials);
   const addSocial = usePhotographerSettingsStore((s) => s.addSocial);
   const updateSocial = usePhotographerSettingsStore((s) => s.updateSocial);
@@ -1909,6 +2592,11 @@ function SocialSlab() {
     validateSocialUrl(link.platform, link.url, { duplicateUrls }) !== null
   ).length;
 
+  // Ready when there's at least one row with a non-empty URL AND no row is
+  // invalid (so a row with a typo doesn't read as Complete). Mirrors the
+  // server-side MISSING_SOCIAL gate in spirit.
+  const ready = filledCount > 0 && invalidCount === 0;
+
   return (
     <Slab
       id="social"
@@ -1916,6 +2604,7 @@ function SocialSlab() {
       title="Social & verification"
       caption="A live link is the cheapest way runners check you're real"
     >
+      <SlabStatusChip ready={ready} />
       <div className="space-y-7">
         <p className="font-sans text-sm text-slate max-w-md">
           At least one social link is required. Most Cebu marathon photographers
@@ -1930,6 +2619,7 @@ function SocialSlab() {
                 key={link.id}
                 link={link}
                 duplicateUrls={duplicateUrls}
+                editing={editing}
                 onChange={(url) => updateSocial(link.id, url)}
                 onRemove={() => handleRemove(link.id, link.platform)}
               />
@@ -1937,26 +2627,28 @@ function SocialSlab() {
           </ul>
         )}
 
-        <div>
-          <Kicker as="p" tone="soft">
-            Add a platform
-          </Kicker>
-          <div className="mt-3 flex flex-wrap gap-2.5">
-            {SOCIAL_PLATFORMS.map((platform) => (
-              <button
-                key={platform}
-                type="button"
-                onClick={() => handleAdd(platform)}
-                className="font-sans text-sm py-2 px-4 rounded-full border border-line text-ink hover:bg-bone-deep/60 hover:border-slate transition-colors inline-flex items-center gap-2"
-              >
-                <Kicker>
-                  {SOCIAL_PLATFORM_TILE[platform]}
-                </Kicker>
-                {SOCIAL_PLATFORM_LABEL[platform]}
-              </button>
-            ))}
+        {editing && (
+          <div>
+            <Kicker as="p" tone="soft">
+              Add a platform
+            </Kicker>
+            <div className="mt-3 flex flex-wrap gap-2.5">
+              {SOCIAL_PLATFORMS.map((platform) => (
+                <button
+                  key={platform}
+                  type="button"
+                  onClick={() => handleAdd(platform)}
+                  className="font-sans text-sm py-2 px-4 rounded-full border border-line text-ink hover:bg-bone-deep/60 hover:border-slate transition-colors inline-flex items-center gap-2"
+                >
+                  <Kicker>
+                    {SOCIAL_PLATFORM_TILE[platform]}
+                  </Kicker>
+                  {SOCIAL_PLATFORM_LABEL[platform]}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {socials.length > 0 && (
           <Kicker
@@ -1977,6 +2669,7 @@ function SocialSlab() {
 interface SocialRowProps {
   link: SocialLink;
   duplicateUrls: ReadonlySet<string>;
+  editing: boolean;
   onChange: (url: string) => void;
   onRemove: () => void;
 }
@@ -1984,6 +2677,7 @@ interface SocialRowProps {
 function SocialRow({
   link,
   duplicateUrls,
+  editing,
   onChange,
   onRemove,
 }: SocialRowProps) {
@@ -2020,13 +2714,15 @@ function SocialRow({
           <span className="font-sans text-sm text-slate">
             {SOCIAL_PLATFORM_LABEL[link.platform]}
           </span>
-          <button
-            type="button"
-            onClick={onRemove}
-            className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
-          >
-            Remove
-          </button>
+          {editing && (
+            <button
+              type="button"
+              onClick={onRemove}
+              className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
+            >
+              Remove
+            </button>
+          )}
         </div>
         <input
           type="url"
@@ -2038,9 +2734,10 @@ function SocialRow({
           onBlur={() => setTouched(true)}
           placeholder={placeholder[link.platform]}
           maxLength={SOCIAL_URL_MAX}
+          disabled={!editing}
           aria-describedby={errorMessage ? errorId : undefined}
           aria-invalid={errorMessage ? true : undefined}
-          className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
+          className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors disabled:text-ink disabled:cursor-not-allowed"
           inputMode="url"
           autoComplete="off"
           spellCheck={false}
@@ -2078,6 +2775,7 @@ function validatePayoutNumber(method: PayoutMethod, raw: string): string | null 
 }
 
 function PayoutSlab() {
+  const { editing } = useEditMode();
   const payouts = usePhotographerSettingsStore((s) => s.payouts);
   const addPayout = usePhotographerSettingsStore((s) => s.addPayout);
   const updatePayout = usePhotographerSettingsStore((s) => s.updatePayout);
@@ -2093,6 +2791,16 @@ function PayoutSlab() {
   // collapses any in-flight edit. Adding a new account also closes any open
   // edit to avoid two forms competing for the photographer's attention.
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Collapse any in-flight per-row form when the global Edit mode is exited —
+  // a stale PayoutForm hanging around in read-only state would let the user
+  // mutate values they can't actually save.
+  useEffect(() => {
+    if (!editing) {
+      setDraftMethod(null);
+      setEditingId(null);
+    }
+  }, [editing]);
 
   function handlePickMethod(method: PayoutMethod) {
     setEditingId(null);
@@ -2168,6 +2876,10 @@ function PayoutSlab() {
     });
   }
 
+  // Ready when there's at least one account marked primary. Matches the
+  // server's MISSING_PAYOUT gate.
+  const ready = payouts.some((p) => p.isPrimary);
+
   return (
     <Slab
       id="payout"
@@ -2175,6 +2887,7 @@ function PayoutSlab() {
       title="Payout accounts"
       caption="Where we send your sales"
     >
+      <SlabStatusChip ready={ready} />
       <div className="space-y-7">
         <p className="font-sans text-sm text-slate max-w-md">
           Only seen by QuickPitik finance. One account is your primary — the
@@ -2183,6 +2896,7 @@ function PayoutSlab() {
           bounce.
         </p>
 
+        {editing && (
         <div>
           <Kicker as="p" tone="soft">
             Add an account
@@ -2214,8 +2928,9 @@ function PayoutSlab() {
             })}
           </div>
         </div>
+        )}
 
-        {draftMethod && (
+        {editing && draftMethod && (
           <PayoutForm
             method={draftMethod}
             onCancel={() => setDraftMethod(null)}
@@ -2251,6 +2966,7 @@ function PayoutSlab() {
                   <PayoutCard
                     key={account.id}
                     account={account}
+                    editing={editing}
                     onEdit={() => handleStartEdit(account.id)}
                     onMakePrimary={() =>
                       handleMakePrimary(account.id, account.method)
@@ -2581,6 +3297,7 @@ function PayoutForm({
 
 interface PayoutCardProps {
   account: PayoutAccount;
+  editing: boolean;
   onEdit: () => void;
   onMakePrimary: () => void;
   onRemove: () => void;
@@ -2588,6 +3305,7 @@ interface PayoutCardProps {
 
 function PayoutCard({
   account,
+  editing,
   onEdit,
   onMakePrimary,
   onRemove,
@@ -2636,31 +3354,33 @@ function PayoutCard({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 shrink-0 md:flex-col md:items-end">
-        {!account.isPrimary && (
+      {editing && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 shrink-0 md:flex-col md:items-end">
+          {!account.isPrimary && (
+            <button
+              type="button"
+              onClick={onMakePrimary}
+              className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
+            >
+              Make primary
+            </button>
+          )}
           <button
             type="button"
-            onClick={onMakePrimary}
+            onClick={onEdit}
             className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
           >
-            Make primary
+            Edit
           </button>
-        )}
-        <button
-          type="button"
-          onClick={onEdit}
-          className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
-        >
-          Remove
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={onRemove}
+            className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
+          >
+            Remove
+          </button>
+        </div>
+      )}
     </li>
   );
 }

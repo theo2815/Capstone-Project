@@ -14,6 +14,7 @@ import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
@@ -47,6 +48,11 @@ class PublicPhotographerService(
             // photographer_settings.user_id is FK ON DELETE CASCADE so this is
             // genuinely unreachable, but the !!-free path beats a runtime NPE.
             NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photographer not found")
+        }
+        // Suspended or non-approved photographers stay fully invisible to the
+        // public — 404 rather than 403 so existence isn't leaked.
+        if (user.suspendedAt != null || settings.verificationStatus != VerificationStatus.APPROVED) {
+            throw NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photographer not found")
         }
 
         val coverage = eventPhotographerRepository
@@ -93,6 +99,12 @@ class PublicPhotographerService(
         val normalized = handle.trim().lowercase()
         val settings = photographerSettingsRepository.findByHandleIgnoreCase(normalized)
             ?: throw NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photographer not found")
+        val user = userRepository.findById(settings.userId).orElseThrow {
+            NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photographer not found")
+        }
+        if (user.suspendedAt != null || settings.verificationStatus != VerificationStatus.APPROVED) {
+            throw NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photographer not found")
+        }
         val event = eventRepository.findBySlugAndDeletedAtIsNull(eventSlug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
 

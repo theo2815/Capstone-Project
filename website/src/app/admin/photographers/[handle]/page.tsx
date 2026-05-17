@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
-import { Slab } from "@/components/profile-shell";
+import { CollapsibleReviewSlab } from "@/components/admin/admin-collapse";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { AdminActionAside } from "@/components/admin/admin-action-aside";
 import { AdminDecisionsTimeline } from "@/components/admin/admin-decisions-timeline";
@@ -106,6 +106,7 @@ export default function AdminPhotographerDetailPage() {
         city={row.city}
         decisionCount={decisions.length}
         brandColor={effectiveSettings?.brandColor}
+        avatarUrl={effectiveSettings?.avatarUrl ?? row.avatarUrl ?? null}
       />
 
       <div className="mt-10 lg:mt-14 grid lg:grid-cols-[1fr_18rem] lg:gap-12 lg:items-start">
@@ -154,6 +155,7 @@ function Hero({
   city,
   decisionCount,
   brandColor,
+  avatarUrl,
 }: {
   cover: CoverSource;
   displayName: string;
@@ -165,6 +167,7 @@ function Hero({
   city: string;
   decisionCount: number;
   brandColor?: EffectivePhotographerSettings["brandColor"];
+  avatarUrl: string | null;
 }) {
   const brandHex =
     brandColor && brandColor !== "none" ? BRAND_COLOR_HEX[brandColor] : null;
@@ -190,7 +193,12 @@ function Hero({
         )}
       </div>
       <div className="mt-6 flex flex-col md:flex-row md:items-end md:gap-5 gap-4">
-        <AvatarDisc name={displayName} size="lg" tone="ink" avatarOverride={null} />
+        <AvatarDisc
+          name={displayName}
+          size="lg"
+          tone="ink"
+          avatarOverride={avatarUrl ? { dataUrl: avatarUrl } : null}
+        />
         <div className="flex-1 min-w-0">
           <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
             Photographer
@@ -285,7 +293,7 @@ function CompletenessSlab({
   const total = COMPLETENESS_FIELDS.length + 2;
 
   return (
-    <Slab
+    <CollapsibleReviewSlab
       id="completeness"
       number="01"
       title="Completeness"
@@ -317,7 +325,7 @@ function CompletenessSlab({
           />
         </ul>
       )}
-    </Slab>
+    </CollapsibleReviewSlab>
   );
 }
 
@@ -370,7 +378,7 @@ function AboutSlab({
     : null;
   const regionLine = resolvedRegion ?? region ?? "—";
   return (
-    <Slab id="about" number="02" title="About" caption="Profile basics">
+    <CollapsibleReviewSlab id="about" number="02" title="About" caption="Profile basics">
       <p className="font-sans text-base text-ink-soft leading-relaxed max-w-2xl">
         {bio}
       </p>
@@ -383,7 +391,7 @@ function AboutSlab({
           <DefRow label="Brand accent" value={BRAND_COLOR_LABEL[brandColor]} />
         )}
       </dl>
-    </Slab>
+    </CollapsibleReviewSlab>
   );
 }
 
@@ -415,7 +423,7 @@ function DefRow({
 function PublicUrlSlab({ handle }: { handle: string }) {
   if (!handle) {
     return (
-      <Slab
+      <CollapsibleReviewSlab
         id="public-url"
         number="03"
         title="Public URL"
@@ -424,12 +432,12 @@ function PublicUrlSlab({ handle }: { handle: string }) {
         <p className="font-sans text-sm text-slate-soft">
           No handle set yet.
         </p>
-      </Slab>
+      </CollapsibleReviewSlab>
     );
   }
   const display = `${PUBLIC_URL_PREFIX}/${handle}`;
   return (
-    <Slab
+    <CollapsibleReviewSlab
       id="public-url"
       number="03"
       title="Public URL"
@@ -449,7 +457,7 @@ function PublicUrlSlab({ handle }: { handle: string }) {
           Open ↗
         </Link>
       </div>
-    </Slab>
+    </CollapsibleReviewSlab>
   );
 }
 
@@ -464,7 +472,7 @@ function WatermarkSlab({
 }) {
   const watermark = effective?.watermark ?? null;
   return (
-    <Slab
+    <CollapsibleReviewSlab
       id="watermark"
       number="04"
       title="Watermark"
@@ -495,7 +503,7 @@ function WatermarkSlab({
           )}
         </div>
       )}
-    </Slab>
+    </CollapsibleReviewSlab>
   );
 }
 
@@ -508,7 +516,7 @@ function SocialsSlab({
 }) {
   const socials = effective?.socials ?? [];
   return (
-    <Slab
+    <CollapsibleReviewSlab
       id="socials"
       number="05"
       title="Social & verification links"
@@ -552,7 +560,7 @@ function SocialsSlab({
           ))}
         </ul>
       )}
-    </Slab>
+    </CollapsibleReviewSlab>
   );
 }
 
@@ -565,7 +573,7 @@ function PayoutsSlab({
 }) {
   const payouts = effective?.payouts ?? [];
   return (
-    <Slab
+    <CollapsibleReviewSlab
       id="payouts"
       number="06"
       title="Payout accounts"
@@ -603,7 +611,7 @@ function PayoutsSlab({
           ))}
         </ul>
       )}
-    </Slab>
+    </CollapsibleReviewSlab>
   );
 }
 
@@ -622,7 +630,7 @@ function EventsCoveredSlab({
   catalogResolver: (slug: string) => string | undefined;
 }) {
   return (
-    <Slab
+    <CollapsibleReviewSlab
       id="events"
       number="07"
       title="Events covered"
@@ -660,7 +668,7 @@ function EventsCoveredSlab({
           })}
         </ul>
       )}
-    </Slab>
+    </CollapsibleReviewSlab>
   );
 }
 
@@ -668,7 +676,7 @@ function EventsCoveredSlab({
 
 function ActivitySlab({ userId }: { userId: string }) {
   return (
-    <Slab
+    <CollapsibleReviewSlab
       id="activity"
       number="08"
       title="Activity"
@@ -679,6 +687,6 @@ function ActivitySlab({ userId }: { userId: string }) {
         limit={20}
         emptyCopy="No actions on file yet."
       />
-    </Slab>
+    </CollapsibleReviewSlab>
   );
 }

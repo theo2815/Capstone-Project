@@ -1,43 +1,43 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { resolveCurrentPhotographer } from "@/lib/current-photographer";
-import {
-  getEffectiveMessages,
-  getUnreadCount,
-} from "@/lib/photographer-messages";
-import { usePhotographerMessageStore } from "@/store/photographer-message-store";
+import { getUnreadCount } from "@/lib/photographer-messages";
+import { useMyPhotographerMessages } from "@/lib/me-photographer-messages-data";
+import { usePhotographerNotificationsWs } from "@/hooks/use-photographer-notifications-ws";
 import { PhotographerInboxModal } from "@/components/layout/photographer-inbox-modal";
 
 // Bell + unread-count badge mounted in <SiteHeader>. Renders nothing for
 // non-photographer roles, when not authenticated, or when the photographer
-// has zero messages (fully empty inbox). SiteHeader stays role-blind — all
-// gating lives here.
+// has zero messages.
 //
-// Unread count is derived from getEffectiveMessages so seed messages with
-// readAt=null contribute to the badge until the user opens the inbox and
-// marks them read.
+// Reads from GET /me/photographer/messages via useMyPhotographerMessages
+// — every admin action (approve/reject/suspend/unsuspend/reset/
+// dispute resolve|deny|escalate/payout approve|hold|paid/report ack|resolve
+// /admin DM) writes a row server-side via AdminDecisionLogService.pushMessage,
+// so the badge surfaces them all without any per-action FE wiring.
+//
+// Real-time path: usePhotographerNotificationsWs opens a WebSocket to
+// /ws/me/photographer/notifications and feeds every push into the same
+// store the bell renders from. While the WS is up, the REST poll relaxes
+// to 5min; on disconnect it snaps back to 30s. Both paths land in
+// applyPush which dedupes by id, so cross-path collisions are harmless.
 
 export function NotificationBell() {
   const { user, isAuthenticated, isLoading } = useAuth();
-  const submissions = usePhotographerMessageStore((s) => s.submissions);
-  const overrides = usePhotographerMessageStore((s) => s.overrides);
+  const isPhotographer = user?.role === "PHOTOGRAPHER";
+  const enabled = isAuthenticated && isPhotographer;
+  // Mount BEFORE the early return — the WS must stay alive even when the
+  // bell hides itself (zero messages, modal closed). Without this, a fresh
+  // photographer would never receive the WS push for their first message.
+  usePhotographerNotificationsWs(enabled);
+  const { messages } = useMyPhotographerMessages(enabled);
   const [open, setOpen] = useState(false);
 
-  const photographer = resolveCurrentPhotographer(user);
+  const unread = getUnreadCount(messages);
+  const total = messages.length;
 
-  const { unread, total } = useMemo(() => {
-    if (!photographer) return { unread: 0, total: 0 };
-    const all = getEffectiveMessages(submissions, overrides);
-    const mine = all.filter((m) => m.photographerId === photographer.id);
-    return {
-      unread: getUnreadCount(mine, photographer.id),
-      total: mine.length,
-    };
-  }, [submissions, overrides, photographer]);
-
-  if (isLoading || !isAuthenticated || !photographer) return null;
+  if (isLoading || !isAuthenticated || !isPhotographer) return null;
   // Stay mounted while the modal is open even if the inbox empties out
   // mid-session (last-message removal) — otherwise the modal unmounts
   // abruptly. Bell hides on next paint after the modal closes.
@@ -63,11 +63,7 @@ export function NotificationBell() {
           </span>
         )}
       </button>
-      <PhotographerInboxModal
-        isOpen={open}
-        onClose={() => setOpen(false)}
-        photographerId={photographer.id}
-      />
+      <PhotographerInboxModal isOpen={open} onClose={() => setOpen(false)} />
     </>
   );
 }

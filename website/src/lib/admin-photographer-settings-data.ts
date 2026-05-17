@@ -119,9 +119,9 @@ export interface UseAdminPhotographerSettingsResult {
 }
 
 // F-NEW-1a — force-refetch a single photographer's settings. Called from
-// useAdminUserStore admin actions (approve/reject/suspend/forceEdit/etc.)
-// so any open drawer or detail page sees fresh BE state without waiting
-// out the 60s TTL. Skips when the userId isn't in the cache — no point
+// useAdminUserStore admin actions (approve/reject/suspend/reset/etc.) so
+// any open drawer or detail page sees fresh BE state without waiting out
+// the 60s TTL. Skips when the userId isn't in the cache — no point
 // pre-populating a row no one is viewing.
 export function refetchAdminPhotographerSettings(userId: string): void {
   const state = useAdminPhotographerSettingsStore.getState();

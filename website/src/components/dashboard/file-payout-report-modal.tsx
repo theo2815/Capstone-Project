@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { submitPayoutReport } from "@/lib/api-photographer-earnings";
 import { resolveCurrentPhotographer } from "@/lib/current-photographer";
 import { useAuth } from "@/hooks/use-auth";
+import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
 import type { PhotographerPayout } from "@/lib/photographer-mock";
 import { formatLongDate } from "@/lib/format";
 import { formatPrice } from "@/lib/utils";
@@ -61,7 +62,8 @@ export function FilePayoutReportModal({
     }
   }, [cycle]);
 
-  const photographer = resolveCurrentPhotographer(user);
+  const settingsHandle = usePhotographerSettingsStore((s) => s.handle);
+  const photographer = resolveCurrentPhotographer(user, settingsHandle);
 
   if (!cycle) return null;
 
@@ -89,7 +91,7 @@ export function FilePayoutReportModal({
         payoutCycleId: cycle.id,
         photographerId: photographer.id,
         photographerName: photographer.name,
-        handle: photographer.handle,
+        handle: photographer.handle ?? "",
         reason,
         note: note.trim(),
       });

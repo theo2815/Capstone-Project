@@ -194,6 +194,11 @@ export async function postPayoutQr(
 export interface VerificationSubmitResponse {
   status: VerificationStatus;
   missing?: string[] | null;
+  // Populated when admin has suspended the account. Orthogonal to status
+  // — an approved photographer can also be suspended, in which case the
+  // FE prioritises the suspended state for gating + banner copy.
+  suspendedAt?: string | null;
+  suspensionReason?: string | null;
 }
 
 export async function submitVerification(): Promise<VerificationSubmitResponse> {

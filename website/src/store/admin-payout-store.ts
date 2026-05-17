@@ -22,10 +22,10 @@ import {
 // mode the FE still uses it for visual collapse until the backend response
 // supplies a canonical UUID.
 //
-// Hold + bulkHold also push a "payout_held" message into the
-// photographer-message-store so the affected photographer sees it in their
-// inbox bell. Approve + markPaid are silent — the photographer learns from
-// status flips on /dashboard/billing, not the inbox.
+// Photographer notifications fire BE-side: AdminPayoutService.hold +
+// resume + markPaid each call AdminDecisionLogService.pushMessage in the
+// same TX (kinds payout_held / payout_approved / payout_paid). The
+// photographer reads them via GET /me/photographer/messages.
 
 function fireBackendPayoutAction(label: string, p: Promise<unknown>): void {
   void p.catch((err) => {

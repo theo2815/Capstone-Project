@@ -5,12 +5,18 @@ import { useUserMediaStore } from "@/store/user-media-store";
 
 export type UploadGateState =
   | { kind: "ok" }
+  | { kind: "suspended"; reason: string | null }
   | { kind: "incomplete"; missingLabel: string }
   | { kind: "pending" };
 
 // Single source of truth for "can this photographer upload right now?". Used
 // by upload pages to gate the form, and by the dashboard overview / event
 // pages to show the verification banner.
+//
+// Priority order: suspended > incomplete > pending > ok. Suspended is the
+// hardest block — even an approved photographer drops here the moment admin
+// flips suspendedAt. Source is photographer-verification-sync polling
+// /me/photographer/verification (mount + focus + 30s while pending).
 export function useCanUpload(): UploadGateState {
   const avatar = useUserMediaStore((s) => s.avatar);
   const cover = usePhotographerSettingsStore((s) => s.cover);
@@ -21,6 +27,14 @@ export function useCanUpload(): UploadGateState {
   const socials = usePhotographerSettingsStore((s) => s.socials);
   const payouts = usePhotographerSettingsStore((s) => s.payouts);
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
+  const suspendedAt = usePhotographerSettingsStore((s) => s.suspendedAt);
+  const suspensionReason = usePhotographerSettingsStore(
+    (s) => s.suspensionReason,
+  );
+
+  if (suspendedAt) {
+    return { kind: "suspended", reason: suspensionReason };
+  }
 
   if (status === "approved") {
     return { kind: "ok" };

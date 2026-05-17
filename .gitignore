@@ -26,6 +26,9 @@ docs/api-keys.md
 *.swp
 *.swo
 
+# Claude Code local permission state (per-developer)
+.claude/settings.local.json
+
 # ML Models (downloaded at build/start time)
 models/
 ai-api/models/

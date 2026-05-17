@@ -32,7 +32,6 @@ import type { PaginatedResponse } from "@/types/api";
 //   POST   /api/v1/admin/users/{id}/reset-verification     → AdminUserRow
 //   POST   /api/v1/admin/users/{id}/suspend      { reason } → AdminUserRow
 //   POST   /api/v1/admin/users/{id}/unsuspend              → AdminUserRow
-//   PATCH  /api/v1/admin/users/{id}              { handle?, brandName? } → AdminUserRow
 //
 //   GET    /api/v1/admin/disputes?status=&offset=&limit=   → PaginatedResponse<Dispute>
 //   POST   /api/v1/admin/disputes/{id}/resolve   { resolution, refundAmount?, reason } → Dispute
@@ -164,6 +163,9 @@ export interface AdminPhotographerSettingsResponse {
   brandName: string | null;
   brandColor: string;
   bio: string;
+  /** Presigned avatar URL via UserDtoMapper.resolveAvatarUrl. Null when
+   *  the photographer hasn't uploaded one. */
+  avatarUrl: string | null;
   region: AdminPhotographerSettingsRegion | null;
   cover: AdminPhotographerSettingsCover | null;
   watermark: AdminPhotographerSettingsWatermark | null;
@@ -197,9 +199,11 @@ export async function rejectUser(
 
 export async function resetUserVerification(
   userId: string,
+  reason: string,
 ): Promise<AdminUserRow> {
   return api.post<AdminUserRow>(
     `/admin/users/${encodeURIComponent(userId)}/reset-verification`,
+    { reason },
   );
 }
 
@@ -219,18 +223,32 @@ export async function unsuspendUser(userId: string): Promise<AdminUserRow> {
   );
 }
 
-export interface ForceEditUserPatch {
-  handle?: string | null;
-  brandName?: string | null;
+// Admin → photographer free-form DM. Writes a photographer_messages row
+// via AdminDecisionLogService.pushMessage server-side (kind=admin_message,
+// title=subject). The photographer reads it via the same /me/photographer/messages
+// endpoint as every other admin-action message.
+export interface SendAdminMessageInput {
+  subject: string;
+  body: string;
 }
 
-export async function forceEditUser(
+export interface AdminMessageResponse {
+  id: string;
+  kind: string;
+  title: string | null;
+  body: string;
+  sourceDecisionId: string | null;
+  createdAt: string;
+  readAt: string | null;
+}
+
+export async function sendAdminMessage(
   userId: string,
-  patch: ForceEditUserPatch,
-): Promise<AdminUserRow> {
-  return api.fetch<AdminUserRow>(
-    `/admin/users/${encodeURIComponent(userId)}`,
-    { method: "PATCH", body: JSON.stringify(patch) },
+  input: SendAdminMessageInput,
+): Promise<AdminMessageResponse> {
+  return api.post<AdminMessageResponse>(
+    `/admin/users/${encodeURIComponent(userId)}/message`,
+    input,
   );
 }
 

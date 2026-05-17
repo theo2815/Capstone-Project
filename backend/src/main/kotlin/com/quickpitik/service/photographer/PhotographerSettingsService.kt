@@ -21,7 +21,9 @@ import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.storage.StorageService
+import com.quickpitik.websocket.AdminInboxEvent
 import org.slf4j.LoggerFactory
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -41,6 +43,7 @@ class PhotographerSettingsService(
     private val storageProperties: StorageProperties,
     private val socialLinkRepository: SocialLinkRepository,
     private val payoutAccountRepository: PayoutAccountRepository,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -258,7 +261,7 @@ class PhotographerSettingsService(
     fun getVerificationStatus(userId: UUID): VerificationSubmitResponseDto {
         val settings = photographerSettingsRepository.findById(userId).orElse(null)
         val status = settings?.verificationStatus ?: VerificationStatus.INCOMPLETE
-        return VerificationSubmitResponseDto(status = status.toWire())
+        return buildVerificationResponse(userId, status)
     }
 
     // ─── Verification withdraw ────────────────────────────────────────────
@@ -273,7 +276,7 @@ class PhotographerSettingsService(
             settings.verificationStatus = VerificationStatus.INCOMPLETE
             photographerSettingsRepository.save(settings)
         }
-        return VerificationSubmitResponseDto(status = settings.verificationStatus.toWire())
+        return buildVerificationResponse(userId, settings.verificationStatus)
     }
 
     // ─── Verification submit ──────────────────────────────────────────────
@@ -289,8 +292,9 @@ class PhotographerSettingsService(
         val settings = getOrCreate(userId)
         val incomplete = collectMissing(userId, settings)
         if (!incomplete.isComplete) {
-            return VerificationSubmitResponseDto(
-                status = VerificationStatus.INCOMPLETE.toWire(),
+            return buildVerificationResponse(
+                userId,
+                VerificationStatus.INCOMPLETE,
                 missing = incomplete.missing,
             )
         }
@@ -299,7 +303,38 @@ class PhotographerSettingsService(
         // PENDING) so admins see fresh evidence without an out-of-band reset.
         settings.verificationStatus = VerificationStatus.PENDING
         photographerSettingsRepository.save(settings)
-        return VerificationSubmitResponseDto(status = settings.verificationStatus.toWire())
+        // Push to connected admins so the verification queue picks up the
+        // new submission without a refresh. AFTER_COMMIT only — a rollback
+        // of this TX drops the push.
+        eventPublisher.publishEvent(
+            AdminInboxEvent(
+                payload = mapOf(
+                    "type" to "verification_submitted",
+                    "entityId" to userId.toString(),
+                    "actorId" to userId.toString(),
+                    "occurredAt" to OffsetDateTime.now().toString(),
+                ),
+            ),
+        )
+        return buildVerificationResponse(userId, settings.verificationStatus)
+    }
+
+    // Hydrates verification responses with suspended fields so the FE can
+    // render a suspended-state banner separately from verification status.
+    // Admin suspension is orthogonal to verification, so both must travel
+    // on the same poll for the photographer dashboard to react in one tick.
+    private fun buildVerificationResponse(
+        userId: UUID,
+        status: VerificationStatus,
+        missing: List<String>? = null,
+    ): VerificationSubmitResponseDto {
+        val user = userRepository.findById(userId).orElse(null)
+        return VerificationSubmitResponseDto(
+            status = status.toWire(),
+            missing = missing,
+            suspendedAt = user?.suspendedAt?.toString(),
+            suspensionReason = user?.suspensionReason,
+        )
     }
 
     // P1-F1 — required-field check now matches the FE's useAllRequiredFilled

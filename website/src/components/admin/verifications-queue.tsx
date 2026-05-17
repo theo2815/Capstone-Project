@@ -7,12 +7,10 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
+import { CollapsibleReviewSection } from "@/components/admin/admin-collapse";
+import { AvatarDisc } from "@/components/account/avatar-disc";
 import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAdminUsersData } from "@/lib/admin-users-data";
-import {
-  notifyVerificationApproved,
-  notifyVerificationRejected,
-} from "@/lib/admin-photographer-notifications";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useUrlState } from "@/hooks/use-url-state";
@@ -221,74 +219,72 @@ export function VerificationsQueue() {
     setRowId(id);
   }
 
-  function handleBulkApprove() {
+  // Bulk handlers fan out N awaits in parallel via Promise.allSettled so
+  // one BE failure doesn't block the rest. The summary toast tallies
+  // successes vs failures so admin sees an honest count — individual
+  // failures already surfaced their own error toast from the store.
+  async function handleBulkApprove() {
     const ids = Array.from(selected);
-    for (const id of ids) {
-      const target = byId.get(id);
-      approve(id);
-      if (target) {
-        notifyVerificationApproved({
-          photographerId: id,
-          brandName: target.brandName ?? target.name,
-        });
-      }
-    }
+    const results = await Promise.allSettled(ids.map((id) => approve(id)));
+    const ok = results.filter(
+      (r) => r.status === "fulfilled" && r.value === true,
+    ).length;
     clearSelection();
-    showToast({
-      kind: "success",
-      message: `Approved · ${ids.length} ${
-        ids.length === 1 ? "photographer" : "photographers"
-      }`,
-    });
+    if (ok === ids.length) {
+      showToast({
+        kind: "success",
+        message: `Approved · ${ok} ${ok === 1 ? "photographer" : "photographers"}`,
+      });
+    } else if (ok > 0) {
+      showToast({
+        kind: "error",
+        message: `Approved ${ok}/${ids.length} — ${ids.length - ok} failed`,
+      });
+    }
   }
 
-  function handleBulkRejectSubmit(reason: string) {
+  async function handleBulkRejectSubmit(reason: string) {
     const ids = Array.from(selected);
-    for (const id of ids) {
-      const target = byId.get(id);
-      reject(id, reason);
-      if (target) {
-        notifyVerificationRejected({
-          photographerId: id,
-          brandName: target.brandName ?? target.name,
-          reason,
-        });
-      }
-    }
     setBulkRejectOpen(false);
+    const results = await Promise.allSettled(
+      ids.map((id) => reject(id, reason)),
+    );
+    const ok = results.filter(
+      (r) => r.status === "fulfilled" && r.value === true,
+    ).length;
     clearSelection();
-    showToast({
-      kind: "info",
-      message: `Sent back · ${ids.length} ${
-        ids.length === 1 ? "photographer" : "photographers"
-      }`,
-    });
+    if (ok === ids.length) {
+      showToast({
+        kind: "info",
+        message: `Sent back · ${ok} ${ok === 1 ? "photographer" : "photographers"}`,
+      });
+    } else if (ok > 0) {
+      showToast({
+        kind: "error",
+        message: `Sent back ${ok}/${ids.length} — ${ids.length - ok} failed`,
+      });
+    }
   }
 
-  function handleDrawerApprove() {
+  async function handleDrawerApprove() {
     if (!openRow) return;
     const brand = openRow.brandName ?? openRow.name;
-    approve(openRow.userId);
-    notifyVerificationApproved({
-      photographerId: openRow.userId,
-      brandName: brand,
-    });
-    showToast({ kind: "success", message: `Approved · ${brand}` });
-    setRowId("");
+    const ok = await approve(openRow.userId);
+    if (ok) {
+      showToast({ kind: "success", message: `Approved · ${brand}` });
+      setRowId("");
+    }
   }
 
-  function handleDrawerRejectSubmit(reason: string) {
+  async function handleDrawerRejectSubmit(reason: string) {
     if (!openRow) return;
     const brand = openRow.brandName ?? openRow.name;
-    reject(openRow.userId, reason);
-    notifyVerificationRejected({
-      photographerId: openRow.userId,
-      brandName: brand,
-      reason,
-    });
     setDrawerRejectOpen(false);
-    showToast({ kind: "info", message: `Sent back · ${brand}` });
-    setRowId("");
+    const ok = await reject(openRow.userId, reason);
+    if (ok) {
+      showToast({ kind: "info", message: `Sent back · ${brand}` });
+      setRowId("");
+    }
   }
 
   // Drawer verbs: E approves the open photographer, R opens the reject
@@ -716,12 +712,30 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
   const regionLine = resolvedRegion ?? row.region ?? "Not set";
   const publicHandle = effective?.handle?.trim() || row.handle || "";
 
+  const socialsCount = effective?.socials.length ?? 0;
+  const payoutsCount = effective?.payouts.length ?? 0;
+  const avatarUrl = effective?.avatarUrl ?? row.avatarUrl ?? null;
+
   return (
-    <div className="space-y-10">
-      <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
-          Identity
-        </p>
+    <div className="space-y-6">
+      <div className="flex items-center gap-4 pb-2">
+        <AvatarDisc
+          name={row.brandName ?? row.name}
+          size="md"
+          tone="ink"
+          avatarOverride={avatarUrl ? { dataUrl: avatarUrl } : null}
+        />
+        <div className="min-w-0">
+          <p className="font-display text-lg md:text-xl text-ink truncate">
+            {row.brandName ?? row.name}
+          </p>
+          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft truncate">
+            {row.email}
+          </p>
+        </div>
+      </div>
+
+      <CollapsibleReviewSection kicker="Identity">
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
           <FieldRow label="Email" value={row.email} mono={false} />
           <FieldRow label="Legal name" value={row.name} mono={false} />
@@ -738,22 +752,48 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
           <FieldRow label="City" value={row.city} mono={false} />
           <FieldRow label="Region" value={regionLine} mono={false} />
         </dl>
-      </section>
+      </CollapsibleReviewSection>
 
-      <CoverSection effective={effective} />
+      <CollapsibleReviewSection kicker="Public profile cover">
+        <CoverSection effective={effective} />
+      </CollapsibleReviewSection>
 
-      <PublicUrlSection handle={publicHandle} />
+      <CollapsibleReviewSection kicker="Public URL">
+        <PublicUrlSection handle={publicHandle} />
+      </CollapsibleReviewSection>
 
-      <WatermarkSection effective={effective} brand={row.brandName ?? row.name} />
+      <CollapsibleReviewSection kicker="Watermark">
+        <WatermarkSection
+          effective={effective}
+          brand={row.brandName ?? row.name}
+        />
+      </CollapsibleReviewSection>
 
-      <SocialsSection effective={effective} />
+      <CollapsibleReviewSection
+        kicker={
+          <>
+            Social &amp; verification links ·{" "}
+            <span className="tnum">{socialsCount}</span>{" "}
+            {socialsCount === 1 ? "link" : "links"}
+          </>
+        }
+      >
+        <SocialsSection effective={effective} />
+      </CollapsibleReviewSection>
 
-      <PayoutsSection effective={effective} />
+      <CollapsibleReviewSection
+        kicker={
+          <>
+            Payout accounts ·{" "}
+            <span className="tnum">{payoutsCount}</span>{" "}
+            {payoutsCount === 1 ? "account" : "accounts"}
+          </>
+        }
+      >
+        <PayoutsSection effective={effective} />
+      </CollapsibleReviewSection>
 
-      <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
-          Settings completeness
-        </p>
+      <CollapsibleReviewSection kicker="Settings completeness">
         <div className="rounded-2xl border border-line bg-bone-deep p-5 md:p-6 space-y-4">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <CompletenessStrip snapshot={liveSnapshot} />
@@ -798,12 +838,9 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
             )}
           </ul>
         </div>
-      </section>
+      </CollapsibleReviewSection>
 
-      <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
-          Account
-        </p>
+      <CollapsibleReviewSection kicker="Account">
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
           <FieldRow
             label="Joined"
@@ -812,7 +849,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
           />
           <FieldRow label="Status" value="Pending review" mono />
         </dl>
-      </section>
+      </CollapsibleReviewSection>
     </div>
   );
 }
@@ -823,66 +860,56 @@ function CoverSection({
   effective: EffectivePhotographerSettings | null;
 }) {
   const cover = effective?.cover ?? null;
-  return (
-    <section>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
-        Public profile cover
+  if (!cover) {
+    return (
+      <p className="font-sans text-sm text-slate-soft">
+        No cover banner uploaded.
       </p>
-      {!cover ? (
-        <p className="font-sans text-sm text-slate-soft">
-          No cover banner uploaded.
-        </p>
+    );
+  }
+  return (
+    <div className="relative bg-bone-deep border border-line rounded-2xl aspect-[16/7] md:aspect-[16/5] overflow-hidden">
+      {cover.kind === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element -- data URL preview; backend serves signed S3 URL.
+        <img
+          src={cover.url}
+          alt=""
+          className="size-full object-cover"
+          draggable={false}
+        />
       ) : (
-        <div className="relative bg-bone-deep border border-line rounded-2xl aspect-[16/7] md:aspect-[16/5] overflow-hidden">
-          {cover.kind === "image" ? (
-            // eslint-disable-next-line @next/next/no-img-element -- data URL preview; backend serves signed S3 URL.
-            <img
-              src={cover.url}
-              alt=""
-              className="size-full object-cover"
-              draggable={false}
-            />
-          ) : (
-            <div
-              aria-hidden
-              className="size-full"
-              style={{
-                background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
-              }}
-            />
-          )}
-        </div>
+        <div
+          aria-hidden
+          className="size-full"
+          style={{
+            background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
+          }}
+        />
       )}
-    </section>
+    </div>
   );
 }
 
 function PublicUrlSection({ handle }: { handle: string }) {
+  if (!handle) {
+    return (
+      <p className="font-sans text-sm text-slate-soft">No handle set yet.</p>
+    );
+  }
   return (
-    <section>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
-        Public URL
+    <div className="flex items-center justify-between gap-4 flex-wrap rounded-2xl border border-line bg-bone-deep px-4 py-3">
+      <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-ink tnum truncate">
+        quickpitik.com/{handle}
       </p>
-      {!handle ? (
-        <p className="font-sans text-sm text-slate-soft">
-          No handle set yet.
-        </p>
-      ) : (
-        <div className="flex items-center justify-between gap-4 flex-wrap rounded-2xl border border-line bg-bone-deep px-4 py-3">
-          <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-ink tnum truncate">
-            quickpitik.com/{handle}
-          </p>
-          <Link
-            href={`/${handle}`}
-            target="_blank"
-            rel="noopener"
-            className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
-          >
-            Open ↗
-          </Link>
-        </div>
-      )}
-    </section>
+      <Link
+        href={`/${handle}`}
+        target="_blank"
+        rel="noopener"
+        className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+      >
+        Open ↗
+      </Link>
+    </div>
   );
 }
 
@@ -894,36 +921,30 @@ function WatermarkSection({
   brand: string;
 }) {
   const watermark = effective?.watermark ?? null;
+  if (!watermark) {
+    return (
+      <p className="font-sans text-sm text-slate-soft">No watermark uploaded.</p>
+    );
+  }
   return (
-    <section>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
-        Watermark
-      </p>
-      {!watermark ? (
-        <p className="font-sans text-sm text-slate-soft">
-          No watermark uploaded.
-        </p>
+    <div className="rounded-2xl border border-line bg-bone-deep p-6 md:p-8 flex items-center justify-center min-h-[120px]">
+      {watermark.kind === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element -- data URL preview from photographer settings store; backend serves signed S3 URL.
+        <img
+          src={watermark.dataUrl}
+          alt={`${brand} watermark`}
+          className="max-h-24 max-w-full object-contain"
+          draggable={false}
+        />
       ) : (
-        <div className="rounded-2xl border border-line bg-bone-deep p-6 md:p-8 flex items-center justify-center min-h-[120px]">
-          {watermark.kind === "image" ? (
-            // eslint-disable-next-line @next/next/no-img-element -- data URL preview from photographer settings store; backend serves signed S3 URL.
-            <img
-              src={watermark.dataUrl}
-              alt={`${brand} watermark`}
-              className="max-h-24 max-w-full object-contain"
-              draggable={false}
-            />
-          ) : (
-            <span
-              className="font-mono uppercase tracking-[0.4em] text-2xl md:text-3xl text-ink/70"
-              aria-label={`Watermark label: ${watermark.label}`}
-            >
-              © {watermark.label}
-            </span>
-          )}
-        </div>
+        <span
+          className="font-mono uppercase tracking-[0.4em] text-2xl md:text-3xl text-ink/70"
+          aria-label={`Watermark label: ${watermark.label}`}
+        >
+          © {watermark.label}
+        </span>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -933,50 +954,45 @@ function SocialsSection({
   effective: EffectivePhotographerSettings | null;
 }) {
   const socials = effective?.socials ?? [];
-  return (
-    <section>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
-        Social & verification links · {socials.length}{" "}
-        {socials.length === 1 ? "link" : "links"}
+  if (socials.length === 0) {
+    return (
+      <p className="font-sans text-sm text-slate-soft">
+        No social profiles linked yet.
       </p>
-      {socials.length === 0 ? (
-        <p className="font-sans text-sm text-slate-soft">
-          No social profiles linked yet.
-        </p>
-      ) : (
-        <ul className="space-y-3">
-          {socials.map((social) => (
-            <li
-              key={social.id}
-              className="flex items-center gap-4 border-b border-line pb-3"
-            >
-              <span
-                aria-hidden
-                className="shrink-0 size-10 rounded-xl border border-line bg-bone-deep flex items-center justify-center font-mono uppercase tracking-[0.15em] text-[13px] text-ink"
-              >
-                {SOCIAL_PLATFORM_TILE[social.platform]}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="font-display text-base text-ink">
-                  {SOCIAL_PLATFORM_LABEL[social.platform]}
-                </p>
-                <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-slate-soft mt-0.5 truncate">
-                  {social.url}
-                </p>
-              </div>
-              <a
-                href={social.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
-              >
-                Open ↗
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    );
+  }
+  return (
+    <ul className="space-y-3">
+      {socials.map((social) => (
+        <li
+          key={social.id}
+          className="flex items-center gap-4 border-b border-line pb-3"
+        >
+          <span
+            aria-hidden
+            className="shrink-0 size-10 rounded-xl border border-line bg-bone-deep flex items-center justify-center font-mono uppercase tracking-[0.15em] text-[13px] text-ink"
+          >
+            {SOCIAL_PLATFORM_TILE[social.platform]}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-display text-base text-ink">
+              {SOCIAL_PLATFORM_LABEL[social.platform]}
+            </p>
+            <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-slate-soft mt-0.5 truncate">
+              {social.url}
+            </p>
+          </div>
+          <a
+            href={social.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+          >
+            Open ↗
+          </a>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -986,44 +1002,39 @@ function PayoutsSection({
   effective: EffectivePhotographerSettings | null;
 }) {
   const payouts = effective?.payouts ?? [];
-  return (
-    <section>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
-        Payout accounts · {payouts.length}{" "}
-        {payouts.length === 1 ? "account" : "accounts"}
+  if (payouts.length === 0) {
+    return (
+      <p className="font-sans text-sm text-slate-soft">
+        No payout accounts on file.
       </p>
-      {payouts.length === 0 ? (
-        <p className="font-sans text-sm text-slate-soft">
-          No payout accounts on file.
-        </p>
-      ) : (
-        <ul className="space-y-3">
-          {payouts.map((p) => (
-            <li
-              key={p.id}
-              className="flex items-center justify-between gap-4 border-b border-line pb-3"
-            >
-              <div className="min-w-0">
-                <p className="font-display text-base text-ink truncate">
-                  {PAYOUT_METHOD_LABEL[p.method]}
-                  {p.isPrimary && (
-                    <span className="ml-2 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh tnum">
-                      Primary
-                    </span>
-                  )}
-                </p>
-                <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
-                  {formatPayoutNumber(p.method, p.accountNumber)}
-                </p>
-              </div>
-              <p className="font-sans text-sm text-slate-soft truncate">
-                {p.accountName}
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    );
+  }
+  return (
+    <ul className="space-y-3">
+      {payouts.map((p) => (
+        <li
+          key={p.id}
+          className="flex items-center justify-between gap-4 border-b border-line pb-3"
+        >
+          <div className="min-w-0">
+            <p className="font-display text-base text-ink truncate">
+              {PAYOUT_METHOD_LABEL[p.method]}
+              {p.isPrimary && (
+                <span className="ml-2 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh tnum">
+                  Primary
+                </span>
+              )}
+            </p>
+            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+              {formatPayoutNumber(p.method, p.accountNumber)}
+            </p>
+          </div>
+          <p className="font-sans text-sm text-slate-soft truncate">
+            {p.accountName}
+          </p>
+        </li>
+      ))}
+    </ul>
   );
 }
 

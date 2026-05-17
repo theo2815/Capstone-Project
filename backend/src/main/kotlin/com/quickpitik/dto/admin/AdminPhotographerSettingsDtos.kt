@@ -21,6 +21,9 @@ data class AdminPhotographerSettingsDto(
     val brandName: String?,
     val brandColor: String,
     val bio: String,
+    /** Presigned URL via UserDtoMapper.resolveAvatarUrl. Null when the
+     *  photographer hasn't uploaded an avatar yet. */
+    val avatarUrl: String?,
     val region: AdminPhotographerRegionDto?,
     val cover: AdminPhotographerCoverDto?,
     val watermark: AdminPhotographerWatermarkDto?,
