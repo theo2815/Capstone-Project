@@ -11,8 +11,14 @@ import org.springframework.web.socket.WebSocketHandler
 import org.springframework.web.socket.server.HandshakeInterceptor
 import java.util.UUID
 
+// JWT-only handshake for /ws/me/photographer/notifications. The role gate
+// (PHOTOGRAPHER vs other roles) is enforced at use site — non-photographers
+// can technically connect but their userId has no admin-decision rows
+// flowing in, so the channel is silent. Keeping the gate loose here means
+// runner/admin users who somehow point at this URL get a no-op instead of
+// a confusing handshake failure. The data path is the gate.
 @Component
-class EventPhotoHandshakeInterceptor(
+class MeNotificationHandshakeInterceptor(
     private val jwtTokenProvider: JwtTokenProvider,
 ) : HandshakeInterceptor {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -23,34 +29,26 @@ class EventPhotoHandshakeInterceptor(
         wsHandler: WebSocketHandler,
         attributes: MutableMap<String, Any>,
     ): Boolean {
-        val eventId = extractEventId(request)
-        if (eventId == null) {
-            log.debug("WS handshake rejected: bad eventId in {}", request.uri.path)
-            return false
-        }
         val token = extractToken(request)
         if (token == null) {
-            log.debug("WS handshake rejected: missing token for event {}", eventId)
+            log.debug("WS handshake rejected (me): missing token")
             return false
         }
         val userId = try {
             UUID.fromString(jwtTokenProvider.parse(token).subject)
         } catch (ex: JwtException) {
-            log.debug("WS handshake rejected: invalid token for event {} ({})", eventId, ex.message)
+            log.debug("WS handshake rejected (me): invalid token ({})", ex.message)
             return false
         } catch (ex: IllegalArgumentException) {
-            log.debug("WS handshake rejected: malformed subject for event {} ({})", eventId, ex.message)
+            log.debug("WS handshake rejected (me): malformed subject ({})", ex.message)
             return false
         }
-        attributes[EventPhotoWebSocketHandler.ATTR_EVENT_ID] = eventId
-        attributes[EventPhotoWebSocketHandler.ATTR_USER_ID] = userId
-        // Echo the chosen subprotocol back to the client. Without this,
-        // browsers drop the connection with code 1006 immediately after
-        // the handshake because the upgrade response is malformed (the
-        // server accepted the handshake but didn't select a subprotocol
-        // from the client's offer). Bug since Q-002 — pre-existed this
-        // notifications PR but caught here while debugging the same
-        // failure mode on the admin/photographer channels.
+        attributes[MeNotificationWebSocketHandler.ATTR_USER_ID] = userId
+        // Echo the chosen subprotocol back to the client. Browsers require
+        // this when the client offered a Sec-WebSocket-Protocol value;
+        // omitting the response header makes the upgrade malformed and
+        // the browser drops the connection with code 1006 immediately
+        // after the handshake.
         response.headers.set("Sec-WebSocket-Protocol", token)
         return true
     }
@@ -64,17 +62,9 @@ class EventPhotoHandshakeInterceptor(
         // no-op
     }
 
-    private fun extractEventId(request: ServerHttpRequest): UUID? {
-        val segments = request.uri.path.trimEnd('/').split("/")
-        val idx = segments.indexOf("events")
-        if (idx == -1 || idx + 1 >= segments.size) return null
-        return runCatching { UUID.fromString(segments[idx + 1]) }.getOrNull()
-    }
-
     private fun extractToken(request: ServerHttpRequest): String? {
         val protocolHeader = request.headers.getFirst("Sec-WebSocket-Protocol")
         if (!protocolHeader.isNullOrBlank()) {
-            // FE sends comma-separated protocols; we accept the first non-empty token
             return protocolHeader.split(",").map { it.trim() }.firstOrNull { it.isNotEmpty() }
         }
         if (request is ServletServerHttpRequest) {

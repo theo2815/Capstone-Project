@@ -5,16 +5,17 @@ import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminPhotographerSettingsDto
 import com.quickpitik.dto.admin.AdminUserDetailDto
 import com.quickpitik.dto.admin.AdminUserRowDto
-import com.quickpitik.dto.admin.ForceEditUserPatchRequest
 import com.quickpitik.dto.admin.RejectUserRequest
+import com.quickpitik.dto.admin.ResetVerificationRequest
 import com.quickpitik.dto.admin.SuspendUserRequest
+import com.quickpitik.dto.photographer.AdminUserMessageRequest
+import com.quickpitik.dto.photographer.PhotographerMessageDto
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminUserService
 import jakarta.validation.Valid
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -65,7 +66,8 @@ class AdminUsersController(
     fun resetVerification(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable userId: UUID,
-    ): AdminUserRowDto = adminUserService.resetVerification(principal.userId, userId)
+        @Valid @RequestBody body: ResetVerificationRequest,
+    ): AdminUserRowDto = adminUserService.resetVerification(principal.userId, userId, body.reason)
 
     @PostMapping("/{userId}/suspend")
     fun suspend(
@@ -80,10 +82,11 @@ class AdminUsersController(
         @PathVariable userId: UUID,
     ): AdminUserRowDto = adminUserService.unsuspend(principal.userId, userId)
 
-    @PatchMapping("/{userId}")
-    fun forceEdit(
+    @PostMapping("/{userId}/message")
+    fun sendMessage(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable userId: UUID,
-        @Valid @RequestBody body: ForceEditUserPatchRequest,
-    ): AdminUserRowDto = adminUserService.forceEdit(principal.userId, userId, body)
+        @Valid @RequestBody body: AdminUserMessageRequest,
+    ): PhotographerMessageDto =
+        adminUserService.sendMessage(principal.userId, userId, body.subject, body.body)
 }

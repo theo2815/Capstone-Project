@@ -48,3 +48,6 @@ src/main/resources/application-local.yml
 
 # LocalFsStorageService dev backend writes here (avatars, selfies, covers, watermarks).
 .storage/
+
+# One-off test-data wipe scripts (contain personal test emails).
+dev/wipe-*.sql

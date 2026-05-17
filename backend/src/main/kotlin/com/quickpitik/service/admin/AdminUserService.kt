@@ -12,29 +12,28 @@ import com.quickpitik.dto.admin.AdminPhotographerWatermarkDto
 import com.quickpitik.dto.admin.AdminUserDetailDto
 import com.quickpitik.dto.admin.AdminUserRowDto
 import com.quickpitik.dto.admin.DecisionLogEntryDto
-import com.quickpitik.dto.admin.ForceEditUserPatchRequest
 import com.quickpitik.dto.admin.PhotographerSettingsSnapshotDto
 import com.quickpitik.dto.photographer.PayoutAccountDto
 import com.quickpitik.dto.photographer.PayoutQrDto
+import com.quickpitik.dto.photographer.PhotographerMessageDto
 import com.quickpitik.dto.photographer.SocialLinkDto
 import com.quickpitik.dto.photographer.toDto
+import com.quickpitik.entity.PhotographerMessage
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
-import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
-import com.quickpitik.repository.ReservedHandleRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.profile.UserDtoMapper
 import com.quickpitik.service.reference.RegionsService
 import org.springframework.data.domain.PageRequest
-import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.OffsetDateTime
@@ -47,12 +46,12 @@ class AdminUserService(
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val socialLinkRepository: SocialLinkRepository,
     private val payoutAccountRepository: PayoutAccountRepository,
-    private val reservedHandleRepository: ReservedHandleRepository,
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val regionsService: RegionsService,
     private val adminDecisionLogService: AdminDecisionLogService,
     private val storageService: com.quickpitik.service.storage.StorageService,
     private val storageProperties: StorageProperties,
+    private val userDtoMapper: UserDtoMapper,
 ) {
 
     @Transactional(readOnly = true)
@@ -115,6 +114,7 @@ class AdminUserService(
             role = row.role,
             email = row.email,
             name = row.name,
+            avatarUrl = row.avatarUrl,
             brandName = row.brandName,
             handle = row.handle,
             region = row.region,
@@ -184,6 +184,7 @@ class AdminUserService(
             brandName = s.brandName,
             brandColor = s.brandColor,
             bio = s.bio,
+            avatarUrl = userDtoMapper.resolveAvatarUrl(user),
             region = region,
             cover = cover,
             watermark = watermark,
@@ -235,7 +236,7 @@ class AdminUserService(
         return hydrateRow(user, s)
     }
 
-    fun resetVerification(adminId: UUID, userId: UUID): AdminUserRowDto {
+    fun resetVerification(adminId: UUID, userId: UUID, reason: String): AdminUserRowDto {
         val (user, settings) = loadUserAndSettings(userId)
         val s = requirePhotographerSettings(user, settings)
         s.verificationStatus = VerificationStatus.INCOMPLETE
@@ -244,11 +245,12 @@ class AdminUserService(
             adminId = adminId,
             targetUserId = userId,
             decision = "reset",
+            reason = reason,
         )
         adminDecisionLogService.pushMessage(
             photographerId = userId,
             kind = PhotographerMessageKind.VERIFICATION_RESET,
-            body = "Your verification status was reset by support. You can re-submit when ready.",
+            body = "Your verification status was reset by support. Reason: $reason. You can re-submit when ready.",
             sourceAdminId = adminId,
             sourceDecisionId = decision.id,
         )
@@ -314,90 +316,47 @@ class AdminUserService(
         return hydrateRow(user, settings)
     }
 
-    fun forceEdit(adminId: UUID, userId: UUID, patch: ForceEditUserPatchRequest): AdminUserRowDto {
-        val (user, settings) = loadUserAndSettings(userId)
-        val s = requirePhotographerSettings(user, settings)
-        val changes = mutableListOf<Map<String, Any?>>()
-
-        patch.handle?.let { handleRaw ->
-            val normalized = handleRaw.trim().lowercase()
-            if (normalized.isEmpty()) {
-                throw ValidationException(
-                    code = ErrorCodes.VALIDATION_ERROR,
-                    message = "handle must not be empty",
-                    field = "handle",
-                )
-            }
-            if (!HANDLE_REGEX.matches(normalized)) {
-                throw ValidationException(
-                    code = ErrorCodes.VALIDATION_ERROR,
-                    message = "handle must be 3-30 chars, lowercase letters/digits/hyphens, no leading/trailing hyphen",
-                    field = "handle",
-                )
-            }
-            if (reservedHandleRepository.existsByHandle(normalized)) {
-                throw ApiException(
-                    status = HttpStatus.CONFLICT,
-                    code = ErrorCodes.RESERVED_HANDLE,
-                    message = "That handle is reserved.",
-                    field = "handle",
-                )
-            }
-            val taken = photographerSettingsRepository.findByHandleIgnoreCase(normalized)
-            if (taken != null && taken.userId != userId) {
-                throw ApiException(
-                    status = HttpStatus.CONFLICT,
-                    code = ErrorCodes.HANDLE_TAKEN,
-                    message = "That handle is already in use.",
-                    field = "handle",
-                )
-            }
-            if (s.handle != normalized) {
-                changes += mapOf("field" to "handle", "from" to (s.handle ?: ""), "to" to normalized)
-                s.handle = normalized
-            }
-        }
-
-        patch.brandName?.let { brandRaw ->
-            val trimmed = brandRaw.trim()
-            if (trimmed.length > 100) {
-                throw ValidationException(
-                    code = ErrorCodes.VALIDATION_ERROR,
-                    message = "brandName must be 0-100 chars",
-                    field = "brandName",
-                )
-            }
-            val nextValue = trimmed.ifBlank { null }
-            if (s.brandName != nextValue) {
-                changes += mapOf("field" to "brandName", "from" to (s.brandName ?: ""), "to" to (nextValue ?: ""))
-                s.brandName = nextValue
-            }
-        }
-
-        if (changes.isEmpty()) {
-            return hydrateRow(user, s)
-        }
-        photographerSettingsRepository.save(s)
-
-        // Log + inbox-message one row per changed field so the photographer
-        // sees each edit individually (mirrors the FE store behaviour).
-        for (change in changes) {
-            val decision = adminDecisionLogService.logUserDecision(
-                adminId = adminId,
-                targetUserId = userId,
-                decision = "force-edited",
-                meta = change,
-            )
-            val field = change["field"]
-            adminDecisionLogService.pushMessage(
-                photographerId = userId,
-                kind = PhotographerMessageKind.FORCE_EDIT,
-                body = "Support updated your $field.",
-                sourceAdminId = adminId,
-                sourceDecisionId = decision.id,
+    fun sendMessage(
+        adminId: UUID,
+        userId: UUID,
+        subject: String,
+        body: String,
+    ): PhotographerMessageDto {
+        val (user, _) = loadUserAndSettings(userId)
+        // Free-form admin DM is photographer-only — runners don't have a
+        // dashboard inbox surface to receive it.
+        if (user.role != Role.PHOTOGRAPHER) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "Messages can only be sent to photographers",
+                field = "userId",
             )
         }
-        return hydrateRow(user, s)
+        val trimmedSubject = subject.trim()
+        val trimmedBody = body.trim()
+        val decision = adminDecisionLogService.logUserDecision(
+            adminId = adminId,
+            targetUserId = userId,
+            decision = "messaged",
+            reason = trimmedSubject,
+        )
+        val message: PhotographerMessage = adminDecisionLogService.pushMessage(
+            photographerId = userId,
+            kind = PhotographerMessageKind.ADMIN_MESSAGE,
+            title = trimmedSubject,
+            body = trimmedBody,
+            sourceAdminId = adminId,
+            sourceDecisionId = decision.id,
+        )
+        return PhotographerMessageDto(
+            id = message.id,
+            kind = message.kindWire,
+            title = message.title,
+            body = message.body,
+            sourceDecisionId = message.sourceDecisionId,
+            createdAt = message.createdAt,
+            readAt = message.readAt,
+        )
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────
@@ -451,6 +410,7 @@ class AdminUserService(
             role = user.role.name,
             email = user.email,
             name = user.name,
+            avatarUrl = userDtoMapper.resolveAvatarUrl(user),
             brandName = settings?.brandName,
             handle = settings?.handle,
             region = regionLabel,
@@ -499,9 +459,6 @@ class AdminUserService(
     }
 
     private companion object {
-        // Same shape as the photographer's own PUT.
-        val HANDLE_REGEX = Regex("^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])?$")
-
         // H-6: cap on rows returned to the admin user-detail page.
         const val DECISION_LOG_DETAIL_CAP = 50
     }

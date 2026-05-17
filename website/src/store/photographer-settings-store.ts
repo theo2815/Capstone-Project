@@ -156,6 +156,10 @@ export interface PhotographerSettings {
   watermark: WatermarkMedia | null;
   handle: string;
   verificationStatus: VerificationStatus;
+  /** ISO timestamp when admin suspended the account, or null. Orthogonal
+   *  to verificationStatus — suspended takes priority for gating + banners. */
+  suspendedAt: string | null;
+  suspensionReason: string | null;
   region: PhotographerRegion | null;
   socials: SocialLink[];
   payouts: PayoutAccount[];
@@ -169,6 +173,7 @@ interface PhotographerSettingsState extends PhotographerSettings {
   setWatermark: (watermark: WatermarkMedia | null) => void;
   setHandle: (handle: string) => void;
   setVerificationStatus: (status: VerificationStatus) => void;
+  setSuspension: (suspendedAt: string | null, reason: string | null) => void;
   setRegion: (region: PhotographerRegion | null) => void;
   addSocial: (platform: SocialPlatform, url: string) => string;
   updateSocial: (id: string, url: string) => void;
@@ -197,6 +202,8 @@ const SEED: PhotographerSettings = {
   watermark: null,
   handle: "",
   verificationStatus: "incomplete",
+  suspendedAt: null,
+  suspensionReason: null,
   region: null,
   socials: [],
   payouts: [],
@@ -225,6 +232,8 @@ export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
       setHandle: (handle) => set({ handle: handle.trim().toLowerCase() }),
       setVerificationStatus: (verificationStatus) =>
         set({ verificationStatus }),
+      setSuspension: (suspendedAt, suspensionReason) =>
+        set({ suspendedAt, suspensionReason }),
       setRegion: (region) => set({ region }),
       addSocial: (platform, url) => {
         const id = newId();

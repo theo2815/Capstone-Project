@@ -12,6 +12,8 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
+import com.quickpitik.websocket.AdminInboxEvent
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -24,6 +26,7 @@ class RefundService(
     private val orderRepository: OrderRepository,
     private val orderItemRepository: OrderItemRepository,
     private val disputeRepository: DisputeRepository,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
     /**
      * POST /api/v1/me/orders/{id}/refund.
@@ -96,6 +99,22 @@ class RefundService(
                     message = "A refund request for photo $photoId is already open",
                 )
             }
+        }
+
+        // Push one AdminInboxEvent per created dispute so the admin queue
+        // updates in real time without a refresh. AFTER_COMMIT only —
+        // rollback discards both the rows AND the would-be pushes.
+        createdDisputes.forEach { dispute ->
+            eventPublisher.publishEvent(
+                AdminInboxEvent(
+                    payload = mapOf(
+                        "type" to "dispute_filed",
+                        "entityId" to dispute.id.toString(),
+                        "actorId" to userId.toString(),
+                        "occurredAt" to dispute.openedAt.toString(),
+                    ),
+                ),
+            )
         }
 
         return RefundResponse(

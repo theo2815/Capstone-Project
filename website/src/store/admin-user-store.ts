@@ -10,13 +10,19 @@ import { useAdminUsersServerStore } from "@/lib/admin-users-data";
 // without waiting out the 60s settings-cache TTL. Skipped automatically
 // when the userId isn't cached (no observer to update).
 import { refetchAdminPhotographerSettings } from "@/lib/admin-photographer-settings-data";
+// Photographer in-app notifications are pushed BE-side by
+// AdminDecisionLogService.pushMessage in the same TX as the admin
+// decision (V10 + V15 migrations); the FE reads them via
+// GET /me/photographer/messages. We do NOT fire FE-side notify helpers
+// here — that path created duplicates the moment the FE started reading
+// the BE inbox. The store's job is just to confirm the BE action, update
+// the cache + decision log, and return success/failure to the caller.
 import {
   approveUser as apiApproveUser,
   rejectUser as apiRejectUser,
   resetUserVerification as apiResetUserVerification,
   suspendUser as apiSuspendUser,
   unsuspendUser as apiUnsuspendUser,
-  forceEditUser as apiForceEditUser,
 } from "@/lib/api-admin";
 
 // Phase 3 — admin actions now await the BE and write the returned row into
@@ -41,6 +47,9 @@ export type DecisionType =
   | "force-edited"
   | "reset";
 
+// "force-edited" is retained so historical decision-log rows still render in
+// the admin timeline; the action itself is removed from the FE/BE surface.
+
 export interface DecisionLogEntry {
   userId: string;
   decision: DecisionType;
@@ -51,10 +60,6 @@ export interface DecisionLogEntry {
   meta?: { field?: string; from?: string; to?: string };
 }
 
-export type ForceEditPatch = Partial<
-  Pick<AdminUserRow, "handle" | "brandName">
->;
-
 interface AdminUserStoreState {
   /** Photographer rows that originated from a real self-submit. Kept as a
    *  transient client-side optimistic insertion so the row shows up in the
@@ -63,12 +68,14 @@ interface AdminUserStoreState {
    *  double-rendering. Phase 5 may remove once Phase 4 wires focus-refetch. */
   submissions: Record<string, AdminUserRow>;
   log: DecisionLogEntry[];
-  approve: (userId: string) => Promise<void>;
-  reject: (userId: string, reason: string) => Promise<void>;
-  suspend: (userId: string, reason: string) => Promise<void>;
-  unsuspend: (userId: string) => Promise<void>;
-  forceEdit: (userId: string, patch: ForceEditPatch) => Promise<void>;
-  resetVerification: (userId: string) => Promise<void>;
+  /** Each mutating action returns true on BE success, false on failure.
+   *  Callers branch their UI toast on the result and need not catch — the
+   *  store already shows the error toast and rolls back local state. */
+  approve: (userId: string) => Promise<boolean>;
+  reject: (userId: string, reason: string) => Promise<boolean>;
+  suspend: (userId: string, reason: string) => Promise<boolean>;
+  unsuspend: (userId: string) => Promise<boolean>;
+  resetVerification: (userId: string, reason: string) => Promise<boolean>;
   upsertSubmission: (row: AdminUserRow) => void;
   revokeSubmission: (userId: string) => void;
   clear: () => void;
@@ -126,9 +133,11 @@ export const useAdminUserStore = create<AdminUserStoreState>()(
               decidedAt: new Date().toISOString(),
             }),
           }));
+          return true;
         } catch (err) {
           flip?.rollback();
           toastBackendFailure("approve", err);
+          return false;
         }
       },
       reject: async (userId, reason) => {
@@ -145,9 +154,11 @@ export const useAdminUserStore = create<AdminUserStoreState>()(
               decidedAt: new Date().toISOString(),
             }),
           }));
+          return true;
         } catch (err) {
           flip?.rollback();
           toastBackendFailure("reject", err);
+          return false;
         }
       },
       suspend: async (userId, reason) => {
@@ -163,8 +174,10 @@ export const useAdminUserStore = create<AdminUserStoreState>()(
               decidedAt: new Date().toISOString(),
             }),
           }));
+          return true;
         } catch (err) {
           toastBackendFailure("suspend", err);
+          return false;
         }
       },
       unsuspend: async (userId) => {
@@ -180,87 +193,31 @@ export const useAdminUserStore = create<AdminUserStoreState>()(
               decidedAt: new Date().toISOString(),
             }),
           }));
+          return true;
         } catch (err) {
           toastBackendFailure("unsuspend", err);
+          return false;
         }
       },
-      forceEdit: async (userId, patch) => {
-        // Pull current row from the server cache so the log entries can
-        // show "from → to" without re-fetching.
-        const current = useAdminUsersServerStore
-          .getState()
-          .rows.find((r) => r.userId === userId);
-        if (!current) {
-          toastBackendFailure(
-            "edit",
-            new Error(`No cached row for ${userId}`),
-          );
-          return;
-        }
-        const changes: DecisionLogEntry[] = [];
-        const now = new Date().toISOString();
-        if (patch.handle !== undefined && patch.handle !== current.handle) {
-          changes.push({
-            userId,
-            decision: "force-edited",
-            reason: null,
-            decidedAt: now,
-            meta: {
-              field: "handle",
-              from: current.handle ?? "—",
-              to: patch.handle ?? "—",
-            },
-          });
-        }
-        if (
-          patch.brandName !== undefined &&
-          patch.brandName !== current.brandName
-        ) {
-          changes.push({
-            userId,
-            decision: "force-edited",
-            reason: null,
-            decidedAt: now,
-            meta: {
-              field: "brandName",
-              from: current.brandName ?? "—",
-              to: patch.brandName ?? "—",
-            },
-          });
-        }
-        if (changes.length === 0) return;
-        try {
-          const updated = await apiForceEditUser(userId, patch);
-          useAdminUsersServerStore.getState().upsertRow(updated);
-          refetchAdminPhotographerSettings(userId);
-          set((s) => {
-            let log = s.log;
-            for (const change of changes) {
-              log = appendLog(log, change);
-            }
-            return { log };
-          });
-        } catch (err) {
-          toastBackendFailure("edit", err);
-        }
-      },
-      resetVerification: async (userId) => {
+      resetVerification: async (userId, reason) => {
         const flip = flipPhotographerOwnStatus(userId, "incomplete");
         try {
-          const updated = await apiResetUserVerification(userId);
+          const updated = await apiResetUserVerification(userId, reason);
           useAdminUsersServerStore.getState().upsertRow(updated);
           refetchAdminPhotographerSettings(userId);
           set((s) => ({
             log: appendLog(s.log, {
               userId,
               decision: "reset",
-              reason: null,
+              reason,
               decidedAt: new Date().toISOString(),
             }),
           }));
+          return true;
         } catch (err) {
           flip?.rollback();
           toastBackendFailure("reset verification", err);
+          return false;
         }
       },
       upsertSubmission: (row) => {

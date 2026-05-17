@@ -9,10 +9,12 @@ import org.springframework.http.server.ServletServerHttpRequest
 import org.springframework.stereotype.Component
 import org.springframework.web.socket.WebSocketHandler
 import org.springframework.web.socket.server.HandshakeInterceptor
-import java.util.UUID
 
+// JWT + ADMIN-role handshake for /ws/admin/notifications. Non-admins are
+// rejected at handshake so they never see broadcasts. Role is read from
+// the JWT "role" claim (set by JwtTokenProvider.createAccessToken).
 @Component
-class EventPhotoHandshakeInterceptor(
+class AdminNotificationHandshakeInterceptor(
     private val jwtTokenProvider: JwtTokenProvider,
 ) : HandshakeInterceptor {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -23,34 +25,24 @@ class EventPhotoHandshakeInterceptor(
         wsHandler: WebSocketHandler,
         attributes: MutableMap<String, Any>,
     ): Boolean {
-        val eventId = extractEventId(request)
-        if (eventId == null) {
-            log.debug("WS handshake rejected: bad eventId in {}", request.uri.path)
-            return false
-        }
         val token = extractToken(request)
         if (token == null) {
-            log.debug("WS handshake rejected: missing token for event {}", eventId)
+            log.debug("WS handshake rejected (admin): missing token")
             return false
         }
-        val userId = try {
-            UUID.fromString(jwtTokenProvider.parse(token).subject)
+        val claims = try {
+            jwtTokenProvider.parse(token)
         } catch (ex: JwtException) {
-            log.debug("WS handshake rejected: invalid token for event {} ({})", eventId, ex.message)
-            return false
-        } catch (ex: IllegalArgumentException) {
-            log.debug("WS handshake rejected: malformed subject for event {} ({})", eventId, ex.message)
+            log.debug("WS handshake rejected (admin): invalid token ({})", ex.message)
             return false
         }
-        attributes[EventPhotoWebSocketHandler.ATTR_EVENT_ID] = eventId
-        attributes[EventPhotoWebSocketHandler.ATTR_USER_ID] = userId
-        // Echo the chosen subprotocol back to the client. Without this,
-        // browsers drop the connection with code 1006 immediately after
-        // the handshake because the upgrade response is malformed (the
-        // server accepted the handshake but didn't select a subprotocol
-        // from the client's offer). Bug since Q-002 — pre-existed this
-        // notifications PR but caught here while debugging the same
-        // failure mode on the admin/photographer channels.
+        val role = claims["role"] as? String
+        if (role != "ADMIN") {
+            log.debug("WS handshake rejected (admin): non-admin role={}", role)
+            return false
+        }
+        // Echo the chosen subprotocol back to the client (the JWT itself
+        // — see MeNotificationHandshakeInterceptor for the rationale).
         response.headers.set("Sec-WebSocket-Protocol", token)
         return true
     }
@@ -64,17 +56,9 @@ class EventPhotoHandshakeInterceptor(
         // no-op
     }
 
-    private fun extractEventId(request: ServerHttpRequest): UUID? {
-        val segments = request.uri.path.trimEnd('/').split("/")
-        val idx = segments.indexOf("events")
-        if (idx == -1 || idx + 1 >= segments.size) return null
-        return runCatching { UUID.fromString(segments[idx + 1]) }.getOrNull()
-    }
-
     private fun extractToken(request: ServerHttpRequest): String? {
         val protocolHeader = request.headers.getFirst("Sec-WebSocket-Protocol")
         if (!protocolHeader.isNullOrBlank()) {
-            // FE sends comma-separated protocols; we accept the first non-empty token
             return protocolHeader.split(",").map { it.trim() }.firstOrNull { it.isNotEmpty() }
         }
         if (request is ServletServerHttpRequest) {

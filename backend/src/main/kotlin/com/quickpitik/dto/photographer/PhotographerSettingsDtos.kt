@@ -110,9 +110,14 @@ fun PayoutAccount.toDto(qrUrl: String?, qrUploadedAt: OffsetDateTime?): PayoutAc
 // ─── Verification submit response ─────────────────────────────────────────
 // Mirrors website/src/lib/api-photographer-settings.ts VerificationSubmitResponse.
 // status is lowercase wire form ("incomplete" | "pending" | "approved" | "rejected").
+// suspendedAt/suspensionReason populated when users.suspended_at is set — admin
+// suspension is orthogonal to verification, so the FE prioritises suspended
+// over status for gating + banner copy.
 data class VerificationSubmitResponseDto(
     val status: String,
     val missing: List<String>? = null,
+    val suspendedAt: String? = null,
+    val suspensionReason: String? = null,
 )
 
 // Used by the submit endpoint when the profile is incomplete — lifted out so

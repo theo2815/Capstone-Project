@@ -15,11 +15,13 @@ import {
 // writes the photographer-message insert in the same TX. Photographer-side
 // submitReport() is photographer-scope; admin actions land here.
 //
-// acknowledge() and resolve() each fire a side-effect into the
-// photographer-message-store so the photographer sees a new inbox row
-// reflecting the admin's action. submitReport() is the inverse direction
-// (photographer-side write); it does NOT fire an inbox message — the
-// photographer already saw the report submission.
+// acknowledge() and resolve() photographer-side notifications fire BE-side
+// via AdminPayoutReportService → AdminDecisionLogService.pushMessage
+// (kinds payout_report_acknowledged / payout_report_resolved). The
+// photographer reads them via GET /me/photographer/messages.
+// submitReport() is the inverse direction (photographer-side write); it
+// does NOT push an inbox message — the photographer already saw the
+// submission they themselves filed.
 
 function fireBackendReportAction(label: string, p: Promise<unknown>): void {
   void p.catch((err) => {

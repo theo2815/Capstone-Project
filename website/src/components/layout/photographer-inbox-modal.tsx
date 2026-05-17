@@ -1,76 +1,63 @@
 "use client";
 
-import { useMemo } from "react";
-import Link from "next/link";
 import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
 import {
   MESSAGE_KIND_LABEL,
-  getEffectiveMessages,
+  getUnreadCount,
+  resolveMessageTitle,
   type PhotographerMessage,
   type PhotographerMessageKind,
 } from "@/lib/photographer-messages";
-import {
-  markAllEffectiveRead,
-  usePhotographerMessageStore,
-} from "@/store/photographer-message-store";
+import { useMyPhotographerMessages } from "@/lib/me-photographer-messages-data";
 import { useConfirmation } from "@/hooks/use-confirmation";
-import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface PhotographerInboxModalProps {
   isOpen: boolean;
   onClose: () => void;
-  photographerId: string;
 }
 
 const KIND_TONE: Record<PhotographerMessageKind, string> = {
-  payout_held: "text-warning",
-  report_acknowledged: "text-slate",
-  report_resolved: "text-fresh",
   verification_approved: "text-fresh",
   verification_rejected: "text-warning",
-  account_suspended: "text-error",
-  account_unsuspended: "text-fresh",
+  verification_reset: "text-warning",
+  suspended: "text-error",
+  unsuspended: "text-fresh",
+  force_edit: "text-slate",
+  dispute_resolved: "text-fresh",
+  dispute_denied: "text-slate",
+  dispute_escalated: "text-warning",
+  payout_approved: "text-fresh",
+  payout_held: "text-warning",
+  payout_paid: "text-fresh",
+  payout_report_acknowledged: "text-slate",
+  payout_report_resolved: "text-fresh",
   admin_message: "text-ink",
 };
 
 export function PhotographerInboxModal({
   isOpen,
   onClose,
-  photographerId,
 }: PhotographerInboxModalProps) {
-  const submissions = usePhotographerMessageStore((s) => s.submissions);
-  const overrides = usePhotographerMessageStore((s) => s.overrides);
-  const markRead = usePhotographerMessageStore((s) => s.markRead);
-  const removeMessage = usePhotographerMessageStore((s) => s.removeMessage);
+  const { messages, markRead, markAllRead, remove } =
+    useMyPhotographerMessages(isOpen);
   const { confirm } = useConfirmation();
 
-  const messages = useMemo(() => {
-    const all = getEffectiveMessages(submissions, overrides);
-    return all
-      .filter((m) => m.photographerId === photographerId)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [submissions, overrides, photographerId]);
-
-  const unreadCount = messages.filter((m) => m.readAt === null).length;
-
-  function handleMarkAll() {
-    markAllEffectiveRead(messages);
-  }
+  const unreadCount = getUnreadCount(messages);
 
   async function handleRemove(message: PhotographerMessage) {
     const ok = await confirm({
       title: "Remove this notification?",
       message:
-        "This message will be cleared from your inbox. Admin still has the underlying record on the payout cycle.",
+        "This message will be cleared from your inbox. Admin still has the underlying record on the decision log.",
       confirmLabel: "Remove",
       cancelLabel: "Cancel",
       danger: true,
     });
     if (!ok) return;
-    removeMessage(message.id);
+    void remove(message.id);
   }
 
   return (
@@ -84,7 +71,7 @@ export function PhotographerInboxModal({
         {unreadCount > 0 && (
           <button
             type="button"
-            onClick={handleMarkAll}
+            onClick={() => void markAllRead()}
             className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
           >
             Mark all read
@@ -94,7 +81,7 @@ export function PhotographerInboxModal({
 
       {messages.length === 0 ? (
         <p className="font-sans text-sm text-slate-soft py-8 text-center">
-          No messages yet. Admin actions on your payouts will land here.
+          No messages yet. Admin actions on your account will land here.
         </p>
       ) : (
         <ul className="max-h-[60vh] overflow-y-auto -mx-2 divide-y divide-line">
@@ -103,10 +90,9 @@ export function PhotographerInboxModal({
               key={m.id}
               message={m}
               onMarkRead={() => {
-                if (m.readAt === null) markRead(m.id);
+                if (m.readAt === null) void markRead(m.id);
               }}
               onRemove={() => handleRemove(m)}
-              onViewCycle={onClose}
             />
           ))}
         </ul>
@@ -129,11 +115,11 @@ interface InboxRowProps {
   message: PhotographerMessage;
   onMarkRead: () => void;
   onRemove: () => void;
-  onViewCycle: () => void;
 }
 
-function InboxRow({ message, onMarkRead, onRemove, onViewCycle }: InboxRowProps) {
+function InboxRow({ message, onMarkRead, onRemove }: InboxRowProps) {
   const isUnread = message.readAt === null;
+  const title = resolveMessageTitle(message);
 
   return (
     <li
@@ -166,53 +152,12 @@ function InboxRow({ message, onMarkRead, onRemove, onViewCycle }: InboxRowProps)
           isUnread ? "text-ink font-semibold" : "text-ink-soft",
         )}
       >
-        {message.title}
+        {title}
       </p>
       <p className="font-sans text-sm text-slate mt-1.5 leading-relaxed">
         {message.body}
       </p>
-      <div className="mt-3 flex items-center justify-between gap-3">
-        {message.cta ? (
-          <Link
-            href={message.cta.href}
-            onClick={(e) => {
-              e.stopPropagation();
-              onViewCycle();
-            }}
-            className="inline-flex items-center gap-1"
-          >
-            <Kicker
-              tone="active"
-              className="underline decoration-fresh/40 underline-offset-4 decoration-1 hover:decoration-fresh"
-            >
-              {message.cta.label}
-            </Kicker>
-            <span aria-hidden="true" className="text-fresh">
-              →
-            </span>
-          </Link>
-        ) : message.payoutCycleId ? (
-          <Link
-            href={`${ROUTES.DASHBOARD_BILLING}#cycle-${message.payoutCycleId}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onViewCycle();
-            }}
-            className="inline-flex items-center gap-1"
-          >
-            <Kicker
-              tone="active"
-              className="underline decoration-fresh/40 underline-offset-4 decoration-1 hover:decoration-fresh"
-            >
-              View cycle
-            </Kicker>
-            <span aria-hidden="true" className="text-fresh">
-              →
-            </span>
-          </Link>
-        ) : (
-          <span aria-hidden="true" />
-        )}
+      <div className="mt-3 flex items-center justify-end">
         <button
           type="button"
           onClick={(e) => {

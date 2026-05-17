@@ -25,6 +25,9 @@ export interface AdminUserRow {
   role: AdminRole;
   email: string;
   name: string;
+  /** Presigned avatar URL from the BE (via UserDtoMapper.resolveAvatarUrl).
+   *  Null when the photographer hasn't uploaded one. */
+  avatarUrl: string | null;
   brandName: string | null;
   handle: string | null;
   region: string | null;

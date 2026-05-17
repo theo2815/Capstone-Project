@@ -3,17 +3,11 @@
 import { useState } from "react";
 import { useAdminUserStore } from "@/store/admin-user-store";
 import { useToast } from "@/hooks/use-toast";
-import {
-  notifyAccountSuspended,
-  notifyAccountUnsuspended,
-  notifyAdminMessage,
-  notifyVerificationApproved,
-  notifyVerificationRejected,
-} from "@/lib/admin-photographer-notifications";
+import { sendAdminMessage } from "@/lib/api-admin";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
 import { AdminRejectModal } from "./admin-reject-modal";
+import { AdminResetVerificationModal } from "./admin-reset-verification-modal";
 import { AdminSuspendModal } from "./admin-suspend-modal";
-import { AdminEditPhotographerModal } from "./admin-edit-photographer-modal";
 import { AdminMessageModal } from "./admin-message-modal";
 import { cn } from "@/lib/utils";
 
@@ -22,9 +16,8 @@ interface AdminActionAsideProps {
 }
 
 // Sticky-on-lg / inline-on-md action cluster for the photographer detail
-// page. Carries all 7 actions (Approve, Reject, Suspend, Unsuspend, Force-
-// edit, Reset verification, Send message). Modal state is local so the
-// detail page stays a thin shell.
+// page. Carries Approve, Reject, Suspend, Unsuspend, Reset verification,
+// Send message. Modal state is local so the detail page stays a thin shell.
 //
 // One-fresh-per-viewport: only Approve is bg-fresh in its rest state. All
 // other primary buttons rest at border-line text-ink and roll to bg-ink on
@@ -35,89 +28,79 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   const reject = useAdminUserStore((s) => s.reject);
   const suspend = useAdminUserStore((s) => s.suspend);
   const unsuspend = useAdminUserStore((s) => s.unsuspend);
-  const forceEdit = useAdminUserStore((s) => s.forceEdit);
   const resetVerification = useAdminUserStore((s) => s.resetVerification);
 
   const [rejectOpen, setRejectOpen] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
-  const [resetConfirm, setResetConfirm] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
 
   const isPending = row.verificationStatus === "pending";
   const isSuspended = row.suspendedAt !== null;
   const isIncomplete = row.verificationStatus === "incomplete";
   const displayName = row.brandName ?? row.name;
 
-  function handleApprove() {
-    approve(row.userId);
-    notifyVerificationApproved({
-      photographerId: row.userId,
-      brandName: displayName,
-    });
-    showToast({ kind: "success", message: `Approved · ${displayName}` });
+  // Each handler awaits the store and only fires the success toast on BE
+  // success — the photographer notification is fired inside the store
+  // action, so we never get a "you're approved!" inbox row on a failed
+  // approve. The store also surfaces its own error toast on failure, so
+  // the caller need not handle the false branch.
+  async function handleApprove() {
+    const ok = await approve(row.userId);
+    if (ok) {
+      showToast({ kind: "success", message: `Approved · ${displayName}` });
+    }
   }
 
-  function handleReject(reason: string) {
-    reject(row.userId, reason);
-    notifyVerificationRejected({
-      photographerId: row.userId,
-      brandName: displayName,
-      reason,
-    });
+  async function handleReject(reason: string) {
+    const ok = await reject(row.userId, reason);
     setRejectOpen(false);
-    showToast({ kind: "info", message: `Sent back · ${displayName}` });
+    if (ok) {
+      showToast({ kind: "info", message: `Sent back · ${displayName}` });
+    }
   }
 
-  function handleSuspend(reason: string) {
-    suspend(row.userId, reason);
-    notifyAccountSuspended({
-      photographerId: row.userId,
-      brandName: displayName,
-      reason,
-    });
+  async function handleSuspend(reason: string) {
+    const ok = await suspend(row.userId, reason);
     setSuspendOpen(false);
-    showToast({ kind: "info", message: `Suspended · ${displayName}` });
+    if (ok) {
+      showToast({ kind: "info", message: `Suspended · ${displayName}` });
+    }
   }
 
-  function handleUnsuspend() {
-    unsuspend(row.userId);
-    notifyAccountUnsuspended({
-      photographerId: row.userId,
-      brandName: displayName,
-    });
-    showToast({ kind: "success", message: `Unsuspended · ${displayName}` });
+  async function handleUnsuspend() {
+    const ok = await unsuspend(row.userId);
+    if (ok) {
+      showToast({ kind: "success", message: `Unsuspended · ${displayName}` });
+    }
   }
 
-  function handleForceEdit(patch: {
-    handle: string | null;
-    brandName: string | null;
-  }) {
-    forceEdit(row.userId, patch);
-    setEditOpen(false);
-    showToast({ kind: "info", message: `Profile updated · ${displayName}` });
+  async function handleReset(reason: string) {
+    setResetOpen(false);
+    const ok = await resetVerification(row.userId, reason);
+    if (ok) {
+      showToast({
+        kind: "info",
+        message: `Verification reset · ${displayName}`,
+      });
+    }
   }
 
-  function handleReset() {
-    resetVerification(row.userId);
-    setResetConfirm(false);
-    showToast({
-      kind: "info",
-      message: `Verification reset · ${displayName}`,
-    });
-  }
-
-  function handleMessage(payload: { subject: string; body: string }) {
-    notifyAdminMessage({
-      photographerId: row.userId,
-      subject: payload.subject,
-      body: payload.body,
-    });
+  async function handleMessage(payload: { subject: string; body: string }) {
     setMessageOpen(false);
-    showToast({
-      kind: "success",
-      message: `Message sent · ${displayName}`,
-    });
+    try {
+      await sendAdminMessage(row.userId, payload);
+      showToast({
+        kind: "success",
+        message: `Message sent · ${displayName}`,
+      });
+    } catch (err) {
+      console.error("[admin/users] sendMessage failed", err);
+      showToast({
+        kind: "error",
+        message: `Couldn't send message — please try again.`,
+      });
+    }
   }
 
   return (
@@ -166,38 +149,14 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
           </button>
         )}
 
-        <button
-          type="button"
-          onClick={() => setEditOpen(true)}
-          className={secondaryBtn}
-        >
-          Force-edit profile…
-        </button>
-
         {!isIncomplete && (
           <button
             type="button"
-            onClick={() => setResetConfirm((v) => !v)}
-            aria-expanded={resetConfirm}
+            onClick={() => setResetOpen(true)}
             className={secondaryBtn}
           >
-            {resetConfirm ? "Cancel reset" : "Reset verification"}
+            Reset verification…
           </button>
-        )}
-        {resetConfirm && !isIncomplete && (
-          <div className="rounded-xl border border-line bg-bone-deep p-4 space-y-3">
-            <p className="font-sans text-sm text-ink-soft">
-              Drops {displayName} back to <strong className="text-ink">incomplete</strong>.
-              They&apos;ll need to resubmit settings for review.
-            </p>
-            <button
-              type="button"
-              onClick={handleReset}
-              className={cn(secondaryBtn, "w-full")}
-            >
-              Confirm reset
-            </button>
-          </div>
         )}
 
         <button
@@ -226,18 +185,17 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         onSubmit={handleReject}
         photographerName={displayName}
       />
+      <AdminResetVerificationModal
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+        onSubmit={handleReset}
+        photographerName={displayName}
+      />
       <AdminSuspendModal
         open={suspendOpen}
         onClose={() => setSuspendOpen(false)}
         onSubmit={handleSuspend}
         photographerName={displayName}
-      />
-      <AdminEditPhotographerModal
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        onSubmit={handleForceEdit}
-        initialHandle={row.handle}
-        initialBrandName={row.brandName}
       />
       <AdminMessageModal
         open={messageOpen}

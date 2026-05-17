@@ -32,14 +32,14 @@ export function usePhotographerVerificationSync(): void {
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
   );
+  const setSuspension = usePhotographerSettingsStore((s) => s.setSuspension);
 
   const isPhotographer = sessionUser?.role === "PHOTOGRAPHER";
 
   const syncOnce = useCallback(async () => {
     try {
       const response = await fetchVerificationStatus();
-      const currentStatus =
-        usePhotographerSettingsStore.getState().verificationStatus;
+      const state = usePhotographerSettingsStore.getState();
       // BE returns lowercase wire form; the FE type accepts "approved" |
       // "pending" | "incomplete". REJECTED is collapsed to incomplete by the
       // admin reject action, so we should never see it here — but if we do,
@@ -50,15 +50,23 @@ export function usePhotographerVerificationSync(): void {
         response.status === "incomplete"
           ? response.status
           : "incomplete";
-      if (next !== currentStatus) {
+      if (next !== state.verificationStatus) {
         setStatus(next);
+      }
+      const nextSuspendedAt = response.suspendedAt ?? null;
+      const nextReason = response.suspensionReason ?? null;
+      if (
+        nextSuspendedAt !== state.suspendedAt ||
+        nextReason !== state.suspensionReason
+      ) {
+        setSuspension(nextSuspendedAt, nextReason);
       }
     } catch (err) {
       // Network blip or 401-after-logout. Stay on cached state and try
       // again on the next trigger — no toast, this is a background sync.
       console.warn("[photographer/verification] sync failed", err);
     }
-  }, [setStatus]);
+  }, [setStatus, setSuspension]);
 
   // Mount + focus-driven sync. Effect runs once per photographer session.
   useEffect(() => {

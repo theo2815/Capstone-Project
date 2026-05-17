@@ -12,6 +12,10 @@ import {
   denyDispute as apiDenyDispute,
   escalateDispute as apiEscalateDispute,
 } from "@/lib/api-admin";
+// Photographer in-app notifications are pushed BE-side by
+// AdminDisputeService — see AdminDecisionLogService.pushMessage calls in
+// resolve / deny / escalate. The FE reads them via
+// GET /me/photographer/messages and no longer fires FE-side notify helpers.
 
 // Mock-mode store of admin actions on the disputes queue. Phase G wiring
 // fires the matching `api-admin` call in the background after the local

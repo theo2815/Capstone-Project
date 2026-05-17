@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
 import { Slab } from "@/components/profile-shell";
-import { VerificationBanner } from "@/components/dashboard/verification-banner";
 import {
   EventFilterBar,
   EventFilterEmpty,
@@ -13,8 +12,13 @@ import {
 import { EventTile } from "@/components/events/event-tile";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useCanUpload } from "@/hooks/use-can-upload";
+import { usePublicEvents } from "@/hooks/use-public-events";
 import { useEventCatalog } from "@/lib/event-catalog";
 import { PAGE_SIZE } from "@/lib/pagination-config";
+
+// Stable empty-array reference so useEventCatalog's memo doesn't churn while
+// the public events list is loading.
+const EMPTY_SEED: ReadonlyArray<ListEvent> = [];
 
 // Photographer upload picker. Shows every event in the catalog (not just the
 // photographer's own coverage) so they can pick where to lift photos to. The
@@ -58,9 +62,13 @@ const SECTIONS: Array<{
 ];
 
 export default function UploadPickerPage() {
+  // VerificationBanner + verification sync live in DashboardShell so the
+  // suspended/incomplete/pending banner stays consistent across every
+  // /dashboard/* page without each page re-mounting them.
   const gate = useCanUpload();
   const canUpload = gate.kind === "ok";
-  const catalog = useEventCatalog();
+  const liveEvents = usePublicEvents();
+  const catalog = useEventCatalog(liveEvents ?? EMPTY_SEED);
 
   const [date, setDate] = useState<EventDateKey>("any");
   const [query, setQuery] = useState("");
@@ -92,18 +100,11 @@ export default function UploadPickerPage() {
   // Catalog itself is empty — no events to upload to at all. Skip the filter
   // bar (filtering nothing yields nothing) and show the wider PickerEmpty.
   if (catalog.length === 0) {
-    return (
-      <>
-        <VerificationBanner />
-        <PickerEmpty />
-      </>
-    );
+    return <PickerEmpty />;
   }
 
   return (
     <>
-      <VerificationBanner />
-
       <EventFilterBar
         date={date}
         onDateChange={setDate}

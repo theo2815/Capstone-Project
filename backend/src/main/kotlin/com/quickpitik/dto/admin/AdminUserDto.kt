@@ -21,11 +21,15 @@ data class PhotographerSettingsSnapshotDto(
 // always serialize as "approved" since they have no settings to gate on.
 // `region` is the human-readable "Cebu · Central Visayas" — derived from
 // region/province codes via RegionsService.
+// `avatarUrl` is a presigned URL (via UserDtoMapper.resolveAvatarUrl) so
+// the admin queue + detail surfaces can render the photographer's actual
+// profile picture instead of falling back to initials.
 data class AdminUserRowDto(
     val userId: UUID,
     val role: String,
     val email: String,
     val name: String,
+    val avatarUrl: String?,
     val brandName: String?,
     val handle: String?,
     val region: String?,
@@ -52,6 +56,7 @@ data class AdminUserDetailDto(
     val role: String,
     val email: String,
     val name: String,
+    val avatarUrl: String?,
     val brandName: String?,
     val handle: String?,
     val region: String?,
@@ -78,10 +83,10 @@ data class SuspendUserRequest(
     val reason: String,
 )
 
-// PATCH /admin/users/{id} — body { handle?, brandName? }. Both optional;
-// service-side validates non-blank values against the same handle regex +
-// reserved-handle gate the photographer's own PUT uses.
-data class ForceEditUserPatchRequest(
-    val handle: String? = null,
-    val brandName: String? = null,
+// POST /admin/users/{id}/reset-verification — body { reason }.
+data class ResetVerificationRequest(
+    @field:NotBlank
+    @field:Size(max = 500)
+    val reason: String,
 )
+

@@ -14,9 +14,12 @@ import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PayoutReportRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.websocket.AdminInboxEvent
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.OffsetDateTime
 import java.util.UUID
 
 /**
@@ -34,6 +37,7 @@ class PayoutReportService(
     private val payoutCycleRepository: PayoutCycleRepository,
     private val userRepository: UserRepository,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
     fun submit(
         photographerId: UUID,
@@ -72,6 +76,19 @@ class PayoutReportService(
                 message = "An open report already exists for this payout",
             )
         }
+
+        // Push to connected admins so the payout-reports queue updates in
+        // real time. AFTER_COMMIT only — rollback discards row + push.
+        eventPublisher.publishEvent(
+            AdminInboxEvent(
+                payload = mapOf(
+                    "type" to "payout_report_filed",
+                    "entityId" to saved.id.toString(),
+                    "actorId" to photographerId.toString(),
+                    "occurredAt" to OffsetDateTime.now().toString(),
+                ),
+            ),
+        )
 
         return saved.toDto(
             photographerName = lookupName(photographerId),

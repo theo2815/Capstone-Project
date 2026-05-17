@@ -17,6 +17,7 @@ import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
+import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.storage.StorageService
@@ -42,6 +43,7 @@ class PhotoUploadService(
     private val eventPhotographerRepository: EventPhotographerRepository,
     private val eventRepository: EventRepository,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
+    private val userRepository: UserRepository,
     private val aiApiClient: AiApiClient,
     private val aiApiProperties: AiApiProperties,
     private val watermarkService: WatermarkService,
@@ -71,6 +73,15 @@ class PhotoUploadService(
                 status = HttpStatus.UNPROCESSABLE_ENTITY,
                 code = ErrorCodes.EVENT_NOT_UPLOADABLE,
                 message = "Upload window for this event has closed.",
+            )
+        }
+        val photographer = userRepository.findById(photographerId).orElse(null)
+            ?: throw NotFoundException(code = ErrorCodes.USER_NOT_FOUND, message = "User not found")
+        if (photographer.suspendedAt != null) {
+            throw ApiException(
+                status = HttpStatus.FORBIDDEN,
+                code = ErrorCodes.ACCOUNT_SUSPENDED,
+                message = "Your account is suspended. Contact support to appeal before uploading.",
             )
         }
         val settings = photographerSettingsRepository.findById(photographerId).orElse(null)

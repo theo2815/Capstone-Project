@@ -18,13 +18,15 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useCanUpload } from "@/hooks/use-can-upload";
+import { usePublicEvents } from "@/hooks/use-public-events";
 import { useToast } from "@/hooks/use-toast";
+import { usePhotographerVerificationSync } from "@/lib/photographer-verification-sync";
 import { uploadPhotographerPhoto } from "@/lib/api-photographer";
 import { ROUTES } from "@/lib/constants";
 import {
   UPLOAD_GRACE_DAYS,
   canUploadToEvent,
-  getEventById,
+  useEventCatalog,
   uploadDaysRemaining,
 } from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
@@ -39,6 +41,10 @@ import { cn } from "@/lib/utils";
 // 1500-photo coverage across three parallel tabs.
 
 const BATCH_LIMIT = 500;
+
+// Stable empty-array reference so useEventCatalog's memo doesn't churn while
+// the public events fetch is in-flight.
+const EMPTY_SEED: ReadonlyArray<ListEvent> = [];
 
 const STATE_LABEL: Record<EventState, string> = {
   live: "LIVE",
@@ -61,11 +67,37 @@ interface UploadEntry {
 }
 
 export default function FocusedUploadPage() {
+  // Keep the suspended/verification state fresh while uploading — admin
+  // suspend mid-session must show up here, not only on /dashboard/settings.
+  usePhotographerVerificationSync();
   const params = useParams<{ eventId: string }>();
   const eventId = Array.isArray(params.eventId)
     ? params.eventId[0]
     : params.eventId;
-  const event = eventId ? getEventById(eventId) : undefined;
+
+  // Client-side fetch + admin-override merge. /upload/[eventId] is a client
+  // page so it can't SSR; we read the public events list through React Query
+  // and merge admin overrides on top. While the fetch is in flight, render
+  // a skeleton — 404 only fires once we know the event truly isn't there.
+  const liveEvents = usePublicEvents();
+  const catalog = useEventCatalog(liveEvents ?? EMPTY_SEED);
+  const event = useMemo(
+    () => (eventId ? catalog.find((e) => e.id === eventId) : undefined),
+    [catalog, eventId],
+  );
+
+  if (liveEvents === null) {
+    return (
+      <main className="bg-bone text-ink min-h-screen flex flex-col">
+        <SiteHeader />
+        <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
+          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+            Loading event…
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   if (!event) {
     notFound();
@@ -185,6 +217,22 @@ function UploadGate({ event }: { event: ListEvent }) {
         >
           Pick a different event
         </Link>
+      </div>
+    );
+  }
+
+  if (gate.kind === "suspended") {
+    // The VerificationBanner above already carries the full suspended copy
+    // + Contact support CTA; keep the dropzone block terse so the banner
+    // owns the message.
+    return (
+      <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
+        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          Uploads paused
+        </p>
+        <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
+          Account suspended — see banner above.
+        </p>
       </div>
     );
   }
