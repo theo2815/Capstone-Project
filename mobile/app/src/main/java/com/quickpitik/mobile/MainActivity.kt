@@ -3,13 +3,12 @@ package com.quickpitik.mobile
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import com.quickpitik.mobile.ui.auth.LoginScreen
+import com.quickpitik.mobile.ui.auth.RegisterScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerDashboardScreen
 import com.quickpitik.mobile.ui.theme.QuickPitikMobileTheme
 
 class MainActivity : ComponentActivity() {
@@ -17,30 +16,47 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             QuickPitikMobileTheme {
-                // A surface container using the 'background' color from the theme
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                val navController = rememberNavController()
+
+                NavHost(
+                    navController = navController,
+                    startDestination = "login"
                 ) {
-                    Greeting("Android")
+                    composable("login") {
+                        LoginScreen(
+                            onNavigateToRegister = {
+                                navController.navigate("register")
+                            },
+                            onLoginSuccess = {
+                                navController.navigate("dashboard") {
+                                    popUpTo("login") { inclusive = true }
+                                }
+                            }
+                        )
+                    }
+                    composable("register") {
+                        RegisterScreen(
+                            onNavigateToLogin = {
+                                navController.navigate("login")
+                            },
+                            onRegisterSuccess = {
+                                navController.navigate("dashboard") {
+                                    popUpTo("login") { inclusive = true }
+                                }
+                            }
+                        )
+                    }
+                    composable("dashboard") {
+                        PhotographerDashboardScreen(
+                            onLogout = {
+                                navController.navigate("login") {
+                                    popUpTo("dashboard") { inclusive = true }
+                                }
+                            }
+                        )
+                    }
                 }
             }
         }
-    }
-}
-
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    QuickPitikMobileTheme {
-        Greeting("Android")
     }
 }
