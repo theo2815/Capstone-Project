@@ -12,38 +12,47 @@ import { EventTile } from "@/components/events/event-tile";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { TileSkeleton } from "@/components/ui/skeleton";
 import { usePhotographerEvents } from "@/hooks/use-photographer-data";
-import { getEventById } from "@/lib/event-catalog";
+import type { EventState, ListEvent } from "@/app/events/events-browser";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import { PHOTOGRAPHER_EVENTS } from "@/lib/photographer-mock";
+import type { PhotographerEventSummary } from "@/lib/photographer-mock";
 
 // Photographer's "events I've covered" list — only events with at least one
 // uploaded photo show up. Each card routes to the focused share page at
 // /dashboard/events/[id].
 
+// Build a ListEvent-shaped record from the BE PhotographerEventSummary so
+// EventTile (which expects ListEvent) can render it. The BE response already
+// carries every field manage-mode uses (id/slug/name/date/location/state);
+// participantCount + status are slot fillers for manage mode and aren't read.
+function toListEvent(p: PhotographerEventSummary): ListEvent {
+  return {
+    id: p.id,
+    slug: p.slug,
+    name: p.name,
+    date: p.date,
+    location: p.location,
+    bannerUrl: p.bannerUrl ?? undefined,
+    photoCount: p.photoCount,
+    participantCount: 0,
+    status: "ACTIVE",
+    state: p.state as EventState,
+    // "City Center, Cebu City" → "Cebu City". Manage mode doesn't currently
+    // surface city, but ListEvent requires the field — derive it cheaply
+    // instead of querying a second BE endpoint.
+    city: p.location.split(",").pop()?.trim() ?? "",
+  };
+}
+
 export default function DashboardEventsPage() {
-  // Live mode prefers GET /me/photographer/events?withUploads=true (Q-014);
-  // mock-mode falls back to the existing PHOTOGRAPHER_EVENTS seed.
   const liveEvents = usePhotographerEvents({ withUploads: true });
-  const rawEvents = liveEvents ?? PHOTOGRAPHER_EVENTS;
-  const isLoading = false;
+  const isLoading = liveEvents === null;
 
   const covered = useMemo(
     () =>
-      (rawEvents ?? [])
+      (liveEvents ?? [])
         .filter((p) => p.photoCount > 0)
-        .map((p) => {
-          const catalog = getEventById(p.id);
-          return catalog ? { catalog, photographer: p } : null;
-        })
-        .filter(
-          (
-            x,
-          ): x is {
-            catalog: NonNullable<ReturnType<typeof getEventById>>;
-            photographer: (typeof PHOTOGRAPHER_EVENTS)[number];
-          } => x !== null,
-        ),
-    [rawEvents],
+        .map((p) => ({ catalog: toListEvent(p), photographer: p })),
+    [liveEvents],
   );
 
   const trailing =

@@ -153,7 +153,13 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
       <div
         className={cn(
           "relative w-full h-[92dvh] max-h-[92vh] flex flex-col overflow-hidden rounded-2xl bg-bone shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)]",
-          wide ? "max-w-5xl" : "max-w-lg sm:max-w-xl",
+          // Modal width is stable per-photo — image fits inside via object-contain
+          // instead of the modal dancing to each photo's aspect. Widening at md/lg
+          // so portrait shots aren't squeezed into max-w-xl on desktop where the
+          // backdrop swallowed ~half the screen.
+          wide
+            ? "max-w-5xl"
+            : "max-w-lg sm:max-w-xl md:max-w-2xl lg:max-w-3xl",
         )}
         style={{ animation: "fade-up 0.4s ease-out both" }}
       >
@@ -194,33 +200,26 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             animation: "fade-in 0.4s ease-out both",
           }}
         >
-          {mode === "browse" && (
+          {mode === "browse" && hasImage && imageLoaded && !imageFailed && (
+            // Platform watermark — bottom-LEFT of the image area. Pairs with the
+            // BE-baked photographer watermark in the bottom-RIGHT of the JPEG
+            // (see backend WatermarkService.drawWatermark). Two corner marks:
+            // photographer (BE) + QuickPitik (FE). No diagonal/tile overlays.
+            //
+            // TODO: replace the `bg-bone/35` square with the QuickPitik logo SVG
+            // once the asset lands in /public. Keep the flex row + spacing so
+            // the wordmark sits beside the logo at the same baseline.
             <div
               aria-hidden="true"
-              className="absolute inset-0 pointer-events-none overflow-hidden select-none"
+              className="absolute bottom-3 left-3 sm:bottom-4 sm:left-4 z-10 pointer-events-none select-none flex items-center gap-1.5 mix-blend-overlay"
             >
               <span
-                className={cn(
-                  "absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.4em] text-2xl sm:text-3xl md:text-5xl rotate-[-18deg] whitespace-nowrap transition-colors duration-300",
-                  hasImage && imageLoaded && !imageFailed
-                    ? "text-bone/25 mix-blend-overlay"
-                    : "text-bone/15",
-                )}
-              >
-                QuickPitik · Preview
+                className="size-3.5 rounded-sm bg-bone/35"
+                aria-hidden="true"
+              />
+              <span className="font-mono uppercase tracking-[0.3em] text-[10px] sm:text-[11px] text-bone/55">
+                QuickPitik
               </span>
-              {hasImage && imageLoaded && !imageFailed && (
-                <div className="absolute inset-0 grid grid-cols-2 grid-rows-3 gap-0">
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <span
-                      key={i}
-                      className="flex items-center justify-center font-mono uppercase tracking-[0.4em] text-[10px] sm:text-xs text-bone/30 mix-blend-overlay rotate-[-18deg] whitespace-nowrap"
-                    >
-                      QuickPitik
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
@@ -265,13 +264,6 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             </div>
           )}
 
-          {mode === "browse" && (
-            <div className="absolute bottom-0 inset-x-0 z-10 px-4 py-3 flex items-end justify-end gap-3 text-bone/85 bg-gradient-to-t from-ink/50 to-transparent pointer-events-none">
-              <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px]">
-                Watermarked preview
-              </span>
-            </div>
-          )}
         </div>
 
         <div className="px-5 md:px-7 py-4 sm:py-5 md:py-6 bg-bone-deep border-t border-line">

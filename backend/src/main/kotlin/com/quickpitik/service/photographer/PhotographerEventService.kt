@@ -18,6 +18,7 @@ import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.service.storage.StorageService
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
@@ -34,6 +35,7 @@ class PhotographerEventService(
     private val orderItemRepository: OrderItemRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
+    private val eventDtoMapper: EventDtoMapper,
 ) {
     fun listEvents(
         photographerId: UUID,
@@ -51,7 +53,7 @@ class PhotographerEventService(
         val items = page.content.mapNotNull { ep ->
             val event = eventsById[ep.id.eventId] ?: return@mapNotNull null
             if (event.deletedAt != null) return@mapNotNull null
-            summaryDto(event, ep)
+            summaryDto(event, ep, eventDtoMapper.resolveBannerUrl(event))
         }
         return PaginatedResponse(
             items = items,
@@ -72,7 +74,7 @@ class PhotographerEventService(
                 message = "No coverage for this event",
             )
         }
-        return detailDto(event, ep)
+        return detailDto(event, ep, eventDtoMapper.resolveBannerUrl(event))
     }
 
     fun listPhotos(
@@ -100,12 +102,24 @@ class PhotographerEventService(
         } else {
             orderItemRepository.countSalesByPhotoIds(photoIds).associate { it.photoId to it.salesCount }
         }
+        val resolver = ::resolveThumbnailUrl
         return PaginatedResponse(
-            items = page.content.map { it.toLibraryDto(salesByPhoto[it.id] ?: 0L) },
+            items = page.content.map {
+                it.toLibraryDto(salesByPhoto[it.id] ?: 0L, resolver)
+            },
             total = page.totalElements,
             offset = pagination.offset,
             limit = pagination.limit,
         )
+    }
+
+    // Mirrors PhotoService.resolveThumbnailUrl — same watermarked-thumbnail-
+    // first preference order so runner-side and photographer-side galleries
+    // pull the same S3 object. Falls back to the original (uncomposited) key
+    // only if both thumbnail + watermark keys are unset (legacy rows).
+    private fun resolveThumbnailUrl(photo: com.quickpitik.entity.Photo): String? {
+        val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key
+        return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
 
     fun getDownload(photographerId: UUID, photoId: UUID): PhotographerDownloadDto {

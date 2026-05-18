@@ -46,6 +46,11 @@ export interface PhotographerEventSummary {
   /** Event date, ISO date-only (YYYY-MM-DD). */
   date: string;
   location: string;
+  /** Resolved event cover URL — presigned cover_s3_key or legacy banner_url
+   *  fallback. Same value runners see on /events tiles; null when the admin
+   *  hasn't uploaded a cover yet (EventTile then falls back to its dark
+   *  placeholder). */
+  bannerUrl?: string | null;
   state: EventState;
   /** Total photos uploaded by this photographer for this event. */
   photoCount: number;
@@ -114,6 +119,10 @@ export interface PhotographerLibraryPhoto {
    * layout. Every 7th photo is wide.
    */
   span: "default" | "wide";
+  /** Watermarked thumbnail URL from the BE (same image runners see in
+   *  /events/[slug]?browse=1). Null while the BE hasn't responded or for
+   *  legacy mock-generated rows that never carried one. */
+  thumbnailUrl?: string | null;
 }
 
 function hashStr(s: string): number {

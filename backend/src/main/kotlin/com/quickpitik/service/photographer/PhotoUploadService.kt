@@ -118,25 +118,40 @@ class PhotoUploadService(
         val originalKey = "events/$eventId/photos/$photoId/original.jpg"
         val watermarkKey = "events/$eventId/photos/$photoId/watermark.jpg"
 
-        // N-2 — Watermark label resolution chain (most specific first):
-        //   1. settings.watermarkLabel — explicit override the photographer set
-        //      via PUT /me/photographer/watermark when uploading a custom label.
-        //   2. settings.brandName — derived fallback so an unbranded photographer
-        //      still gets *something* recognisable on the public gallery thumbnail.
-        //   3. "QUICKPITIK" — final house-brand fallback. Plan does not mandate
-        //      a specific final value. WatermarkService.drawWatermark also
-        //      falls back to "QUICKPITIK" via .ifBlank { } so the literal lives
-        //      in two places — both layers stay self-sufficient if either
-        //      path ever sees a blank label.
-        val watermarkLabel = settings.watermarkLabel?.takeIf { it.isNotBlank() }
-            ?: settings.brandName?.takeIf { it.isNotBlank() }
-            ?: "QUICKPITIK"
+        // Photographer's watermark IMAGE (logo) gets composited onto every
+        // upload — bottom-right corner (identification) + diagonal center
+        // (anti-piracy). Verification gate at line 92 + PhotographerSettings
+        // collectMissing line 372-374 guarantee watermarkS3Key is non-null at
+        // this point; !! is safe. WatermarkService handles transparent PNG +
+        // opaque JPEG watermarks identically (alpha-aware composite).
+        //
+        // The defensive try/catch covers a real-world drift case observed
+        // 2026-05-18: DB pointer + disk file went out of sync (DB referenced
+        // a key whose bytes no longer existed on disk — partial nuke, manual
+        // file delete, or a race in uploadWatermark's put → save → delete
+        // sequence). Surface a clean 422 so the FE prompts the photographer
+        // to re-upload via /dashboard/settings rather than dumping a 500.
+        val watermarkBytes = try {
+            storageService.getBytes(settings.watermarkS3Key!!)
+        } catch (ex: java.nio.file.NoSuchFileException) {
+            log.warn(
+                "Watermark file missing for photographer {} (key {})",
+                photographerId,
+                settings.watermarkS3Key,
+            )
+            throw ApiException(
+                status = HttpStatus.UNPROCESSABLE_ENTITY,
+                code = ErrorCodes.WATERMARK_MISSING,
+                message = "Your watermark image is missing from storage. Re-upload it in Settings before uploading photos.",
+            )
+        }
 
         val watermarked = try {
-            watermarkService.processThumbnail(bytes, watermarkLabel)
+            watermarkService.processThumbnail(bytes, watermarkBytes)
         } catch (ex: IllegalArgumentException) {
-            // Magic-byte mismatch — Content-Type lied. Reject with the same
-            // code as content-type filtering so the FE handles them as one.
+            // Magic-byte mismatch — Content-Type lied, or the watermark image
+            // can't be decoded (stale storage). Reject with the same code as
+            // content-type filtering so the FE handles them as one.
             throw ApiException(
                 status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
                 code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,

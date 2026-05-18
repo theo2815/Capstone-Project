@@ -74,7 +74,7 @@ class EventDtoMapper(
         adminOverrides = event.adminOverrides,
     )
 
-    private fun resolveBannerUrl(event: Event): String? {
+    fun resolveBannerUrl(event: Event): String? {
         val key = event.coverS3Key
         if (!key.isNullOrBlank()) {
             return storageService.presignedGetUrl(key, storageProperties.presignedTtl.cover)

@@ -3,23 +3,21 @@
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { SiteHeader } from "@/components/layout/site-header";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { EventTile } from "@/components/events/event-tile";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
-import { usePublicPhotographer } from "@/hooks/use-photographer-data";
+import { Skeleton } from "@/components/ui/skeleton";
+import { fetchPublicPhotographer } from "@/lib/api-photographer-public";
 import { isReservedHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
 import { formatMemberSince } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import {
-  PHOTOGRAPHER_EVENTS,
-  type EventState,
-} from "@/lib/photographer-mock";
+import type { EventState } from "@/lib/photographer-mock";
 import { getCatalogWithOverrides } from "@/lib/event-catalog";
 import {
-  getPhotographerByHandle,
   getProfileTotals,
   type CoverSource,
   type PhotographerProfile,
@@ -35,15 +33,11 @@ import type { ListEvent } from "@/app/events/events-browser";
 // logged-in photographer visits their own /{handle}. Owner edit/share lives
 // on /profile; this page is what runners see.
 //
-// Resolves three states:
-//   1. Handle matches the logged-in photographer's settings store → render a
-//      live preview built from the store + PHOTOGRAPHER_EVENTS.
-//   2. Handle matches a static registry photographer → render their public
-//      profile.
-//   3. Otherwise → "No photographer here yet" not-found body.
-//
-// TODO(backend): replace registry lookup + settings-store override with a
-// single `api.get<PhotographerPublic>("/p/{handle}")` call.
+// Single data path: GET /public/photographers/{handle} → PhotographerProfile.
+// Owner-self has no special branch — the BE already returns the right shape
+// (events list, watermark label, cover, brand color) whether the requester
+// is the owner or a runner. The `isOwner` flag we pass down only affects
+// affordances like the SaveButton (hidden for own photos), never data.
 export default function PublicHandlePage() {
   const params = useParams<{ handle: string }>();
   const raw = Array.isArray(params.handle) ? params.handle[0] : params.handle;
@@ -62,47 +56,58 @@ export default function PublicHandlePage() {
 }
 
 function PublicProfileBody({ handle }: { handle: string }) {
-  const settings = usePhotographerSettingsStore();
-  const isOwnHandle = handle.length > 0 && settings.handle === handle;
+  // Logged-in photographer's own handle from the settings store — the only
+  // place we still touch the store, and only for the isOwner affordance.
+  // Runners + guests have a blank settings.handle, so isOwner is always
+  // false for them.
+  const ownHandle = usePhotographerSettingsStore((s) => s.handle);
+  const isOwner = handle.length > 0 && ownHandle === handle;
 
-  // Live mode prefers GET /public/photographers/{handle} (Q-016); mock-mode
-  // falls back to the registry seed. Owner-self preview always reads from the
-  // settings store so unsaved local edits show without a backend round-trip.
-  const liveProfile = usePublicPhotographer(isOwnHandle ? null : handle);
+  // Use useQuery directly (not the wrapper hook) so we can distinguish
+  // "still loading" from "404 / not found". The wrapper collapses both into
+  // null. Without this distinction, the first paint flashes NotFoundBody
+  // before the BE response lands.
+  const query = useQuery({
+    queryKey: ["photographer", "public", handle],
+    queryFn: () => fetchPublicPhotographer(handle),
+    enabled: handle.length > 0,
+    staleTime: 5 * 60_000,
+  });
 
-  if (isOwnHandle) {
-    const profile = ownerProfileFromSettings(handle, settings);
-    return <ProfileLayout profile={profile} isOwner />;
+  // isLoading is true ONLY on first fetch (no cached data yet). Background
+  // refetches set isFetching true but keep the cached data visible — we
+  // intentionally don't gate on isFetching so the page doesn't flash a
+  // skeleton during a quiet refetch.
+  if (query.isLoading) {
+    return <ProfileSkeleton />;
   }
 
-  const registryProfile = liveProfile ?? getPhotographerByHandle(handle);
-  if (registryProfile) {
-    return <ProfileLayout profile={registryProfile} isOwner={false} />;
+  if (query.isError || !query.data) {
+    return <NotFoundBody handle={handle} />;
   }
 
-  return <NotFoundBody handle={handle} />;
+  return <ProfileLayout profile={query.data} isOwner={isOwner} />;
 }
 
-function ownerProfileFromSettings(
-  handle: string,
-  s: ReturnType<typeof usePhotographerSettingsStore.getState>,
-): PhotographerProfile {
-  return {
-    handle,
-    displayName: s.brandName.trim() || "Photographer",
-    brandColor: s.brandColor,
-    bio: s.bio,
-    city: "Cebu",
-    memberSince: "2024-08-15",
-    cover: s.cover ? { kind: "image", url: s.cover.dataUrl } : null,
-    watermarkLabel: s.watermark ? "OWNER" : null,
-    events: PHOTOGRAPHER_EVENTS.filter((e) => e.photoCount > 0).map((e) => ({
-      eventSlug: e.slug,
-      state: e.state,
-      photoCount: e.photoCount,
-      salesCount: e.salesCount,
-    })),
-  };
+function ProfileSkeleton() {
+  return (
+    <div className="flex-1">
+      <div className="relative bg-bone-deep border-b border-line aspect-[16/5] md:aspect-[16/4]" />
+      <div className="max-w-7xl mx-auto w-full px-6 md:px-10 -mt-10 md:-mt-14 relative">
+        <Skeleton className="size-20 md:size-24 rounded-full" />
+        <Skeleton className="h-10 md:h-12 w-64 mt-6" />
+        <Skeleton className="h-5 w-96 mt-4" />
+        <div className="mt-10 grid grid-cols-3 gap-y-7 gap-x-8 md:gap-x-12 max-w-2xl">
+          {[0, 1, 2].map((i) => (
+            <div key={i}>
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-7 md:h-8 w-20 mt-2" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ─────────────── LAYOUT ─────────────── */

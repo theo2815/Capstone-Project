@@ -8,6 +8,12 @@ interface StorageService {
 
     fun put(key: String, stream: InputStream, contentLength: Long, contentType: String): StoredObject
 
+    // Server-side read of stored object bytes. Used when a server-internal
+    // operation (e.g. compositing the photographer's watermark image onto a
+    // newly-uploaded photo) needs the bytes, not a presigned URL the client
+    // would fetch. Throws if the key is missing.
+    fun getBytes(key: String): ByteArray
+
     fun delete(key: String)
 
     fun exists(key: String): Boolean

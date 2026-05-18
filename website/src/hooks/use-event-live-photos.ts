@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { API_BASE_URL } from "@/lib/constants";
+import { buildWsUrl } from "@/lib/ws-url";
 import { getAccessToken } from "@/lib/auth";
 import type { EventPhotosResult, Photo } from "@/lib/api-photos";
 
@@ -57,8 +57,13 @@ export function useEventLivePhotos(
 
     function connect() {
       if (cancelled) return;
-      const wsBase = API_BASE_URL.replace(/^http/i, "ws");
-      const url = `${wsBase}/events/${encodeURIComponent(args.eventId)}/photos`;
+      // BE registers the handler at /ws/events/*/photos — NOT under the REST
+      // /api/v1 prefix. buildWsUrl strips API_BASE_URL's path component before
+      // appending the WS path; matches use-admin-notifications-ws + use-
+      // photographer-notifications-ws.
+      const url = buildWsUrl(
+        `/ws/events/${encodeURIComponent(args.eventId)}/photos`,
+      );
       const token = getAccessToken();
       // Bearer JWT carried via Sec-WebSocket-Protocol per Q-002. Backend
       // reads the first protocol value as the access token.

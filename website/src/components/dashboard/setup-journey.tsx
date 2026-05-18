@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useCanUpload, type UploadGateState } from "@/hooks/use-can-upload";
+import { usePhotographerEvents } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
-import { PHOTOGRAPHER_PIPELINE } from "@/lib/photographer-mock";
 import { SECTION_GUIDE } from "@/lib/section-guide";
 
 const SECTION_GUIDE_STORAGE_KEY = "qp:dashboard:section-guide-collapsed";
@@ -30,7 +30,15 @@ const STEP_COUNT = 3;
 
 export function SetupJourney() {
   const gate = useCanUpload();
-  const steps = buildSteps(gate, PHOTOGRAPHER_PIPELINE.uploaded);
+  const events = usePhotographerEvents();
+  // "Uploaded so far" = sum of photoCount across every event_photographer
+  // row for this photographer. event_photographer.photo_count is updated by
+  // the BE upsert on every successful upload (PhotoUploadService).
+  const uploadedCount = (events ?? []).reduce(
+    (sum, e) => sum + e.photoCount,
+    0,
+  );
+  const steps = buildSteps(gate, uploadedCount);
   const activeIndex = steps.findIndex((s) => s.status === "active");
   const currentStep = activeIndex >= 0 ? activeIndex + 1 : steps.length;
 

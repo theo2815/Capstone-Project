@@ -57,6 +57,8 @@ class LocalFsStorageService(
         return StoredObject(key = key, sizeBytes = Files.size(target), contentType = contentType)
     }
 
+    override fun getBytes(key: String): ByteArray = Files.readAllBytes(resolve(key))
+
     override fun delete(key: String) {
         Files.deleteIfExists(resolve(key))
     }
