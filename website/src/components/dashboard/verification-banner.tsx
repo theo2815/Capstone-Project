@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import { ROUTES } from "@/lib/constants";
 
@@ -15,11 +16,18 @@ interface VerificationBannerProps {
 //   incomplete → "Finish your settings" + which field is missing + Settings link
 //   pending    → "Awaiting review" + reassurance copy
 //   ok         → optional thin "Verified" strip (off by default)
+//
+// Suppressed on /dashboard/settings: that page renders an inline
+// VerificationStatusPanel at the bottom which covers the same state +
+// actions ("Submit for review" / "Edit settings"). Two banners would
+// just consume vertical space and confuse the eye.
 export function VerificationBanner({
   showOnApproved = false,
 }: VerificationBannerProps) {
   const gate = useCanUpload();
+  const pathname = usePathname();
 
+  if (pathname === ROUTES.DASHBOARD_SETTINGS) return null;
   if (gate.kind === "ok" && !showOnApproved) return null;
 
   if (gate.kind === "suspended") {

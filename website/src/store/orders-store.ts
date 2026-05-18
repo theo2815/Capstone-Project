@@ -2,10 +2,16 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { OrderStatus } from "@/types/order";
 
-// Local cache of orders for mock-mode + offline-friendly Race Log derivation.
+// Local cache of orders for offline-friendly Race Log derivation.
 // Phase E (2026-05-09): /orders page reads via `useOrdersList()` hook which
-// pulls from /me/orders in live mode and falls back here in mock mode. The
-// CheckoutModal mock branch still pushes a MockOrder here on payment success.
+// pulls from /me/orders. CheckoutModal pushes a fresh MockOrder here on
+// payment success so the Race Log derives "bought" rows without waiting
+// on a /me/orders refetch.
+//
+// Initial state is an empty array — no demo seed. The earlier `SEED_ORDERS`
+// (QP-DEMO01 + QP-DEMO02) was a development convenience that every fresh
+// user inherited, contributing to the "all users share same data" symptom
+// fixed 2026-05-18.
 
 export interface MockOrder {
   id: string;            // e.g. "QP-A1B2C3"
@@ -15,34 +21,13 @@ export interface MockOrder {
   paymentMethod: string;
   paidAt: string;        // ISO timestamp
   // Phase E backend-hydrated optional fields. Server populates these on the
-  // /me/orders list payload; mock seed leaves them undefined and consumers
-  // (label helpers, kicker counts) fall back to local catalog joins.
+  // /me/orders list payload; locally-pushed checkout orders leave them
+  // undefined and consumers (label helpers, kicker counts) fall back to
+  // local catalog joins.
   eventName?: string;
   eventSlug?: string;
   status?: OrderStatus;
 }
-
-// Demo seed so a fresh user sees Race Log "kept" counts immediately.
-// - Order on event "1" (Cebu Marathon)        → pairs with saved → save+bought row
-// - Order on event "3" (SRP Half-Marathon)    → never saved → bought-only row (retroactive entry)
-const SEED_ORDERS: ReadonlyArray<MockOrder> = [
-  {
-    id: "QP-DEMO01",
-    eventId: "1",
-    photoIds: ["mock-cm-1", "mock-cm-2", "mock-cm-3"],
-    total: 240,
-    paymentMethod: "gcash",
-    paidAt: "2026-04-29T10:23:00.000Z",
-  },
-  {
-    id: "QP-DEMO02",
-    eventId: "3",
-    photoIds: ["mock-srp-1", "mock-srp-2"],
-    total: 140,
-    paymentMethod: "gcash",
-    paidAt: "2026-04-13T18:11:00.000Z",
-  },
-];
 
 interface OrdersState {
   orders: MockOrder[];
@@ -54,7 +39,7 @@ interface OrdersState {
 export const useOrdersStore = create<OrdersState>()(
   persist(
     (set) => ({
-      orders: [...SEED_ORDERS],
+      orders: [],
       setOrders: (orders) => set({ orders }),
       addOrder: (order) =>
         set((state) => ({ orders: [order, ...state.orders] })),

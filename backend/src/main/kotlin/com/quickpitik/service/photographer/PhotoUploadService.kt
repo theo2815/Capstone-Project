@@ -19,7 +19,6 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.ai.AiApiClient
-import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.PhotoPublishedEvent
 import org.slf4j.LoggerFactory
@@ -110,21 +109,10 @@ class PhotoUploadService(
         val bytes = file.bytes
         val filename = file.originalFilename ?: "upload.jpg"
 
-        // Blur gate runs before any storage I/O so blurry uploads cost the
-        // photographer round-trip latency only — no storage churn, no DB row.
-        val blurResult = try {
-            aiApiClient.blurDetect(bytes, contentType, filename)
-        } catch (ex: AiApiException) {
-            // Bubble up via dedicated handler → 503 AI_API_UNAVAILABLE envelope.
-            throw ex
-        }
-        if (blurResult.is_blurry) {
-            throw ApiException(
-                status = HttpStatus.UNPROCESSABLE_ENTITY,
-                code = ErrorCodes.BLUR_REJECTED,
-                message = "Photo did not pass blur quality check.",
-            )
-        }
+        // Blur culling is desktop-only (BatchMyPhotos). Web upload assumes
+        // photos have already been culled by the photographer's desktop
+        // workflow — see backend/decisions 2026-05-18 "Blur removed from
+        // BE upload" + website/decisions 2026-05-06 "Blur removed from web."
 
         val photoId = UUID.randomUUID()
         val originalKey = "events/$eventId/photos/$photoId/original.jpg"
@@ -166,7 +154,6 @@ class PhotoUploadService(
             s3Key = originalKey,
             thumbnailS3Key = watermarkKey,
             watermarkS3Key = watermarkKey,
-            blurScore = blurResult.metrics.laplacian_variance.toBigDecimal(),
             spanWire = PhotoSpan.DEFAULT.wire,
             tone = Random.nextInt(0, 4),
             uploadedAt = OffsetDateTime.now(),
@@ -174,56 +161,62 @@ class PhotoUploadService(
             pricePhp = event.pricePerPhoto,
         )
 
-        // Faces — best-effort. A failure here doesn't block the upload; the
-        // photo is still searchable by bib number, just not by selfie.
-        // Track outer-try outcome so we can surface degraded search to the
-        // photographer dashboard (H-5). Inner enroll failures are already
-        // logged via runCatching's onFailure and don't change the signal —
-        // an enroll outage usually correlates with a detect outage anyway.
-        var facesOk = true
-        try {
-            val facesResult = aiApiClient.facesDetect(bytes, contentType, filename)
-            facesResult.faces.forEachIndexed { index, _ ->
-                val personId = "$photoId:$index"
-                runCatching {
-                    aiApiClient.facesEnroll(
-                        file = bytes,
-                        contentType = contentType,
-                        filename = filename,
-                        personName = photoId.toString(),
-                        personId = personId,
-                        eventId = eventId,
-                    )
-                    photo.facePersons.add(PhotoFacePersonEmbed(faceIndex = index, aiPersonId = personId))
-                }.onFailure { log.warn("Face enroll failed for {}: {}", personId, it.message) }
-            }
-        } catch (ex: Exception) {
-            facesOk = false
-            log.warn("Faces detect failed for upload {}: {}", photoId, ex.message)
-        }
-
-        // Bibs — best-effort, filtered by configurable confidence floor.
-        var bibsOk = true
-        try {
-            val bibsResult = aiApiClient.bibsRecognize(bytes, contentType, filename)
-            bibsResult.detections
-                .filter { it.confidence >= aiApiProperties.bibConfidenceThresholdDefault }
-                .map { it.bib_number.trim().uppercase() }
-                .filter { it.isNotEmpty() }
-                .distinct()
-                .forEach { bibNumber ->
-                    photo.bibs.add(
-                        PhotoBibEmbed(
-                            bibNumber = bibNumber,
-                            ocrConfidence = BigDecimal.valueOf(
-                                bibsResult.detections.first { it.bib_number.trim().uppercase() == bibNumber }.confidence,
-                            ),
-                        ),
-                    )
+        // Faces + bibs — best-effort. Both are gated by `app.ai-api.enabled`
+        // so feature development can run without ai-api on. When disabled,
+        // facesOk + bibsOk stay false → aiDetectionStatus = "none" in the
+        // response, photo still uploads, just without face embeddings or bib
+        // OCR. When ai-api comes online (AI_API_ENABLED=true), the existing
+        // try/catch graceful degradation kicks in for transient failures.
+        // Inner enroll failures are logged via runCatching's onFailure.
+        var facesOk = false
+        var bibsOk = false
+        if (aiApiProperties.enabled) {
+            facesOk = true
+            try {
+                val facesResult = aiApiClient.facesDetect(bytes, contentType, filename)
+                facesResult.faces.forEachIndexed { index, _ ->
+                    val personId = "$photoId:$index"
+                    runCatching {
+                        aiApiClient.facesEnroll(
+                            file = bytes,
+                            contentType = contentType,
+                            filename = filename,
+                            personName = photoId.toString(),
+                            personId = personId,
+                            eventId = eventId,
+                        )
+                        photo.facePersons.add(PhotoFacePersonEmbed(faceIndex = index, aiPersonId = personId))
+                    }.onFailure { log.warn("Face enroll failed for {}: {}", personId, it.message) }
                 }
-        } catch (ex: Exception) {
-            bibsOk = false
-            log.warn("Bibs recognize failed for upload {}: {}", photoId, ex.message)
+            } catch (ex: Exception) {
+                facesOk = false
+                log.warn("Faces detect failed for upload {}: {}", photoId, ex.message)
+            }
+
+            bibsOk = true
+            try {
+                val bibsResult = aiApiClient.bibsRecognize(bytes, contentType, filename)
+                bibsResult.detections
+                    .filter { it.confidence >= aiApiProperties.bibConfidenceThresholdDefault }
+                    .map { it.bib_number.trim().uppercase() }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
+                    .forEach { bibNumber ->
+                        photo.bibs.add(
+                            PhotoBibEmbed(
+                                bibNumber = bibNumber,
+                                ocrConfidence = BigDecimal.valueOf(
+                                    bibsResult.detections.first { it.bib_number.trim().uppercase() == bibNumber }.confidence,
+                                ),
+                            ),
+                        )
+                    }
+            } catch (ex: Exception) {
+                bibsOk = false
+                log.warn("Bibs recognize failed for upload {}: {}", photoId, ex.message)
+            }
+        } else {
+            log.debug("ai-api disabled; skipping faces + bibs for photo {}", photoId)
         }
 
         photoRepository.save(photo)

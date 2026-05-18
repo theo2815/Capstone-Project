@@ -38,9 +38,6 @@ class Photo(
     @Column(name = "watermark_s3_key", length = 512)
     var watermarkS3Key: String? = null,
 
-    @Column(name = "blur_score", precision = 10, scale = 4)
-    var blurScore: BigDecimal? = null,
-
     @Column(name = "span", nullable = false, length = 20)
     @JdbcTypeCode(SqlTypes.VARCHAR)
     var spanWire: String = PhotoSpan.DEFAULT.wire,

@@ -5,6 +5,15 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
 
+// Master switch for the mock Google OAuth path. The 2026-05-05 ADR shipped
+// `mockGoogleLogin` as a placeholder that hardcodes `juan.delacruz@gmail.com`
+// for every Google signup — so every account that came in via Google looked
+// identical across browsers. Real Google OAuth lands in Phase B (see
+// website/tasks.md Next). Until then, this flag is `false` and email/password
+// is the only signup path. When real OAuth ships, flip to `true` and replace
+// `mockGoogleLogin` with a real `/auth/oauth/google/callback` exchange.
+export const OAUTH_ENABLED = false;
+
 interface GoogleButtonProps {
   disabled?: boolean;
 }

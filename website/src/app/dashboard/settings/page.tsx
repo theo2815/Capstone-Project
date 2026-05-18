@@ -234,14 +234,22 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   editingRef.current = editing;
   const { showToast } = useToast();
 
-  // One-shot hydration of socials + payouts from the BE on mount. Reconciles
-  // the localStorage-persisted store against the server's truth, then
-  // proactively POSTs any local-only rows so legacy localStorage state from
-  // before BE wiring (Phase F.2 ADR 2026-05-10) doesn't strand the
-  // photographer with "chip says complete but submit returns missing."
-  // Gated on `!editing` at the moment of setState so a mid-flight Edit
-  // click doesn't clobber the user's in-flight snapshot — in that race the
-  // migration defers to next page load.
+  // One-shot hydration of socials + payouts from the BE on mount.
+  //
+  // History: an earlier version of this effect ALSO auto-POSTed local-only
+  // rows to the BE as a migration shim for legacy pre-Phase-F.2 localStorage.
+  // That shim was the root cause of the 2026-05-18 "all users share same
+  // photographer settings" bug — it pushed User A's stale localStorage
+  // socials/payouts to the BE under User B's auth token whenever B's settings
+  // page mounted. Combined with `resetUserScopedStores` clearing the local
+  // store on every auth transition (see lib/auth-reset.ts), the shim is no
+  // longer needed — local store starts empty on a fresh session, so there's
+  // nothing to "migrate" anyway.
+  //
+  // Current behavior: fetch from BE, overwrite local store. BE is the source
+  // of truth. Edits go through the explicit Edit→Save state machine which
+  // posts via the same `postSocial` / `postPayoutAccount` helpers — not
+  // through this effect.
   const hydratedRef = useRef(false);
   useEffect(() => {
     if (hydratedRef.current) return;
@@ -262,89 +270,14 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (!beSocials || !bePayouts) return;
-
-      const local = usePhotographerSettingsStore.getState();
-      const beSocialIds = new Set(beSocials.map((s) => s.id));
-      const bePayoutIds = new Set(bePayouts.map((p) => p.id));
-      const unsyncedSocials = local.socials.filter(
-        (s) => !beSocialIds.has(s.id) && s.url.trim().length > 0,
-      );
-      const unsyncedPayouts = local.payouts.filter(
-        (p) => !bePayoutIds.has(p.id),
-      );
-
-      const [socialResults, payoutResults] = await Promise.all([
-        Promise.allSettled(
-          unsyncedSocials.map((s) => postSocial(s.platform, s.url.trim())),
-        ),
-        Promise.allSettled(
-          unsyncedPayouts.map((p) =>
-            postPayoutAccount({
-              method: p.method,
-              accountNumber: p.accountNumber,
-              accountName: p.accountName,
-            }),
-          ),
-        ),
-      ]);
-
       if (editingRef.current) {
-        // User entered edit mode mid-fetch. Skipping the store rewrite
-        // avoids clobbering their snapshot; the migration will retry on
-        // the next page load. Any POSTs that already succeeded are
-        // server-side rows now and the user will see them after refresh.
-        console.warn(
-          "[photographer/settings] hydration completed during edit — store update skipped to preserve snapshot.",
-        );
+        // User entered edit mode mid-fetch. Don't clobber their snapshot;
+        // the next page load will re-hydrate.
         return;
       }
-
-      const mergedSocials: SocialLink[] = [...beSocials];
-      socialResults.forEach((r, i) => {
-        if (r.status === "fulfilled") {
-          mergedSocials.push(r.value);
-        } else {
-          console.error(
-            "[photographer/settings] hydration social POST failed",
-            r.reason,
-          );
-          mergedSocials.push(unsyncedSocials[i]);
-        }
-      });
-
-      const mergedPayouts: PayoutAccount[] = [...bePayouts];
-      const qrUploads: Array<{ payoutId: string; file: File }> = [];
-      payoutResults.forEach((r, i) => {
-        if (r.status === "fulfilled") {
-          mergedPayouts.push(r.value);
-          const localQr = unsyncedPayouts[i].qr;
-          if (localQr) {
-            qrUploads.push({
-              payoutId: r.value.id,
-              file: dataUrlToFile(localQr.dataUrl, `qr-${r.value.id}.png`),
-            });
-          }
-        } else {
-          console.error(
-            "[photographer/settings] hydration payout POST failed",
-            r.reason,
-          );
-          mergedPayouts.push(unsyncedPayouts[i]);
-        }
-      });
-
       usePhotographerSettingsStore.setState({
-        socials: mergedSocials,
-        payouts: mergedPayouts,
-      });
-
-      qrUploads.forEach(({ payoutId, file }) => {
-        void postPayoutQr(payoutId, file).catch((err) => {
-          console.error(
-            `[photographer/settings] hydration QR upload failed for ${payoutId}`,
-            err,
-          );
-        });
+        socials: beSocials,
+        payouts: bePayouts,
       });
     })();
   }, []);
@@ -729,32 +662,31 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// Sticky floating pill — Save + Cancel when editing, fallback Edit entry
-// when there's no banner Edit button (i.e. status !== "incomplete").
+// Sticky floating pill — Save + Cancel when editing, otherwise an Edit
+// entry the photographer can hit from any scroll position.
 // Portal'd to document.body for the same transform-context reasons as the
 // existing ReadyToSubmitPill (see notes/ui-pitfalls.md).
 //
-// Why the conditional Edit entry: when the verification banner is showing
-// "Submit for review" (status === "incomplete"), we want the Edit button
-// living right beside Submit so the photographer sees both actions in one
-// place. The floating pill would duplicate that. In "pending" and
-// "approved" states the banner has no Submit, so the floating pill is the
-// only Edit entry. Save + Cancel always float during editing regardless of
-// status — they're too important to lose to scroll.
+// Visibility: the pill is suppressed only in the narrow "ready to submit"
+// window — status === "incomplete" AND every required field filled — so
+// the ReadyToSubmitPill (Edit + Submit pair) can take the bottom-right slot
+// without overlap. In every other state (fresh incomplete photographer
+// mid-fill, pending, approved) the pill shows so Edit + Save + Cancel are
+// never more than a corner-tap away.
 function EditModePill() {
   const { editing, saving, beginEdit, saveEdit, cancelEdit } = useEditMode();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
+  const ready = usePhotographerSettingsStore((s) => s.isComplete());
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
   }, []);
   if (!mounted) return null;
 
-  // Read-only Edit entry only when the banner isn't already rendering one.
-  const showFloatingEditEntry = !editing && status !== "incomplete";
-
-  // Nothing to render when not editing AND banner owns the Edit button.
-  if (!editing && !showFloatingEditEntry) return null;
+  // Hand off the bottom-right slot to ReadyToSubmitPill in the moments
+  // when it owns the Edit + Submit pair. Otherwise stay mounted.
+  const readyToSubmitSlot = !editing && status === "incomplete" && ready;
+  if (readyToSubmitSlot) return null;
 
   return createPortal(
     <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3">
@@ -1129,13 +1061,14 @@ function ReadyToSubmitNudge() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      const result = await submitForReview({ setStatus, showToast });
-      // Only dismiss the modal on accepted submit. On incomplete/network
-      // failure, keep it open so the photographer can retry or see context
-      // before navigating away.
-      if (result.submitted) setModalOpen(false);
+      await submitForReview({ setStatus, showToast });
     } finally {
       setSubmitting(false);
+      // Close the modal regardless of outcome — the toast surfaces success
+      // ("Submitted for review") or failure ("Can't submit yet — missing
+      // X"). Keeping the modal open after a click felt sticky; the
+      // photographer can re-trigger it from ReadyToSubmitPill if needed.
+      setModalOpen(false);
     }
   }
 
