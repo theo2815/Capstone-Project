@@ -7,11 +7,19 @@ import jakarta.persistence.Enumerated
 import jakarta.persistence.Id
 import jakarta.persistence.PreUpdate
 import jakarta.persistence.Table
+import org.hibernate.annotations.DynamicUpdate
 import java.time.OffsetDateTime
 import java.util.UUID
 
+// @DynamicUpdate: see PhotographerSettings.kt for the full rationale. Avatar
+// uploads (POST /me/avatar) fire concurrently with /me/photographer/* writes
+// that also load this user into their own TX persistence context via
+// PhotographerSettingsService.getOrCreate. Without @DynamicUpdate, any TX
+// that flushes the loaded User entity would write a full-row UPDATE with its
+// stale avatar_s3_key snapshot, clobbering the avatar upload.
 @Entity
 @Table(name = "users")
+@DynamicUpdate
 class User(
     @Id
     @Column(nullable = false, updatable = false)
