@@ -725,7 +725,7 @@ function PhotoPreviewMount({
       addItem({
         photoId: photo.id,
         eventId: event.id,
-        thumbnailUrl: "",
+        thumbnailUrl: photo.imageUrl ?? "",
         price: photo.price,
         bib: photo.bib,
         eventName: event.name,
@@ -749,7 +749,7 @@ function PhotoPreviewMount({
     addItem({
       photoId: photo.id,
       eventId: event.id,
-      thumbnailUrl: "",
+      thumbnailUrl: photo.imageUrl ?? "",
       price: photo.price,
       bib: photo.bib,
       eventName: event.name,

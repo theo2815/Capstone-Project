@@ -62,6 +62,10 @@ class SecurityConfig(
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/events/*/photos/search-by-face").authenticated()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/orders").permitAll()
+                // Guest order status polling. Service-layer token check enforces auth.
+                auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*/status").permitAll()
+                // Guest order detail (token-gated, anti-IDOR via service layer).
+                auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*").permitAll()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/payments/webhook/**").permitAll()
                 auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 auth.anyRequest().authenticated()

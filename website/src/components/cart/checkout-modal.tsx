@@ -139,8 +139,19 @@ export function CheckoutModal({
         recipientEmail: isAuthenticated ? undefined : email,
         idempotencyKey,
       });
-      // Race log derives from saved-events ∪ orders — invalidate both so the
-      // /profile race log picks up the new purchase.
+
+      if (order.redirectUrl) {
+        // PayMongo hosted-checkout flow: leave this page entirely. After the
+        // user pays, PayMongo bounces them to /orders/return?orderId=…&token=…
+        // (the success_url stamped on the Checkout Session). The polling
+        // page there flips us into the SuccessStep equivalent once the
+        // server-side webhook flips PAID.
+        window.location.href = order.redirectUrl;
+        return;
+      }
+
+      // No redirectUrl ⇒ idempotent replay of an already-PAID order, or the
+      // legacy stub path. Fall back to the in-modal success step.
       queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
       queryClient.invalidateQueries({ queryKey: ["me", "saved-events"] });
       setOrderId(order.id);

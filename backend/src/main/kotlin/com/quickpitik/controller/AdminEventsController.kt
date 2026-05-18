@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.multipart.MultipartFile
+import java.math.BigDecimal
 import java.util.UUID
 
 @RestController
@@ -62,12 +63,14 @@ class AdminEventsController(
         @RequestParam("title") title: String,
         @RequestParam("date") date: String,
         @RequestParam("location") location: String,
+        @RequestParam("pricePerPhoto", required = false) pricePerPhoto: String?,
         @RequestPart("cover", required = false) cover: MultipartFile?,
     ): AdminListEventDto {
         val req = CreateAdminEventRequest(
             title = title.trim(),
             date = date.trim(),
             location = location.trim(),
+            pricePerPhoto = parsePrice(pricePerPhoto) ?: BigDecimal.ZERO,
             bannerUrl = null,
         )
         if (req.title.isBlank()) {
@@ -96,6 +99,7 @@ class AdminEventsController(
         @RequestParam(required = false) title: String?,
         @RequestParam(required = false) date: String?,
         @RequestParam(required = false) location: String?,
+        @RequestParam(required = false) pricePerPhoto: String?,
         @RequestParam(required = false) removeCover: Boolean?,
         @RequestPart("cover", required = false) cover: MultipartFile?,
     ): AdminListEventDto {
@@ -103,6 +107,7 @@ class AdminEventsController(
             title = title?.trim()?.takeIf { it.isNotEmpty() },
             date = date?.trim()?.takeIf { it.isNotEmpty() },
             location = location?.trim()?.takeIf { it.isNotEmpty() },
+            pricePerPhoto = parsePrice(pricePerPhoto),
         )
         val coverUpload = cover?.takeUnless { it.isEmpty }?.let {
             AdminEventService.CoverUpload(bytes = it.bytes, contentType = it.contentType)
@@ -121,4 +126,20 @@ class AdminEventsController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
     ): AdminEventDeleteResponseDto = adminEventService.delete(principal.userId, eventId)
+
+    // FormData round-trips floats as strings ("80" or "80.00"). Blank /
+    // missing means "no change" on PATCH and "default to 0" on POST. Surface
+    // parse failures as 400 with the offending field so the FE shows it on
+    // the right input instead of a generic 500.
+    private fun parsePrice(raw: String?): BigDecimal? {
+        val trimmed = raw?.trim().orEmpty()
+        if (trimmed.isEmpty()) return null
+        return runCatching { BigDecimal(trimmed) }.getOrElse {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "pricePerPhoto must be a number",
+                field = "pricePerPhoto",
+            )
+        }
+    }
 }

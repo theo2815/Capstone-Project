@@ -100,6 +100,34 @@ app:
       # header is missing, malformed, or fails constant-time comparison.
       hmac-secret: ${PAYMENT_WEBHOOK_HMAC_SECRET:dev-only-payment-webhook-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random}
       signature-header: ${PAYMENT_WEBHOOK_SIGNATURE_HEADER:X-QuickPitik-Signature}
+  payments:
+    paymongo:
+      # PayMongo Checkout Sessions wiring. Real secret + webhook signing
+      # secret are env-driven (or via application-local.yml, gitignored).
+      # The dev defaults are intentionally fake — a boot without proper
+      # secrets will fail loudly at the first PayMongo call instead of
+      # silently sending garbage. PayMongo uses HTTP Basic auth: secret
+      # key as username, empty password. Webhook signing format is
+      # `Paymongo-Signature: t=<unix>,te=<test_sig>,li=<live_sig>`.
+      secret-key: ${PAYMONGO_SECRET_KEY:sk_test_dev-only-DO-NOT-USE-IN-PRODUCTION}
+      webhook-secret: ${PAYMONGO_WEBHOOK_SECRET:whsk_dev-only-DO-NOT-USE-IN-PRODUCTION}
+      success-url: ${PAYMONGO_SUCCESS_URL:http://localhost:3000/orders/return}
+      cancel-url: ${PAYMONGO_CANCEL_URL:http://localhost:3000/cart}
+      base-url: ${PAYMONGO_BASE_URL:https://api.paymongo.com/v1}
+      connect-timeout: PT5S
+      read-timeout: PT15S
+  email:
+    resend:
+      # Resend transactional email wiring. Free-tier dev sender
+      # (`onboarding@resend.dev`) only delivers to the verified Resend
+      # signup address — fine for wiring tests, swap to a verified
+      # domain sender before guest checkout testing.
+      api-key: ${RESEND_API_KEY:re_dev-only-DO-NOT-USE-IN-PRODUCTION}
+      from-address: ${RESEND_FROM_ADDRESS:onboarding@resend.dev}
+      from-name: ${RESEND_FROM_NAME:QuickPitik}
+      base-url: ${RESEND_BASE_URL:https://api.resend.com}
+      connect-timeout: PT5S
+      read-timeout: PT15S
 
 logging:
   level:

@@ -19,6 +19,10 @@ export interface Order {
   totalAmount: number;
   paymentMethod: string;
   createdAt: string;
+  // PayMongo hosted-checkout URL. Present for newly-created PENDING orders
+  // and for idempotent replays of PENDING orders. Null when the order is
+  // already PAID (success path on replay) or when the legacy stub flow ran.
+  redirectUrl?: string | null;
 }
 
 export interface OrderItem {

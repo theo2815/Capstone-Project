@@ -35,11 +35,11 @@ data class AdminListEventDto(
 )
 
 // POST /admin/events is now multipart — the controller pulls title/date/
-// location off the multipart request and builds this DTO before handing
-// to the service. The cover image arrives as a separate file part
-// (handled by AdminEventsController + EventCoverService) so the row's
-// `cover_s3_key` is set after the event is persisted; `bannerUrl` here
-// stays for legacy callers that pre-set a remote URL.
+// location/pricePerPhoto off the multipart request and builds this DTO
+// before handing to the service. The cover image arrives as a separate
+// file part (handled by AdminEventsController + EventCoverService) so the
+// row's `cover_s3_key` is set after the event is persisted; `bannerUrl`
+// here stays for legacy callers that pre-set a remote URL.
 data class CreateAdminEventRequest(
     @field:NotBlank
     @field:Size(max = 200)
@@ -49,17 +49,21 @@ data class CreateAdminEventRequest(
     @field:NotBlank
     @field:Size(max = 200)
     val location: String,
+    val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
     val bannerUrl: String? = null,
 )
 
-// PATCH /admin/events/{id} — body { title?, date?, location? }.
-// Per Q-A3 only these three fields are admin-editable; status and slug stay
+// PATCH /admin/events/{id} — body { title?, date?, location?, pricePerPhoto? }.
+// Per Q-A3 these are the only admin-editable fields; status and slug stay
 // fixed (slug to keep public URLs stable, status to keep state machines
-// out of the admin surface).
+// out of the admin surface). When `pricePerPhoto` changes, AdminEventService
+// also re-prices existing `photos.price_php` rows under the same event so the
+// new price takes effect across runner-facing galleries and carts.
 data class UpdateAdminEventRequest(
     val title: String? = null,
     val date: String? = null,
     val location: String? = null,
+    val pricePerPhoto: BigDecimal? = null,
 )
 
 data class AdminEventDeleteResponseDto(

@@ -35,7 +35,7 @@ export function BuyAllBar({
       const ok = addItem({
         photoId: p.id,
         eventId: event.id,
-        thumbnailUrl: "",
+        thumbnailUrl: p.imageUrl ?? "",
         price: p.price,
         bib: p.bib,
         eventName: event.name,

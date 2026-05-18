@@ -101,6 +101,7 @@ export default function AdminEventsPage() {
     name: string;
     location: string;
     date: string;
+    pricePerPhoto: number;
     cover: File | null;
     removeCover: boolean;
   }) {
@@ -109,6 +110,7 @@ export default function AdminEventsPage() {
         name: payload.name,
         location: payload.location,
         date: payload.date,
+        pricePerPhoto: payload.pricePerPhoto,
         cover: payload.cover,
       });
       // Refetch the admin list so the optimistic submission gets replaced
@@ -131,15 +133,23 @@ export default function AdminEventsPage() {
     name: string;
     location: string;
     date: string;
+    pricePerPhoto: number;
     cover: File | null;
     removeCover: boolean;
   }) {
     if (!editTarget) return;
     try {
+      // Only forward pricePerPhoto when it actually changed from the
+      // prefilled value — keeps the PATCH payload minimal and avoids
+      // logging a no-op price entry into events.admin_overrides JSONB.
+      const priceChanged =
+        editTarget.pricePerPhoto === undefined ||
+        editTarget.pricePerPhoto !== payload.pricePerPhoto;
       await editEvent(editTarget.id, {
         name: payload.name,
         location: payload.location,
         date: payload.date,
+        ...(priceChanged ? { pricePerPhoto: payload.pricePerPhoto } : {}),
         cover: payload.cover,
         removeCover: payload.removeCover,
       });

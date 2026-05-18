@@ -19,6 +19,10 @@ data class OrderDetailDto(
     val status: OrderStatus?,
     val photos: List<OrderPhotoDetailDto>,
     val downloadBundleUrl: String? = null,
+    // Required by the /orders/return success state so we can render "We've
+    // also emailed these links to <recipient>". Authed runners see their
+    // account email; guests see whatever they typed at checkout.
+    val recipientEmail: String = "",
 )
 
 data class OrderPhotoDetailDto(

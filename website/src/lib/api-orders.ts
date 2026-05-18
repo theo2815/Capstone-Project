@@ -1,7 +1,7 @@
 import { api } from "@/lib/api";
 import type { MockOrder } from "@/store/orders-store";
 import type { PaginatedResponse } from "@/types/api";
-import type { Order, OrderPhotoDetail } from "@/types/order";
+import type { Order, OrderPhotoDetail, OrderStatus } from "@/types/order";
 
 // Orders backend contract (Q-008 idempotency, Q-005 photo URLs RESOLVED 2026-05-09).
 //   GET  /api/v1/me/orders?offset=&limit=    → PaginatedResponse<MockOrder>
@@ -14,6 +14,9 @@ import type { Order, OrderPhotoDetail } from "@/types/order";
 export interface OrderDetail extends MockOrder {
   photos: OrderPhotoDetail[];
   downloadBundleUrl?: string;
+  // Populated for the /orders/return success state. May be empty on legacy
+  // payloads or when the BE chose to omit it.
+  recipientEmail?: string;
 }
 
 export interface CreateOrderArgs {
@@ -69,4 +72,34 @@ export async function submitOrderRefund(
       note: args.note,
     },
   );
+}
+
+// Guest-friendly status poll. The /orders/return page calls this to check
+// whether PayMongo's webhook has fired yet. Authed runners hit
+// `fetchOrderDetail` instead — they get full hydration via JWT.
+export interface OrderStatusPayload {
+  id: string;
+  status: OrderStatus;
+  paidAt: string | null;
+}
+
+export async function fetchOrderStatus(
+  orderId: string,
+  token: string,
+): Promise<OrderStatusPayload> {
+  const qs = `?token=${encodeURIComponent(token)}`;
+  return api.get<OrderStatusPayload>(
+    `/orders/${encodeURIComponent(orderId)}/status${qs}`,
+  );
+}
+
+// Guest-friendly full order detail (hydrated photos + receipt fields).
+// `/me/orders/{id}` is for authed runners; this is for guests landing on
+// /orders/return with a share token in the URL.
+export async function fetchGuestOrderDetail(
+  orderId: string,
+  token: string,
+): Promise<OrderDetail | null> {
+  const qs = `?token=${encodeURIComponent(token)}`;
+  return api.get<OrderDetail>(`/orders/${encodeURIComponent(orderId)}${qs}`);
 }
