@@ -8,11 +8,49 @@
 * **Build app:** `.\gradlew.bat assembleDebug` (from the `mobile/` directory)
 * **Clean cache:** `.\gradlew.bat clean`
 * **Check compile validity:** `.\gradlew.bat compileDebugKotlin`
-* **USB Physical Phone Network Bridge:**
-  ```powershell
-  & "C:\Users\USER\AppData\Local\Android\Sdk\platform-tools\adb.exe" reverse tcp:8080 tcp:8080
+## 📱 Mobile-to-PC Backend Network Bridging Guide (ADB & Emulator)
+
+When debugging the mobile app on a physical phone or an emulator, the Android device sees **"localhost"** as its own internal loopback interface rather than your PC. To route phone traffic straight to your laptop's running Spring Boot server on port `8080`, use the guides below:
+
+### 🔌 Option A: Physical Android Phone via USB (Highly Recommended)
+1. **Enable USB Debugging on your phone:**
+   * Go to **Settings** -> **About Phone**.
+   * Tap **Build Number** 7 times until it says *"You are now a developer!"*.
+   * Go back to settings -> **System** -> **Developer Options** -> Enable **USB Debugging**.
+   * Plug your phone into your laptop via USB cable and select "Allow USB Debugging" when prompted.
+2. **Check phone connectivity:**
+   * Open PowerShell/Terminal on your laptop and run:
+     ```powershell
+     & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" devices
+     ```
+     *(You should see your phone listed in the list of devices.)*
+3. **Establish Port Forwarding:**
+   * Run this command to bridge port `8080` across the USB cable:
+     ```powershell
+     # Windows PowerShell (Universal Path)
+     & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" reverse tcp:8080 tcp:8080
+     
+     # macOS Terminal
+     ~/Library/Android/sdk/platform-tools/adb reverse tcp:8080 tcp:8080
+     
+     # Linux Terminal
+     adb reverse tcp:8080 tcp:8080
+     ```
+     *(After running this, the phone will successfully communicate with `http://localhost:8080` on your laptop!)*
+
+### 💻 Option B: Android Emulator (Virtual Device)
+* If using the standard Android Studio Emulator, the laptop's loopback interface is mapped to the special IP address **`10.0.2.2`**.
+* Open `RetrofitClient.kt` and change the `BASE_URL` to:
+  ```kotlin
+  private const val BASE_URL = "http://10.0.2.2:8080/"
   ```
-  *(Always run this command when debugging on a physical phone to map its local port `8080` straight to your PC's running Spring Boot backend container.)*
+
+### 📶 Option C: Wireless local Wi-Fi (No USB cable)
+* Ensure both your laptop and phone are connected to the exact same Wi-Fi network.
+* Open `RetrofitClient.kt` and change `localhost` to your computer's local Wi-Fi IP address (e.g. `192.168.1.XX`):
+  ```kotlin
+  private const val BASE_URL = "http://192.168.1.50:8080/"
+  ```
 
 ---
 
