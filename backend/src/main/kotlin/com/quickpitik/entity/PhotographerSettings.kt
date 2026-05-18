@@ -7,13 +7,24 @@ import jakarta.persistence.Enumerated
 import jakarta.persistence.Id
 import jakarta.persistence.PreUpdate
 import jakarta.persistence.Table
+import org.hibernate.annotations.DynamicUpdate
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.util.UUID
 
+// @DynamicUpdate makes Hibernate emit UPDATE SQL containing only the columns
+// whose values actually changed in this transaction. The /dashboard/settings
+// page fires 5+ profile POSTs in parallel (brand, handle, region, cover,
+// watermark), each updating a different column on this same row. Without
+// @DynamicUpdate, every TX writes a full-row UPDATE — each TX's loaded
+// snapshot of the untouched columns gets persisted back, so the last commit
+// wins and every other TX's column changes are silently overwritten ("lost
+// update"). With @DynamicUpdate, concurrent TXes touching different columns
+// no longer stomp each other.
 @Entity
 @Table(name = "photographer_settings")
+@DynamicUpdate
 class PhotographerSettings(
     @Id
     @Column(name = "user_id", nullable = false, updatable = false)
