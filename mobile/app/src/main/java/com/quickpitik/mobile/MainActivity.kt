@@ -9,6 +9,7 @@ import androidx.navigation.compose.rememberNavController
 import com.quickpitik.mobile.ui.auth.LoginScreen
 import com.quickpitik.mobile.ui.auth.RegisterScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardScreen
+import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
 import com.quickpitik.mobile.ui.theme.QuickPitikMobileTheme
 
 class MainActivity : ComponentActivity() {
@@ -27,8 +28,9 @@ class MainActivity : ComponentActivity() {
                             onNavigateToRegister = {
                                 navController.navigate("register")
                             },
-                            onLoginSuccess = {
-                                navController.navigate("dashboard") {
+                            onLoginSuccess = { isPhotographer ->
+                                val target = if (isPhotographer) "dashboard" else "gallery"
+                                navController.navigate(target) {
                                     popUpTo("login") { inclusive = true }
                                 }
                             }
@@ -39,8 +41,9 @@ class MainActivity : ComponentActivity() {
                             onNavigateToLogin = {
                                 navController.navigate("login")
                             },
-                            onRegisterSuccess = {
-                                navController.navigate("dashboard") {
+                            onRegisterSuccess = { isPhotographer ->
+                                val target = if (isPhotographer) "dashboard" else "gallery"
+                                navController.navigate(target) {
                                     popUpTo("login") { inclusive = true }
                                 }
                             }
@@ -51,6 +54,15 @@ class MainActivity : ComponentActivity() {
                             onLogout = {
                                 navController.navigate("login") {
                                     popUpTo("dashboard") { inclusive = true }
+                                }
+                            }
+                        )
+                    }
+                    composable("gallery") {
+                        RunnerGalleryScreen(
+                            onLogout = {
+                                navController.navigate("login") {
+                                    popUpTo("gallery") { inclusive = true }
                                 }
                             }
                         )
