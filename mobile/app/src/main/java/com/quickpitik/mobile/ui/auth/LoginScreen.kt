@@ -1,6 +1,5 @@
 package com.quickpitik.mobile.ui.auth
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,12 +18,24 @@ import com.quickpitik.mobile.ui.theme.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
+    viewModel: AuthViewModel,
     onNavigateToRegister: () -> Unit,
     onLoginSuccess: (isPhotographer: Boolean) -> Unit
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var isPhotographer by remember { mutableStateOf(false) }
+    var isPhotographerMode by remember { mutableStateOf(false) }
+
+    val authState by viewModel.authState.collectAsState()
+
+    // Handle single-time navigation routing on success state
+    LaunchedEffect(authState) {
+        if (authState is AuthState.Success) {
+            val user = (authState as AuthState.Success).response.user
+            onLoginSuccess(user.role == "PHOTOGRAPHER")
+            viewModel.resetState()
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -67,17 +78,17 @@ fun LoginScreen(
             )
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Role selector row
+            // Role selector row (useful to toggle testing defaults)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Runner login mode
                 Button(
-                    onClick = { isPhotographer = false },
+                    onClick = { isPhotographerMode = false },
+                    enabled = authState !is AuthState.Loading,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (!isPhotographer) Ink else BoneDeep,
-                        contentColor = if (!isPhotographer) Bone else Ink
+                        containerColor = if (!isPhotographerMode) Ink else BoneDeep,
+                        contentColor = if (!isPhotographerMode) Bone else Ink
                     ),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f)
@@ -85,12 +96,12 @@ fun LoginScreen(
                     Text("Runner Mode", style = Typography.labelMedium)
                 }
 
-                // Photographer login mode
                 Button(
-                    onClick = { isPhotographer = true },
+                    onClick = { isPhotographerMode = true },
+                    enabled = authState !is AuthState.Loading,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isPhotographer) Ink else BoneDeep,
-                        contentColor = if (isPhotographer) Bone else Ink
+                        containerColor = if (isPhotographerMode) Ink else BoneDeep,
+                        contentColor = if (isPhotographerMode) Bone else Ink
                     ),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f)
@@ -114,6 +125,7 @@ fun LoginScreen(
                     TextField(
                         value = email,
                         onValueChange = { email = it },
+                        enabled = authState !is AuthState.Loading,
                         placeholder = { Text("you@example.com", color = SlateSoft) },
                         singleLine = true,
                         colors = TextFieldDefaults.colors(
@@ -139,6 +151,7 @@ fun LoginScreen(
                     TextField(
                         value = password,
                         onValueChange = { password = it },
+                        enabled = authState !is AuthState.Loading,
                         placeholder = { Text("Your password", color = SlateSoft) },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
@@ -155,11 +168,23 @@ fun LoginScreen(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(36.dp))
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Dynamic Error Message Text
+            if (authState is AuthState.Error) {
+                Text(
+                    text = (authState as AuthState.Error).message,
+                    color = Color.Red,
+                    style = Typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             // Action Button
             Button(
-                onClick = { onLoginSuccess(isPhotographer) },
+                onClick = { viewModel.login(email.trim(), password) },
+                enabled = authState !is AuthState.Loading && email.isNotBlank() && password.length >= 8,
                 shape = RoundedCornerShape(percent = 100),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Fresh,
@@ -168,10 +193,17 @@ fun LoginScreen(
                 contentPadding = PaddingValues(vertical = 16.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = "LOG IN →",
-                    style = Typography.labelLarge
-                )
+                if (authState is AuthState.Loading) {
+                    CircularProgressIndicator(
+                        color = Bone,
+                        modifier = Modifier.size(24.dp)
+                    )
+                } else {
+                    Text(
+                        text = "LOG IN →",
+                        style = Typography.labelLarge
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -190,7 +222,12 @@ fun LoginScreen(
                     text = "CREATE ACCOUNT →",
                     style = Typography.labelMedium,
                     color = Ink,
-                    modifier = Modifier.clickable { onNavigateToRegister() }
+                    modifier = Modifier.clickable { 
+                        if (authState !is AuthState.Loading) {
+                            viewModel.resetState()
+                            onNavigateToRegister()
+                        }
+                    }
                 )
             }
         }
