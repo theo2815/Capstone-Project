@@ -13,6 +13,7 @@ import com.quickpitik.mobile.ui.auth.RegisterScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
 import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
+import com.quickpitik.mobile.ui.runner.RunnerGalleryViewModel
 import com.quickpitik.mobile.ui.theme.QuickPitikMobileTheme
 
 class MainActivity : ComponentActivity() {
@@ -67,7 +68,9 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     composable("gallery") {
+                        val runnerViewModel: RunnerGalleryViewModel = viewModel()
                         RunnerGalleryScreen(
+                            viewModel = runnerViewModel,
                             onLogout = {
                                 navController.navigate("login") {
                                     popUpTo("gallery") { inclusive = true }
