@@ -16,8 +16,15 @@ import com.quickpitik.mobile.ui.theme.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhotographerDashboardScreen(
+    viewModel: PhotographerDashboardViewModel,
     onLogout: () -> Unit
 ) {
+    val activeEvent by viewModel.activeEvent.collectAsState()
+    val eventsState by viewModel.eventsState.collectAsState()
+    val queueStats by viewModel.queueStats.collectAsState()
+
+    var showDropdown by remember { mutableStateOf(false) }
+
     // Explicitly lock the Photographer Dashboard into the premium athletic Dark Theme
     MaterialTheme(
         colorScheme = darkColorScheme(
@@ -74,32 +81,83 @@ fun PhotographerDashboardScreen(
                 }
                 Spacer(modifier = Modifier.height(28.dp))
 
-                // Active Event Card
+                // Active Event Selector Card
                 Card(
+                    onClick = { showDropdown = true },
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = InkSoft),
                     border = BorderStroke(1.dp, Slate),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(20.dp)) {
-                        Text(
-                            text = "ACTIVE EVENT",
-                            style = Typography.labelMedium,
-                            color = Fresh
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "ACTIVE EVENT",
+                                style = Typography.labelMedium,
+                                color = Fresh
+                            )
+                            Text(
+                                text = "CHANGE ▾",
+                                style = Typography.labelMedium,
+                                color = SlateSoft
+                            )
+                        }
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Cebu Marathon 2026",
+                            text = activeEvent?.name ?: "No assigned event",
                             style = Typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = Bone
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "CClex Waterfront Route &middot; 42K",
+                            text = activeEvent?.let { "${it.location} • ${it.state.uppercase()}" } ?: "Verify with administrator",
                             style = Typography.bodyMedium,
                             color = SlateSoft
                         )
+
+                        DropdownMenu(
+                            expanded = showDropdown,
+                            onDismissRequest = { showDropdown = false },
+                            modifier = Modifier.background(InkSoft)
+                        ) {
+                            when (val state = eventsState) {
+                                is EventsState.Loading -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Loading assigned events...", color = Bone) },
+                                        onClick = {}
+                                    )
+                                }
+                                is EventsState.Success -> {
+                                    if (state.events.isEmpty()) {
+                                        DropdownMenuItem(
+                                            text = { Text("No events found", color = Bone) },
+                                            onClick = {}
+                                        )
+                                    } else {
+                                        state.events.forEach { event ->
+                                            DropdownMenuItem(
+                                                text = { Text(event.name, color = Bone) },
+                                                onClick = {
+                                                    viewModel.selectEvent(event)
+                                                    showDropdown = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                                is EventsState.Error -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Error: ${state.message}", color = Color.Red) },
+                                        onClick = {}
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.height(20.dp))
@@ -136,7 +194,7 @@ fun PhotographerDashboardScreen(
                             color = Bone
                         )
                         Text(
-                            text = "Sony Alpha 7 IV &middot; CCID 4429",
+                            text = "Sony Alpha 7 IV · CCID 4429",
                             style = Typography.bodyMedium,
                             color = SlateSoft
                         )
@@ -163,9 +221,9 @@ fun PhotographerDashboardScreen(
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             
-                            // Progress bar
+                            // Live Room Progress bar
                             LinearProgressIndicator(
-                                progress = 0.72f,
+                                progress = queueStats.progress,
                                 color = Fresh,
                                 trackColor = Ink,
                                 modifier = Modifier.fillMaxWidth().height(8.dp)
@@ -176,14 +234,23 @@ fun PhotographerDashboardScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("Synced: 248 photos", style = Typography.bodyMedium, color = Bone)
-                                Text("Queued: 3 remaining", style = Typography.bodyMedium, color = Fresh)
+                                Text("Synced: ${queueStats.syncedCount} photos", style = Typography.bodyMedium, color = Bone)
+                                Text(
+                                    text = when {
+                                        queueStats.uploadingCount > 0 -> "Uploading..."
+                                        queueStats.queuedCount > 0 -> "Queued: ${queueStats.queuedCount} remaining"
+                                        queueStats.failedCount > 0 -> "Failed: ${queueStats.failedCount} uploads"
+                                        else -> "Idle"
+                                    },
+                                    style = Typography.bodyMedium,
+                                    color = if (queueStats.queuedCount > 0 || queueStats.uploadingCount > 0) Fresh else SlateSoft
+                                )
                             }
                         }
 
-                        // Start/Stop action buttons
+                        // Trigger sync engine action button
                         Button(
-                            onClick = {},
+                            onClick = { viewModel.runSyncEngine() },
                             shape = RoundedCornerShape(percent = 100),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = Fresh,
@@ -191,7 +258,10 @@ fun PhotographerDashboardScreen(
                             ),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("RUN SYNC ENGINE", style = Typography.labelLarge)
+                            Text(
+                                text = if (queueStats.uploadingCount > 0) "SYNCING QUEUE..." else "RUN SYNC ENGINE",
+                                style = Typography.labelLarge
+                            )
                         }
                     }
                 }

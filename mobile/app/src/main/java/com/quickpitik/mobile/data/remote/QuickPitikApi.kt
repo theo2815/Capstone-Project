@@ -17,4 +17,10 @@ interface QuickPitikApi {
         @Path("eventId") eventId: String,
         @Part file: MultipartBody.Part
     ): ApiResponseEnvelope<UploadedPhotoDto>
+
+    @GET("api/v1/me/photographer/events")
+    suspend fun getPhotographerEvents(
+        @Header("Authorization") token: String,
+        @Query("withUploads") withUploads: Boolean = false
+    ): ApiResponseEnvelope<PaginatedResponse<PhotographerEventSummaryDto>>
 }

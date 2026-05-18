@@ -11,6 +11,7 @@ import com.quickpitik.mobile.ui.auth.AuthViewModel
 import com.quickpitik.mobile.ui.auth.LoginScreen
 import com.quickpitik.mobile.ui.auth.RegisterScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
 import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
 import com.quickpitik.mobile.ui.theme.QuickPitikMobileTheme
 
@@ -55,7 +56,9 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     composable("dashboard") {
+                        val photographerViewModel: PhotographerDashboardViewModel = viewModel()
                         PhotographerDashboardScreen(
+                            viewModel = photographerViewModel,
                             onLogout = {
                                 navController.navigate("login") {
                                     popUpTo("dashboard") { inclusive = true }
