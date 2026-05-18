@@ -21,6 +21,7 @@ import com.quickpitik.mobile.ui.theme.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RegisterScreen(
+    viewModel: AuthViewModel,
     onNavigateToLogin: () -> Unit,
     onRegisterSuccess: (isPhotographer: Boolean) -> Unit
 ) {
@@ -28,6 +29,17 @@ fun RegisterScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var isPhotographer by remember { mutableStateOf(false) }
+
+    val authState by viewModel.authState.collectAsState()
+
+    // Handle single-time navigation routing on success state
+    LaunchedEffect(authState) {
+        if (authState is AuthState.Success) {
+            val user = (authState as AuthState.Success).response.user
+            onRegisterSuccess(user.role == "PHOTOGRAPHER")
+            viewModel.resetState()
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -65,7 +77,7 @@ fun RegisterScreen(
             )
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Role selection buttons (Matches custom web layout buttons)
+            // Role selection buttons
             Text(
                 text = "ACCOUNT TYPE",
                 style = Typography.labelMedium,
@@ -78,7 +90,11 @@ fun RegisterScreen(
             ) {
                 // Runner Option
                 Card(
-                    onClick = { isPhotographer = false },
+                    onClick = { 
+                        if (authState !is AuthState.Loading) {
+                            isPhotographer = false 
+                        }
+                    },
                     border = BorderStroke(
                         width = 1.5.dp,
                         color = if (!isPhotographer) Ink else Line
@@ -112,7 +128,11 @@ fun RegisterScreen(
 
                 // Photographer Option
                 Card(
-                    onClick = { isPhotographer = true },
+                    onClick = {
+                        if (authState !is AuthState.Loading) {
+                            isPhotographer = true 
+                        }
+                    },
                     border = BorderStroke(
                         width = 1.5.dp,
                         color = if (isPhotographer) Ink else Line
@@ -160,6 +180,7 @@ fun RegisterScreen(
                     TextField(
                         value = name,
                         onValueChange = { name = it },
+                        enabled = authState !is AuthState.Loading,
                         placeholder = { Text("Juan dela Cruz", color = SlateSoft) },
                         singleLine = true,
                         colors = TextFieldDefaults.colors(
@@ -185,6 +206,7 @@ fun RegisterScreen(
                     TextField(
                         value = email,
                         onValueChange = { email = it },
+                        enabled = authState !is AuthState.Loading,
                         placeholder = { Text("you@example.com", color = SlateSoft) },
                         singleLine = true,
                         colors = TextFieldDefaults.colors(
@@ -215,6 +237,7 @@ fun RegisterScreen(
                     TextField(
                         value = password,
                         onValueChange = { password = it },
+                        enabled = authState !is AuthState.Loading,
                         placeholder = { Text("••••••••", color = SlateSoft) },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
@@ -231,11 +254,23 @@ fun RegisterScreen(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Dynamic Error Message Text
+            if (authState is AuthState.Error) {
+                Text(
+                    text = (authState as AuthState.Error).message,
+                    color = Color.Red,
+                    style = Typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             // CTA Button
             Button(
-                onClick = { onRegisterSuccess(isPhotographer) },
+                onClick = { viewModel.register(name.trim(), email.trim(), password, isPhotographer) },
+                enabled = authState !is AuthState.Loading && name.isNotBlank() && email.isNotBlank() && password.length >= 8,
                 shape = RoundedCornerShape(percent = 100),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Fresh,
@@ -244,10 +279,17 @@ fun RegisterScreen(
                 contentPadding = PaddingValues(vertical = 16.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = "CREATE ACCOUNT →",
-                    style = Typography.labelLarge
-                )
+                if (authState is AuthState.Loading) {
+                    CircularProgressIndicator(
+                        color = Bone,
+                        modifier = Modifier.size(24.dp)
+                    )
+                } else {
+                    Text(
+                        text = "CREATE ACCOUNT →",
+                        style = Typography.labelLarge
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -266,7 +308,12 @@ fun RegisterScreen(
                     text = "SIGN IN →",
                     style = Typography.labelMedium,
                     color = Ink,
-                    modifier = Modifier.clickable { onNavigateToLogin() }
+                    modifier = Modifier.clickable { 
+                        if (authState !is AuthState.Loading) {
+                            viewModel.resetState()
+                            onNavigateToLogin()
+                        }
+                    }
                 )
             }
             
