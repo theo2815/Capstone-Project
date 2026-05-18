@@ -37,3 +37,12 @@ data class ApiErrorEnvelope(
     val success: Boolean,
     val errors: List<ApiError>?
 )
+
+data class UploadedPhotoDto(
+    val id: String,
+    val status: String,
+    val uploadedAt: String,
+    val thumbnailUrl: String,
+    val span: String,
+    val aiDetectionStatus: String? = null
+)
