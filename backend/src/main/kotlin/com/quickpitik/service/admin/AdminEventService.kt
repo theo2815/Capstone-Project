@@ -13,6 +13,7 @@ import com.quickpitik.entity.EventStatus
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
 import org.springframework.stereotype.Service
@@ -26,6 +27,7 @@ import java.util.UUID
 @Transactional
 class AdminEventService(
     private val eventRepository: EventRepository,
+    private val photoRepository: PhotoRepository,
     private val adminDecisionLogService: AdminDecisionLogService,
     private val eventDtoMapper: EventDtoMapper,
     private val eventCoverService: EventCoverService,
@@ -59,6 +61,7 @@ class AdminEventService(
     ): AdminListEventDto {
         val date = parseDate(req.date)
         val slug = slugify(req.title)
+        val price = validatedPrice(req.pricePerPhoto)
         // Persist the row first so the cover key can scope to the new
         // event id (events/{id}/cover/{uuid}.jpg). Saves stay in the same
         // @Transactional method — a cover-decode failure rolls back the
@@ -75,7 +78,7 @@ class AdminEventService(
                 status = EventStatus.ACTIVE,
                 description = "",
                 organizerName = "",
-                pricePerPhoto = BigDecimal("125"),
+                pricePerPhoto = price,
                 createdAt = OffsetDateTime.now(),
                 updatedAt = OffsetDateTime.now(),
             ),
@@ -88,7 +91,12 @@ class AdminEventService(
             adminId = adminId,
             targetEventId = event.id,
             decision = "event_created",
-            meta = mapOf("title" to req.title, "date" to req.date, "location" to req.location),
+            meta = mapOf(
+                "title" to req.title,
+                "date" to req.date,
+                "location" to req.location,
+                "pricePerPhoto" to price.toPlainString(),
+            ),
         )
         return eventDtoMapper.toAdminListDto(event)
     }
@@ -134,6 +142,25 @@ class AdminEventService(
                 before["location"] = event.location
                 after["location"] = newLocation
                 event.location = newLocation
+            }
+        }
+        // Price-per-photo override propagates to every photo already uploaded
+        // under this event so runner-facing galleries pick up the new price
+        // on next paint. `compareTo` (not `!=`) because BigDecimal equality
+        // also weighs scale — 125 vs 125.00 would otherwise look like a
+        // change. Cart drift is surfaced to runners at checkout via the
+        // existing CART_ITEM_PRICE_CHANGED flow; we deliberately do not
+        // mutate cart_items.price_php_at_add.
+        req.pricePerPhoto?.let { rawPrice ->
+            val newPrice = validatedPrice(rawPrice)
+            if (event.pricePerPhoto.compareTo(newPrice) != 0) {
+                val oldPriceStr = event.pricePerPhoto.toPlainString()
+                val newPriceStr = newPrice.toPlainString()
+                changes["pricePerPhoto"] = mapOf("from" to oldPriceStr, "to" to newPriceStr)
+                before["pricePerPhoto"] = oldPriceStr
+                after["pricePerPhoto"] = newPriceStr
+                event.pricePerPhoto = newPrice
+                photoRepository.updatePriceByEventId(event.id, newPrice)
             }
         }
         // Cover handling — upload wins over remove when both are signalled.
@@ -202,6 +229,20 @@ class AdminEventService(
                 field = "date",
             )
         }
+
+    // Admin-set per-photo price must be a non-negative peso amount. We
+    // strip trailing zeros and clamp to scale 2 so the audit log entries
+    // stay readable (avoid "125.00000" creeping in from FormData round-trips).
+    private fun validatedPrice(raw: BigDecimal): BigDecimal {
+        if (raw < BigDecimal.ZERO) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "pricePerPhoto must be ≥ 0",
+                field = "pricePerPhoto",
+            )
+        }
+        return raw.setScale(2, java.math.RoundingMode.HALF_UP)
+    }
 
     private fun slugify(title: String): String {
         val base = title.trim().lowercase()

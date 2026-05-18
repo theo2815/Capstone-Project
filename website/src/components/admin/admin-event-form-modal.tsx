@@ -39,6 +39,10 @@ interface AdminEventFormModalProps {
     name: string;
     location: string;
     date: string;
+    /** Per-photo price in PHP (admin-set). On edit, send only when changed
+     *  from the prefilled value; on create, always send. The BE re-prices
+     *  every existing photo under the event when this changes. */
+    pricePerPhoto: number;
     cover: File | null;
     /** True when the user removed an existing cover and didn't pick a new
      *  file — signals to the caller to send `removeCover` to the backend.
@@ -57,6 +61,11 @@ export function AdminEventFormModal({
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [date, setDate] = useState("");
+  // Price is captured as a string so the user can clear / retype freely;
+  // we coerce to a number at submit time. Stored separately from the
+  // ListEvent.pricePerPhoto so the input doesn't churn on every catalog
+  // refetch while editing.
+  const [price, setPrice] = useState("");
   // `coverFile` is a newly picked file. `existingBannerUrl` is the URL
   // already on the event in edit mode. Preview prefers coverFile.
   const [coverFile, setCoverFile] = useState<File | null>(null);
@@ -78,12 +87,14 @@ export function AdminEventFormModal({
       setName(event.name);
       setLocation(event.location);
       setDate(event.date);
+      setPrice(formatPriceForInput(event.pricePerPhoto));
       setExistingBannerUrl(event.bannerUrl);
       setInitialHadCover(Boolean(event.bannerUrl));
     } else {
       setName("");
       setLocation("");
       setDate("");
+      setPrice("");
       setExistingBannerUrl(undefined);
       setInitialHadCover(false);
     }
@@ -109,14 +120,22 @@ export function AdminEventFormModal({
   const trimmedName = name.trim();
   const trimmedLocation = location.trim();
   const dateValid = /^\d{4}-\d{2}-\d{2}$/.test(date);
+  // Accept "", "0", "80", "80.5", "80.50" — anything that parses as a
+  // non-negative finite number. Submit coerces to Number; blank means 0.
+  const parsedPrice = parsePrice(price);
+  const priceValid = parsedPrice !== null;
+  const priceHint = !priceValid
+    ? "Enter a non-negative number (e.g. 80 or 80.50)."
+    : undefined;
   const canSubmit =
     trimmedName.length > 0 &&
     trimmedLocation.length > 0 &&
     dateValid &&
+    priceValid &&
     !submitting;
 
   async function handleSubmit() {
-    if (!canSubmit) return;
+    if (!canSubmit || parsedPrice === null) return;
     // User cleared an existing cover (Remove button) and didn't replace it.
     // The new file branch takes precedence in the parent + backend if the
     // user actually picked a replacement.
@@ -128,6 +147,7 @@ export function AdminEventFormModal({
         name: trimmedName,
         location: trimmedLocation,
         date,
+        pricePerPhoto: parsedPrice,
         cover: coverFile,
         removeCover,
       });
@@ -189,6 +209,21 @@ export function AdminEventFormModal({
         />
       </div>
 
+      <AdminTextInput
+        id="event-price-per-photo"
+        label="Price per photo · PHP"
+        value={price}
+        onChange={setPrice}
+        type="number"
+        min={0}
+        step="0.01"
+        inputMode="decimal"
+        prefix="₱"
+        placeholder="80"
+        inputClassName="tnum"
+        hint={priceHint}
+      />
+
       <CoverField
         bannerUrl={displayedBannerUrl}
         error={coverError}
@@ -209,6 +244,26 @@ export function AdminEventFormModal({
       />
     </AdminFormModal>
   );
+}
+
+// Formats the BE's optional pricePerPhoto for the number input. Undefined
+// renders as empty so the placeholder shows; 0 renders as "0" so the admin
+// sees the explicit zero rather than mistaking it for "no price yet."
+function formatPriceForInput(value: number | undefined): string {
+  if (value === undefined || value === null) return "";
+  if (!Number.isFinite(value)) return "";
+  return String(value);
+}
+
+// Returns the parsed peso amount or null when the input isn't a valid
+// non-negative finite number. Blank counts as 0 so the admin can leave a
+// "free event" intentionally without typing a zero.
+function parsePrice(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return 0;
+  const num = Number(trimmed);
+  if (!Number.isFinite(num) || num < 0) return null;
+  return num;
 }
 
 interface CoverFieldProps {

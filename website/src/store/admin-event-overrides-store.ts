@@ -33,12 +33,18 @@ export type EventOverridePatch = Partial<
   /** Presigned URL for the cover banner. Pass `undefined` to clear an
    *  existing cover (the spread-merger reads it as "no banner"). */
   bannerUrl?: string;
+  /** New admin-set per-photo price in PHP. Optional — only forwarded to the
+   *  BE when it actually changed in the modal. */
+  pricePerPhoto?: number;
 };
 
 export interface CreateEventInput {
   name: string;
   date: string;
   location: string;
+  /** Per-photo price in PHP. Admin sets it at event creation; the BE seeds
+   *  every uploaded photo to this value via PhotoUploadService. */
+  pricePerPhoto: number;
   /** Raw cover file picked from disk. Uploaded as multipart; the backend
    *  re-encodes to JPEG and returns the presigned URL on the response. */
   cover?: File | null;
@@ -115,6 +121,9 @@ export const useAdminEventOverridesStore = create<AdminEventOverridesState>(
         ...(patch.name !== undefined ? { title: patch.name } : {}),
         ...(patch.date !== undefined ? { date: patch.date } : {}),
         ...(patch.location !== undefined ? { location: patch.location } : {}),
+        ...(patch.pricePerPhoto !== undefined
+          ? { pricePerPhoto: patch.pricePerPhoto }
+          : {}),
         ...(cover ? { cover } : {}),
         ...(removeCover ? { removeCover: true } : {}),
       };
@@ -130,6 +139,7 @@ export const useAdminEventOverridesStore = create<AdminEventOverridesState>(
         title: input.name.trim(),
         date: input.date,
         location: input.location.trim(),
+        pricePerPhoto: input.pricePerPhoto,
         cover: input.cover ?? null,
       });
       const event: ListEvent = {

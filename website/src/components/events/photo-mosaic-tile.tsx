@@ -52,7 +52,7 @@ export function PhotoMosaicTile({
   const cartPayload = {
     photoId: photo.id,
     eventId: event.id,
-    thumbnailUrl: "",
+    thumbnailUrl: photo.imageUrl ?? "",
     price: photo.price,
     bib: photo.bib,
     eventName: event.name,

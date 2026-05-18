@@ -45,6 +45,17 @@ class Order(
     @Column(name = "paid_at")
     var paidAt: OffsetDateTime? = null,
 
+    // Opaque token minted for guest orders so /orders/{id}?token=... is
+    // reachable from the email receipt without an account. NULL for authed
+    // orders — those reach the page via JWT.
+    @Column(name = "share_token", length = 64, unique = true)
+    var shareToken: String? = null,
+
+    // Stamped after the Resend receipt fires. Idempotency guard against
+    // PayMongo's retried webhook deliveries — handler checks NULL before send.
+    @Column(name = "email_sent_at")
+    var emailSentAt: OffsetDateTime? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 ) {

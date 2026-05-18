@@ -10,6 +10,11 @@ export interface Event {
   photoCount: number;
   participantCount: number;
   status: EventStatus;
+  // Per-photo price in PHP. Admin sets it at create time and overrides via
+  // PATCH /admin/events/{id}; on change the BE re-prices every photo under
+  // the event. Optional here because non-admin list endpoints historically
+  // omitted it — keep the field opt-in so older mock data doesn't break.
+  pricePerPhoto?: number;
 }
 
 export interface EventDetail extends Event {

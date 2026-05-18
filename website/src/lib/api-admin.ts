@@ -467,6 +467,9 @@ export interface CreateAdminEventArgs {
   title: string;
   date: string;
   location: string;
+  /** Per-photo price in PHP. Admin-set at create; the BE seeds new uploads
+   *  to this value via PhotoUploadService. Defaults to 0 if omitted. */
+  pricePerPhoto: number;
   /** Raw file from the picker. The backend re-encodes to 1920×1440 JPEG
    *  via EventCoverService — sending the raw file avoids the data-URL
    *  detour that overflowed banner_url VARCHAR(512) and 500'd the create. */
@@ -480,6 +483,7 @@ export async function createAdminEvent(
   form.append("title", args.title);
   form.append("date", args.date);
   form.append("location", args.location);
+  form.append("pricePerPhoto", String(args.pricePerPhoto));
   if (args.cover) form.append("cover", args.cover);
   return api.post<ListEvent>("/admin/events", form);
 }
@@ -488,6 +492,11 @@ export interface UpdateAdminEventPatch {
   title?: string;
   date?: string;
   location?: string;
+  /** New per-photo price in PHP. When this changes the BE re-prices every
+   *  existing photo under the event (UPDATE photos SET price_php = ?). Active
+   *  carts fail at checkout with CART_ITEM_PRICE_CHANGED — the snapshot is
+   *  deliberately not mutated. */
+  pricePerPhoto?: number;
   /** New cover file. Wins over `removeCover` when both are present. */
   cover?: File | null;
   /** Clear the existing cover key on the server. Ignored if `cover` is set. */
@@ -502,6 +511,9 @@ export async function updateAdminEvent(
   if (patch.title !== undefined) form.append("title", patch.title);
   if (patch.date !== undefined) form.append("date", patch.date);
   if (patch.location !== undefined) form.append("location", patch.location);
+  if (patch.pricePerPhoto !== undefined) {
+    form.append("pricePerPhoto", String(patch.pricePerPhoto));
+  }
   if (patch.cover) form.append("cover", patch.cover);
   if (patch.removeCover) form.append("removeCover", "true");
   return api.fetch<ListEvent>(

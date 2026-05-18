@@ -5,11 +5,26 @@ import com.quickpitik.entity.PhotoStatus
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.math.BigDecimal
 import java.util.UUID
 
 interface PhotoRepository : JpaRepository<Photo, UUID> {
+
+    // Bulk re-prices every photo under the event. Used by admin event PATCH
+    // when the operator changes events.price_per_photo so existing photos
+    // pick up the new price across runner-facing galleries. Cart drift is
+    // handled separately by CartService.add → CART_ITEM_PRICE_CHANGED at
+    // checkout — we deliberately do not touch cart_items.price_php_at_add
+    // so the server-canonical snapshot guarantee stays intact.
+    @Modifying
+    @Query("UPDATE Photo p SET p.pricePhp = :price WHERE p.eventId = :eventId")
+    fun updatePriceByEventId(
+        @Param("eventId") eventId: UUID,
+        @Param("price") price: BigDecimal,
+    ): Int
 
     @Query(
         """
