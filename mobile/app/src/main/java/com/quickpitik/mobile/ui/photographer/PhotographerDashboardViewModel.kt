@@ -9,9 +9,11 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.worker.PhotoUploadWorker
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -119,5 +121,36 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             .build()
 
         workManager.enqueue(syncRequest)
+    }
+
+    fun simulatePhotoCapture() {
+        val event = _activeEvent.value ?: return
+        viewModelScope.launch {
+            try {
+                // 1. Create a simulated physical JPEG image on phone cache storage
+                val cacheDir = getApplication<Application>().cacheDir
+                val mockFile = File(cacheDir, "simulated_dslr_${System.currentTimeMillis()}.jpg")
+                
+                // Write valid JPEG signature byte headers so S3/Spring processes the multi-part payload cleanly
+                val jpegHeader = byteArrayOf(
+                    0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 
+                    0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00
+                )
+                mockFile.writeBytes(jpegHeader)
+
+                // 2. Insert as a "QUEUED" record in local SQLite database
+                database.uploadQueueDao().insertRecord(
+                    UploadRecord(
+                        filePath = mockFile.absolutePath,
+                        eventId = event.id,
+                        photographerId = "simulated_photographer",
+                        captureTimestamp = System.currentTimeMillis(),
+                        uploadStatus = "QUEUED"
+                    )
+                )
+            } catch (e: Exception) {
+                // Fail silently or log error during simulation
+            }
+        }
     }
 }
