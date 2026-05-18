@@ -9,7 +9,11 @@ import { ApiError } from "@/lib/api";
 import { isSafeRedirect } from "@/lib/redirect";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types/user";
-import { AuthDivider, GoogleButton } from "@/components/auth/google-button";
+import {
+  AuthDivider,
+  GoogleButton,
+  OAUTH_ENABLED,
+} from "@/components/auth/google-button";
 import { FieldError } from "@/components/ui/field-error";
 import {
   NAME_MAX,
@@ -106,10 +110,12 @@ export function RegisterForm() {
         <span className="text-fresh">QuickPitik.</span>
       </h1>
 
-      <div className="space-y-5">
-        <GoogleButton disabled={isLoading} />
-        <AuthDivider label="or with email" />
-      </div>
+      {OAUTH_ENABLED && (
+        <div className="space-y-5">
+          <GoogleButton disabled={isLoading} />
+          <AuthDivider label="or with email" />
+        </div>
+      )}
 
       <div
         role="group"

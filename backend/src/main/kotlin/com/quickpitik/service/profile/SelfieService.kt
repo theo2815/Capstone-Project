@@ -1,6 +1,7 @@
 package com.quickpitik.service.profile
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.profile.SelfieRefDto
 import com.quickpitik.entity.UserSelfie
@@ -40,6 +41,7 @@ class SelfieService(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val aiApiClient: AiApiClient,
+    private val aiApiProperties: AiApiProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -139,6 +141,14 @@ class SelfieService(
     }
 
     private fun qualityGate(file: ByteArray, contentType: String, filename: String): BigDecimal {
+        if (!aiApiProperties.enabled) {
+            // Feature-dev short-circuit. Selfie still uploads; quality score is a
+            // placeholder until ai-api comes online. Existing selfies are NOT
+            // back-filled when AI is enabled later — they keep qualityScore=0
+            // until the user re-uploads.
+            log.debug("ai-api disabled; skipping selfie quality gate")
+            return BigDecimal.ZERO
+        }
         val result = try {
             aiApiClient.facesDetect(file = file, contentType = contentType, filename = filename)
         } catch (ex: AiApiException) {

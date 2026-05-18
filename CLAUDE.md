@@ -53,7 +53,9 @@ Repository-level docs are in `docs/`:
              │                           │
              ▼                           ▼
 ┌──────────────────────────────────────────────────┐
-│  ai-api  (blur / face / bib / batch)             │
+│  ai-api                                          │
+│  · web + mobile use: face / bib                  │
+│  · desktop uses:     blur / batch                │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -64,6 +66,8 @@ Repository-level docs are in `docs/`:
 3. **Each backend owns its own domain data.** `ai-api` is stateless about events/users/participants — it only stores face embeddings tagged with `api_key_id` + `event_id`.
 4. **Confidence thresholds are a backend concern.** `ai-api` returns raw scores; each backend applies its own per-event threshold.
 5. **Event isolation must always be enforced.** Any `faces/enroll` or `faces/search` call MUST pass `event_id` — this is how cross-event data leakage is prevented.
+6. **Blur detection is desktop-only.** Web + mobile upload paths MUST NOT call any blur endpoint (no `/blur/detect`, no `BLUR_REJECTED` gate, no `blurScore` writes). Photographers cull blurry shots in BatchMyPhotos before uploading. The Spring Boot backend's `AiApiClient` intentionally has no `blurDetect()` method — do not re-add it. See vault `backend/decisions.md` 2026-05-18 and `website/decisions.md` 2026-05-06 for the rationale.
+7. **`AI_API_ENABLED=false` is the dev default.** The Spring Boot backend has a master switch (`app.ai-api.enabled`, env `AI_API_ENABLED`) that gates every server-side ai-api call. Default in `application.yml` is `false`. When off: photo upload still works (no face embeddings / bib OCR — `aiDetectionStatus="none"`), selfie upload still works (`qualityScore=0`), runner face-search short-circuits to 503 AI_API_UNAVAILABLE. Flip to `true` when implementing AI features. Do not paper over this flag with mocks or new feature flags — it is the single point of control.
 
 Full integration contracts: `ai-api/docs/integration-architecture.md`, `ai-api/docs/integration-contracts.md`.
 

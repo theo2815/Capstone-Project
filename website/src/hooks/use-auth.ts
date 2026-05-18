@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { useAuthStore } from "@/store/auth-store";
 import { api } from "@/lib/api";
 import { getRefreshToken, setTokens, clearTokens } from "@/lib/auth";
+import { resetUserScopedStores } from "@/lib/auth-reset";
 import type {
   AuthResponse,
   LoginRequest,
@@ -27,6 +28,10 @@ export function useAuth() {
   const login = useCallback(
     async (credentials: LoginRequest) => {
       const data = await api.post<AuthResponse>("/auth/login", credentials);
+      // Clear any leftover state from a previous user in this browser BEFORE
+      // setting the new user — prevents User A's photographer settings,
+      // cart, etc. from bleeding into User B's session.
+      resetUserScopedStores();
       setTokens(data.accessToken, data.refreshToken);
       setUser(data.user);
     },
@@ -36,6 +41,7 @@ export function useAuth() {
   const register = useCallback(
     async (payload: RegisterRequest) => {
       const data = await api.post<AuthResponse>("/auth/register", payload);
+      resetUserScopedStores();
       setTokens(data.accessToken, data.refreshToken);
       setUser(data.user);
     },
@@ -74,6 +80,10 @@ export function useAuth() {
       });
     }
     clearTokens();
+    // Reset BEFORE clearUser so cart/saved-events still see syncEnabled state
+    // correctly when their clear() runs (resetUserScopedStores flips
+    // syncEnabled false first to skip the spurious BE clear call).
+    resetUserScopedStores();
     clearUser();
   }, [clearUser]);
 

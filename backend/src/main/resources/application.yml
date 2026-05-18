@@ -59,6 +59,17 @@ app:
     local-root: ${STORAGE_LOCAL_ROOT:.storage}
     public-base-url: ${STORAGE_PUBLIC_BASE_URL:}
   ai-api:
+    # Master switch. Default is off until ai-api work begins — feature
+    # development runs faster without 3-attempt retry backoff on every
+    # upload + selfie. Flip to true (set AI_API_ENABLED=true) when ai-api
+    # is running and you want face enrollment + bib OCR + selfie search.
+    # When false:
+    #   - Photo upload skips faces/bibs (photo still uploads, aiDetectionStatus="none")
+    #   - Runner selfie upload skips quality gate (qualityScore=0)
+    #   - Runner face-search returns 503 AI_API_UNAVAILABLE
+    #   - Bib search still works (it's a DB query against photo_bibs — but
+    #     that table will be empty until AI is on during upload)
+    enabled: ${AI_API_ENABLED:false}
     base-url: ${AI_API_URL:http://localhost:8000}
     api-key: ${AI_API_KEY:dev-only-ai-api-key-DO-NOT-USE-IN-PRODUCTION}
     connect-timeout: PT5S
@@ -68,7 +79,6 @@ app:
     face-match-threshold-default: 0.6
     face-top-k-default: 5
     bib-confidence-threshold-default: 0.7
-    blur-reject-threshold: 100.0
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:false}
     photographer-upload:

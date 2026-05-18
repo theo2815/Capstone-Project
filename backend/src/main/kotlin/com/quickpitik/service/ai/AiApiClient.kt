@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.dto.ai.AiApiEnvelope
 import com.quickpitik.dto.ai.BibsRecognizeResult
-import com.quickpitik.dto.ai.BlurDetectResult
 import com.quickpitik.dto.ai.FacesDetectResult
 import com.quickpitik.dto.ai.FacesEnrollResult
 import com.quickpitik.dto.ai.FacesSearchResult
@@ -32,11 +31,6 @@ class AiApiClient(
     private val objectMapper: ObjectMapper,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
-
-    fun blurDetect(file: ByteArray, contentType: String, filename: String): BlurDetectResult {
-        val body = singleFileBody(file, contentType, filename)
-        return postAndUnwrap("/api/v1/blur/detect", body, blurDetectRef)
-    }
 
     fun facesDetect(file: ByteArray, contentType: String, filename: String): FacesDetectResult {
         val body = singleFileBody(file, contentType, filename)
@@ -197,7 +191,6 @@ class AiApiClient(
     }
 
     private companion object {
-        val blurDetectRef = object : TypeReference<AiApiEnvelope<BlurDetectResult>>() {}
         val facesDetectRef = object : TypeReference<AiApiEnvelope<FacesDetectResult>>() {}
         val facesEnrollRef = object : TypeReference<AiApiEnvelope<FacesEnrollResult>>() {}
         val facesSearchRef = object : TypeReference<AiApiEnvelope<FacesSearchResult>>() {}

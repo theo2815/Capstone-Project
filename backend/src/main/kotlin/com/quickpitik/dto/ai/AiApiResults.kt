@@ -4,19 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 
 // Minimal typed results for the endpoints the backend actually calls. Fields are added
 // as downstream PRs consume them; unknown fields are ignored so the ai-api can evolve.
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-data class BlurDetectResult(
-    val is_blurry: Boolean = false,
-    val confidence: Double = 0.0,
-    val metrics: BlurMetrics = BlurMetrics(),
-)
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-data class BlurMetrics(
-    val laplacian_variance: Double = 0.0,
-    val hf_ratio: Double = 0.0,
-)
+//
+// Blur detection is desktop-only (BatchMyPhotos calls ai-api directly with its own
+// key). Web/mobile upload paths do not call blur — do not re-add BlurDetectResult here.
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class FacesDetectResult(

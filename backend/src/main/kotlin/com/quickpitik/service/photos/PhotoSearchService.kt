@@ -9,6 +9,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiApiException
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import java.util.UUID
 
@@ -32,6 +33,17 @@ class PhotoSearchService(
                 code = ErrorCodes.SELFIE_REQUIRED,
                 message = "selfie file is required",
                 field = "selfie",
+            )
+        }
+        if (!aiApiProperties.enabled) {
+            // Feature-dev short-circuit. ai-api is intentionally off; surface
+            // the same 503 envelope a real outage would. Bib search keeps
+            // working because it's a DB query (just empty until AI is on
+            // during upload to populate photo_bibs).
+            throw AiApiException(
+                status = HttpStatus.SERVICE_UNAVAILABLE,
+                aiCode = null,
+                message = "ai-api is disabled — face search unavailable",
             )
         }
         val matches = try {

@@ -8,7 +8,11 @@ import { ROUTES } from "@/lib/constants";
 import { ApiError } from "@/lib/api";
 import { useRedirectTarget } from "@/hooks/use-redirect-target";
 import { validateEmail, validatePassword } from "@/lib/auth-validation";
-import { AuthDivider, GoogleButton } from "@/components/auth/google-button";
+import {
+  AuthDivider,
+  GoogleButton,
+  OAUTH_ENABLED,
+} from "@/components/auth/google-button";
 import { FieldError } from "@/components/ui/field-error";
 
 interface FieldErrors {
@@ -72,10 +76,12 @@ export function LoginForm() {
         Continue to your photos.
       </p>
 
-      <div className="space-y-5 pt-2">
-        <GoogleButton disabled={isLoading} />
-        <AuthDivider label="or with email" />
-      </div>
+      {OAUTH_ENABLED && (
+        <div className="space-y-5 pt-2">
+          <GoogleButton disabled={isLoading} />
+          <AuthDivider label="or with email" />
+        </div>
+      )}
 
       <div className="space-y-6 pt-2">
         <FieldBlock>

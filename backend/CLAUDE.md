@@ -98,6 +98,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `ADMIN_BOOTSTRAP_PASSWORD` | `changeme123` | **MUST OVERRIDE** |
 | `ADMIN_BOOTSTRAP_NAME` | `QuickPitik Admin` | — |
 | `SERVER_PORT` | `8080` | — |
+| `AI_API_ENABLED` | `false` | Set `true` when ai-api is wired and you want face/bib indexing on upload + selfie quality gate + runner face-search. When `false`, every server-side ai-api call is skipped — photographer upload + selfie upload still work, face-search returns 503. See vault `backend/decisions.md` 2026-05-18 master-switch ADR. |
 
 `BootstrapAdminRunner` creates the admin on first boot if no `ADMIN` exists yet. Subsequent boots are no-ops.
 

@@ -37,6 +37,12 @@ dependencies {
 
 	implementation("software.amazon.awssdk:s3:2.30.21")
 
+	// EXIF orientation reader. Phone cameras (iPhone especially) tag portrait
+	// photos with an orientation flag instead of rotating the pixel buffer.
+	// Java's ImageIO doesn't honor the tag — without this, every portrait
+	// upload renders sideways. Used by WatermarkService.processThumbnail.
+	implementation("com.drewnoakes:metadata-extractor:2.19.0")
+
 	// In-memory rate limiter (single-instance v1; Redis-backed swap is a future
 	// PR per docs/IMPLEMENTATION_PLAN.md scaling notes).
 	implementation("com.bucket4j:bucket4j-core:8.10.1")

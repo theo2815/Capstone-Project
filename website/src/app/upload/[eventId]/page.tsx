@@ -759,23 +759,63 @@ const QueueRow = memo(function QueueRow({
   const status = entry.status;
   const canRetry = status === "error" && entry.retryable === true;
 
+  // Local object URL for the row thumbnail. Computed once per File reference
+  // so it survives all the progress-tick re-renders without leaking — the
+  // cleanup effect revokes when the row unmounts (entry removed or batch
+  // cleared). Cheap memory cost: a browser-side handle to the in-memory File
+  // bytes, no network round-trip and no copy. Backend-rendered thumbs are
+  // delivered after upload completes but aren't surfaced on this page —
+  // photographers want immediate confirmation of "right photo, right slot."
+  const previewUrl = useMemo(
+    () => URL.createObjectURL(entry.file),
+    [entry.file],
+  );
+  useEffect(() => {
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
   return (
     <div className="py-4 md:py-5 flex items-center gap-4">
       <div
         className={cn(
-          "size-10 md:size-12 rounded-md border border-line shrink-0 flex items-center justify-center",
+          "size-10 md:size-12 rounded-md border border-line shrink-0 overflow-hidden relative",
           status === "error" ? "bg-error/10" : "bg-bone-deep/40",
         )}
-        aria-hidden="true"
       >
-        <span
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={previewUrl}
+          alt=""
           className={cn(
-            "font-mono text-[9px] tracking-[0.15em] uppercase tnum",
-            status === "error" ? "text-error" : "text-slate",
+            "absolute inset-0 w-full h-full object-cover",
+            status === "error" ? "opacity-40" : "opacity-100",
           )}
-        >
-          {status === "done" ? "✓" : status === "error" ? "!" : "…"}
-        </span>
+          draggable={false}
+        />
+        {(status === "queued" || status === "uploading") && (
+          <span
+            aria-hidden="true"
+            className="absolute inset-0 flex items-center justify-center bg-ink/30 font-mono text-[10px] tracking-[0.15em] uppercase text-bone tnum"
+          >
+            …
+          </span>
+        )}
+        {status === "done" && (
+          <span
+            aria-hidden="true"
+            className="absolute bottom-0.5 right-0.5 size-3.5 rounded-full bg-fresh text-bone flex items-center justify-center font-mono text-[8px] leading-none"
+          >
+            ✓
+          </span>
+        )}
+        {status === "error" && (
+          <span
+            aria-hidden="true"
+            className="absolute inset-0 flex items-center justify-center font-mono text-[12px] font-bold text-error"
+          >
+            !
+          </span>
+        )}
       </div>
 
       <div className="flex-1 min-w-0">
