@@ -202,6 +202,34 @@ fun PhotographerDashboardScreen(
                 }
                 Spacer(modifier = Modifier.height(20.dp))
 
+                // Simulated SNAPSHOT trigger card
+                Card(
+                    onClick = { viewModel.simulatePhotoCapture() },
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = InkSoft),
+                    border = BorderStroke(1.dp, Fresh), // Highlighted in brand fresh green!
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "⚡ SIMULATE DSLR SNAPSHOT",
+                            style = Typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Fresh
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Tap to simulate a new photo capture over USB OTG",
+                            style = Typography.bodySmall,
+                            color = SlateSoft
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+
                 // Sync Queue Stats
                 Card(
                     shape = RoundedCornerShape(20.dp),
