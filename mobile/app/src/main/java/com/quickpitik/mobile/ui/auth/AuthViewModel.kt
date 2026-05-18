@@ -1,8 +1,10 @@
 package com.quickpitik.mobile.ui.auth
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
+import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,7 +18,8 @@ sealed class AuthState {
     data class Error(val message: String) : AuthState()
 }
 
-class AuthViewModel : ViewModel() {
+class AuthViewModel(application: Application) : AndroidViewModel(application) {
+    private val sessionManager = SessionManager.getInstance(application)
     private val _authState = MutableStateFlow<AuthState>(AuthState.Idle)
     val authState: StateFlow<AuthState> = _authState
 
@@ -26,7 +29,14 @@ class AuthViewModel : ViewModel() {
             try {
                 val envelope = RetrofitClient.apiService.login(LoginRequest(email, password))
                 if (envelope.success && envelope.data != null) {
-                    _authState.value = AuthState.Success(envelope.data)
+                    val authData = envelope.data
+                    sessionManager.saveSession(
+                        token = authData.accessToken,
+                        role = authData.user.role,
+                        name = authData.user.name,
+                        email = authData.user.email
+                    )
+                    _authState.value = AuthState.Success(authData)
                 } else {
                     _authState.value = AuthState.Error(envelope.error ?: "Login failed. Please check credentials.")
                 }
@@ -47,7 +57,14 @@ class AuthViewModel : ViewModel() {
                     RegisterRequest(name, email, password, role)
                 )
                 if (envelope.success && envelope.data != null) {
-                    _authState.value = AuthState.Success(envelope.data)
+                    val authData = envelope.data
+                    sessionManager.saveSession(
+                        token = authData.accessToken,
+                        role = authData.user.role,
+                        name = authData.user.name,
+                        email = authData.user.email
+                    )
+                    _authState.value = AuthState.Success(authData)
                 } else {
                     _authState.value = AuthState.Error(envelope.error ?: "Registration failed.")
                 }
