@@ -1,6 +1,11 @@
 # CLAUDE.md — Mobile App (Kotlin)
 
-**Status:** Not started. Android first; iOS planned later.
+**Status:** Skeleton Initialized (Active Development). Design Tokens configured; MVVM package stubs mapped.
+
+## Build and Test Commands
+* Build app: `.\gradlew.bat assembleDebug` (from the `mobile/` directory)
+* Run unit tests: `.\gradlew.bat test`
+* Clean build cache: `.\gradlew.bat clean`
 
 ## Role in the project
 
@@ -16,6 +21,7 @@ See root `CLAUDE.md` for monorepo-wide rules and `docs/project-vision.md` for us
 | Concern | Choice |
 |---------|--------|
 | Language | Kotlin |
+
 | Platform | Android first, iOS planned |
 | Distribution | Google Play Store |
 | Auth | JWT from backend |
