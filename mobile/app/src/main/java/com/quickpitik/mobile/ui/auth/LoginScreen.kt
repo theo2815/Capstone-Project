@@ -24,7 +24,6 @@ fun LoginScreen(
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var isPhotographerMode by remember { mutableStateOf(false) }
 
     val authState by viewModel.authState.collectAsState()
 
@@ -77,39 +76,6 @@ fun LoginScreen(
                 color = InkSoft
             )
             Spacer(modifier = Modifier.height(32.dp))
-
-            // Role selector row (useful to toggle testing defaults)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = { isPhotographerMode = false },
-                    enabled = authState !is AuthState.Loading,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (!isPhotographerMode) Ink else BoneDeep,
-                        contentColor = if (!isPhotographerMode) Bone else Ink
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Runner Mode", style = Typography.labelMedium)
-                }
-
-                Button(
-                    onClick = { isPhotographerMode = true },
-                    enabled = authState !is AuthState.Loading,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isPhotographerMode) Ink else BoneDeep,
-                        contentColor = if (isPhotographerMode) Bone else Ink
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Camera Mode", style = Typography.labelMedium)
-                }
-            }
-            Spacer(modifier = Modifier.height(28.dp))
 
             // Fields
             Column(
