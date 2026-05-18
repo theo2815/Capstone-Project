@@ -22,7 +22,7 @@ import com.quickpitik.mobile.ui.theme.*
 @Composable
 fun RegisterScreen(
     onNavigateToLogin: () -> Unit,
-    onRegisterSuccess: () -> Unit
+    onRegisterSuccess: (isPhotographer: Boolean) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
@@ -235,7 +235,7 @@ fun RegisterScreen(
 
             // CTA Button
             Button(
-                onClick = onRegisterSuccess,
+                onClick = { onRegisterSuccess(isPhotographer) },
                 shape = RoundedCornerShape(percent = 100),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Fresh,

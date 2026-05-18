@@ -1,5 +1,6 @@
 package com.quickpitik.mobile.ui.auth
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,12 +20,12 @@ import com.quickpitik.mobile.ui.theme.*
 @Composable
 fun LoginScreen(
     onNavigateToRegister: () -> Unit,
-    onLoginSuccess: () -> Unit
+    onLoginSuccess: (isPhotographer: Boolean) -> Unit
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var isPhotographer by remember { mutableStateOf(false) }
 
-    // Enforce the website's beautiful warm-cream light colors explicitly for Auth Uniformity
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = Bone
@@ -64,7 +65,40 @@ fun LoginScreen(
                 style = Typography.bodyLarge,
                 color = InkSoft
             )
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Role selector row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Runner login mode
+                Button(
+                    onClick = { isPhotographer = false },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (!isPhotographer) Ink else BoneDeep,
+                        contentColor = if (!isPhotographer) Bone else Ink
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Runner Mode", style = Typography.labelMedium)
+                }
+
+                // Photographer login mode
+                Button(
+                    onClick = { isPhotographer = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isPhotographer) Ink else BoneDeep,
+                        contentColor = if (isPhotographer) Bone else Ink
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Camera Mode", style = Typography.labelMedium)
+                }
+            }
+            Spacer(modifier = Modifier.height(28.dp))
 
             // Fields
             Column(
@@ -121,11 +155,11 @@ fun LoginScreen(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(36.dp))
 
             // Action Button
             Button(
-                onClick = onLoginSuccess,
+                onClick = { onLoginSuccess(isPhotographer) },
                 shape = RoundedCornerShape(percent = 100),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Fresh,
@@ -156,8 +190,7 @@ fun LoginScreen(
                     text = "CREATE ACCOUNT →",
                     style = Typography.labelMedium,
                     color = Ink,
-                    modifier = Modifier
-                        .clickable { onNavigateToRegister() }
+                    modifier = Modifier.clickable { onNavigateToRegister() }
                 )
             }
         }
