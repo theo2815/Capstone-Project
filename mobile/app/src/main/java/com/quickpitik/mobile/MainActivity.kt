@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
                         PhotographerDashboardScreen(
                             viewModel = photographerViewModel,
                             onLogout = {
+                                authViewModel.resetState()
                                 navController.navigate("login") {
                                     popUpTo("dashboard") { inclusive = true }
                                 }
@@ -72,6 +73,7 @@ class MainActivity : ComponentActivity() {
                         RunnerGalleryScreen(
                             viewModel = runnerViewModel,
                             onLogout = {
+                                authViewModel.resetState()
                                 navController.navigate("login") {
                                     popUpTo("gallery") { inclusive = true }
                                 }

@@ -2,7 +2,9 @@ package com.quickpitik.mobile.ui.auth
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -45,9 +47,12 @@ fun LoginScreen(
                 .fillMaxSize()
                 .padding(horizontal = 24.dp)
                 .statusBarsPadding()
-                .navigationBarsPadding(),
-            verticalArrangement = Arrangement.Center
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.Top
         ) {
+            Spacer(modifier = Modifier.height(56.dp))
+
             // Eyebrow kicker
             Text(
                 text = "LOG IN",
@@ -150,11 +155,13 @@ fun LoginScreen(
             // Action Button
             Button(
                 onClick = { viewModel.login(email.trim(), password) },
-                enabled = authState !is AuthState.Loading && email.isNotBlank() && password.length >= 8,
+                enabled = authState !is AuthState.Loading,
                 shape = RoundedCornerShape(percent = 100),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Fresh,
-                    contentColor = Bone
+                    contentColor = Bone,
+                    disabledContainerColor = Fresh.copy(alpha = 0.8f),
+                    disabledContentColor = Bone
                 ),
                 contentPadding = PaddingValues(vertical = 16.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -166,7 +173,7 @@ fun LoginScreen(
                     )
                 } else {
                     Text(
-                        text = "LOG IN →",
+                        text = "LOG IN",
                         style = Typography.labelLarge
                     )
                 }
@@ -185,7 +192,7 @@ fun LoginScreen(
                     color = Slate
                 )
                 Text(
-                    text = "CREATE ACCOUNT →",
+                    text = "CREATE ACCOUNT",
                     style = Typography.labelMedium,
                     color = Ink,
                     modifier = Modifier.clickable { 

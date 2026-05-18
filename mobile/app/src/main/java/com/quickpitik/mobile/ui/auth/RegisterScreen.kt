@@ -52,9 +52,9 @@ fun RegisterScreen(
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Top
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(56.dp))
             
             // Eyebrow kicker
             Text(
@@ -270,11 +270,13 @@ fun RegisterScreen(
             // CTA Button
             Button(
                 onClick = { viewModel.register(name.trim(), email.trim(), password, isPhotographer) },
-                enabled = authState !is AuthState.Loading && name.isNotBlank() && email.isNotBlank() && password.length >= 8,
+                enabled = authState !is AuthState.Loading,
                 shape = RoundedCornerShape(percent = 100),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Fresh,
-                    contentColor = Bone
+                    contentColor = Bone,
+                    disabledContainerColor = Fresh.copy(alpha = 0.8f),
+                    disabledContentColor = Bone
                 ),
                 contentPadding = PaddingValues(vertical = 16.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -286,7 +288,7 @@ fun RegisterScreen(
                     )
                 } else {
                     Text(
-                        text = "CREATE ACCOUNT →",
+                        text = "CREATE ACCOUNT",
                         style = Typography.labelLarge
                     )
                 }
@@ -305,7 +307,7 @@ fun RegisterScreen(
                     color = Slate
                 )
                 Text(
-                    text = "SIGN IN →",
+                    text = "SIGN IN",
                     style = Typography.labelMedium,
                     color = Ink,
                     modifier = Modifier.clickable { 
