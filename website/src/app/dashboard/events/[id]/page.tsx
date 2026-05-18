@@ -18,13 +18,10 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { fetchPhotographerPhotoDownload } from "@/lib/api-photographer";
 import { ROUTES } from "@/lib/constants";
-import { getEventById } from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
-import {
-  PHOTOGRAPHER_EVENTS,
-  generatePhotographerLibrary,
-  type PhotographerEventSummary,
-  type PhotographerLibraryPhoto,
+import type {
+  PhotographerEventSummary,
+  PhotographerLibraryPhoto,
 } from "@/lib/photographer-mock";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
@@ -57,39 +54,39 @@ export default function FocusedSharePage() {
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
 
-  // Live mode prefers GET /me/photographer/events/{id} (Q-014); mock-mode
-  // falls back to the existing PHOTOGRAPHER_EVENTS seed lookup.
   const liveDetail = usePhotographerEventDetail(id ?? null);
   const livePhotos = usePhotographerEventPhotos(id ?? null);
 
-  // Memoize the synchronous lookup so useMockLatency sees a stable reference
-  // per id — without it, every parent re-render hands the hook a fresh object
-  // and the effect re-fires unnecessarily.
-  const resolved = useMemo(
-    () => ({
-      event: id ? getEventById(id) : undefined,
-      photographer:
-        liveDetail ??
-        (id ? PHOTOGRAPHER_EVENTS.find((p) => p.id === id) : undefined),
-    }),
-    [id, liveDetail],
-  );
-  const data = resolved;
-  const isLoading = false;
-
-  // Show skeleton while the (mock-latency-gated) lookup is in flight. Once
-  // resolved with no event / no photographer / no uploads → 404.
-  if (isLoading || data === null) {
+  // Loading: hook returns null until the BE responds. Don't gate on photos
+  // separately — the grid renders its own skeleton when livePhotos is null.
+  if (liveDetail === null) {
     return <FocusedShareSkeleton />;
   }
 
-  const { event, photographer } = data;
-
   // Only events the photographer has actually covered render this page.
-  // Anything else (catalog event without uploads, or no event at all) → 404.
-  if (!event || !photographer || photographer.photoCount === 0) {
+  // Detail is null when the photographer doesn't own this event_photographer
+  // row OR the event was deleted. Either way → 404.
+  if (liveDetail.photoCount === 0) {
     notFound();
   }
+
+  // Build a ListEvent-shaped record so the shared sub-components (Hero,
+  // ShareHeroBand, etc.) keep their existing prop contracts. Summary fields
+  // come straight from the BE; participantCount + status + city are slot
+  // fillers manage mode doesn't read.
+  const event: ListEvent = {
+    id: liveDetail.id,
+    slug: liveDetail.slug,
+    name: liveDetail.name,
+    date: liveDetail.date,
+    location: liveDetail.location,
+    photoCount: liveDetail.photoCount,
+    participantCount: 0,
+    status: "ACTIVE",
+    state: liveDetail.state as EventState,
+    city: liveDetail.location.split(",").pop()?.trim() ?? "",
+  };
+  const photographer = liveDetail;
 
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col">
@@ -370,12 +367,10 @@ function PhotoGrid({
   photographer: PhotographerEventSummary;
   livePhotos: PhotographerLibraryPhoto[] | null;
 }) {
-  // Live mode prefers GET /me/photographer/events/{id}/photos (Q-014).
-  // Mock-mode falls back to the deterministic library generator.
-  const photos = useMemo(
-    () => livePhotos ?? generatePhotographerLibrary(photographer),
-    [livePhotos, photographer],
-  );
+  // GET /me/photographer/events/{id}/photos — null while the request is in
+  // flight. Treat null as "still loading" via an empty list so the grid
+  // shows its skeleton row count rather than flashing the empty state.
+  const photos = livePhotos ?? [];
   const total = photos.length;
 
   const { showToast } = useToast();
@@ -429,7 +424,7 @@ function PhotoGrid({
         tone: openPhoto.tone,
         price: 0,
         span: openPhoto.span,
-        imageUrl: null,
+        imageUrl: openPhoto.thumbnailUrl ?? null,
       }
     : null;
 
@@ -490,7 +485,6 @@ function PhotoTile({
 }) {
   const colorIdx = photo.tone % TONE_COLORS.length;
   const wide = photo.span === "wide";
-  const opacity = 0.7 + (index % 3) * 0.1;
 
   return (
     <div
@@ -507,15 +501,25 @@ function PhotoTile({
         aria-label={`Open photo ${index + 1}`}
         className="block w-full h-full text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
       >
+        {/* Tone-color background acts as a placeholder while the watermarked
+            JPEG decodes — once `thumbnailUrl` loads, object-cover fills the
+            entire tile and the placeholder is hidden behind it. */}
         <div
           className="relative overflow-hidden rounded-xl h-full transition-transform duration-300 group-hover:-translate-y-[2px]"
-          style={{
-            backgroundColor: TONE_COLORS[colorIdx],
-            opacity,
-          }}
+          style={{ backgroundColor: TONE_COLORS[colorIdx] }}
         >
+          {photo.thumbnailUrl && (
+            // eslint-disable-next-line @next/next/no-img-element -- presigned S3 URL; Next/Image would re-proxy and lose the signature.
+            <img
+              src={photo.thumbnailUrl}
+              alt={photo.bib ? `Photo of bib ${photo.bib}` : "Uploaded photo"}
+              className="absolute inset-0 w-full h-full object-cover"
+              draggable={false}
+              loading="lazy"
+            />
+          )}
           {photo.salesCount > 0 && (
-            <span className="absolute bottom-2 right-2 font-mono uppercase tracking-[0.2em] text-[8px] text-bone tnum">
+            <span className="absolute bottom-2 right-2 font-mono uppercase tracking-[0.2em] text-[8px] text-bone tnum bg-ink/40 px-1.5 py-0.5 rounded-full backdrop-blur-sm">
               {photo.salesCount} sold
             </span>
           )}

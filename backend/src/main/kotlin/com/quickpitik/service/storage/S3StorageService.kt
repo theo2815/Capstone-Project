@@ -52,6 +52,11 @@ class S3StorageService(
         return StoredObject(key = key, sizeBytes = contentLength, contentType = contentType)
     }
 
+    override fun getBytes(key: String): ByteArray {
+        val req = GetObjectRequest.builder().bucket(props.bucket).key(key).build()
+        return client.getObjectAsBytes(req).asByteArray()
+    }
+
     override fun delete(key: String) {
         client.deleteObject(DeleteObjectRequest.builder().bucket(props.bucket).key(key).build())
     }

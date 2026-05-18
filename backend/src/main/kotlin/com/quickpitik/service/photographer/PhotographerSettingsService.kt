@@ -221,25 +221,29 @@ class PhotographerSettingsService(
                 field = "file",
             )
         }
-        val processed = scaleToLongEdgeJpeg(bytes, MAX_WATERMARK_LONG_EDGE)
-            ?: throw ValidationException(
-                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
-                message = "image cannot be decoded",
-                field = "file",
-            )
+        // Preserve PNG when the photographer uploads PNG — watermarks are
+        // almost always transparent-background logos, so re-encoding to JPEG
+        // would replace transparency with a solid white rectangle. PNG keeps
+        // the alpha channel intact so WatermarkService composites it cleanly.
+        // JPEG / WebP inputs stay JPEG since they couldn't carry transparency
+        // to begin with.
+        val isPng = mime == "image/png"
+        val processed = if (isPng) {
+            scaleToLongEdgePng(bytes, MAX_WATERMARK_LONG_EDGE)
+        } else {
+            scaleToLongEdgeJpeg(bytes, MAX_WATERMARK_LONG_EDGE)
+        } ?: throw ValidationException(
+            code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+            message = "image cannot be decoded",
+            field = "file",
+        )
         val settings = getOrCreate(userId)
         val previousKey = settings.watermarkS3Key
-        val newKey = "photographers/$userId/watermark/${UUID.randomUUID()}.jpg"
-        storageService.put(newKey, processed, "image/jpeg")
+        val ext = if (isPng) "png" else "jpg"
+        val storedContentType = if (isPng) "image/png" else "image/jpeg"
+        val newKey = "photographers/$userId/watermark/${UUID.randomUUID()}.$ext"
+        storageService.put(newKey, processed, storedContentType)
         settings.watermarkS3Key = newKey
-        // Photographer hasn't supplied a label slot yet on the FE — derive a
-        // safe placeholder from brandName so downstream WatermarkService still
-        // has a non-blank label to render onto live photo uploads. The FE may
-        // surface a label-edit slab in a later PR; this keeps the upload-only
-        // path working today.
-        if (settings.watermarkLabel.isNullOrBlank()) {
-            settings.watermarkLabel = settings.brandName?.takeIf { it.isNotBlank() }
-        }
         photographerSettingsRepository.save(settings)
         if (previousKey != null && previousKey != newKey) {
             runCatching { storageService.delete(previousKey) }
@@ -401,7 +405,21 @@ class PhotographerSettingsService(
     }
 
     // Returns null when ImageIO can't decode the bytes (lying Content-Type).
-    private fun scaleToLongEdgeJpeg(input: ByteArray, maxLongEdge: Int): ByteArray? {
+    private fun scaleToLongEdgeJpeg(input: ByteArray, maxLongEdge: Int): ByteArray? =
+        scaleToLongEdge(input, maxLongEdge, transparent = false, encoderFormat = "jpeg")
+
+    // PNG variant preserves the alpha channel — required for watermark logos
+    // that have transparent backgrounds. JPEG would collapse alpha into a
+    // solid white background and the watermark would composite as a rectangle.
+    private fun scaleToLongEdgePng(input: ByteArray, maxLongEdge: Int): ByteArray? =
+        scaleToLongEdge(input, maxLongEdge, transparent = true, encoderFormat = "png")
+
+    private fun scaleToLongEdge(
+        input: ByteArray,
+        maxLongEdge: Int,
+        transparent: Boolean,
+        encoderFormat: String,
+    ): ByteArray? {
         val source = ImageIO.read(ByteArrayInputStream(input)) ?: return null
         val srcW = source.width
         val srcH = source.height
@@ -409,7 +427,12 @@ class PhotographerSettingsService(
         val scale = if (longEdge > maxLongEdge) maxLongEdge.toDouble() / longEdge else 1.0
         val targetW = (srcW * scale).toInt().coerceAtLeast(1)
         val targetH = (srcH * scale).toInt().coerceAtLeast(1)
-        val resized = java.awt.image.BufferedImage(targetW, targetH, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val imageType = if (transparent) {
+            java.awt.image.BufferedImage.TYPE_INT_ARGB
+        } else {
+            java.awt.image.BufferedImage.TYPE_INT_RGB
+        }
+        val resized = java.awt.image.BufferedImage(targetW, targetH, imageType)
         val g = resized.createGraphics()
         try {
             g.setRenderingHint(
@@ -425,7 +448,7 @@ class PhotographerSettingsService(
             g.dispose()
         }
         val out = java.io.ByteArrayOutputStream()
-        ImageIO.write(resized, "jpeg", out)
+        ImageIO.write(resized, encoderFormat, out)
         return out.toByteArray()
     }
 

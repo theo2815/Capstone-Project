@@ -6,15 +6,13 @@ import { AvatarDisc } from "@/components/account/avatar-disc";
 import { Sparkline } from "@/components/dashboard/sparkline";
 import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
+import { usePhotographerEvents } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
 import {
   BRAND_COLOR_HEX,
   usePhotographerSettingsStore,
 } from "@/store/photographer-settings-store";
-import {
-  PHOTOGRAPHER_EARNINGS,
-  PHOTOGRAPHER_EVENTS,
-} from "@/lib/photographer-mock";
+import { PHOTOGRAPHER_EARNINGS } from "@/lib/photographer-mock";
 
 // 2×2 quick-action grid that anchors the dashboard overview. Each card
 // carries a visual signature drawn from real photographer data — photo-tone
@@ -192,8 +190,8 @@ function EarningsCard() {
 
 // ─── Events — state-dot rows ──────────────────────────────────────────────
 function EventsCard() {
-  const events = PHOTOGRAPHER_EVENTS;
-  const isLoading = false;
+  const events = usePhotographerEvents();
+  const isLoading = events === null;
   if (isLoading || !events) {
     return (
       <CardShell href={ROUTES.DASHBOARD_EVENTS}>

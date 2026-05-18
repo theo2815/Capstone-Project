@@ -5,11 +5,8 @@ import com.drew.metadata.exif.ExifIFD0Directory
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.awt.AlphaComposite
-import java.awt.Color
-import java.awt.Font
 import java.awt.RenderingHints
 import java.awt.geom.AffineTransform
-import java.awt.image.AffineTransformOp
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -32,13 +29,20 @@ class WatermarkService {
     // The output JPEG carries no EXIF (re-encode strips it) but the pixels are
     // already in display orientation — clients render correctly without any
     // FE-side EXIF handling.
-    fun processThumbnail(input: ByteArray, watermarkLabel: String): ByteArray {
+    //
+    // Watermark is the photographer's uploaded logo image (PNG preserves
+    // transparency, JPEG composites as a rectangle). Two marks per photo:
+    //   1. Bottom-right corner — identification mark, sharp + visible.
+    //   2. Diagonal center — anti-piracy mark, low opacity, harder to crop out.
+    fun processThumbnail(input: ByteArray, watermarkImage: ByteArray): ByteArray {
         val source = ImageIO.read(ByteArrayInputStream(input))
             ?: throw IllegalArgumentException("Unreadable image bytes")
         val orientation = readExifOrientation(input)
         val upright = applyExifOrientation(source, orientation)
         val target = scaleToLongEdge(upright, MAX_LONG_EDGE)
-        drawWatermark(target, watermarkLabel)
+        val watermark = ImageIO.read(ByteArrayInputStream(watermarkImage))
+            ?: throw IllegalArgumentException("Unreadable watermark image bytes")
+        drawWatermarkImage(target, watermark)
         val out = ByteArrayOutputStream()
         ImageIO.write(target, "jpg", out)
         return out.toByteArray()
@@ -103,8 +107,18 @@ class WatermarkService {
         val outW = if (swapsDims) h else w
         val outH = if (swapsDims) w else h
         val out = BufferedImage(outW, outH, BufferedImage.TYPE_INT_RGB)
-        val op = AffineTransformOp(transform, AffineTransformOp.TYPE_BILINEAR)
-        op.filter(source, out)
+        // AffineTransformOp.filter throws ImagingOpException when source and
+        // destination ColorModels disagree — common for ImageIO-loaded JPEGs
+        // that come back as TYPE_3BYTE_BGR / TYPE_CUSTOM (iPhone, cameras with
+        // embedded ICC profiles). Graphics2D.drawImage handles the conversion
+        // gracefully and matches the scaling path's approach.
+        val g = out.createGraphics()
+        try {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+            g.drawImage(source, transform, null)
+        } finally {
+            g.dispose()
+        }
         return out
     }
 
@@ -127,41 +141,71 @@ class WatermarkService {
         return resized
     }
 
-    private fun drawWatermark(image: BufferedImage, label: String) {
-        val text = label.trim().take(MAX_WATERMARK_CHARS).ifBlank { "QUICKPITIK" }
-        val g = image.createGraphics()
+    private fun drawWatermarkImage(photo: BufferedImage, watermark: BufferedImage) {
+        // Corner mark — identifies the photographer. ~15% of photo width,
+        // padded from edges, 70% opacity. This is the "this photo is mine" mark.
+        val cornerWidth = (photo.width * CORNER_WIDTH_RATIO).toInt().coerceAtLeast(48)
+        val cornerScale = cornerWidth.toDouble() / watermark.width
+        val cornerHeight = (watermark.height * cornerScale).toInt().coerceAtLeast(1)
+        val cornerPad = (photo.width * 0.025).toInt().coerceAtLeast(12)
+
+        val gCorner = photo.createGraphics()
         try {
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-            val fontSize = (image.height * 0.035).toInt().coerceAtLeast(14)
-            g.font = Font(Font.SANS_SERIF, Font.BOLD, fontSize)
-            val metrics = g.fontMetrics
-            val textWidth = metrics.stringWidth(text)
-            val textHeight = metrics.height
-            val pad = (fontSize * 0.6).toInt().coerceAtLeast(8)
-            val x = image.width - textWidth - pad
-            val y = image.height - pad
-            // Translucent dark plate keeps the label readable on bright frames.
-            g.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.35f)
-            g.color = Color.BLACK
-            g.fillRoundRect(
-                x - pad / 2,
-                y - textHeight + metrics.descent / 2,
-                textWidth + pad,
-                textHeight,
-                fontSize / 2,
-                fontSize / 2,
+            gCorner.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+            gCorner.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+            gCorner.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, CORNER_OPACITY)
+            gCorner.drawImage(
+                watermark,
+                photo.width - cornerWidth - cornerPad,
+                photo.height - cornerHeight - cornerPad,
+                cornerWidth,
+                cornerHeight,
+                null,
             )
-            g.composite = AlphaComposite.SrcOver
-            g.color = Color(255, 255, 255, 220)
-            g.drawString(text, x, y - metrics.descent / 2)
         } finally {
-            g.dispose()
+            gCorner.dispose()
+        }
+
+        // Center mark — diagonal across the photo, low opacity. This is the
+        // anti-piracy mark: bigger so it's hard to crop out, low opacity so it
+        // doesn't dominate the preview. Rotated -18° so it reads as a
+        // watermark and not a misaligned logo.
+        val centerWidth = (photo.width * CENTER_WIDTH_RATIO).toInt().coerceAtLeast(120)
+        val centerScale = centerWidth.toDouble() / watermark.width
+        val centerHeight = (watermark.height * centerScale).toInt().coerceAtLeast(1)
+
+        val gCenter = photo.createGraphics()
+        try {
+            gCenter.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+            gCenter.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+            gCenter.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, CENTER_OPACITY)
+            // Translate to photo center, rotate, then draw the watermark
+            // centered at the origin — so the rotation pivot is the watermark's
+            // own center, not a corner.
+            gCenter.translate(photo.width / 2.0, photo.height / 2.0)
+            gCenter.rotate(Math.toRadians(CENTER_ROTATION_DEG))
+            gCenter.drawImage(
+                watermark,
+                -centerWidth / 2,
+                -centerHeight / 2,
+                centerWidth,
+                centerHeight,
+                null,
+            )
+        } finally {
+            gCenter.dispose()
         }
     }
 
     companion object {
         private const val MAX_LONG_EDGE = 1280
-        private const val MAX_WATERMARK_CHARS = 24
         private const val ORIENTATION_NORMAL = 1
+        // Corner watermark — 15% of photo width, 70% opacity (sharp + visible).
+        private const val CORNER_WIDTH_RATIO = 0.15
+        private const val CORNER_OPACITY = 0.70f
+        // Center diagonal watermark — 50% of photo width, 18% opacity, -18°.
+        private const val CENTER_WIDTH_RATIO = 0.50
+        private const val CENTER_OPACITY = 0.18f
+        private const val CENTER_ROTATION_DEG = -18.0
     }
 }

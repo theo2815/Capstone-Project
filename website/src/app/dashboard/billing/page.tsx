@@ -70,11 +70,9 @@ function PayoutsSlab() {
   const [trackingCycle, setTrackingCycle] = useState<PhotographerPayout | null>(
     null,
   );
-  // Live mode prefers GET /me/photographer/payouts (Q-A1 + Q-E1); mock-mode
-  // falls back to PHOTOGRAPHER_PAYOUTS seed.
   const livePayouts = usePhotographerPayouts();
-  const payouts = livePayouts ?? PHOTOGRAPHER_PAYOUTS;
-  const isLoading = false;
+  const payouts = livePayouts ?? [];
+  const isLoading = livePayouts === null;
   const { user } = useAuth();
   const photographer = resolveCurrentPhotographer(user);
   const submissions = useAdminPayoutReportStore((s) => s.submissions);
@@ -396,13 +394,11 @@ function PayoutRow({
 }
 
 function TransactionsSlab() {
-  // Live mode prefers GET /me/photographer/billing/transactions (Q-017);
-  // mock-mode falls back to PHOTOGRAPHER_TRANSACTIONS seed. monthTotals lives
-  // in the response envelope but the existing render derives them client-side
-  // from the same items, so both paths agree.
+  // monthTotals lives in the response envelope but the existing render
+  // derives them client-side from the same items, so both paths agree.
   const liveTx = usePhotographerTransactions();
-  const transactions = liveTx ? liveTx.items : PHOTOGRAPHER_TRANSACTIONS;
-  const isLoading = false;
+  const transactions = liveTx?.items ?? [];
+  const isLoading = liveTx === null;
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.TRANSACTION_INITIAL);
 
   // Memos must run on every render — using `?? []` so the loading branch

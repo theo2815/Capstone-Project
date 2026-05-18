@@ -5,15 +5,16 @@ import { Slab } from "@/components/profile-shell";
 import { DashboardActionGrid } from "@/components/dashboard/dashboard-action-grid";
 import { SetupJourney } from "@/components/dashboard/setup-journey";
 import { useCanUpload } from "@/hooks/use-can-upload";
+import {
+  usePhotographerEvents,
+  usePhotographerPayouts,
+} from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
-import {
-  PHOTOGRAPHER_EVENTS,
-  PHOTOGRAPHER_PAYOUTS,
-  PHOTOGRAPHER_PIPELINE,
-  type EventState,
-  type PhotographerEventSummary,
-  type PhotographerPayout,
+import type {
+  EventState,
+  PhotographerEventSummary,
+  PhotographerPayout,
 } from "@/lib/photographer-mock";
 
 // Two modes:
@@ -25,8 +26,12 @@ import {
 //    asked question ("when am I getting paid?").
 export default function DashboardOverviewPage() {
   const gate = useCanUpload();
-  const isSetupMode =
-    gate.kind !== "ok" || PHOTOGRAPHER_PIPELINE.uploaded === 0;
+  const events = usePhotographerEvents();
+  // Setup mode is true until the photographer is verified AND has at least
+  // one photo uploaded across all their events. Photo count comes from the
+  // event_photographer.photo_count column (BE upserts it on every upload).
+  const hasAnyUploads = (events ?? []).some((e) => e.photoCount > 0);
+  const isSetupMode = gate.kind !== "ok" || !hasAnyUploads;
 
   if (isSetupMode) {
     return <SetupJourney />;
@@ -42,10 +47,11 @@ export default function DashboardOverviewPage() {
 }
 
 function BillingGlance() {
-  const next = pickNextScheduled(PHOTOGRAPHER_PAYOUTS);
-  const inReviewTotal = PHOTOGRAPHER_PAYOUTS.filter(
-    (p) => p.status === "pending",
-  ).reduce((sum, p) => sum + p.amount, 0);
+  const payouts = usePhotographerPayouts() ?? [];
+  const next = pickNextScheduled(payouts);
+  const inReviewTotal = payouts
+    .filter((p) => p.status === "pending")
+    .reduce((sum, p) => sum + p.amount, 0);
 
   return (
     <Slab
@@ -124,8 +130,9 @@ function NextUpGlance() {
   // dropzone, upcoming lands on the "Uploads open on race day" panel.
   // /dashboard/events/[id] 404s for events without uploads, so we
   // deliberately avoid that path here.
-  const live = PHOTOGRAPHER_EVENTS.find((e) => e.state === "live");
-  const upcoming = [...PHOTOGRAPHER_EVENTS]
+  const events = usePhotographerEvents() ?? [];
+  const live = events.find((e) => e.state === "live");
+  const upcoming = [...events]
     .filter((e) => e.state === "upcoming")
     .sort((a, b) => a.date.localeCompare(b.date))[0];
   const featured = live ?? upcoming;

@@ -20,6 +20,7 @@ import {
 } from "@/components/dashboard/event-filter-bar";
 import { Kicker } from "@/components/ui/kicker";
 import { useAuth } from "@/hooks/use-auth";
+import { usePhotographerEvents } from "@/hooks/use-photographer-data";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useOrdersList } from "@/hooks/use-orders";
 import { useToast } from "@/hooks/use-toast";
@@ -29,8 +30,8 @@ import {
 } from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
 import { formatMemberSince, formatRaceDate } from "@/lib/format";
-import { PHOTOGRAPHER_EVENTS } from "@/lib/photographer-mock";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { PhotographerEventSummary } from "@/lib/photographer-mock";
+import type { EventState, ListEvent } from "@/app/events/events-browser";
 import {
   usePhotographerSettingsStore,
   BRAND_COLOR_HEX,
@@ -320,6 +321,12 @@ function PhotographerProfileBody({ user }: { user: User }) {
   const bio = usePhotographerSettingsStore((s) => s.bio);
   const handle = usePhotographerSettingsStore((s) => s.handle);
 
+  // Live BE rollup of the photographer's covered events. withUploads=true so
+  // events the photographer hasn't shot for yet stay out of the portfolio.
+  // null = still loading; [] = no covered events. The StatsRow + PortfolioGrid
+  // both feed off this single read.
+  const events = usePhotographerEvents({ withUploads: true });
+
   const accent = brandColor !== "none" ? BRAND_COLOR_HEX[brandColor] : null;
   const displayName = brandName.trim() || user.name;
 
@@ -414,12 +421,12 @@ function PhotographerProfileBody({ user }: { user: User }) {
           </Link>
         </div>
 
-        <StatsRow memberSince={user.createdAt} />
+        <StatsRow memberSince={user.createdAt} events={events} />
 
         <PublicUrlChip handle={handle} />
 
         <div className="stagger-children mt-12 pb-8 md:pb-20">
-          <PortfolioGrid handle={handle} />
+          <PortfolioGrid handle={handle} events={events} />
         </div>
       </div>
 
@@ -429,15 +436,22 @@ function PhotographerProfileBody({ user }: { user: User }) {
 
 // Photographer-self stats: Events / Photos / Sales / On QuickPitik. Mirrors
 // the public /[handle] stats row but adds Sales (which is owner-relevant).
-// Numbers derived from PHOTOGRAPHER_EVENTS rather than the public profile's
-// `getProfileTotals` since /profile reads the live mock list directly.
-function StatsRow({ memberSince }: { memberSince: string }) {
-  const events = PHOTOGRAPHER_EVENTS.filter((e) => e.photoCount > 0);
-  const totalPhotos = events.reduce((sum, e) => sum + e.photoCount, 0);
-  const totalSales = events.reduce((sum, e) => sum + e.salesCount, 0);
+// Reads from the live BE summary list passed in from the parent — same
+// dataset feeds PortfolioGrid below so the two stay consistent. Null while
+// loading falls back to zeros to avoid layout jank.
+function StatsRow({
+  memberSince,
+  events,
+}: {
+  memberSince: string;
+  events: PhotographerEventSummary[] | null;
+}) {
+  const covered = (events ?? []).filter((e) => e.photoCount > 0);
+  const totalPhotos = covered.reduce((sum, e) => sum + e.photoCount, 0);
+  const totalSales = covered.reduce((sum, e) => sum + e.salesCount, 0);
   return (
     <dl className="mt-10 grid grid-cols-2 md:grid-cols-4 gap-y-7 gap-x-8 md:gap-x-12 max-w-2xl">
-      <Stat label="Events" value={events.length.toString()} />
+      <Stat label="Events" value={covered.length.toString()} />
       <Stat label="Photos" value={totalPhotos.toLocaleString()} />
       <Stat label="Sales" value={totalSales.toLocaleString()} />
       <Stat label="On QuickPitik" value={formatMemberSince(memberSince)} />
@@ -543,10 +557,16 @@ function PublicUrlChip({ handle }: { handle: string }) {
 // hrefOverride; falls back to /events/{slug} only if the photographer hasn't
 // claimed a handle yet. Date dropdown + name search reuse the /events
 // taxonomy at the surface level.
-function PortfolioGrid({ handle }: { handle: string }) {
+function PortfolioGrid({
+  handle,
+  events,
+}: {
+  handle: string;
+  events: PhotographerEventSummary[] | null;
+}) {
   const allEvents = useMemo(
-    () => PHOTOGRAPHER_EVENTS.filter((e) => e.photoCount > 0),
-    [],
+    () => (events ?? []).filter((e) => e.photoCount > 0),
+    [events],
   );
   const validHandle = handle.length > 0;
   const [date, setDate] = useState<EventDateKey>("any");
@@ -557,9 +577,7 @@ function PortfolioGrid({ handle }: { handle: string }) {
     return allEvents.filter((summary) => {
       if (!matchEventDate(summary.state, date)) return false;
       if (trimmed) {
-        const ce = getCatalogWithOverrides().find((e) => e.slug === summary.slug);
-        if (!ce) return false;
-        const hay = `${ce.name} ${ce.location} ${ce.city}`.toLowerCase();
+        const hay = `${summary.name} ${summary.location}`.toLowerCase();
         if (!hay.includes(trimmed)) return false;
       }
       return true;
@@ -598,23 +616,19 @@ function PortfolioGrid({ handle }: { handle: string }) {
             <EventFilterEmpty onClear={clearFilters} />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
-              {filtered.map((summary, index) => {
-                const tileEvent = toListEvent(summary);
-                if (!tileEvent) return null;
-                return (
-                  <EventTile
-                    key={summary.id}
-                    mode="browse"
-                    event={tileEvent}
-                    index={index}
-                    hrefOverride={
-                      validHandle
-                        ? `/${handle}/events/${summary.slug}`
-                        : undefined
-                    }
-                  />
-                );
-              })}
+              {filtered.map((summary, index) => (
+                <EventTile
+                  key={summary.id}
+                  mode="browse"
+                  event={toListEvent(summary)}
+                  index={index}
+                  hrefOverride={
+                    validHandle
+                      ? `/${handle}/events/${summary.slug}`
+                      : undefined
+                  }
+                />
+              ))}
             </div>
           )}
         </>
@@ -623,19 +637,24 @@ function PortfolioGrid({ handle }: { handle: string }) {
   );
 }
 
-// Build a ListEvent for EventTile from a PhotographerEventSummary. The
-// catalog supplies city + participantCount + status (which the tile reads),
-// the summary supplies the photographer's per-event state + their slice of
-// photoCount.
-function toListEvent(
-  summary: (typeof PHOTOGRAPHER_EVENTS)[number],
-): ListEvent | null {
-  const ce = getCatalogWithOverrides().find((e) => e.slug === summary.slug);
-  if (!ce) return null;
+// Build a ListEvent for EventTile directly from the BE summary. bannerUrl
+// flows through from the BE (resolved cover_s3_key / banner_url fallback)
+// so the portfolio cards render the actual event cover. city is derived
+// from "City Center, Cebu City" → "Cebu City"; participantCount is unused
+// in browse mode but ListEvent requires the field.
+function toListEvent(summary: PhotographerEventSummary): ListEvent {
   return {
-    ...ce,
+    id: summary.id,
+    slug: summary.slug,
+    name: summary.name,
+    date: summary.date,
+    location: summary.location,
+    bannerUrl: summary.bannerUrl ?? undefined,
     photoCount: summary.photoCount,
-    state: summary.state,
+    participantCount: 0,
+    status: "ACTIVE",
+    state: summary.state as EventState,
+    city: summary.location.split(",").pop()?.trim() ?? "",
   };
 }
 

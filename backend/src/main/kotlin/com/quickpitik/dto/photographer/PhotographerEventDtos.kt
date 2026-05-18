@@ -12,12 +12,17 @@ import java.time.ZoneId
 import java.util.UUID
 
 // Mirrors website/src/lib/photographer-mock.ts PhotographerEventSummary.
+// bannerUrl is the resolved cover (presigned cover_s3_key or legacy banner_url
+// fallback) — same value runners see on /events tiles. Carried here so the
+// photographer dashboard's covered-event cards render the actual event cover
+// instead of the "Banner · soon" placeholder.
 data class PhotographerEventSummaryDto(
     val id: UUID,
     val slug: String,
     val name: String,
     val date: LocalDate,
     val location: String,
+    val bannerUrl: String?,
     val state: String,
     val photoCount: Int,
     val salesCount: Int,
@@ -32,6 +37,7 @@ data class PhotographerEventDetailDto(
     val name: String,
     val date: LocalDate,
     val location: String,
+    val bannerUrl: String?,
     val state: String,
     val photoCount: Int,
     val salesCount: Int,
@@ -43,6 +49,10 @@ data class PhotographerEventDetailDto(
 // Mirrors website/src/lib/photographer-mock.ts PhotographerLibraryPhoto.
 // status is lowercase wire form; LIVE → "live", HIDDEN → "hidden". Bib is the
 // alphabetically-first match if multiple were OCR-detected (matches PhotoDto).
+// thumbnailUrl is the watermarked variant (same URL runners see in
+// /events/[slug]?browse=1) — the photographer's own dashboard reuses it so
+// no second resolver is needed. Clean originals stay behind the explicit
+// /me/photographer/photos/{id}/download endpoint.
 data class PhotographerLibraryPhotoDto(
     val id: UUID,
     val bib: String?,
@@ -51,6 +61,7 @@ data class PhotographerLibraryPhotoDto(
     val uploadedAt: OffsetDateTime,
     val tone: Int,
     val span: String,
+    val thumbnailUrl: String?,
 )
 
 // Mirrors website/src/lib/api-photographer.ts PhotographerDownloadResponse.
@@ -97,26 +108,36 @@ internal fun deriveEventState(event: Event, today: LocalDate = LocalDate.now(phZ
         EventStatus.DRAFT -> "upcoming"
     }
 
-fun summaryDto(event: Event, ep: EventPhotographer): PhotographerEventSummaryDto =
+fun summaryDto(
+    event: Event,
+    ep: EventPhotographer,
+    bannerUrl: String?,
+): PhotographerEventSummaryDto =
     PhotographerEventSummaryDto(
         id = event.id,
         slug = event.slug,
         name = event.name,
         date = event.date,
         location = event.location,
+        bannerUrl = bannerUrl,
         state = deriveEventState(event),
         photoCount = ep.photoCount,
         salesCount = ep.salesCount,
         revenueKept = ep.revenueKeptPhp,
     )
 
-fun detailDto(event: Event, ep: EventPhotographer): PhotographerEventDetailDto =
+fun detailDto(
+    event: Event,
+    ep: EventPhotographer,
+    bannerUrl: String?,
+): PhotographerEventDetailDto =
     PhotographerEventDetailDto(
         id = event.id,
         slug = event.slug,
         name = event.name,
         date = event.date,
         location = event.location,
+        bannerUrl = bannerUrl,
         state = deriveEventState(event),
         photoCount = ep.photoCount,
         salesCount = ep.salesCount,
@@ -125,7 +146,10 @@ fun detailDto(event: Event, ep: EventPhotographer): PhotographerEventDetailDto =
         lastUploadAt = ep.lastUploadAt,
     )
 
-fun Photo.toLibraryDto(salesCount: Long): PhotographerLibraryPhotoDto =
+fun Photo.toLibraryDto(
+    salesCount: Long,
+    thumbnailUrlResolver: (Photo) -> String?,
+): PhotographerLibraryPhotoDto =
     PhotographerLibraryPhotoDto(
         id = id,
         bib = bibs.minByOrNull { it.bibNumber }?.bibNumber,
@@ -141,4 +165,5 @@ fun Photo.toLibraryDto(salesCount: Long): PhotographerLibraryPhotoDto =
         uploadedAt = uploadedAt,
         tone = tone,
         span = span.wire,
+        thumbnailUrl = thumbnailUrlResolver(this),
     )

@@ -759,20 +759,20 @@ const QueueRow = memo(function QueueRow({
   const status = entry.status;
   const canRetry = status === "error" && entry.retryable === true;
 
-  // Local object URL for the row thumbnail. Computed once per File reference
-  // so it survives all the progress-tick re-renders without leaking — the
-  // cleanup effect revokes when the row unmounts (entry removed or batch
-  // cleared). Cheap memory cost: a browser-side handle to the in-memory File
-  // bytes, no network round-trip and no copy. Backend-rendered thumbs are
-  // delivered after upload completes but aren't surfaced on this page —
-  // photographers want immediate confirmation of "right photo, right slot."
-  const previewUrl = useMemo(
-    () => URL.createObjectURL(entry.file),
-    [entry.file],
-  );
+  // Local object URL for the row thumbnail. Bound to the effect lifecycle so
+  // React 18 StrictMode's double-mount in dev (mount → cleanup → mount) creates
+  // a fresh blob on the second mount instead of reusing a memoized handle the
+  // cleanup already revoked — which would surface as net::ERR_FILE_NOT_FOUND
+  // on the first paint. Cheap memory cost: a browser-side handle to the
+  // in-memory File bytes, no network round-trip and no copy. Backend-rendered
+  // thumbs are delivered after upload completes but aren't surfaced on this
+  // page — photographers want immediate confirmation of "right photo, right slot."
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   useEffect(() => {
-    return () => URL.revokeObjectURL(previewUrl);
-  }, [previewUrl]);
+    const url = URL.createObjectURL(entry.file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [entry.file]);
 
   return (
     <div className="py-4 md:py-5 flex items-center gap-4">
@@ -782,16 +782,18 @@ const QueueRow = memo(function QueueRow({
           status === "error" ? "bg-error/10" : "bg-bone-deep/40",
         )}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={previewUrl}
-          alt=""
-          className={cn(
-            "absolute inset-0 w-full h-full object-cover",
-            status === "error" ? "opacity-40" : "opacity-100",
-          )}
-          draggable={false}
-        />
+        {previewUrl && (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={previewUrl}
+            alt=""
+            className={cn(
+              "absolute inset-0 w-full h-full object-cover",
+              status === "error" ? "opacity-40" : "opacity-100",
+            )}
+            draggable={false}
+          />
+        )}
         {(status === "queued" || status === "uploading") && (
           <span
             aria-hidden="true"

@@ -12,8 +12,8 @@ import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
-import { usePublicPhotographer } from "@/hooks/use-photographer-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { useCartStore } from "@/store/cart-store";
@@ -23,19 +23,12 @@ import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { fetchEventDetail } from "@/lib/api-events";
 import {
-  PHOTOGRAPHER_EVENTS,
-  type EventState,
-} from "@/lib/photographer-mock";
-import {
-  getPhotographerByHandle,
-  getPhotographerCoverage,
-  generatePhotographerPhotos,
-  type PhotographerProfile,
-} from "@/lib/photographer-registry";
-import {
-  usePhotographerSettingsStore,
-  BRAND_COLOR_HEX,
-} from "@/store/photographer-settings-store";
+  fetchPublicPhotographer,
+  fetchPublicPhotographerEventPhotos,
+} from "@/lib/api-photographer-public";
+import type { EventState } from "@/lib/photographer-mock";
+import type { PhotographerProfile } from "@/lib/photographer-registry";
+import { BRAND_COLOR_HEX } from "@/store/photographer-settings-store";
 import type { EventDetail } from "@/types/event";
 import type { MockPhoto } from "@/types/photo";
 
@@ -47,8 +40,10 @@ import type { MockPhoto } from "@/types/photo";
 // no-match. The bib filter scope is photographer-only (their slice), not the
 // full event pool.
 //
-// TODO(backend): swap registry resolve + photo generator for
-// `api.get<{ profile, event, photos }>("/p/{handle}/events/{slug}")`.
+// Single data path: GET /public/photographers/{handle} + GET .../events/{slug}
+// + GET .../events/{slug}/photos. No isOwner branch — owner-self sees the
+// same shape as runners (watermarked thumbs, no edit affordances). The
+// /profile page is the owner-only edit surface.
 export default function HandleEventPage() {
   const params = useParams<{ handle: string; slug: string }>();
   const rawHandle = Array.isArray(params.handle)
@@ -72,62 +67,42 @@ export default function HandleEventPage() {
 }
 
 function PageBody({ handle, slug }: { handle: string; slug: string }) {
-  const settings = usePhotographerSettingsStore();
-  const { data: event } = useQuery({
+  // Profile + event detail fan out in parallel — both 5-min stale, both BE.
+  // useQuery (not the wrapper hook) so we can distinguish "still loading"
+  // from "404 / not found". The wrapper collapses both into null which would
+  // flash NotFoundBody before the BE response lands.
+  const profileQuery = useQuery({
+    queryKey: ["photographer", "public", handle],
+    queryFn: () => fetchPublicPhotographer(handle),
+    enabled: handle.length > 0,
+    staleTime: 5 * 60_000,
+  });
+  const eventQuery = useQuery({
     queryKey: ["events", slug, "detail"],
     queryFn: () => fetchEventDetail(slug),
+    enabled: slug.length > 0,
     staleTime: 60_000,
   });
 
-  // GET /public/photographers/{handle} (Q-016) for the non-self path.
-  const isOwnHandle = handle.length > 0 && settings.handle === handle;
-  const liveProfile = usePublicPhotographer(isOwnHandle ? null : handle);
+  if (profileQuery.isLoading || eventQuery.isLoading) {
+    return <GallerySkeleton />;
+  }
+
+  const event = eventQuery.data;
+  const profile = profileQuery.data;
 
   if (!event) {
     return <NotFoundBody handle={handle} reason="event" />;
   }
-
-  // Owner preview: build a synthetic profile + coverage from the live
-  // settings store + PHOTOGRAPHER_EVENTS, so the photographer can preview
-  // their own gallery directly from /dashboard/settings.
-  if (isOwnHandle) {
-    const ownerCoverage = PHOTOGRAPHER_EVENTS.find(
-      (e) => e.slug === slug && e.photoCount > 0,
-    );
-    if (!ownerCoverage) {
-      return <NotFoundBody handle={handle} reason="not-shot" event={event} />;
-    }
-    const ownerProfile: PhotographerProfile = {
-      handle,
-      displayName: settings.brandName.trim() || "Photographer",
-      brandColor: settings.brandColor,
-      bio: settings.bio,
-      city: "Cebu",
-      memberSince: "2024-08-15",
-      cover: settings.cover
-        ? { kind: "image", url: settings.cover.dataUrl }
-        : null,
-      watermarkLabel: "OWNER",
-      events: [
-        {
-          eventSlug: ownerCoverage.slug,
-          state: ownerCoverage.state,
-          photoCount: ownerCoverage.photoCount,
-          salesCount: ownerCoverage.salesCount,
-        },
-      ],
-    };
-    return <Gallery profile={ownerProfile} event={event} />;
-  }
-
-  const profile = liveProfile ?? getPhotographerByHandle(handle);
   if (!profile) {
     return <NotFoundBody handle={handle} reason="profile" />;
   }
-  const coverage = getPhotographerCoverage(profile, slug);
+
+  const coverage = profile.events.find((e) => e.eventSlug === event.slug);
   if (!coverage || coverage.photoCount === 0) {
     return <NotFoundBody handle={handle} reason="not-shot" event={event} />;
   }
+
   return <Gallery profile={profile} event={event} />;
 }
 
@@ -147,10 +122,27 @@ function Gallery({
       ? BRAND_COLOR_HEX[profile.brandColor]
       : null;
 
-  const photos = useMemo(
-    () => generatePhotographerPhotos(profile.handle, event, photoCount),
-    [profile.handle, event, photoCount],
-  );
+  // Pull the photographer's slice for this event from the BE. Capped at 240
+  // to keep the initial payload bounded — matches the runner-facing
+  // /events/[slug]?browse=1 batch size. Beyond 240, photographers should
+  // expect users to paginate via "Load more".
+  const photosQuery = useQuery<MockPhoto[]>({
+    queryKey: [
+      "photographer",
+      "public",
+      profile.handle,
+      event.slug,
+      "photos",
+      { offset: 0, limit: 240 },
+    ],
+    queryFn: () =>
+      fetchPublicPhotographerEventPhotos(profile.handle, event.slug, event, photoCount, {
+        offset: 0,
+        limit: 240,
+      }),
+    staleTime: 60_000,
+  });
+  const photos = photosQuery.data ?? [];
 
   const [bibFilter, setBibFilter] = useUrlState<string>("bib", "", {
     parse: (raw) => raw.trim().toUpperCase(),
@@ -498,7 +490,7 @@ function PhotoPreviewMount({
   const cartPayload = {
     photoId: photo.id,
     eventId: event.id,
-    thumbnailUrl: "",
+    thumbnailUrl: photo.imageUrl ?? "",
     price: photo.price,
     bib: photo.bib,
     eventName: event.name,
@@ -547,7 +539,29 @@ function PhotoPreviewMount({
   );
 }
 
-/* ─────────────── EMPTY / NOT FOUND ─────────────── */
+/* ─────────────── EMPTY / NOT FOUND / SKELETON ─────────────── */
+
+function GallerySkeleton() {
+  return (
+    <div className="flex-1">
+      <div className="px-6 md:px-10 pt-8 md:pt-10 pb-8 md:pb-10 border-b border-line">
+        <div className="max-w-7xl mx-auto space-y-5">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-9 w-64 rounded-full" />
+          <Skeleton className="h-12 md:h-14 w-3/4" />
+          <Skeleton className="h-5 w-1/2" />
+        </div>
+      </div>
+      <div className="px-6 md:px-10 py-10">
+        <div className="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
+          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+            <Skeleton key={i} className="aspect-square" />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function EmptyGalleryPanel({ displayName }: { displayName: string }) {
   return (

@@ -16,7 +16,6 @@ import { formatLongDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
   PHOTOGRAPHER_EARNINGS,
-  PHOTOGRAPHER_EVENTS,
   type PhotographerEventSummary,
 } from "@/lib/photographer-mock";
 import { cn } from "@/lib/utils";
@@ -201,11 +200,11 @@ function BreakdownStat({
 }
 
 function PerEventSlab() {
-  // Live mode prefers GET /me/photographer/earnings/per-event (Q-017); the
-  // shape collapses to PhotographerEventSummary so the existing render code
-  // works unchanged. Mock-mode falls back to PHOTOGRAPHER_EVENTS.
+  // GET /me/photographer/earnings/per-event response collapses to the
+  // PhotographerEventSummary shape so the existing render code works
+  // unchanged.
   const livePerEvent = usePhotographerPerEventEarnings();
-  const liveAsSeed = livePerEvent
+  const rawEvents = livePerEvent
     ? livePerEvent.map((row) => ({
         id: row.eventId,
         slug: row.eventName,
@@ -218,8 +217,7 @@ function PerEventSlab() {
         revenueKept: row.revenueKept,
       }))
     : null;
-  const rawEvents = liveAsSeed ?? PHOTOGRAPHER_EVENTS;
-  const isLoading = false;
+  const isLoading = livePerEvent === null;
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EARNINGS_INITIAL);
 
   if (isLoading || !rawEvents) {
