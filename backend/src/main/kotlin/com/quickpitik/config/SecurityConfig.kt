@@ -64,6 +64,9 @@ class SecurityConfig(
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/orders").permitAll()
                 // Guest order status polling. Service-layer token check enforces auth.
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*/status").permitAll()
+                // Bundle download (token-gated; works for both runners + guests
+                // because a top-level navigation can't carry the JWT).
+                auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*/download-bundle").permitAll()
                 // Guest order detail (token-gated, anti-IDOR via service layer).
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*").permitAll()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/payments/webhook/**").permitAll()

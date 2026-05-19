@@ -23,6 +23,10 @@ data class OrderDetailDto(
     // also emailed these links to <recipient>". Authed runners see their
     // account email; guests see whatever they typed at checkout.
     val recipientEmail: String = "",
+    // Opaque per-order token. Both runners and guests use it to authorize the
+    // bundle-download endpoint (top-level navigations can't carry the JWT).
+    // Null only on legacy rows created before V18 backfilled them.
+    val shareToken: String? = null,
 )
 
 data class OrderPhotoDetailDto(

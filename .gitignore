@@ -74,3 +74,6 @@ htmlcov/
 
 # Node
 node_modules/
+
+# ngok
+dev-start.ps1

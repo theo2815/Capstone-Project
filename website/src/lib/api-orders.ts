@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { API_BASE_URL } from "@/lib/constants";
 import type { MockOrder } from "@/store/orders-store";
 import type { PaginatedResponse } from "@/types/api";
 import type { Order, OrderPhotoDetail, OrderStatus } from "@/types/order";
@@ -17,6 +18,10 @@ export interface OrderDetail extends MockOrder {
   // Populated for the /orders/return success state. May be empty on legacy
   // payloads or when the BE chose to omit it.
   recipientEmail?: string;
+  // Per-order opaque token. Both runners and guests use it to authorize the
+  // bundle-download URL (a top-level <a> navigation can't carry the JWT).
+  // Null on legacy rows; FE hides the master Download-all button when absent.
+  shareToken?: string | null;
 }
 
 export interface CreateOrderArgs {
@@ -102,4 +107,14 @@ export async function fetchGuestOrderDetail(
 ): Promise<OrderDetail | null> {
   const qs = `?token=${encodeURIComponent(token)}`;
   return api.get<OrderDetail>(`/orders/${encodeURIComponent(orderId)}${qs}`);
+}
+
+// Absolute URL to the bundle-download endpoint. Token-only auth on the BE
+// (the endpoint is reachable by top-level <a download> navigation, which
+// can't carry the JWT — runners and guests use the same path). FE just
+// sets `<a href={url}>` and clicks; the BE streams the ZIP back with a
+// Content-Disposition that makes the browser save instead of navigate.
+export function buildOrderBundleUrl(orderId: string, token: string): string {
+  const qs = `?token=${encodeURIComponent(token)}`;
+  return `${API_BASE_URL}/orders/${encodeURIComponent(orderId)}/download-bundle${qs}`;
 }

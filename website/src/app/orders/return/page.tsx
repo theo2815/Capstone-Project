@@ -9,12 +9,17 @@ import { Kicker } from "@/components/ui/kicker";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import {
+  buildOrderBundleUrl,
   fetchOrderDetail,
   fetchGuestOrderDetail,
   type OrderDetail,
 } from "@/lib/api-orders";
 import type { OrderPhotoDetail } from "@/types/order";
 import { ROUTES } from "@/lib/constants";
+import {
+  appendDownloadDisposition,
+  buildPhotoDownloadFilename,
+} from "@/lib/download-helpers";
 import { cn } from "@/lib/utils";
 
 // /orders/return — landing page PayMongo redirects to after hosted checkout.
@@ -126,6 +131,41 @@ function PaidState({
   const eventName = detail.eventName ?? "QuickPitik";
   const recipientEmail = detail.recipientEmail ?? "";
 
+  // Download-all hits the BE bundle endpoint which streams a ZIP. Token-only
+  // auth on the BE — works for runners AND guests since <a download> can't
+  // carry a JWT. Hidden when shareToken is missing (legacy orders before
+  // V18 backfill, or a BE that omits the field).
+  const bundleUrl = detail.shareToken
+    ? buildOrderBundleUrl(detail.id, detail.shareToken)
+    : null;
+  const showDownloadAll = photoCount >= 2 && bundleUrl != null;
+  const [bulkState, setBulkState] = useState<"idle" | "preparing">("idle");
+
+  const handleDownloadAll = () => {
+    if (bulkState === "preparing" || !bundleUrl) return;
+    setBulkState("preparing");
+    // Programmatic <a download> click — same-tab, no navigation. Server's
+    // Content-Disposition makes the browser save the response as a file.
+    const a = document.createElement("a");
+    a.href = bundleUrl;
+    a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Reset state after the browser has had time to pick up the download.
+    // The BE may take a few seconds to assemble the first byte (S3 reads +
+    // ZIP entry headers); 5s leaves the spinner visible long enough to
+    // signal "we heard you" without holding the button hostage if the
+    // request silently fails.
+    window.setTimeout(() => setBulkState("idle"), 5000);
+  };
+
+  // When the master Download-all owns the fresh slot, per-photo CTAs demote
+  // to ghost so the one-fresh-per-viewport rule holds. Single-photo orders
+  // keep per-photo as the primary fresh action — the master button hides.
+  const perPhotoVariant: PhotoCardVariant = showDownloadAll ? "ghost" : "primary";
+
   return (
     <section className="flex-1 px-6 md:px-10 py-10 md:py-16">
       <div className="max-w-6xl mx-auto">
@@ -149,9 +189,21 @@ function PaidState({
             className="space-y-6 md:space-y-7 order-1"
             style={{ animation: "fade-up 0.6s 0.15s both", opacity: 0 }}
           >
+            {showDownloadAll && (
+              <DownloadAllButton
+                photoCount={photoCount}
+                state={bulkState}
+                onClick={handleDownloadAll}
+              />
+            )}
             {detail.photos.length > 0 ? (
               detail.photos.map((photo, i) => (
-                <PhotoCard key={photo.id} photo={photo} index={i} />
+                <PhotoCard
+                  key={photo.id}
+                  photo={photo}
+                  index={i}
+                  variant={perPhotoVariant}
+                />
               ))
             ) : (
               <PhotoCardSkeleton />
@@ -203,9 +255,23 @@ function PaidState({
 
             {/* CTAs */}
             <div className="flex flex-col gap-4">
+              {hasAccount && (
+                <Link
+                  href={ROUTES.ORDERS}
+                  className="inline-flex w-full sm:w-auto items-center justify-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+                >
+                  View your orders →
+                </Link>
+              )}
+
               <Link
                 href={ROUTES.EVENTS}
-                className="inline-flex w-full sm:w-auto items-center justify-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+                className={cn(
+                  "inline-flex w-full sm:w-auto items-center justify-center px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+                  hasAccount
+                    ? "border border-line hover:bg-bone-deep text-ink"
+                    : "bg-ink hover:bg-ink-soft text-bone",
+                )}
               >
                 Browse more events →
               </Link>
@@ -221,14 +287,18 @@ function PaidState({
   );
 }
 
+type PhotoCardVariant = "primary" | "ghost";
+
 function PhotoCard({
   photo,
   index,
+  variant,
 }: {
   photo: OrderPhotoDetail;
   index: number;
+  variant: PhotoCardVariant;
 }) {
-  const filename = buildDownloadFilename(photo);
+  const filename = buildPhotoDownloadFilename(photo);
   const downloadUrl = photo.downloadUrl
     ? appendDownloadDisposition(photo.downloadUrl, filename)
     : null;
@@ -264,7 +334,12 @@ function PhotoCard({
         <a
           href={downloadUrl}
           download={filename}
-          className="group inline-flex w-full items-center justify-center gap-2 bg-fresh hover:bg-fresh-deep text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+          className={cn(
+            "group inline-flex w-full items-center justify-center gap-2 px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+            variant === "primary"
+              ? "bg-fresh hover:bg-fresh-deep text-bone"
+              : "border border-ink text-ink hover:bg-ink hover:text-bone",
+          )}
         >
           <span
             aria-hidden="true"
@@ -283,6 +358,52 @@ function PhotoCard({
         </button>
       )}
     </article>
+  );
+}
+
+function DownloadAllButton({
+  photoCount,
+  state,
+  onClick,
+}: {
+  photoCount: number;
+  state: "idle" | "preparing";
+  onClick: () => void;
+}) {
+  const isPreparing = state === "preparing";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={isPreparing}
+      aria-live="polite"
+      className={cn(
+        "group inline-flex w-full items-center justify-center gap-2.5 bg-fresh hover:bg-fresh-deep text-bone px-7 py-4 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+        isPreparing && "opacity-90 cursor-wait hover:bg-fresh",
+      )}
+    >
+      {isPreparing ? (
+        <>
+          <span
+            aria-hidden="true"
+            className="size-3.5 rounded-full border-2 border-bone/40 border-t-bone animate-spin"
+          />
+          <span>Preparing your zip…</span>
+        </>
+      ) : (
+        <>
+          <span
+            aria-hidden="true"
+            className="transition-transform group-hover:translate-y-0.5"
+          >
+            ↓
+          </span>
+          <span>
+            Download all <span className="tnum">{photoCount}</span> photos (.zip)
+          </span>
+        </>
+      )}
+    </button>
   );
 }
 
@@ -458,19 +579,6 @@ function MissingOrder() {
 }
 
 /* ─────────────── HELPERS ─────────────── */
-
-function buildDownloadFilename(photo: OrderPhotoDetail): string {
-  const tag = photo.bib
-    ? `bib-${photo.bib}`
-    : `untagged-${photo.id.slice(0, 8)}`;
-  return `quickpitik-${tag}.jpg`;
-}
-
-function appendDownloadDisposition(url: string, filename: string): string {
-  const sep = url.includes("?") ? "&" : "?";
-  const encodedName = encodeURIComponent(filename);
-  return `${url}${sep}disposition=attachment&filename=${encodedName}`;
-}
 
 function formatPaidAt(iso: string | undefined | null): string {
   if (!iso) return "—";

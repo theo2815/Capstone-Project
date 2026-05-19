@@ -40,6 +40,13 @@ jwt:
   refresh-token-ttl: P7D
 
 app:
+  # Externally-reachable URLs the BE needs to embed in artifacts whose request
+  # context can't tell it about (e.g. the receipt email). When running ngrok
+  # for cross-device download testing, set PUBLIC_API_BASE_URL alongside
+  # STORAGE_PUBLIC_BASE_URL so the email button reaches the BE through the
+  # same tunnel as the storage links.
+  public:
+    api-base-url: ${PUBLIC_API_BASE_URL:http://localhost:8080/api/v1}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
   admin:

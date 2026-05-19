@@ -11,6 +11,11 @@ import {
 } from "@/components/profile-shell";
 import { useAuth } from "@/hooks/use-auth";
 import { useOrdersList, useOrderDetail } from "@/hooks/use-orders";
+import { buildOrderBundleUrl } from "@/lib/api-orders";
+import {
+  appendDownloadDisposition,
+  buildPhotoDownloadFilename,
+} from "@/lib/download-helpers";
 import { type MockOrder } from "@/store/orders-store";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -252,7 +257,12 @@ function ReceiptRow({
   order: MockOrder;
   onRefundRequest: (order: MockOrder) => void;
 }) {
-  const event = getEventById(order.eventId);
+  // Prefer the BE-hydrated event fields on the order itself. The local
+  // EVENT_CATALOG seed is empty, so getEventById() returns undefined for any
+  // real backend order and we'd render "Event archived" for live data.
+  const catalogEvent = getEventById(order.eventId);
+  const eventName = order.eventName ?? catalogEvent?.name ?? null;
+  const eventSlug = order.eventSlug ?? catalogEvent?.slug ?? null;
   const [expanded, setExpanded] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const { showToast } = useToast();
@@ -301,10 +311,22 @@ function ReceiptRow({
     }));
   }, [detail?.photos, order.photoIds]);
 
+  // BE no longer pre-stamps a presigned bundle URL — it hands us a per-order
+  // shareToken and we point a top-level <a> at the streaming bundle endpoint.
+  // Same path runs the email button + the guest /orders/return flow.
+  const bundleUrl =
+    detail?.shareToken && detail?.id
+      ? buildOrderBundleUrl(detail.id, detail.shareToken)
+      : null;
+
   function handleDownloadAll() {
-    if (detail?.downloadBundleUrl) {
-      triggerDownload(detail.downloadBundleUrl, `${order.id}.zip`);
-    }
+    if (!bundleUrl) return;
+    // Server sets the real Content-Disposition (single-photo orders come
+    // back as image/jpeg, multi as application/zip). The hint here only
+    // matters if the response somehow omits the header — keep it honest
+    // to the count so a fallback save doesn't misname the file.
+    const hintExt = photoCount === 1 ? "jpg" : "zip";
+    triggerDownload(bundleUrl, `${order.id}.${hintExt}`);
     showToast({
       kind: "success",
       message: `Preparing ${photoCount} photo${photoCount === 1 ? "" : "s"}…`,
@@ -313,9 +335,14 @@ function ReceiptRow({
 
   function handleDownloadOne(id: string) {
     const photo = detail?.photos.find((p) => p.id === id);
-    if (photo?.downloadUrl) {
-      triggerDownload(photo.downloadUrl);
-    }
+    if (!photo?.downloadUrl) return;
+    // appendDownloadDisposition flips the response to
+    // Content-Disposition: attachment so mobile Safari (which ignores
+    // cross-origin `<a download>`) and desktop both save instead of
+    // navigating to the image. Same plumbing as the /orders/return cards.
+    const filename = buildPhotoDownloadFilename(photo);
+    const url = appendDownloadDisposition(photo.downloadUrl, filename);
+    triggerDownload(url, filename);
     showToast({
       kind: "success",
       message: `Downloading ${id.replace(/^mock-/, "")}…`,
@@ -331,13 +358,17 @@ function ReceiptRow({
           <Kicker as="p" tnum>
             {formatPaidAt(order.paidAt)}
           </Kicker>
-          {event ? (
+          {eventName && eventSlug ? (
             <Link
-              href={`/events/${event.slug}`}
+              href={`/events/${eventSlug}`}
               className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink hover:text-fresh transition-colors mt-2 inline-block max-w-full truncate"
             >
-              {event.name}
+              {eventName}
             </Link>
+          ) : eventName ? (
+            <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
+              {eventName}
+            </p>
           ) : (
             <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-slate mt-2">
               Event archived
@@ -400,13 +431,13 @@ function ReceiptRow({
             />
           )}
           <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3">
-            {photoCount > 0 && (
+            {photoCount > 0 && bundleUrl && (
               <button
                 type="button"
                 onClick={handleDownloadAll}
                 className="font-sans text-base font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
               >
-                Download all
+                {photoCount === 1 ? "Download photo" : "Download all"}
                 <span aria-hidden="true">↓</span>
               </button>
             )}
@@ -433,7 +464,7 @@ function ReceiptRow({
         <PhotoPreviewCard
           mode="owned"
           photo={previewItems[previewIndex]}
-          eventName={event?.name ?? "Order"}
+          eventName={eventName ?? "Order"}
           index={previewIndex + 1}
           total={previewItems.length}
           onClose={() => setPreviewIndex(null)}
