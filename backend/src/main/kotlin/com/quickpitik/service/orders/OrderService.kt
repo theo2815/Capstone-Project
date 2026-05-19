@@ -150,7 +150,11 @@ class OrderService(
                         status = OrderStatus.PENDING,
                         totalPhp = totalPhp,
                         idempotencyKey = idempotencyKey,
-                        shareToken = if (userId == null) generateShareToken() else null,
+                        // Always minted — runners need it for the bundle-download
+                        // URL (top-level <a> navigations don't carry the JWT, so
+                        // the bundle endpoint authorizes via ?token=). Guests use
+                        // it for everything (status poll, detail, bundle).
+                        shareToken = generateShareToken(),
                     ),
                 )
                 items.forEach { item ->
@@ -404,7 +408,15 @@ class OrderService(
     private fun buildSuccessUrl(order: Order): String {
         val base = paymongoProperties.successUrl
         val sep = if (base.contains("?")) "&" else "?"
-        val tokenParam = order.shareToken?.let { "&token=$it" } ?: ""
+        // Token in the success URL is guest-only so authed runners reach
+        // /orders/return via the JWT-gated /me/orders/{id} detail endpoint
+        // (which keeps cross-user IDOR checks). Bundle URL embeds the token
+        // regardless because the bundle endpoint is token-only.
+        val tokenParam = if (order.userId == null && order.shareToken != null) {
+            "&token=${order.shareToken}"
+        } else {
+            ""
+        }
         return "$base${sep}orderId=${order.id}$tokenParam"
     }
 
@@ -490,6 +502,7 @@ class OrderService(
             },
             downloadBundleUrl = null,
             recipientEmail = order.recipientEmail,
+            shareToken = order.shareToken,
         )
     }
 

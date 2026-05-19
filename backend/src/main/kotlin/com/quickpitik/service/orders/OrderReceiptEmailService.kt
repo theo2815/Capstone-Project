@@ -1,20 +1,20 @@
 package com.quickpitik.service.orders
 
+import com.quickpitik.config.PublicProperties
 import com.quickpitik.config.ResendProperties
-import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.email.ResendSendEmailRequest
 import com.quickpitik.entity.Order
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
-import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.email.ResendClient
-import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -36,13 +36,11 @@ import java.util.UUID
 class OrderReceiptEmailService(
     private val orderRepository: OrderRepository,
     private val orderItemRepository: OrderItemRepository,
-    private val photoRepository: PhotoRepository,
     private val eventRepository: EventRepository,
     private val downloadGrantRepository: DownloadGrantRepository,
-    private val storageService: StorageService,
-    private val storageProperties: StorageProperties,
     private val resendClient: ResendClient,
     private val resendProperties: ResendProperties,
+    private val publicProperties: PublicProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -69,41 +67,36 @@ class OrderReceiptEmailService(
             return
         }
 
+        if (order.shareToken.isNullOrBlank()) {
+            // V18 backfilled every legacy row, and OrderService.create always
+            // mints one — if we ever land here something upstream is broken.
+            log.warn(
+                "Receipt skipped — order {} has no share token; cannot build bundle URL",
+                orderId,
+            )
+            return
+        }
+
         val items = orderItemRepository.findByIdOrderId(order.id)
         if (items.isEmpty()) {
             log.warn("Receipt skipped — order {} has no items", orderId)
             return
         }
-        val photoIds = items.map { it.id.photoId }
-        val photos = photoRepository.findAllById(photoIds).associateBy { it.id }
-        val event = eventRepository.findById(order.eventId).orElse(null)
         val grants = downloadGrantRepository.findByIdOrderId(order.id).associateBy { it.id.photoId }
-
-        val eventSlug = event?.slug ?: "quickpitik"
-        val downloads = items.mapNotNull { item ->
-            val photo = photos[item.id.photoId] ?: return@mapNotNull null
-            // No grant ⇒ this order isn't actually entitled yet. Skip the row.
-            grants[item.id.photoId] ?: return@mapNotNull null
-            val bib = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber
-            val baseUrl = storageService.presignedGetUrl(
-                photo.s3Key,
-                storageProperties.presignedTtl.runnerDownload,
-            )
-            val filename = buildDownloadFilename(eventSlug, bib, photo.id.toString())
-            ReceiptDownloadLink(
-                bib = bib,
-                url = appendDownloadDisposition(baseUrl, filename),
-            )
-        }
-        if (downloads.isEmpty()) {
+        val entitledCount = items.count { item -> grants[item.id.photoId] != null }
+        if (entitledCount == 0) {
             log.warn("Receipt skipped — order {} has no download grants yet", orderId)
             return
         }
 
+        val event = eventRepository.findById(order.eventId).orElse(null)
+        val bundleUrl = buildBundleUrl(orderId, order.shareToken!!)
+
         val html = renderHtml(
             order = order,
             eventName = event?.name ?: "QuickPitik",
-            downloads = downloads,
+            entitledCount = entitledCount,
+            bundleUrl = bundleUrl,
         )
         val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
         val subject = buildSubject(event?.name)
@@ -140,30 +133,18 @@ class OrderReceiptEmailService(
     private fun renderHtml(
         order: Order,
         eventName: String,
-        downloads: List<ReceiptDownloadLink>,
+        entitledCount: Int,
+        bundleUrl: String,
     ): String {
         val ref = order.id.toString().take(8).uppercase()
         val paidAt = (order.paidAt ?: order.createdAt)
             .atZoneSameInstant(DISPLAY_ZONE)
             .format(DATE_FORMATTER)
-        val photoWord = if (downloads.size == 1) "photo" else "photos"
+        val photoWord = if (entitledCount == 1) "photo" else "photos"
         val totalPhp = "₱${order.totalPhp.toPlainString()}"
-
-        val buttonsHtml = downloads.joinToString("") { dl ->
-            val label = dl.bib?.let { "BIB $it" } ?: "Untagged"
-            """
-            <tr><td style="padding:6px 0;">
-              <a href="${escapeUrl(dl.url)}" download
-                 style="display:inline-block;background:#3b8c5f;color:#fafaf6;
-                        text-decoration:none;padding:14px 28px;border-radius:999px;
-                        font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
-                        text-transform:uppercase;letter-spacing:0.18em;font-size:12px;
-                        font-weight:500;">
-                Download · $label  ↓
-              </a>
-            </td></tr>
-            """.trimIndent()
-        }
+        val buttonLabel =
+            if (entitledCount == 1) "Download your photo  ↓"
+            else "Download all $entitledCount photos (.zip)  ↓"
 
         return """
 <!DOCTYPE html>
@@ -180,13 +161,22 @@ class OrderReceiptEmailService(
             All yours.
           </h1>
           <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 28px;">
-            You bought <strong style="font-variant-numeric:tabular-nums;">${downloads.size}</strong> $photoWord from
+            You bought <strong style="font-variant-numeric:tabular-nums;">$entitledCount</strong> $photoWord from
             <strong>${escapeHtml(eventName)}</strong> for
             <strong style="font-variant-numeric:tabular-nums;">$totalPhp</strong>.
           </p>
 
           <table cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
-            $buttonsHtml
+            <tr><td style="padding:6px 0;">
+              <a href="${escapeUrl(bundleUrl)}" download
+                 style="display:inline-block;background:#3b8c5f;color:#fafaf6;
+                        text-decoration:none;padding:16px 32px;border-radius:999px;
+                        font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+                        text-transform:uppercase;letter-spacing:0.2em;font-size:13px;
+                        font-weight:500;">
+                $buttonLabel
+              </a>
+            </td></tr>
           </table>
 
           <hr style="border:none;border-top:1px solid #e5e2d8;margin:28px 0;" />
@@ -199,7 +189,7 @@ class OrderReceiptEmailService(
           </p>
 
           <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:28px 0 0;">
-            The download links above work for 7 days. After that, reply to this email and we&rsquo;ll send you fresh ones.
+            Tap the button to save the ZIP to your device. iOS Files and Android both unzip on tap. The link works as long as you keep this email.
           </p>
         </td></tr>
       </table>
@@ -212,23 +202,10 @@ class OrderReceiptEmailService(
         """.trimIndent()
     }
 
-    // Friendly filename that lands in the user's downloads folder.
-    // Pattern: quickpitik-<event-slug>-<bib-or-photo-prefix>.jpg
-    private fun buildDownloadFilename(eventSlug: String, bib: String?, photoId: String): String {
-        val tag = bib?.takeIf { it.isNotBlank() }?.let { "bib-$it" }
-            ?: "untagged-${photoId.take(8)}"
-        return "quickpitik-$eventSlug-$tag.jpg"
-    }
-
-    // Append disposition+filename hints to a presigned URL. Works with the
-    // existing `?expires=…&method=…` query string already on the URL.
-    // StorageDownloadDispositionFilter reads these and stamps the
-    // Content-Disposition response header so browsers always download
-    // instead of displaying inline.
-    private fun appendDownloadDisposition(url: String, filename: String): String {
-        val sep = if (url.contains("?")) "&" else "?"
-        val encodedName = java.net.URLEncoder.encode(filename, Charsets.UTF_8).replace("+", "%20")
-        return "$url${sep}disposition=attachment&filename=$encodedName"
+    private fun buildBundleUrl(orderId: UUID, shareToken: String): String {
+        val base = publicProperties.apiBaseUrl.trimEnd('/')
+        val token = URLEncoder.encode(shareToken, StandardCharsets.UTF_8)
+        return "$base/orders/$orderId/download-bundle?token=$token"
     }
 
     private fun escapeHtml(s: String): String = s
@@ -237,14 +214,9 @@ class OrderReceiptEmailService(
         .replace(">", "&gt;")
         .replace("\"", "&quot;")
 
-    // Presigned URLs already URL-encoded by S3/storage; only `&` needs to
-    // be `&amp;` to be valid inside an href attribute in HTML email.
+    // Bundle URL is unencoded; only `&` needs to become `&amp;` to be valid
+    // inside an href attribute in HTML email.
     private fun escapeUrl(s: String): String = s.replace("&", "&amp;")
-
-    private data class ReceiptDownloadLink(
-        val bib: String?,
-        val url: String,
-    )
 
     private companion object {
         val DISPLAY_ZONE: ZoneId = ZoneId.of("Asia/Manila")
