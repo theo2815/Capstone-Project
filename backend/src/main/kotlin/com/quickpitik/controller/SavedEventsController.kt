@@ -3,7 +3,7 @@ package com.quickpitik.controller
 import com.quickpitik.dto.cart.MergeSavedEventsRequest
 import com.quickpitik.dto.cart.RemovedResponse
 import com.quickpitik.dto.cart.SaveEventRequest
-import com.quickpitik.dto.cart.SaveEventResponse
+import com.quickpitik.dto.cart.SavedEventSummaryDto
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.cart.SavedEventsService
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -22,15 +22,15 @@ class SavedEventsController(
     private val savedEventsService: SavedEventsService,
 ) {
     @GetMapping
-    fun list(@AuthenticationPrincipal principal: AuthPrincipal): List<UUID> =
+    fun list(@AuthenticationPrincipal principal: AuthPrincipal): List<SavedEventSummaryDto> =
         savedEventsService.list(principal.userId)
 
     @PostMapping
     fun save(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @RequestBody body: SaveEventRequest,
-    ): SaveEventResponse =
-        SaveEventResponse(savedAt = savedEventsService.save(principal.userId, body.eventId))
+    ): SavedEventSummaryDto =
+        savedEventsService.save(principal.userId, body.eventId)
 
     @DeleteMapping("/{eventId}")
     fun unsave(
@@ -43,6 +43,6 @@ class SavedEventsController(
     fun merge(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @RequestBody body: MergeSavedEventsRequest,
-    ): List<UUID> =
+    ): List<SavedEventSummaryDto> =
         savedEventsService.merge(principal.userId, body.eventIds)
 }

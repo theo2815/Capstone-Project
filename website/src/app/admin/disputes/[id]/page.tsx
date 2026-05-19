@@ -177,7 +177,10 @@ export default function AdminDisputeDetailPage() {
                 resolvedAt={dispute.resolvedAt}
               />
             )}
-            <AdminDisputeActivityList disputeId={dispute.id} />
+            <AdminDisputeActivityList
+              disputeId={dispute.id}
+              activity={dispute.activity}
+            />
           </Slab>
         </div>
 

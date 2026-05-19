@@ -13,6 +13,7 @@ import {
   SelfieSearchPanel,
   type SearchPanelMode,
 } from "./bib-search-panels";
+import type { EventPhotosResult } from "@/lib/api-photos";
 
 interface FindPhotosModalProps {
   /** Event slug — passed to the selfie panel for the search-by-face POST. */
@@ -25,9 +26,11 @@ interface FindPhotosModalProps {
   eventPhotoCount: number;
   onClose: () => void;
   onSubmitBib: (b: string) => void;
-  /** Fired after a successful face match. Defaults to closing the modal so
-   *  callers without face-mode UI (e.g. /[handle]/events/[slug]) just dismiss. */
-  onSearchByFaceSuccess?: () => void;
+  /** Fired after a successful face match. Receives the EventPhotosResult so
+   *  the caller can render photos directly without re-running the search.
+   *  Callers without face-mode UI (e.g. /[handle]/events/[slug]) may omit
+   *  it; the modal still closes on success. */
+  onSearchByFaceSuccess?: (result: EventPhotosResult) => void;
 }
 
 // Portal-mounted "Find your photos" modal. Reused by `event-cockpit` (event-wide
@@ -182,8 +185,8 @@ export function FindPhotosModal({
             <SelfieSearchPanel
               eventSlug={eventSlug}
               onSwitchToBib={() => setPanelMode("bib")}
-              onSearchSuccess={() => {
-                if (onSearchByFaceSuccess) onSearchByFaceSuccess();
+              onSearchSuccess={(result) => {
+                if (onSearchByFaceSuccess) onSearchByFaceSuccess(result);
                 onClose();
               }}
             />

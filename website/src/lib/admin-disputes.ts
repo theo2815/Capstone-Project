@@ -25,11 +25,32 @@ export interface DisputePhotoSnapshot {
   thumbnailUrl?: string;
 }
 
+// Mirrors BE DisputeActivityEntry. One row per admin_decision_log entry
+// targeting this dispute. resolution + refundAmount are flattened from the
+// BE meta JSONB (only present on decision="resolved" entries).
+// `decision` matches the union in store/admin-dispute-store.ts so the local
+// optimistic log and the BE-persisted activity render through the same
+// label table.
+export interface DisputeActivityEntry {
+  id: string;
+  decidedAt: string;
+  decision: "resolved" | "denied" | "escalated";
+  resolution: DisputeResolution | null;
+  refundAmount: number | null;
+  reason: string | null;
+}
+
 export interface Dispute {
   id: string;
   orderId: string;
   photoId: string;
   eventId: string;
+  // Hydrated from BE — the actual event title. Null for ghost rows where
+  // neither order nor photo can resolve the event (rare). Optional so
+  // local optimistic mints (`useAdminDisputeStore.submitDispute`) don't
+  // need to fabricate it. Always prefer this over a local-catalog lookup,
+  // which is empty post-Phase B.
+  eventName?: string | null;
   runnerHandle: string;
   photographerHandle: string;
   reason: DisputeReason;
@@ -41,6 +62,10 @@ export interface Dispute {
   resolution: DisputeResolution | null;
   orderSnapshot: DisputeOrderSnapshot;
   photoSnapshot: DisputePhotoSnapshot;
+  // Server-side audit trail — every admin action ever taken on this
+  // dispute, newest first. Persists across sessions (unlike the
+  // session-only optimistic log in useAdminDisputeStore.log).
+  activity?: DisputeActivityEntry[];
 }
 
 export const DISPUTE_REASON_LABEL: Record<DisputeReason, string> = {

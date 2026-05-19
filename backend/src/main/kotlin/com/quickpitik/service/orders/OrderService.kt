@@ -15,6 +15,7 @@ import com.quickpitik.dto.orders.OrderResponse
 import com.quickpitik.dto.orders.OrderResponseItem
 import com.quickpitik.dto.orders.OrderStatusDto
 import com.quickpitik.dto.orders.PaymongoBilling
+import com.quickpitik.dto.orders.RunnerDisputeDto
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionAttributes
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionRequest
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionRequestEnvelope
@@ -35,7 +36,9 @@ import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.CartItemRepository
+import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
@@ -44,6 +47,7 @@ import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.earnings.TransactionMintingService
+import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
@@ -73,6 +77,8 @@ class OrderService(
     private val transactionMintingService: TransactionMintingService,
     private val paymongoClient: PaymongoClient,
     private val paymongoProperties: PaymongoProperties,
+    private val disputeRepository: DisputeRepository,
+    private val adminDecisionLogRepository: AdminDecisionLogRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -450,6 +456,7 @@ class OrderService(
             .groupBy { it.id.orderId }
         val events = eventRepository.findAllById(orders.map { it.eventId }.toSet())
             .associateBy { it.id }
+        val disputesByOrder = hydrateDisputesByOrderId(orderIds)
         return orders.map { order ->
             val items = itemsByOrder[order.id].orEmpty()
             val event = events[order.eventId]
@@ -462,9 +469,55 @@ class OrderService(
                 paidAt = order.paidAt,
                 eventName = event?.name,
                 eventSlug = event?.slug,
+                eventDate = event?.date,
+                eventState = event?.let { EventDtoMapper.deriveAdminEventState(it) },
                 status = order.status,
+                disputes = disputesByOrder[order.id].orEmpty(),
             )
         }
+    }
+
+    /**
+     * Batch-hydrate disputes + their admin resolution notes for a page of
+     * orders. Two round-trips total regardless of N:
+     *   1. SELECT * FROM disputes WHERE order_id IN (...)
+     *   2. SELECT * FROM admin_decision_log
+     *      WHERE target_dispute_id IN (...) ORDER BY decided_at DESC
+     *
+     * The decision-log query is ordered DESC and grouped by targetDisputeId
+     * in memory — the first row per disputeId is the most-recent admin
+     * action (resolved / denied / escalated), and its `reason` becomes the
+     * runner-visible resolution note.
+     */
+    private fun hydrateDisputesByOrderId(orderIds: Collection<UUID>): Map<UUID, List<RunnerDisputeDto>> {
+        if (orderIds.isEmpty()) return emptyMap()
+        val disputes = disputeRepository.findByOrderIdIn(orderIds)
+        if (disputes.isEmpty()) return emptyMap()
+
+        val disputeIds = disputes.map { it.id }
+        val latestNoteByDisputeId: Map<UUID, String?> =
+            adminDecisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(disputeIds)
+                .groupBy { it.targetDisputeId }
+                .mapNotNull { (k, v) -> if (k == null) null else k to v.first().reason }
+                .toMap()
+
+        return disputes
+            .map { d ->
+                d.orderId to RunnerDisputeDto(
+                    id = d.id,
+                    photoId = d.photoId,
+                    reason = d.reasonWire,
+                    note = d.note,
+                    status = d.statusWire,
+                    resolution = d.resolutionWire,
+                    refundAmount = d.refundAmountPhp,
+                    resolutionNote = latestNoteByDisputeId[d.id],
+                    openedAt = d.openedAt,
+                    resolvedAt = d.resolvedAt,
+                    withdrawnAt = d.withdrawnAt,
+                )
+            }
+            .groupBy({ it.first }, { it.second })
     }
 
     private fun hydrateDetail(order: Order): OrderDetailDto {
@@ -503,6 +556,7 @@ class OrderService(
             downloadBundleUrl = null,
             recipientEmail = order.recipientEmail,
             shareToken = order.shareToken,
+            disputes = hydrateDisputesByOrderId(listOf(order.id))[order.id].orEmpty(),
         )
     }
 

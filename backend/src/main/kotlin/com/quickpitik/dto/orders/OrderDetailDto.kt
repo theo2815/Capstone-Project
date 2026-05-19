@@ -27,6 +27,10 @@ data class OrderDetailDto(
     // bundle-download endpoint (top-level navigations can't carry the JWT).
     // Null only on legacy rows created before V18 backfilled them.
     val shareToken: String? = null,
+    // Refund disputes filed against this order. Surfaces status, admin's
+    // resolution note, and timestamps so /orders can render the chip +
+    // timeline + cancel button off a single detail fetch.
+    val disputes: List<RunnerDisputeDto> = emptyList(),
 )
 
 data class OrderPhotoDetailDto(

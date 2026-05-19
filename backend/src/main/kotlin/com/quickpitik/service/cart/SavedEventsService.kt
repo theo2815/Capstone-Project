@@ -1,11 +1,14 @@
 package com.quickpitik.service.cart
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.dto.cart.SavedEventSummaryDto
+import com.quickpitik.entity.Event
 import com.quickpitik.entity.SavedEvent
 import com.quickpitik.entity.SavedEventId
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.SavedEventRepository
+import com.quickpitik.service.events.EventDtoMapper
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.OffsetDateTime
@@ -16,25 +19,35 @@ import java.util.UUID
 class SavedEventsService(
     private val savedEventRepository: SavedEventRepository,
     private val eventRepository: EventRepository,
+    private val eventDtoMapper: EventDtoMapper,
 ) {
     @Transactional(readOnly = true)
-    fun list(userId: UUID): List<UUID> = savedEventRepository.findEventIdsByUserId(userId)
-
-    fun save(userId: UUID, eventId: UUID): OffsetDateTime {
-        if (!eventRepository.existsById(eventId)) {
-            throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+    fun list(userId: UUID): List<SavedEventSummaryDto> {
+        val saves = savedEventRepository.findByUserIdOrderedBySavedAtDesc(userId)
+        if (saves.isEmpty()) return emptyList()
+        val events = eventRepository
+            .findAllById(saves.map { it.id.eventId })
+            .filter { it.deletedAt == null }
+            .associateBy { it.id }
+        return saves.mapNotNull { save ->
+            val event = events[save.id.eventId] ?: return@mapNotNull null
+            toSummary(event, save.savedAt)
         }
+    }
+
+    fun save(userId: UUID, eventId: UUID): SavedEventSummaryDto {
+        val event = eventRepository.findById(eventId).orElse(null)
+            ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         val id = SavedEventId(userId = userId, eventId = eventId)
         val existing = savedEventRepository.findById(id).orElse(null)
-        if (existing != null) return existing.savedAt
-        val saved = savedEventRepository.save(SavedEvent(id))
-        return saved.savedAt
+        val savedAt = existing?.savedAt ?: savedEventRepository.save(SavedEvent(id)).savedAt
+        return toSummary(event, savedAt)
     }
 
     fun unsave(userId: UUID, eventId: UUID): Boolean =
         savedEventRepository.deleteByUserIdAndEventId(userId, eventId) > 0
 
-    fun merge(userId: UUID, incoming: Collection<UUID>): List<UUID> {
+    fun merge(userId: UUID, incoming: Collection<UUID>): List<SavedEventSummaryDto> {
         val existing = savedEventRepository.findEventIdsByUserId(userId).toSet()
         val newIds = incoming.toSet() - existing
         if (newIds.isNotEmpty()) {
@@ -43,6 +56,18 @@ class SavedEventsService(
                 savedEventRepository.save(SavedEvent(SavedEventId(userId, eventId)))
             }
         }
-        return savedEventRepository.findEventIdsByUserId(userId)
+        return list(userId)
     }
+
+    private fun toSummary(event: Event, savedAt: OffsetDateTime): SavedEventSummaryDto =
+        SavedEventSummaryDto(
+            id = event.id,
+            slug = event.slug,
+            name = event.name,
+            date = event.date,
+            state = EventDtoMapper.deriveAdminEventState(event),
+            bannerUrl = eventDtoMapper.resolveBannerUrl(event),
+            location = event.location,
+            savedAt = savedAt,
+        )
 }

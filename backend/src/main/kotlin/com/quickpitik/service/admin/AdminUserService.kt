@@ -22,6 +22,8 @@ import com.quickpitik.entity.PhotographerMessage
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
+import com.quickpitik.entity.RunnerMessage
+import com.quickpitik.entity.RunnerMessageKind
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.NotFoundException
@@ -33,6 +35,7 @@ import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.profile.UserDtoMapper
 import com.quickpitik.service.reference.RegionsService
+import com.quickpitik.service.runner.RunnerMessagesService
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -52,6 +55,7 @@ class AdminUserService(
     private val storageService: com.quickpitik.service.storage.StorageService,
     private val storageProperties: StorageProperties,
     private val userDtoMapper: UserDtoMapper,
+    private val runnerMessagesService: RunnerMessagesService,
 ) {
 
     @Transactional(readOnly = true)
@@ -283,6 +287,14 @@ class AdminUserService(
                 sourceAdminId = adminId,
                 sourceDecisionId = decision.id,
             )
+        } else if (user.role == Role.RUNNER) {
+            runnerMessagesService.pushMessage(
+                runnerId = userId,
+                kind = RunnerMessageKind.ACCOUNT_SUSPENDED,
+                body = "Your account has been suspended. Reason: $reason. Contact support to appeal.",
+                sourceAdminId = adminId,
+                sourceDecisionId = decision.id,
+            )
         }
         return hydrateRow(user, settings)
     }
@@ -312,6 +324,14 @@ class AdminUserService(
                 sourceAdminId = adminId,
                 sourceDecisionId = decision.id,
             )
+        } else if (user.role == Role.RUNNER) {
+            runnerMessagesService.pushMessage(
+                runnerId = userId,
+                kind = RunnerMessageKind.ACCOUNT_UNSUSPENDED,
+                body = "Your account has been reinstated.",
+                sourceAdminId = adminId,
+                sourceDecisionId = decision.id,
+            )
         }
         return hydrateRow(user, settings)
     }
@@ -323,12 +343,12 @@ class AdminUserService(
         body: String,
     ): PhotographerMessageDto {
         val (user, _) = loadUserAndSettings(userId)
-        // Free-form admin DM is photographer-only — runners don't have a
-        // dashboard inbox surface to receive it.
-        if (user.role != Role.PHOTOGRAPHER) {
+        // Free-form admin DM lands in the role-appropriate inbox. ADMIN
+        // accounts can't receive messages (they're the ones sending).
+        if (user.role == Role.ADMIN) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
-                message = "Messages can only be sent to photographers",
+                message = "Messages can only be sent to photographers or runners",
                 field = "userId",
             )
         }
@@ -340,23 +360,52 @@ class AdminUserService(
             decision = "messaged",
             reason = trimmedSubject,
         )
-        val message: PhotographerMessage = adminDecisionLogService.pushMessage(
-            photographerId = userId,
-            kind = PhotographerMessageKind.ADMIN_MESSAGE,
-            title = trimmedSubject,
-            body = trimmedBody,
-            sourceAdminId = adminId,
-            sourceDecisionId = decision.id,
-        )
-        return PhotographerMessageDto(
-            id = message.id,
-            kind = message.kindWire,
-            title = message.title,
-            body = message.body,
-            sourceDecisionId = message.sourceDecisionId,
-            createdAt = message.createdAt,
-            readAt = message.readAt,
-        )
+
+        // PhotographerMessageDto is the wire shape for both inboxes — the
+        // fields (id / kind / title / body / sourceDecisionId / createdAt /
+        // readAt) map 1:1 between RunnerMessage and PhotographerMessage.
+        // The admin UI only consumes id + createdAt for optimistic state.
+        return when (user.role) {
+            Role.PHOTOGRAPHER -> {
+                val message: PhotographerMessage = adminDecisionLogService.pushMessage(
+                    photographerId = userId,
+                    kind = PhotographerMessageKind.ADMIN_MESSAGE,
+                    title = trimmedSubject,
+                    body = trimmedBody,
+                    sourceAdminId = adminId,
+                    sourceDecisionId = decision.id,
+                )
+                PhotographerMessageDto(
+                    id = message.id,
+                    kind = message.kindWire,
+                    title = message.title,
+                    body = message.body,
+                    sourceDecisionId = message.sourceDecisionId,
+                    createdAt = message.createdAt,
+                    readAt = message.readAt,
+                )
+            }
+            Role.RUNNER -> {
+                val message: RunnerMessage = runnerMessagesService.pushMessage(
+                    runnerId = userId,
+                    kind = RunnerMessageKind.ADMIN_MESSAGE,
+                    title = trimmedSubject,
+                    body = trimmedBody,
+                    sourceAdminId = adminId,
+                    sourceDecisionId = decision.id,
+                )
+                PhotographerMessageDto(
+                    id = message.id,
+                    kind = message.kindWire,
+                    title = message.title,
+                    body = message.body,
+                    sourceDecisionId = message.sourceDecisionId,
+                    createdAt = message.createdAt,
+                    readAt = message.readAt,
+                )
+            }
+            else -> error("unreachable — Admin already blocked above")
+        }
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────

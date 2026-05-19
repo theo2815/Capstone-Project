@@ -90,6 +90,15 @@ export function EventTile(props: EventTileProps) {
         {isBrowse && (
           <SaveButton
             eventId={event.id}
+            event={{
+              id: event.id,
+              slug: event.slug,
+              name: event.name,
+              date: event.date,
+              state: event.state,
+              bannerUrl: event.bannerUrl ?? null,
+              location: event.location,
+            }}
             variant="card"
             disabled={(props as EventTileBrowseProps).saveDisabled}
           />

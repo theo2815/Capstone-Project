@@ -95,6 +95,22 @@ interface AdminDecisionLogRepository : JpaRepository<AdminDecisionLog, UUID> {
         @Param("idempotencyKey") idempotencyKey: String,
     ): UUID?
 
+    // Runner-side: pull every decision_log row for the given dispute IDs in
+    // DESC order, so the service layer can group-by targetDisputeId and pick
+    // the most-recent admin reason as the resolution-note surfaced to runners
+    // on /me/orders. Ordering matches findForUser so the truncated head is
+    // the latest admin action.
+    @Query(
+        """
+        SELECT a FROM AdminDecisionLog a
+        WHERE a.targetDisputeId IN :disputeIds
+        ORDER BY a.decidedAt DESC, a.id ASC
+        """,
+    )
+    fun findByTargetDisputeIdInOrderByDecidedAtDesc(
+        @Param("disputeIds") disputeIds: Collection<UUID>,
+    ): List<AdminDecisionLog>
+
     // Per-row dedup gate (C-3): inside a bulk replay, skip the
     // logPayoutDecision + pushMessage writes when a row already exists for
     // (admin_id, idempotency_key, target_payout_id). Backed by the partial

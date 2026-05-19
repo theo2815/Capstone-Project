@@ -3,7 +3,21 @@ package com.quickpitik.dto.admin
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 import java.math.BigDecimal
+import java.time.OffsetDateTime
 import java.util.UUID
+
+// One entry per admin action on this dispute. Sourced from admin_decision_log
+// rows where target_dispute_id = X. `resolution` + `refundAmount` are
+// flattened out of the `meta` JSONB (decision="resolved" only) so the FE
+// can render them without parsing JSON.
+data class DisputeActivityEntry(
+    val id: UUID,
+    val decidedAt: OffsetDateTime,
+    val decision: String,
+    val resolution: String?,
+    val refundAmount: BigDecimal?,
+    val reason: String?,
+)
 
 // Mirrors website/src/lib/admin-disputes.ts Dispute. orderSnapshot +
 // photoSnapshot are computed at read time from the live order + photo rows
@@ -27,6 +41,7 @@ data class AdminDisputeDto(
     val orderId: UUID,
     val photoId: UUID,
     val eventId: UUID,
+    val eventName: String?,
     val runnerHandle: String,
     val photographerHandle: String,
     val reason: String,
@@ -38,6 +53,11 @@ data class AdminDisputeDto(
     val resolution: String?,
     val orderSnapshot: DisputeOrderSnapshotDto,
     val photoSnapshot: DisputePhotoSnapshotDto,
+    // Every admin action on this dispute, newest first. Sourced from
+    // admin_decision_log so past-session decisions persist. Empty for
+    // open disputes (no admin action yet) or disputes closed before the
+    // decision log went live.
+    val activity: List<DisputeActivityEntry> = emptyList(),
 )
 
 // POST /admin/disputes/{id}/resolve — body { resolution, refundAmount?, reason }.

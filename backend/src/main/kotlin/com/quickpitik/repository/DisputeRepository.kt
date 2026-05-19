@@ -11,6 +11,10 @@ import java.util.UUID
 interface DisputeRepository : JpaRepository<Dispute, UUID> {
     fun findByOrderId(orderId: UUID): List<Dispute>
 
+    // Batch fetch for OrderService.hydrateList — one round-trip for the whole
+    // page of orders instead of N. Service layer groups by orderId.
+    fun findByOrderIdIn(orderIds: Collection<UUID>): List<Dispute>
+
     @Query(
         """
         SELECT d FROM Dispute d

@@ -23,6 +23,15 @@ class NotificationBroadcaster(
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    fun onRunnerMessage(event: RunnerMessageCreatedEvent) {
+        // Same per-user registry as photographers — userIds are globally
+        // unique across roles so there's no key collision. The runner
+        // client connects to /ws/me/runner/notifications instead so the
+        // FE bell knows which inbox to invalidate.
+        meRegistry.broadcast(event.runnerId, event.payload)
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     fun onAdminInbox(event: AdminInboxEvent) {
         adminRegistry.broadcast(event.payload)
     }

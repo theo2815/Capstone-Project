@@ -1,8 +1,39 @@
 import { api } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/constants";
+import type {
+  DisputeReason,
+  DisputeResolution,
+} from "@/lib/admin-disputes";
 import type { MockOrder } from "@/store/orders-store";
 import type { PaginatedResponse } from "@/types/api";
 import type { Order, OrderPhotoDetail, OrderStatus } from "@/types/order";
+
+// Embedded on every MockOrder / OrderDetail payload from /me/orders. Carries
+// what the /orders surface needs to render the status chip, timeline, cancel
+// button, and admin's resolution note — without a separate per-order fetch.
+// Mirrors the BE RunnerDisputeDto.
+export type RunnerDisputeStatus =
+  | "open"
+  | "resolved"
+  | "denied"
+  | "escalated"
+  | "withdrawn";
+
+export interface RunnerDispute {
+  id: string;
+  photoId: string;
+  reason: DisputeReason;
+  note: string;
+  status: RunnerDisputeStatus;
+  resolution: DisputeResolution | null;
+  refundAmount: number | null;
+  // Most-recent admin_decision_log.reason for this dispute (resolve / deny /
+  // escalate). Null when admin hasn't engaged yet.
+  resolutionNote: string | null;
+  openedAt: string;
+  resolvedAt: string | null;
+  withdrawnAt: string | null;
+}
 
 // Orders backend contract (Q-008 idempotency, Q-005 photo URLs RESOLVED 2026-05-09).
 //   GET  /api/v1/me/orders?offset=&limit=    → PaginatedResponse<MockOrder>
@@ -76,6 +107,18 @@ export async function submitOrderRefund(
       reason: args.reason,
       note: args.note,
     },
+  );
+}
+
+// Runner cancels their own open refund request. BE returns the updated
+// RunnerDispute (status flipped to "withdrawn", withdrawnAt stamped). Caller
+// should invalidate the orders cache so the receipt chip + photo lock clear.
+export async function withdrawDispute(
+  disputeId: string,
+): Promise<RunnerDispute> {
+  return api.post<RunnerDispute>(
+    `/me/disputes/${encodeURIComponent(disputeId)}/withdraw`,
+    {},
   );
 }
 
