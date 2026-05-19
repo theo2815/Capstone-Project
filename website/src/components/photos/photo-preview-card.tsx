@@ -46,7 +46,19 @@ interface OwnedPhotoPreviewProps extends BasePhotoPreviewProps {
   onDownload: () => void;
 }
 
-type PhotoPreviewCardProps = BrowsePhotoPreviewProps | OwnedPhotoPreviewProps;
+// "review" — read-only mode for admin disputes (and any future internal
+// review surface). No cart, no buy, no download CTA: the admin is judging
+// the runner's complaint, not transacting. Footer carries a short kicker
+// instead of a button bar.
+interface ReviewPhotoPreviewProps extends BasePhotoPreviewProps {
+  mode: "review";
+  footerLabel?: string;
+}
+
+type PhotoPreviewCardProps =
+  | BrowsePhotoPreviewProps
+  | OwnedPhotoPreviewProps
+  | ReviewPhotoPreviewProps;
 
 export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
   const { photo, eventName, index, total, onClose, onPrev, onNext } = props;
@@ -223,7 +235,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             </div>
           )}
 
-          {mode === "owned" && !hasImage && (
+          {(mode === "owned" || mode === "review") && !hasImage && (
             <div
               aria-hidden="true"
               className="absolute inset-0 flex items-center justify-center pointer-events-none"
@@ -254,7 +266,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             />
           )}
 
-          {props.mode !== "owned" && props.inCart && (
+          {props.mode !== "owned" && props.mode !== "review" && props.inCart && (
             <div className="absolute top-4 right-4 inline-flex items-center gap-2 bg-fresh text-bone rounded-full px-3 py-1 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] z-10">
               <span
                 className="size-1.5 rounded-full bg-bone"
@@ -281,6 +293,10 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                 <span aria-hidden="true">↓</span>
               </button>
             </>
+          ) : props.mode === "review" ? (
+            <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft text-center">
+              {props.footerLabel ?? "Admin · Review only"}
+            </p>
           ) : (
             <>
               {!props.inCart && (

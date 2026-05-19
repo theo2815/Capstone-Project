@@ -9,11 +9,31 @@ import { getEventById } from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { Tooltip } from "@/components/ui/tooltip";
+import type { SavedEventSummary } from "@/lib/api-saved-events";
 
 type SaveButtonVariant = "card" | "inline";
 
+// Optimistic summary the SaveButton needs to push into the store on click so
+// /profile race log gets a row immediately — before the POST round-trip. Same
+// shape as SavedEventSummary minus savedAt (the store stamps that). All
+// SaveButton call sites have these fields on the event object they already
+// render, so threading is cheap.
+export type SaveButtonEvent = {
+  id: string;
+  slug: string;
+  name: string;
+  date: string;
+  state: SavedEventSummary["state"];
+  bannerUrl?: string | null;
+  location: string;
+};
+
 interface SaveButtonProps {
   eventId: string;
+  /** Optional event summary used for the optimistic store insert. When
+   *  omitted the store still toggles by ID, but the race-log row won't
+   *  render until the BE POST response arrives. */
+  event?: SaveButtonEvent;
   variant?: SaveButtonVariant;
   className?: string;
   /** When true, the button keeps its default unsaved visual but does not
@@ -25,6 +45,7 @@ interface SaveButtonProps {
 
 export function SaveButton({
   eventId,
+  event,
   variant = "card",
   className,
   disabled = false,
@@ -61,9 +82,19 @@ export function SaveButton({
     }
 
     const willBeSaved = !isSaved;
-    toggle(eventId);
+    const optimistic = event && {
+      id: event.id,
+      slug: event.slug,
+      name: event.name,
+      date: event.date,
+      state: event.state,
+      bannerUrl: event.bannerUrl ?? null,
+      location: event.location,
+      savedAt: new Date().toISOString(),
+    };
+    toggle(eventId, optimistic);
 
-    const eventName = getEventById(eventId)?.name ?? "this event";
+    const eventName = event?.name ?? getEventById(eventId)?.name ?? "this event";
     showToast({
       kind: "success",
       message: willBeSaved
@@ -76,7 +107,7 @@ export function SaveButton({
         : undefined,
       action: {
         label: "Undo",
-        onClick: () => toggle(eventId),
+        onClick: () => toggle(eventId, optimistic),
       },
     });
   }

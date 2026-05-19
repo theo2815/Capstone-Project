@@ -4,17 +4,22 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.orders.RefundDisputeDto
 import com.quickpitik.dto.orders.RefundRequest
 import com.quickpitik.dto.orders.RefundResponse
+import com.quickpitik.dto.orders.RunnerDisputeDto
 import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeReason
+import com.quickpitik.entity.DisputeStatus
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.websocket.AdminInboxEvent
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.OffsetDateTime
@@ -26,6 +31,7 @@ class RefundService(
     private val orderRepository: OrderRepository,
     private val orderItemRepository: OrderItemRepository,
     private val disputeRepository: DisputeRepository,
+    private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
     /**
@@ -127,6 +133,78 @@ class RefundService(
                     openedAt = it.openedAt,
                 )
             },
+        )
+    }
+
+    /**
+     * POST /api/v1/me/disputes/{id}/withdraw.
+     *
+     * Runner cancels their own refund request before admin engages with it.
+     *
+     * Policy:
+     *   - Owner-only: dispute.runnerId == userId (anti-IDOR: 404 on mismatch).
+     *   - OPEN-only: once ESCALATED admin has already invested review time,
+     *     and RESOLVED/DENIED outcomes belong to admin — withdrawing those
+     *     would lose context. Returns 409 INVALID_STATE_TRANSITION otherwise.
+     *
+     * Side effects:
+     *   - Sets status = WITHDRAWN with withdrawnAt = now (frees the partial
+     *     unique index slot — runner can re-submit on the same photo later).
+     *   - Publishes AFTER_COMMIT AdminInboxEvent so the admin queue refreshes
+     *     in real time and a withdrawn-while-you-were-watching dispute
+     *     disappears from the open filter.
+     */
+    fun withdraw(userId: UUID, disputeId: UUID): RunnerDisputeDto {
+        val dispute = disputeRepository.findById(disputeId).orElseThrow {
+            NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+        }
+        if (dispute.runnerId != userId) {
+            // Anti-IDOR — never reveal that the dispute exists for another user.
+            throw NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+        }
+        if (dispute.status != DisputeStatus.OPEN) {
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "Only open refund requests can be cancelled (current: ${dispute.status.wire})",
+            )
+        }
+
+        val now = OffsetDateTime.now()
+        dispute.status = DisputeStatus.WITHDRAWN
+        dispute.withdrawnAt = now
+        disputeRepository.save(dispute)
+
+        // Mirror submit() — let admin queues update in real time once the TX
+        // commits. Rollback discards both the row update AND the push.
+        eventPublisher.publishEvent(
+            AdminInboxEvent(
+                payload = mapOf(
+                    "type" to "dispute_withdrawn",
+                    "entityId" to dispute.id.toString(),
+                    "actorId" to userId.toString(),
+                    "occurredAt" to now.toString(),
+                ),
+            ),
+        )
+
+        val latestNote = adminDecisionLogRepository
+            .findByTargetDisputeIdInOrderByDecidedAtDesc(listOf(dispute.id))
+            .firstOrNull()
+            ?.reason
+
+        return RunnerDisputeDto(
+            id = dispute.id,
+            photoId = dispute.photoId,
+            reason = dispute.reasonWire,
+            note = dispute.note,
+            status = dispute.statusWire,
+            resolution = dispute.resolutionWire,
+            refundAmount = dispute.refundAmountPhp,
+            resolutionNote = latestNote,
+            openedAt = dispute.openedAt,
+            resolvedAt = dispute.resolvedAt,
+            withdrawnAt = dispute.withdrawnAt,
         )
     }
 }

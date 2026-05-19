@@ -10,6 +10,7 @@ import com.quickpitik.dto.orders.OrderListItemDto
 import com.quickpitik.dto.orders.OrderResponse
 import com.quickpitik.dto.orders.RefundRequest
 import com.quickpitik.dto.orders.RefundResponse
+import com.quickpitik.dto.orders.RunnerDisputeDto
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.orders.OrderService
@@ -77,4 +78,13 @@ class OrderController(
         @Valid @RequestBody body: RefundRequest,
     ): RefundResponse =
         refundService.submit(userId = principal.userId, orderId = id, request = body)
+
+    // Runner cancels their own open refund request. State + ownership
+    // checks live in RefundService.withdraw; controller is a thin pass-through.
+    @PostMapping("/me/disputes/{id}/withdraw")
+    fun withdrawDispute(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable id: UUID,
+    ): RunnerDisputeDto =
+        refundService.withdraw(userId = principal.userId, disputeId = id)
 }

@@ -2,6 +2,7 @@ package com.quickpitik.dto.orders
 
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotEmpty
+import java.math.BigDecimal
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -27,4 +28,23 @@ data class RefundDisputeDto(
     val photoId: UUID,
     val status: String,
     val openedAt: OffsetDateTime,
+)
+
+// Embedded in OrderListItemDto + OrderDetailDto. Carries everything the
+// runner-side /orders surface needs to render status chips, the timeline,
+// the admin's resolution note, and the cancel button — without a separate
+// round-trip per order. resolutionNote is the most-recent
+// admin_decision_log.reason for this dispute (resolve / deny / escalate).
+data class RunnerDisputeDto(
+    val id: UUID,
+    val photoId: UUID,
+    val reason: String,
+    val note: String,
+    val status: String,
+    val resolution: String?,
+    val refundAmount: BigDecimal?,
+    val resolutionNote: String?,
+    val openedAt: OffsetDateTime,
+    val resolvedAt: OffsetDateTime?,
+    val withdrawnAt: OffsetDateTime?,
 )

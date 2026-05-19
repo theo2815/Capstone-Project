@@ -82,9 +82,9 @@ export function AuthHydrator() {
     const localIds = useSavedEventsStore.getState().ids;
 
     Promise.all([mergeCart(localItems), mergeSavedEvents(localIds)])
-      .then(([mergedItems, mergedIds]) => {
+      .then(([mergedItems, mergedSummaries]) => {
         useCartStore.getState().setItems(mergedItems);
-        useSavedEventsStore.getState().setIds(mergedIds);
+        useSavedEventsStore.getState().setSummaries(mergedSummaries);
       })
       .catch(() => {
         // Spec rule: do NOT clear local on merge failure. Retry on next load.

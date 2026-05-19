@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
 import { FieldError } from "@/components/ui/field-error";
@@ -10,22 +11,15 @@ import {
   DropdownItem,
 } from "@/components/ui/dropdown";
 import { RefundPolicyContent } from "@/components/orders/refund-policy-content";
-import {
-  getDisputesForOrder,
-  getDisputableePhotoIds,
-} from "@/lib/refund-helpers";
+import { getDisputableePhotoIds } from "@/lib/refund-helpers";
 import {
   DISPUTE_REASON_LABEL,
-  type Dispute,
   type DisputeReason,
 } from "@/lib/admin-disputes";
 import { REFUND_PROCESSING_DAYS } from "@/lib/refund-policy";
-import {
-  useAdminDisputeStore,
-  getEffectiveDisputes,
-} from "@/store/admin-dispute-store";
 import { useToast } from "@/hooks/use-toast";
 import type { MockOrder } from "@/store/orders-store";
+import type { RunnerDispute, RunnerDisputeStatus } from "@/lib/api-orders";
 import { formatLongDate } from "@/lib/format";
 import { formatPrice, cn } from "@/lib/utils";
 import { submitOrderRefund } from "@/lib/api-orders";
@@ -52,8 +46,6 @@ type RefundModalProps =
       onClose: () => void;
       order: MockOrder;
       eventName: string;
-      photographerHandle: string;
-      runnerHandle: string;
     };
 
 export function RefundModal(props: RefundModalProps) {
@@ -90,8 +82,6 @@ interface RequestProps {
   onClose: () => void;
   order: MockOrder;
   eventName: string;
-  photographerHandle: string;
-  runnerHandle: string;
 }
 
 function RefundRequestModal({
@@ -99,25 +89,17 @@ function RefundRequestModal({
   onClose,
   order,
   eventName,
-  photographerHandle,
-  runnerHandle,
 }: RequestProps) {
-  const overrides = useAdminDisputeStore((s) => s.overrides);
-  const submissions = useAdminDisputeStore((s) => s.submissions);
-  const submitDispute = useAdminDisputeStore((s) => s.submitDispute);
+  const queryClient = useQueryClient();
   const { showToast } = useToast();
 
-  const allDisputes = useMemo(
-    () => getEffectiveDisputes(overrides, submissions),
-    [overrides, submissions],
-  );
-  const orderDisputes = useMemo(
-    () => getDisputesForOrder(order.id, allDisputes),
-    [order.id, allDisputes],
+  const orderDisputes = useMemo<RunnerDispute[]>(
+    () => order.disputes ?? [],
+    [order.disputes],
   );
   const disputableIds = useMemo(
-    () => getDisputableePhotoIds(order, allDisputes),
-    [order, allDisputes],
+    () => getDisputableePhotoIds(order),
+    [order],
   );
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -173,8 +155,9 @@ function RefundRequestModal({
 
     try {
       // Server creates the canonical Dispute records + admin queue rows.
-      // FE still pushes locally so the runner sees pending status immediately;
-      // server-side hydration on hard refresh is a Phase F problem (Q-010).
+      // We then invalidate the orders cache so the receipt chip + photo
+      // locks come from the freshly-fetched order.disputes payload — no
+      // local-store mirror to drift out of sync with admin actions.
       await submitOrderRefund({
         orderId: order.id,
         photoIds,
@@ -182,28 +165,8 @@ function RefundRequestModal({
         note: trimmedNote,
       });
 
-      for (const photoId of photoIds) {
-        submitDispute({
-          orderId: order.id,
-          photoId,
-          eventId: order.eventId,
-          runnerHandle,
-          photographerHandle,
-          reason,
-          note: trimmedNote,
-          orderSnapshot: {
-            total: order.total,
-            paymentMethod: order.paymentMethod,
-            paidAt: order.paidAt,
-          },
-          photoSnapshot: {
-            alt: `${eventName} — ${photoId}`,
-            kmMark: null,
-            bib: null,
-            thumbnailUrl: undefined,
-          },
-        });
-      }
+      await queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
+
       const count = photoIds.length;
       showToast({
         kind: "success",
@@ -268,7 +231,10 @@ function RefundRequestModal({
           >
             {order.photoIds.map((id) => {
               const lockedDispute = orderDisputes.find(
-                (d) => d.photoId === id && d.status !== "denied",
+                (d) =>
+                  d.photoId === id &&
+                  d.status !== "denied" &&
+                  d.status !== "withdrawn",
               );
               const isLocked = !!lockedDispute;
               const isChecked = selected.has(id);
@@ -413,7 +379,7 @@ function RefundRequestModal({
   );
 }
 
-function refundChipLabel(status: Dispute["status"]): string {
+function refundChipLabel(status: RunnerDisputeStatus): string {
   switch (status) {
     case "open":
       return "pending";
@@ -423,6 +389,8 @@ function refundChipLabel(status: Dispute["status"]): string {
       return "approved";
     case "denied":
       return "denied";
+    case "withdrawn":
+      return "withdrawn";
     default:
       return "in flight";
   }

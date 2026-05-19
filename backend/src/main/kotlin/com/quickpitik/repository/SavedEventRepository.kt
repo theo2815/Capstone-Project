@@ -14,6 +14,11 @@ interface SavedEventRepository : JpaRepository<SavedEvent, SavedEventId> {
     @Query("SELECT s.id.eventId FROM SavedEvent s WHERE s.id.userId = :userId ORDER BY s.savedAt DESC")
     fun findEventIdsByUserId(@Param("userId") userId: UUID): List<UUID>
 
+    // Returns SavedEvent rows in saved-at-desc order so the service can zip
+    // with Event lookups to build SavedEventSummaryDto without losing ordering.
+    @Query("SELECT s FROM SavedEvent s WHERE s.id.userId = :userId ORDER BY s.savedAt DESC")
+    fun findByUserIdOrderedBySavedAtDesc(@Param("userId") userId: UUID): List<SavedEvent>
+
     @Modifying
     @Transactional
     @Query("DELETE FROM SavedEvent s WHERE s.id.userId = :userId AND s.id.eventId = :eventId")

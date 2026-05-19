@@ -32,6 +32,16 @@ class WebSocketConfig(
             .addInterceptors(meNotificationHandshake)
             .setAllowedOriginPatterns("*")
 
+        // Runner-side inbox shares the same handler + handshake — the
+        // handler is generic (keyed by userId, role-agnostic) and the
+        // separate URL just lets the FE bell pick which channel to listen
+        // on. Both endpoints land in the same MeNotificationSessionRegistry,
+        // so a user with multiple tabs across roles still gets every push.
+        registry
+            .addHandler(meNotificationHandler, "/ws/me/runner/notifications")
+            .addInterceptors(meNotificationHandshake)
+            .setAllowedOriginPatterns("*")
+
         registry
             .addHandler(adminNotificationHandler, "/ws/admin/notifications")
             .addInterceptors(adminNotificationHandshake)

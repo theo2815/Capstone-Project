@@ -7,24 +7,30 @@ import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminDisputeDto
+import com.quickpitik.dto.admin.DisputeActivityEntry
 import com.quickpitik.dto.admin.DisputeOrderSnapshotDto
 import com.quickpitik.dto.admin.DisputePhotoSnapshotDto
 import com.quickpitik.dto.admin.ResolveDisputeRequest
+import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.entity.RunnerMessageKind
 import com.quickpitik.entity.Transaction
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
+import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.service.storage.StorageService
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
@@ -42,6 +48,7 @@ class AdminDisputeService(
     private val orderRepository: OrderRepository,
     private val orderItemRepository: OrderItemRepository,
     private val photoRepository: PhotoRepository,
+    private val eventRepository: EventRepository,
     private val userRepository: UserRepository,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val transactionRepository: TransactionRepository,
@@ -49,6 +56,8 @@ class AdminDisputeService(
     private val storageProperties: StorageProperties,
     private val platformProperties: PlatformProperties,
     private val adminDecisionLogService: AdminDecisionLogService,
+    private val adminDecisionLogRepository: AdminDecisionLogRepository,
+    private val runnerMessagesService: RunnerMessagesService,
 ) {
 
     @Transactional(readOnly = true)
@@ -115,6 +124,13 @@ class AdminDisputeService(
                 sourceDecisionId = decision.id,
             )
         }
+        pushRunnerOutcome(
+            dispute = dispute,
+            kind = RunnerMessageKind.DISPUTE_RESOLVED,
+            body = buildResolvedBody(resolution, refundAmount),
+            sourceAdminId = adminId,
+            sourceDecisionId = decision.id,
+        )
         return hydrateOne(dispute)
     }
 
@@ -151,6 +167,14 @@ class AdminDisputeService(
                 sourceDecisionId = decision.id,
             )
         }
+        pushRunnerOutcome(
+            dispute = dispute,
+            kind = RunnerMessageKind.DISPUTE_DENIED,
+            body = "Your refund request for photo ${shortPhotoId(dispute.photoId)} was declined." +
+                (reason?.takeIf { it.isNotBlank() }?.let { " Reason: $it" } ?: ""),
+            sourceAdminId = adminId,
+            sourceDecisionId = decision.id,
+        )
         return hydrateOne(dispute)
     }
 
@@ -184,10 +208,59 @@ class AdminDisputeService(
                 sourceDecisionId = decision.id,
             )
         }
+        pushRunnerOutcome(
+            dispute = dispute,
+            kind = RunnerMessageKind.DISPUTE_ESCALATED,
+            body = "Your refund request for photo ${shortPhotoId(dispute.photoId)} is being escalated for further review.",
+            sourceAdminId = adminId,
+            sourceDecisionId = decision.id,
+        )
         return hydrateOne(dispute)
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────
+
+    /**
+     * Push the dispute outcome to the runner's inbox. Skipped silently
+     * when `dispute.runnerId` is null — that's a guest order, no runner
+     * account to notify (the runner gets the email receipt at
+     * /orders/return instead).
+     */
+    private fun pushRunnerOutcome(
+        dispute: Dispute,
+        kind: RunnerMessageKind,
+        body: String,
+        sourceAdminId: UUID,
+        sourceDecisionId: UUID,
+    ) {
+        val runnerId = dispute.runnerId ?: return
+        runnerMessagesService.pushMessage(
+            runnerId = runnerId,
+            kind = kind,
+            body = body,
+            sourceAdminId = sourceAdminId,
+            sourceDecisionId = sourceDecisionId,
+            orderId = dispute.orderId,
+        )
+    }
+
+    private fun buildResolvedBody(
+        resolution: DisputeResolution,
+        refundAmount: BigDecimal?,
+    ): String = when (resolution) {
+        DisputeResolution.REFUND_FULL,
+        DisputeResolution.REFUND_PARTIAL,
+        -> {
+            val amount = refundAmount?.toPlainString()?.let { "₱$it refunded" } ?: "Refund processing"
+            "Your refund has been approved — $amount."
+        }
+        DisputeResolution.DENY -> "Your refund request was declined."
+    }
+
+    private fun shortPhotoId(photoId: UUID): String =
+        photoId.toString().take(8).uppercase()
+
+    // ─── Existing helpers ─────────────────────────────────────────────────
     private fun computeRefundAmount(
         dispute: Dispute,
         resolution: DisputeResolution,
@@ -253,10 +326,45 @@ class AdminDisputeService(
 
     private fun hydrateMany(disputes: List<Dispute>): List<AdminDisputeDto> {
         if (disputes.isEmpty()) return emptyList()
-        return disputes.map { hydrateOne(it) }
+        // Batch-fetch activity for the page in one round trip; pass the
+        // pre-grouped map to hydrateOne so the per-row path doesn't re-query.
+        val activityByDispute = loadActivityForDisputes(disputes.map { it.id })
+        return disputes.map { hydrateOne(it, activityByDispute[it.id].orEmpty()) }
     }
 
-    internal fun hydrateOne(dispute: Dispute): AdminDisputeDto {
+    private fun loadActivityForDisputes(
+        disputeIds: Collection<UUID>,
+    ): Map<UUID, List<DisputeActivityEntry>> {
+        if (disputeIds.isEmpty()) return emptyMap()
+        return adminDecisionLogRepository
+            .findByTargetDisputeIdInOrderByDecidedAtDesc(disputeIds)
+            .mapNotNull { row -> row.targetDisputeId?.let { it to toActivityEntry(row) } }
+            .groupBy({ it.first }, { it.second })
+    }
+
+    private fun toActivityEntry(row: AdminDecisionLog): DisputeActivityEntry {
+        // meta JSONB carries resolution-specific fields written by
+        // AdminDisputeService.resolve(). Flatten the two we surface; keep
+        // every other meta key inside the JSONB blob for future use.
+        val meta = row.meta
+        val resolution = (meta?.get("resolution") as? String)?.takeIf { it.isNotBlank() }
+        val refundAmount = (meta?.get("refundAmount") as? String)?.let {
+            runCatching { BigDecimal(it) }.getOrNull()
+        } ?: (meta?.get("refundAmount") as? Number)?.let { BigDecimal(it.toString()) }
+        return DisputeActivityEntry(
+            id = row.id,
+            decidedAt = row.decidedAt,
+            decision = row.decision,
+            resolution = resolution,
+            refundAmount = refundAmount,
+            reason = row.reason,
+        )
+    }
+
+    internal fun hydrateOne(
+        dispute: Dispute,
+        activity: List<DisputeActivityEntry> = loadActivityForDisputes(listOf(dispute.id))[dispute.id].orEmpty(),
+    ): AdminDisputeDto {
         val order = orderRepository.findById(dispute.orderId).orElse(null)
         val photo = photoRepository.findById(dispute.photoId).orElse(null)
 
@@ -270,11 +378,17 @@ class AdminDisputeService(
             photographerSettingsRepository.findById(it).map { s -> s.handle }.orElse(null)
         }.orEmpty()
 
+        val eventId = order?.eventId ?: photo?.eventId ?: dispute.orderId // fallback for ghost rows
+        val eventName = (order?.eventId ?: photo?.eventId)?.let { eid ->
+            eventRepository.findById(eid).map { it.name }.orElse(null)
+        }
+
         return AdminDisputeDto(
             id = dispute.id,
             orderId = dispute.orderId,
             photoId = dispute.photoId,
-            eventId = order?.eventId ?: photo?.eventId ?: dispute.orderId, // fallback for ghost rows
+            eventId = eventId,
+            eventName = eventName,
             runnerHandle = runnerHandle,
             photographerHandle = photographerHandle,
             reason = dispute.reasonWire,
@@ -298,6 +412,7 @@ class AdminDisputeService(
                     storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
                 },
             ),
+            activity = activity,
         )
     }
 

@@ -1,16 +1,15 @@
 "use client";
 
 import {
-  useState,
-  useMemo,
+  useCallback,
   useEffect,
+  useMemo,
+  useState,
   type FormEvent,
 } from "react";
 import Link from "next/link";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
-import { useAuthStore } from "@/store/auth-store";
-import { useUserMediaStore } from "@/store/user-media-store";
 import type { EventDetail } from "@/types/event";
 import { type MockPhoto } from "@/types/photo";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
@@ -29,8 +28,8 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { RefundModal } from "@/components/orders/refund-modal";
 import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
 import { useEventPhotos } from "@/hooks/use-event-photos";
-import { useEventFacePhotos } from "@/hooks/use-event-face-photos";
 import { useEventLivePhotos } from "@/hooks/use-event-live-photos";
+import type { EventPhotosResult } from "@/lib/api-photos";
 import { deriveEventState } from "@/lib/event-catalog";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 
@@ -49,11 +48,6 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const [faceFlag] = useUrlState<string>("face", "");
   const setUrlBatch = useUrlStateBatch();
 
-  const userId = useAuthStore((s) => s.user?.id);
-  const primarySelfie = useUserMediaStore((s) =>
-    s.selfies.find((sf) => sf.isPrimary),
-  );
-
   const isFaceMode = faceFlag === "1";
   const mode: Mode =
     bibFilter || browseFlag === "1" || isFaceMode ? "browse" : "cockpit";
@@ -69,16 +63,26 @@ export function EventCockpit({ event, initialPhotos }: Props) {
     enabled: !isFaceMode,
   });
 
-  // Q-005 + Q-006: face-keyed cache. Active only in face-mode browse.
-  const facePhotos = useEventFacePhotos({
-    slug: event.slug,
-    userId,
-    selfieId: primarySelfie?.id,
-    enabled: isFaceMode,
-  });
+  // 2026-05-19 PM: face search is now one-shot, not cached. The selfie panel
+  // (upload / take / library pick) does the search and hands the result up
+  // through onFaceSearchSuccess. We hold it in local state and render from
+  // it while face mode is active. A direct `?face=1` URL (no prior search)
+  // shows the FaceEmptyState so the runner can open the modal explicitly —
+  // replaces the old "auto-fire face search with primary on URL load"
+  // behavior, matching the redesign where every selfie match is initiated
+  // by an explicit click.
+  const [faceSearchResult, setFaceSearchResult] =
+    useState<EventPhotosResult | null>(null);
+  useEffect(() => {
+    if (!isFaceMode) setFaceSearchResult(null);
+  }, [isFaceMode]);
 
-  const visiblePhotos = isFaceMode ? facePhotos.photos : bibPhotos.photos;
-  const visibleTotal = isFaceMode ? facePhotos.total : bibPhotos.total;
+  const visiblePhotos = isFaceMode
+    ? faceSearchResult?.items ?? []
+    : bibPhotos.photos;
+  const visibleTotal = isFaceMode
+    ? faceSearchResult?.total ?? 0
+    : bibPhotos.total;
 
   const submitBib = (raw: string) => {
     const clean = raw.trim().toUpperCase();
@@ -105,9 +109,13 @@ export function EventCockpit({ event, initialPhotos }: Props) {
     setUrlBatch({ bib: null, browse: null, face: null });
   };
 
-  const handleFaceSearchSuccess = () => {
-    setUrlBatch({ face: "1", browse: "1", bib: null });
-  };
+  const handleFaceSearchSuccess = useCallback(
+    (result: EventPhotosResult) => {
+      setFaceSearchResult(result);
+      setUrlBatch({ face: "1", browse: "1", bib: null });
+    },
+    [setUrlBatch],
+  );
 
   if (mode === "browse") {
     return (
@@ -162,7 +170,7 @@ function CockpitMode({
   panelMode: SearchPanelMode;
   onPanelModeChange: (m: SearchPanelMode) => void;
   onBrowseAll: () => void;
-  onFaceSearchSuccess: () => void;
+  onFaceSearchSuccess: (result: EventPhotosResult) => void;
 }) {
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -186,7 +194,19 @@ function CockpitMode({
             </span>
             <span>Back to events</span>
           </Kicker>
-          <SaveButton eventId={event.id} variant="inline" />
+          <SaveButton
+            eventId={event.id}
+            event={{
+              id: event.id,
+              slug: event.slug,
+              name: event.name,
+              date: event.date,
+              state: deriveEventState(event.date),
+              bannerUrl: event.bannerUrl ?? null,
+              location: event.location,
+            }}
+            variant="inline"
+          />
         </div>
       </div>
 
@@ -373,7 +393,7 @@ function BrowseMode({
   onSubmitBib: (b: string) => void;
   onClearBib: () => void;
   onClearFace: () => void;
-  onFaceSearchSuccess: () => void;
+  onFaceSearchSuccess: (result: EventPhotosResult) => void;
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);

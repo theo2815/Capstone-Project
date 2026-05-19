@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { UserMenu } from "@/components/layout/user-menu";
 import { NotificationBell } from "@/components/layout/notification-bell";
+import { RunnerNotificationBell } from "@/components/layout/runner-notification-bell";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -81,6 +82,7 @@ export function SiteHeader({
           ) : isAuthenticated && user ? (
             <>
               <NotificationBell />
+              <RunnerNotificationBell />
               <UserMenu user={user} />
             </>
           ) : rightLink ? (

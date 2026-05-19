@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { SiteHeader } from "@/components/layout/site-header";
 import {
@@ -11,13 +13,18 @@ import {
 } from "@/components/profile-shell";
 import { useAuth } from "@/hooks/use-auth";
 import { useOrdersList, useOrderDetail } from "@/hooks/use-orders";
-import { buildOrderBundleUrl } from "@/lib/api-orders";
+import {
+  buildOrderBundleUrl,
+  withdrawDispute,
+  type RunnerDispute,
+} from "@/lib/api-orders";
 import {
   appendDownloadDisposition,
   buildPhotoDownloadFilename,
 } from "@/lib/download-helpers";
 import { type MockOrder } from "@/store/orders-store";
 import { useToast } from "@/hooks/use-toast";
+import { useConfirmation } from "@/hooks/use-confirmation";
 import {
   PhotoPreviewCard,
   type PhotoPreviewItem,
@@ -25,10 +32,7 @@ import {
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { RefundModal } from "@/components/orders/refund-modal";
-import {
-  useAdminDisputeStore,
-  getEffectiveDisputes,
-} from "@/store/admin-dispute-store";
+import { RefundTimeline } from "@/components/orders/refund-timeline";
 import {
   getOrderRefundStatus,
   type OrderRefundStatus,
@@ -41,6 +45,7 @@ import {
   formatMonthYear,
   formatPaidAt,
 } from "@/lib/format";
+import { ApiError } from "@/lib/api";
 import { cn, formatPrice } from "@/lib/utils";
 
 // Programmatic anchor click — direct hit to the presigned S3 URL avoids the
@@ -70,13 +75,46 @@ export default function OrdersPage() {
 function OrdersBody() {
   const { user } = useAuth();
   const [refundOrder, setRefundOrder] = useState<MockOrder | null>(null);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // ?expand={orderId} deep-link from the runner notification inbox. We
+  // mirror the param into local state so the URL can be cleaned
+  // immediately (avoids re-triggering on refresh) but the ReceiptRow
+  // children still see a stable value to react to. Updates when the URL
+  // param changes (mid-session click from the inbox while already on
+  // /orders) — the matching row then expands + scrolls.
+  const expandFromUrl = searchParams.get("expand");
+  const [pendingExpand, setPendingExpand] = useState<string | null>(
+    expandFromUrl,
+  );
+
+  useEffect(() => {
+    if (expandFromUrl && expandFromUrl !== pendingExpand) {
+      setPendingExpand(expandFromUrl);
+    }
+    if (expandFromUrl) {
+      // Clear the param so a refresh doesn't re-trigger. `scroll: false`
+      // keeps the user's current scroll position while the matching row
+      // handles its own scrollIntoView.
+      router.replace(ROUTES.ORDERS, { scroll: false });
+    }
+    // pendingExpand intentionally omitted — including it would loop the
+    // effect every time we update local state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandFromUrl, router]);
+
   if (!user) return null;
 
   const memberSince = formatMemberSince(user.createdAt);
-  const runnerHandle = deriveRunnerHandle(user.email);
   const refundEvent = refundOrder
     ? getEventById(refundOrder.eventId)
     : undefined;
+  // Live event name lives on the order itself (BE-hydrated). Catalog
+  // fallback only matters for locally-pushed CheckoutModal orders that
+  // haven't been refetched yet.
+  const refundEventName =
+    refundOrder?.eventName ?? refundEvent?.name ?? "—";
 
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
@@ -103,7 +141,10 @@ function OrdersBody() {
           />
           <div className="stagger-children min-w-0 pb-8 md:pb-20 md:border-l md:border-line md:-ml-6 lg:-ml-10 md:pl-6 lg:pl-10">
             <SpendSlab />
-            <ReceiptsSlab onRefundRequest={setRefundOrder} />
+            <ReceiptsSlab
+              onRefundRequest={setRefundOrder}
+              pendingExpand={pendingExpand}
+            />
           </div>
         </div>
       </div>
@@ -114,21 +155,11 @@ function OrdersBody() {
           isOpen
           onClose={() => setRefundOrder(null)}
           order={refundOrder}
-          eventName={refundEvent?.name ?? "—"}
-          photographerHandle=""
-          runnerHandle={runnerHandle}
+          eventName={refundEventName}
         />
       )}
     </main>
   );
-}
-
-// Mock-only handle derivation for runner-submitted disputes. Backend ships
-// a real `handle` field on User in Phase B; until then we slugify the email
-// local part so the admin queue has something readable.
-function deriveRunnerHandle(email: string): string {
-  const local = email.split("@")[0] ?? "";
-  return local.split(".")[0].toLowerCase() || "runner";
 }
 
 function SpendSlab() {
@@ -200,8 +231,10 @@ function Stat({
 
 function ReceiptsSlab({
   onRefundRequest,
+  pendingExpand,
 }: {
   onRefundRequest: (order: MockOrder) => void;
+  pendingExpand: string | null;
 }) {
   const { orders } = useOrdersList();
   const sorted = useMemo(
@@ -213,6 +246,16 @@ function ReceiptsSlab({
   );
   const trailing = `${sorted.length} receipt${sorted.length === 1 ? "" : "s"}`;
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.RECEIPT_INITIAL);
+  // If the deep-link target sits past the initial page, bump the visible
+  // window so the row mounts and the expand effect fires. Without this a
+  // notification for the 11th receipt would silently no-op.
+  useEffect(() => {
+    if (!pendingExpand) return;
+    const idx = sorted.findIndex((o) => o.id === pendingExpand);
+    if (idx >= 0 && idx >= loadedCount) {
+      setLoadedCount(idx + 1);
+    }
+  }, [pendingExpand, sorted, loadedCount]);
   const visibleSlice = sorted.slice(0, loadedCount);
 
   return (
@@ -232,6 +275,7 @@ function ReceiptsSlab({
                 <ReceiptRow
                   order={order}
                   onRefundRequest={onRefundRequest}
+                  pendingExpand={pendingExpand}
                 />
               </li>
             ))}
@@ -253,9 +297,11 @@ function ReceiptsSlab({
 function ReceiptRow({
   order,
   onRefundRequest,
+  pendingExpand,
 }: {
   order: MockOrder;
   onRefundRequest: (order: MockOrder) => void;
+  pendingExpand: string | null;
 }) {
   // Prefer the BE-hydrated event fields on the order itself. The local
   // EVENT_CATALOG seed is empty, so getEventById() returns undefined for any
@@ -263,19 +309,47 @@ function ReceiptRow({
   const catalogEvent = getEventById(order.eventId);
   const eventName = order.eventName ?? catalogEvent?.name ?? null;
   const eventSlug = order.eventSlug ?? catalogEvent?.slug ?? null;
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(pendingExpand === order.id);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
   const { showToast } = useToast();
+  const { confirm } = useConfirmation();
+  const queryClient = useQueryClient();
+  const rowRef = useRef<HTMLDivElement>(null);
   const { detail } = useOrderDetail(expanded ? order.id : null);
 
-  const overrides = useAdminDisputeStore((s) => s.overrides);
-  const submissions = useAdminDisputeStore((s) => s.submissions);
+  // Notification deep-link: when the runner clicks a refund notification,
+  // the inbox routes to /orders?expand={orderId}. OrdersBody mirrors the
+  // param into pendingExpand and clears the URL; this effect handles the
+  // expansion + scroll regardless of whether the row was already expanded.
+  useEffect(() => {
+    if (pendingExpand && pendingExpand === order.id) {
+      setExpanded(true);
+      // Defer until layout settles so scrollIntoView lands on the right spot.
+      const t = setTimeout(() => {
+        rowRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+      return () => clearTimeout(t);
+    }
+  }, [pendingExpand, order.id]);
+
+  // Disputes live on the order payload itself (BE-embedded). Detail payload
+  // is the more current copy when the row is expanded — prefer it so a
+  // server-side resolution arriving while the user has the row open shows up.
+  const disputes = (detail?.disputes ?? order.disputes ?? []) as RunnerDispute[];
+  const orderForStatus = useMemo(
+    () => ({ ...order, disputes }),
+    [order, disputes],
+  );
   const refundStatus = useMemo<OrderRefundStatus>(
-    () => getOrderRefundStatus(order, getEffectiveDisputes(overrides, submissions)),
-    [order, overrides, submissions],
+    () => getOrderRefundStatus(orderForStatus),
+    [orderForStatus],
   );
   const canRequest =
     refundStatus.kind === "none" || refundStatus.kind === "rejected";
+  // The runner can only cancel a request before admin engages. ESCALATED is
+  // admin's territory; RESOLVED / DENIED / WITHDRAWN are terminal.
+  const cancellableDispute = disputes.find((d) => d.status === "open") ?? null;
 
   // Defensive coalesce — backend payloads can ship partial fields and the
   // renderer must not crash on a single bad row. Mock data is always complete;
@@ -333,6 +407,36 @@ function ReceiptRow({
     });
   }
 
+  async function handleCancelRequest(disputeId: string) {
+    const ok = await confirm({
+      title: "Cancel refund request?",
+      message:
+        "You can submit a new request for these photos later if you change your mind.",
+      confirmLabel: "Cancel request",
+      cancelLabel: "Keep request",
+      danger: true,
+    });
+    if (!ok) return;
+    setWithdrawingId(disputeId);
+    try {
+      await withdrawDispute(disputeId);
+      await queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
+      showToast({
+        kind: "success",
+        message: "Refund request cancelled.",
+        duration: 4000,
+      });
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "We couldn't cancel that request. Try again in a moment.";
+      showToast({ kind: "error", message });
+    } finally {
+      setWithdrawingId(null);
+    }
+  }
+
   function handleDownloadOne(id: string) {
     const photo = detail?.photos.find((p) => p.id === id);
     if (!photo?.downloadUrl) return;
@@ -352,7 +456,7 @@ function ReceiptRow({
   const photoCountLabel = photoCount === 1 ? "photo" : "photos";
 
   return (
-    <div className="py-6 md:py-7">
+    <div ref={rowRef} className="py-6 md:py-7 scroll-mt-24">
       <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-3 md:gap-6">
         <div className="flex-1 min-w-0">
           <Kicker as="p" tnum>
@@ -456,7 +560,22 @@ function ReceiptRow({
                   : "Refund pending review"}
               </span>
             )}
+            {cancellableDispute && (
+              <button
+                type="button"
+                onClick={() => handleCancelRequest(cancellableDispute.id)}
+                disabled={withdrawingId === cancellableDispute.id}
+                className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors disabled:opacity-40 disabled:hover:text-slate disabled:hover:decoration-line"
+              >
+                {withdrawingId === cancellableDispute.id
+                  ? "Cancelling…"
+                  : "Cancel refund request"}
+              </button>
+            )}
           </div>
+          {disputes.length > 0 && (
+            <RefundTimeline disputes={disputes} className="mt-6" />
+          )}
         </div>
       )}
 
@@ -629,23 +748,27 @@ function RefundStatusChip({
   if (!label) return null;
 
   return (
-    <Kicker
-      as="p"
-      tnum
-      className="mt-3 inline-flex items-center gap-2"
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "size-1.5 rounded-full",
-          status.kind === "approved"
-            ? "bg-fresh"
-            : status.kind === "rejected"
-              ? "bg-error"
-              : "bg-slate",
-        )}
-      />
-      {label}
-    </Kicker>
+    <div className="mt-3 space-y-1.5">
+      <Kicker as="p" tnum className="inline-flex items-center gap-2">
+        <span
+          aria-hidden="true"
+          className={cn(
+            "size-1.5 rounded-full",
+            status.kind === "approved"
+              ? "bg-fresh"
+              : status.kind === "rejected"
+                ? "bg-error"
+                : "bg-slate",
+          )}
+        />
+        {label}
+      </Kicker>
+      {status.kind === "rejected" && status.rejectedNote && (
+        <p className="font-sans text-sm text-ink-soft max-w-md">
+          <span className="text-slate">Admin note · </span>
+          {status.rejectedNote}
+        </p>
+      )}
+    </div>
   );
 }

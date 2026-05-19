@@ -13,7 +13,11 @@ import java.time.OffsetDateTime
 import java.util.UUID
 
 enum class DisputeStatus(val wire: String) {
-    OPEN("open"), RESOLVED("resolved"), DENIED("denied"), ESCALATED("escalated");
+    OPEN("open"),
+    RESOLVED("resolved"),
+    DENIED("denied"),
+    ESCALATED("escalated"),
+    WITHDRAWN("withdrawn");
 
     companion object {
         fun fromWire(raw: String): DisputeStatus = entries.first { it.wire == raw }
@@ -87,6 +91,9 @@ class Dispute(
 
     @Column(name = "resolved_at")
     var resolvedAt: OffsetDateTime? = null,
+
+    @Column(name = "withdrawn_at")
+    var withdrawnAt: OffsetDateTime? = null,
 ) {
     var reason: DisputeReason
         get() = DisputeReason.fromWire(reasonWire)

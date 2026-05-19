@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { RunnerDispute } from "@/lib/api-orders";
 import type { OrderStatus } from "@/types/order";
 
 // Local cache of orders for offline-friendly Race Log derivation.
@@ -26,7 +27,19 @@ export interface MockOrder {
   // local catalog joins.
   eventName?: string;
   eventSlug?: string;
+  // 2026-05-19 PM — date + state added so /profile race log can render
+  // purchased-only rows (events bought but not saved) without a second
+  // round-trip per event. Optional because locally-pushed checkout orders
+  // and legacy payloads omit them; race log skips the date/state label
+  // when null and falls back to whatever the catalog can provide.
+  eventDate?: string;
+  eventState?: "upcoming" | "live" | "open" | "past";
   status?: OrderStatus;
+  // Refund disputes filed against this order. Source of truth for the
+  // /orders status chip, photo locks, timeline, and cancel button. Embedded
+  // on every BE payload from /me/orders since 2026-05-19; locally-pushed
+  // checkout orders default to an empty array.
+  disputes?: RunnerDispute[];
 }
 
 interface OrdersState {

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { SiteHeader } from "@/components/layout/site-header";
 import { AvatarDisc } from "@/components/account/avatar-disc";
@@ -25,9 +25,10 @@ import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useOrdersList } from "@/hooks/use-orders";
 import { useToast } from "@/hooks/use-toast";
 import {
-  getCatalogWithOverrides,
-  MOCK_USER_PHOTOS_FOUND,
-} from "@/lib/event-catalog";
+  fetchSavedEvents,
+  type SavedEventSummary,
+} from "@/lib/api-saved-events";
+import type { MockOrder } from "@/store/orders-store";
 import { ROUTES } from "@/lib/constants";
 import { formatMemberSince, formatRaceDate } from "@/lib/format";
 import type { PhotographerEventSummary } from "@/lib/photographer-mock";
@@ -46,9 +47,13 @@ interface RaceLogEntry {
   name: string;
   date: string;
   state: RaceState;
-  photosFound: number;
   photosBought: number;
   isSaved: boolean;
+  // Carried only for saved rows so the unsave → undo handler can hand a
+  // full optimistic SavedEventSummary back to save(). Purchased-only rows
+  // never expose the unsave button so these stay undefined for them.
+  location?: string;
+  bannerUrl?: string | null;
 }
 
 const JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
@@ -131,12 +136,33 @@ function SelfieLibrarySection() {
 }
 
 function RaceLogSection() {
-  const savedIds = useSavedEventsStore((s) => s.ids);
+  const summaries = useSavedEventsStore((s) => s.summaries);
+  const setSummaries = useSavedEventsStore((s) => s.setSummaries);
+  const syncEnabled = useSavedEventsStore((s) => s.syncEnabled);
   const { orders } = useOrdersList();
 
+  // Defensive re-fetch on mount. AuthHydrator's merge is the canonical hydration,
+  // but it runs once per signed-in user — a direct /profile visit after a long
+  // idle (or another tab toggling a save) can still see stale summaries. One
+  // GET per /profile mount keeps the race log honest with minimal cost.
+  useEffect(() => {
+    if (!syncEnabled) return;
+    let cancelled = false;
+    fetchSavedEvents()
+      .then((fresh) => {
+        if (!cancelled) setSummaries(fresh);
+      })
+      .catch(() => {
+        // Silent — store keeps last-good summaries.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [syncEnabled, setSummaries]);
+
   const log = useMemo(
-    () => buildRaceLog(savedIds, orders),
-    [savedIds, orders],
+    () => buildRaceLog(summaries, orders),
+    [summaries, orders],
   );
 
   const trailing = `${log.length} race${log.length === 1 ? "" : "s"}`;
@@ -182,15 +208,6 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
         </h3>
         <p className="font-sans text-sm text-slate mt-2">
           {stateLabel[entry.state]}
-          {!isUpcoming && entry.photosFound > 0 && (
-            <>
-              <span className="text-slate-soft"> · </span>
-              <span className="font-mono tnum text-ink-soft">
-                {entry.photosFound}
-              </span>{" "}
-              photos
-            </>
-          )}
           {entry.photosBought > 0 && (
             <>
               <span className="text-slate-soft"> · </span>
@@ -208,13 +225,23 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            const optimistic = {
+              id: entry.id,
+              slug: entry.slug,
+              name: entry.name,
+              date: entry.date,
+              state: entry.state,
+              bannerUrl: entry.bannerUrl ?? null,
+              location: entry.location ?? "",
+              savedAt: new Date().toISOString(),
+            };
             unsave(entry.id);
             showToast({
               kind: "success",
               message: `Removed ${entry.name} from saved.`,
               action: {
                 label: "Undo",
-                onClick: () => save(entry.id),
+                onClick: () => save(entry.id, optimistic),
               },
             });
           }}
@@ -271,12 +298,15 @@ function RaceLogEmpty() {
   );
 }
 
-// Race Log = saved ∪ purchased. Saved events appear immediately. Purchases
-// retroactively create rows when the user bought from an event they didn't save.
-// Both triggers can apply to the same event — single row, dedupe by event id.
+// Race Log = saved ∪ purchased. Saved events come from the BE-hydrated
+// summaries (full metadata in one round-trip via /me/saved-events). Purchases
+// retroactively create rows for events the runner bought but didn't save —
+// metadata comes from the /me/orders payload (eventName/eventSlug/eventDate/
+// eventState added 2026-05-19 PM for this surface). Dedupe by event id; saved
+// rows win when both signals fire so the unsave control stays attached.
 function buildRaceLog(
-  savedIds: ReadonlyArray<string>,
-  orders: ReadonlyArray<{ eventId: string; photoIds: string[] }>,
+  summaries: ReadonlyArray<SavedEventSummary>,
+  orders: ReadonlyArray<MockOrder>,
 ): ReadonlyArray<RaceLogEntry> {
   const photosByEvent = new Map<string, number>();
   for (const order of orders) {
@@ -286,24 +316,37 @@ function buildRaceLog(
     );
   }
 
-  const includedIds = new Set<string>([
-    ...savedIds,
-    ...photosByEvent.keys(),
-  ]);
-
   const entries: RaceLogEntry[] = [];
-  for (const id of includedIds) {
-    const event = getCatalogWithOverrides().find((e) => e.id === id);
-    if (!event) continue;
+  const seen = new Set<string>();
+
+  for (const summary of summaries) {
+    if (seen.has(summary.id)) continue;
+    seen.add(summary.id);
     entries.push({
-      id: event.id,
-      slug: event.slug,
-      name: event.name,
-      date: event.date,
-      state: event.state,
-      photosFound: MOCK_USER_PHOTOS_FOUND[event.id] ?? 0,
-      photosBought: photosByEvent.get(event.id) ?? 0,
-      isSaved: savedIds.includes(event.id),
+      id: summary.id,
+      slug: summary.slug,
+      name: summary.name,
+      date: summary.date,
+      state: summary.state,
+      photosBought: photosByEvent.get(summary.id) ?? 0,
+      isSaved: true,
+      location: summary.location,
+      bannerUrl: summary.bannerUrl,
+    });
+  }
+
+  for (const order of orders) {
+    if (seen.has(order.eventId)) continue;
+    if (!order.eventName || !order.eventDate) continue;
+    seen.add(order.eventId);
+    entries.push({
+      id: order.eventId,
+      slug: order.eventSlug ?? "",
+      name: order.eventName,
+      date: order.eventDate,
+      state: order.eventState ?? "past",
+      photosBought: photosByEvent.get(order.eventId) ?? 0,
+      isSaved: false,
     });
   }
 
