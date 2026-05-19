@@ -103,6 +103,28 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
         @Param("to") to: OffsetDateTime,
     ): BigDecimal
 
+    // Per-photographer net kept amount + non-refund sale count for a single
+    // week window. Drives the admin "Generate cycles" action — one row per
+    // photographer who had at least ₱0.01 net activity in the window. Refund
+    // rows reduce amountKeptPhp (they're inserted as negative); itemCount
+    // counts non-refund rows only. Returns Array<Any> of (photographerId,
+    // netAmount, saleCount) — Kotlin caller widens the types.
+    @Query(
+        """
+        SELECT t.photographerId,
+               COALESCE(SUM(t.amountKeptPhp), 0),
+               SUM(CASE WHEN t.isRefund = false THEN 1 ELSE 0 END)
+        FROM Transaction t
+        WHERE t.paidAt >= :from AND t.paidAt < :to
+        GROUP BY t.photographerId
+        HAVING COALESCE(SUM(t.amountKeptPhp), 0) > 0
+        """,
+    )
+    fun aggregateByPhotographerInWindow(
+        @Param("from") from: OffsetDateTime,
+        @Param("to") to: OffsetDateTime,
+    ): List<Array<Any>>
+
     // Refund total in a window — only the negative-amount refund rows. The
     // sum is positive (we negate the negatives) so the FE can render it as
     // a peso amount without sign juggling.

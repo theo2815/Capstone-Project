@@ -7,6 +7,7 @@ import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminPayoutCycleDto
 import com.quickpitik.dto.admin.BulkPayoutResultDto
 import com.quickpitik.dto.admin.BulkPayoutsRequest
+import com.quickpitik.dto.admin.GenerateCyclesResultDto
 import com.quickpitik.dto.admin.HoldPayoutRequest
 import com.quickpitik.dto.admin.MarkPayoutPaidRequest
 import com.quickpitik.exception.ValidationException
@@ -23,6 +24,10 @@ import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeParseException
 
 @RestController
 @RequestMapping("/api/v1/admin/payouts")
@@ -79,5 +84,36 @@ class AdminPayoutsController(
                 field = IdempotencyKey.HEADER,
             )
         return adminPayoutService.bulk(principal.userId, key, body)
+    }
+
+    // Admin-triggered cycle generator. Accepts `weekOf` (Monday YYYY-MM-DD);
+    // when omitted, defaults to the previous ISO Monday in Asia/Manila so the
+    // common case ("generate last week") is a one-click button. Idempotent —
+    // see AdminPayoutService.generateForWeek.
+    @PostMapping("/generate")
+    fun generate(
+        @RequestParam(required = false) weekOf: String?,
+    ): GenerateCyclesResultDto {
+        val resolvedWeek = weekOf
+            ?.takeIf { it.isNotBlank() }
+            ?.let {
+                try {
+                    LocalDate.parse(it.trim())
+                } catch (_: DateTimeParseException) {
+                    throw ValidationException(
+                        code = ErrorCodes.VALIDATION_ERROR,
+                        message = "weekOf must be ISO date (YYYY-MM-DD)",
+                        field = "weekOf",
+                    )
+                }
+            }
+            ?: previousIsoMonday()
+        return adminPayoutService.generateForWeek(resolvedWeek)
+    }
+
+    private fun previousIsoMonday(): LocalDate {
+        val today = LocalDate.now(ZoneId.of("Asia/Manila"))
+        val thisMonday = today.minusDays((today.dayOfWeek.value - DayOfWeek.MONDAY.value).toLong())
+        return thisMonday.minusWeeks(1)
     }
 }

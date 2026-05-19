@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
-import { getAdminAttentionTarget } from "@/lib/admin-queues";
+import { useAdminAttentionTarget } from "@/lib/admin-queues";
 import { cn } from "@/lib/utils";
 
 interface AdminRoute {
@@ -55,7 +55,7 @@ const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED
 // alongside <DesktopNudge>. Renders nothing ≥ md (parent has `md:hidden`).
 export function AdminMobileStrip() {
   const pathname = usePathname();
-  const attention = getAdminAttentionTarget();
+  const attention = useAdminAttentionTarget();
 
   return (
     <div className="bg-bone/90 backdrop-blur-md border-b border-line">

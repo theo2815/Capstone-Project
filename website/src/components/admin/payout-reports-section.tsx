@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Slab } from "@/components/profile-shell";
 import { Kicker } from "@/components/ui/kicker";
 import {
@@ -15,15 +16,19 @@ import {
 import {
   PAYOUT_REPORT_REASON_LABEL,
   PAYOUT_REPORT_STATUS_LABEL,
-  getEffectiveReports,
+  mergeReportsWithOverrides,
   type PayoutReport,
   type PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
 import { useAdminPayoutReportStore } from "@/store/admin-payout-report-store";
 import {
-  getEffectivePayouts,
+  mergePayoutsWithOverrides,
   useAdminPayoutStore,
 } from "@/store/admin-payout-store";
+import {
+  useAdminPayoutReports,
+  useAdminPayouts,
+} from "@/hooks/use-admin-data";
 import { useToast } from "@/hooks/use-toast";
 import { useUrlState } from "@/hooks/use-url-state";
 import { formatLongDate } from "@/lib/format";
@@ -54,12 +59,31 @@ function statusTone(status: PayoutReportStatus): AdminStatusPillTone {
 // within each bucket, newest reportedAt first.
 
 export function PayoutReportsSection() {
-  const submissions = useAdminPayoutReportStore((s) => s.submissions);
+  // A-1 followup for reports: read from BE. The local submissions array in
+  // Zustand only ever contains reports filed in *this* browser session
+  // (photographer-side), so a fresh admin tab saw "No reports yet" even
+  // when reports existed on the server. overrides still layer for instant
+  // feedback after acknowledge/resolve.
   const overrides = useAdminPayoutReportStore((s) => s.overrides);
   const acknowledge = useAdminPayoutReportStore((s) => s.acknowledge);
   const resolve = useAdminPayoutReportStore((s) => s.resolve);
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
+  const serverReports = useAdminPayoutReports() ?? [];
+  const serverPayouts = useAdminPayouts() ?? [];
+  const queryClient = useQueryClient();
   const { showToast } = useToast();
+
+  function refreshAfterAction() {
+    // Local override already gives instant feedback; this kicks a refetch so
+    // BE state becomes the source of truth (and the photographer's
+    // /dashboard/billing reports cache, if mounted, also catches up).
+    queryClient.invalidateQueries({
+      queryKey: ["admin", "payouts", "reports"],
+    });
+    queryClient.invalidateQueries({
+      queryKey: ["photographer", "payouts", "reports"],
+    });
+  }
 
   const [reportRowId, setReportRowId] = useUrlState<string>("report", "");
   const [actionMode, setActionMode] = useState<PayoutReportActionMode | null>(
@@ -67,7 +91,7 @@ export function PayoutReportsSection() {
   );
 
   const reports = useMemo(() => {
-    const all = getEffectiveReports(submissions, overrides);
+    const all = mergeReportsWithOverrides(serverReports, overrides);
     const order: Record<PayoutReportStatus, number> = {
       open: 0,
       acknowledged: 1,
@@ -78,18 +102,16 @@ export function PayoutReportsSection() {
       if (so !== 0) return so;
       return b.reportedAt.localeCompare(a.reportedAt);
     });
-  }, [submissions, overrides]);
+  }, [serverReports, overrides]);
 
   const openCount = reports.filter((r) => r.status === "open").length;
 
   const cyclesById = useMemo(() => {
-    const map = new Map<
-      string,
-      ReturnType<typeof getEffectivePayouts>[number]
-    >();
-    for (const c of getEffectivePayouts(payoutOverrides)) map.set(c.id, c);
+    const merged = mergePayoutsWithOverrides(serverPayouts, payoutOverrides);
+    const map = new Map<string, (typeof merged)[number]>();
+    for (const c of merged) map.set(c.id, c);
     return map;
-  }, [payoutOverrides]);
+  }, [serverPayouts, payoutOverrides]);
 
   const openReport = useMemo(
     () => (reportRowId ? reports.find((r) => r.id === reportRowId) ?? null : null),
@@ -99,6 +121,7 @@ export function PayoutReportsSection() {
   function handleAcknowledge(note: string) {
     if (!openReport) return;
     acknowledge(openReport.id, note);
+    refreshAfterAction();
     setActionMode(null);
     showToast({
       kind: "success",
@@ -109,6 +132,7 @@ export function PayoutReportsSection() {
   function handleResolve(note: string) {
     if (!openReport) return;
     resolve(openReport.id, note);
+    refreshAfterAction();
     setActionMode(null);
     setReportRowId("");
     showToast({

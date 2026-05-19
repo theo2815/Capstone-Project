@@ -201,7 +201,10 @@ export function generatePhotographerLibrary(
 // Billing
 // ─────────────────────────────────────────────────────────────────────────
 
-export type PayoutStatus = "paid" | "pending" | "scheduled";
+// "held" added for the request-based flow: admin can hold a photographer's
+// request pending a fix (e.g. update payout account); photographer sees the
+// reason and can Withdraw to re-request after addressing it.
+export type PayoutStatus = "paid" | "pending" | "scheduled" | "held";
 
 export interface PhotographerPayout {
   id: string;
@@ -209,12 +212,15 @@ export interface PhotographerPayout {
   weekOf: string;
   amount: number;
   status: PayoutStatus;
-  /** ISO timestamp when the payout was settled (paid) or is expected (others). */
-  settledAt: string;
+  /** ISO timestamp when the payout was settled (paid) or admin approved it.
+   *  Null for fresh pending_review requests that haven't been touched yet. */
+  settledAt: string | null;
   /** Q-E1 RESOLVED 2026-05-10: enum locked to gcash | maya | gotyme. */
   method: "gcash" | "maya" | "gotyme";
   /** Reference number for paid cycles. null for pending/scheduled. */
   reference: string | null;
+  /** Admin's reason when status is "held"; null otherwise. */
+  holdReason?: string | null;
 }
 
 export interface PhotographerTransaction {
@@ -222,6 +228,11 @@ export interface PhotographerTransaction {
   /** ISO timestamp the runner paid. */
   paidAt: string;
   eventId: string;
+  /** Snapshot of the event title at sale time. Null when the event was
+   *  hard-deleted — the row then renders the "Event archived" fallback. */
+  eventName?: string | null;
+  /** Event slug snapshot — kept for future deep-linking from the row. */
+  eventSlug?: string | null;
   photoId: string;
   /** Display name of the buyer (mock — backend returns a privacy-safe handle). */
   buyer: string;

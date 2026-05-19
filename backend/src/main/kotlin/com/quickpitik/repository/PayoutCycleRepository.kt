@@ -60,6 +60,29 @@ interface PayoutCycleRepository : JpaRepository<PayoutCycle, String> {
 
     fun countByStatusWire(statusWire: String): Long
 
+    // Photographer-initiated payout request flow:
+    //   - countByPhotographerId drives the next sequence number when building
+    //     a new cycle id (PAY-{HANDLE}-{seq:003}).
+    //   - findFirstByPhotographerIdAndStatusWireIn finds an open cycle so we
+    //     can enforce "one open request at a time."
+    //   - sumPaidByPhotographer subtracts from lifetime kept to compute the
+    //     photographer's unpaid balance for the ₱500 threshold check.
+    fun countByPhotographerId(photographerId: UUID): Long
+
+    fun findFirstByPhotographerIdAndStatusWireIn(
+        photographerId: UUID,
+        statusWires: Collection<String>,
+    ): PayoutCycle?
+
+    @Query(
+        """
+        SELECT COALESCE(SUM(c.amountPhp), 0) FROM PayoutCycle c
+        WHERE c.photographerId = :photographerId
+          AND c.statusWire = 'paid'
+        """,
+    )
+    fun sumPaidByPhotographer(@Param("photographerId") photographerId: UUID): BigDecimal
+
     // Admin payout queue list. The FE filter is one of pending_review |
     // approved | held | paid; we map "pending_review" → DB "pending" since
     // the DB enum is shared with the photographer-facing surface (which

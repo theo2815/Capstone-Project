@@ -66,6 +66,17 @@ export function getEffectiveReports(
   return [...submitted, ...seed];
 }
 
+// Layers admin's local acknowledge/resolve overrides on top of BE reports
+// for instant feedback after an action — same pattern as
+// mergePayoutsWithOverrides. The BE catches up on the next refetch and
+// becomes the source of truth.
+export function mergeReportsWithOverrides(
+  serverReports: ReadonlyArray<PayoutReport>,
+  overrides: Record<string, Partial<PayoutReport>>,
+): PayoutReport[] {
+  return serverReports.map((r) => mergeReport(r, overrides[r.id]));
+}
+
 // Lookup used by the photographer billing page to decide between
 // "File a report" (no prior report) and "Track your report" (any prior
 // report). Returns the most recent report by reportedAt — covers the

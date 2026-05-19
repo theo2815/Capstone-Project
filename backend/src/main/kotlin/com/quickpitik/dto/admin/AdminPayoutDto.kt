@@ -81,3 +81,16 @@ data class BulkPayoutResultDto(
     val groupId: UUID,
     val results: List<BulkPayoutItemResultDto>,
 )
+
+// POST /admin/payouts/generate?weekOf=YYYY-MM-DD. Idempotent on (weekOf,
+// photographer): re-running for the same week updates pending-review rows in
+// place, leaves admin-decided rows (paid / held / already-approved) untouched.
+data class GenerateCyclesResultDto(
+    val weekOf: String,
+    val created: Int,
+    val updated: Int,
+    // Cycles that already had an admin decision applied (paid/held/approved)
+    // and were left alone so the generator doesn't clobber human judgment.
+    val skipped: Int,
+    val totalAmount: BigDecimal,
+)

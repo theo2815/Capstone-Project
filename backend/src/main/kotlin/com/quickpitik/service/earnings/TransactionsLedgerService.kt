@@ -6,6 +6,7 @@ import com.quickpitik.dto.earnings.PhotographerTransactionDto
 import com.quickpitik.dto.earnings.TransactionsLedgerResponse
 import com.quickpitik.dto.earnings.privacyBuyerDisplay
 import com.quickpitik.dto.earnings.toDto
+import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
 import org.springframework.stereotype.Service
@@ -31,6 +32,7 @@ import java.util.UUID
 class TransactionsLedgerService(
     private val transactionRepository: TransactionRepository,
     private val userRepository: UserRepository,
+    private val eventRepository: EventRepository,
 ) {
     fun list(photographerId: UUID, params: PaginationParams): TransactionsLedgerResponse {
         val page = transactionRepository.pageForPhotographer(
@@ -50,11 +52,27 @@ class TransactionsLedgerService(
             emptyMap()
         }
 
+        // Resolve event name/slug per row so the FE billing ledger can show
+        // the event title without a parallel events lookup. Soft-deleted
+        // events still resolve (findAllById ignores the deletedAt filter) —
+        // the FE renders the snapshot title regardless of admin archive state.
+        val eventIds = page.content.map { it.eventId }.toSet()
+        val eventsById = if (eventIds.isNotEmpty()) {
+            eventRepository.findAllById(eventIds).associateBy { it.id }
+        } else {
+            emptyMap()
+        }
+
         val items = page.content.map { tx ->
             val display = tx.buyerDisplayName.takeIf { it.isNotBlank() }
                 ?: liveBuyers[tx.buyerId]
                 ?: ""
-            tx.toDto(buyerDisplay = display)
+            val event = eventsById[tx.eventId]
+            tx.toDto(
+                buyerDisplay = display,
+                eventName = event?.name,
+                eventSlug = event?.slug,
+            )
         }
 
         val monthTotals = computeMonthTotals(photographerId)

@@ -53,6 +53,10 @@ data class PhotographerPayoutDto(
     val settledAt: OffsetDateTime?,
     val method: String,
     val reference: String?,
+    // Surfaced for the photographer's "request held" hero so they can read
+    // the admin's reason inline (also goes to their inbox). Null in any
+    // non-held state.
+    val holdReason: String?,
 )
 
 fun PayoutCycle.toDto(): PhotographerPayoutDto = PhotographerPayoutDto(
@@ -63,6 +67,7 @@ fun PayoutCycle.toDto(): PhotographerPayoutDto = PhotographerPayoutDto(
     settledAt = settledAt,
     method = methodWire,
     reference = paymentReference,
+    holdReason = holdReason,
 )
 
 // ─── Reports ─────────────────────────────────────────────────────────────
@@ -113,6 +118,18 @@ data class SubmitPayoutReportRequest(
     val note: String? = null,
 )
 
+// ─── Photographer-initiated payout request ──────────────────────────────
+// GET /me/photographer/payouts/balance drives the request-payout hero on
+// /dashboard/billing. openRequest is the cycle currently in pending_review /
+// approved / held — null when the photographer has none, in which case the
+// hero shows the request CTA gated on unpaidBalance >= minimum.
+data class PayoutBalanceDto(
+    val unpaidBalance: BigDecimal,
+    val minimum: BigDecimal,
+    val hasOpenRequest: Boolean,
+    val openRequest: PhotographerPayoutDto?,
+)
+
 // ─── Transactions ledger ─────────────────────────────────────────────────
 // Mirrors website/src/lib/photographer-mock.ts PhotographerTransaction +
 // website/src/lib/api-photographer-earnings.ts TransactionsResponse. monthTotals
@@ -122,16 +139,28 @@ data class PhotographerTransactionDto(
     val id: String,
     val paidAt: OffsetDateTime,
     val eventId: String,
+    // eventName + eventSlug snapshot the originating event so the billing
+    // ledger can render the title (and deep-link) without the FE keeping a
+    // parallel events lookup. Null means the event was hard-deleted — FE
+    // falls back to "Event archived".
+    val eventName: String?,
+    val eventSlug: String?,
     val photoId: String,
     val buyer: String,
     val amountKept: BigDecimal,
 )
 
-fun Transaction.toDto(buyerDisplay: String): PhotographerTransactionDto =
+fun Transaction.toDto(
+    buyerDisplay: String,
+    eventName: String?,
+    eventSlug: String?,
+): PhotographerTransactionDto =
     PhotographerTransactionDto(
         id = id.toString(),
         paidAt = paidAt,
         eventId = eventId.toString(),
+        eventName = eventName,
+        eventSlug = eventSlug,
         photoId = photoId.toString(),
         buyer = buyerDisplay,
         amountKept = amountKeptPhp,
@@ -158,10 +187,10 @@ fun privacyBuyerDisplay(name: String?): String {
     return "$first $lastInitial."
 }
 
-// Internal: builds the FE cycle id `PAY-{YYYY}W{NN}-{HANDLE}` per Q-A1. Handle
-// is uppercased and stripped to alphanumerics so an unsanitised handle (period,
-// dash, emoji) doesn't break URL routing. `?` falls back to UNKNOWN — admin
-// can rename later via PR 10.
+// Internal: builds the legacy week-based cycle id `PAY-{YYYY}W{NN}-{HANDLE}` —
+// kept for the smoke-test seed helper (one cycle per week per photographer).
+// The live request-based flow uses buildSequencedCycleId instead so multiple
+// requests in the same ISO week don't collide on the unique PK.
 fun buildCycleId(weekOf: LocalDate, handle: String?): String {
     val isoYear = weekOf.get(java.time.temporal.IsoFields.WEEK_BASED_YEAR)
     val isoWeek = weekOf.get(java.time.temporal.IsoFields.WEEK_OF_WEEK_BASED_YEAR)
@@ -169,6 +198,17 @@ fun buildCycleId(weekOf: LocalDate, handle: String?): String {
         ?.takeIf { it.isNotEmpty() }
         ?: "UNKNOWN"
     return "PAY-${isoYear}W${"%02d".format(isoWeek)}-$handlePart"
+}
+
+// Photographer-initiated payouts can fire multiple times per ISO week, so the
+// week-based id collides on the PK. Sequence id is monotonic per photographer:
+// PAY-JUANDC-001, PAY-JUANDC-002, etc. Handle sanitised the same way; falls
+// back to a UUID prefix when handle is missing so the id is still stable.
+fun buildSequencedCycleId(handle: String?, photographerId: UUID, sequence: Long): String {
+    val handlePart = handle?.uppercase()?.replace(Regex("[^A-Z0-9]"), "")
+        ?.takeIf { it.isNotEmpty() }
+        ?: photographerId.toString().take(8).uppercase()
+    return "PAY-$handlePart-${"%03d".format(sequence)}"
 }
 
 // Used by the /me/photographer/payouts/{id} test-seed endpoint signature so a

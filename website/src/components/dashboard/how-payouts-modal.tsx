@@ -16,8 +16,10 @@ import {
 // /dashboard/billing. Same shape as PlatformCutModal: portals to body,
 // scroll-locks, ESC + backdrop close, Quiet Studio styling.
 //
-// Sections: lede → one-cycle visual → where it lands (primary account
-// preview) → processing time (per-method) → holds and refunds.
+// Sections: lede → four-step flow → where it lands (primary account
+// preview) → processing time (per-method) → holds and withdrawals.
+// The flow is photographer-initiated: earn → request (≥ ₱500) → admin
+// reviews → admin transfers manually.
 
 interface HowPayoutsModalProps {
   isOpen: boolean;
@@ -96,9 +98,10 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
               How payouts work
             </h2>
             <p className="font-sans text-sm md:text-base text-slate mt-3 max-w-md">
-              Cycles run Monday to Sunday. Sales settle to your primary
-              payout account the following Friday, with 0–24h processing
-              time.
+              You request payouts when ready. Once your unpaid earnings reach{" "}
+              <span className="font-mono tnum">₱500</span>, hit{" "}
+              <span className="text-ink">Request payout</span> — admin reviews
+              and transfers to your primary payout account manually.
             </p>
             <button
               type="button"
@@ -117,14 +120,14 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
             </button>
           </div>
 
-          <section aria-labelledby="cycle-heading">
+          <section aria-labelledby="flow-heading">
             <p
-              id="cycle-heading"
+              id="flow-heading"
               className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
             >
-              One cycle
+              The flow
             </p>
-            <CycleDiagram />
+            <FlowDiagram />
           </section>
 
           <section aria-labelledby="lands-heading">
@@ -181,8 +184,8 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
               </Link>
             </div>
             <p className="font-sans text-sm text-slate mt-4 max-w-md">
-              If your primary fails, the next active backup receives the
-              payout automatically.
+              Admin sends to this account when they approve your request — so
+              keep the account number current before submitting.
             </p>
           </section>
 
@@ -192,6 +195,10 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
               className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
             >
               Processing time
+            </p>
+            <p className="mt-3 font-sans text-sm text-slate max-w-md">
+              Once admin transfers the funds, the bank-side processing time
+              depends on the method:
             </p>
             <ul className="mt-4 border-y border-line divide-y divide-line">
               <ProcessingRow method="GCash" timing="instant" />
@@ -205,11 +212,14 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
               id="holds-heading"
               className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
             >
-              Holds and refunds
+              Holds and withdrawals
             </p>
             <p className="mt-3 font-sans text-sm md:text-base text-slate max-w-md">
-              Refunded sales reverse from the next pending cycle. Disputed
-              sales are held until resolved.
+              If admin holds your request — usually because the payout account
+              needs a fix — you&apos;ll see the reason on this page. Fix the
+              issue, hit{" "}
+              <span className="text-ink">Withdraw request</span>, then submit a
+              new one. Refunded sales reduce your next available balance.
             </p>
           </section>
         </div>
@@ -228,25 +238,26 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
   );
 }
 
-function CycleDiagram() {
+function FlowDiagram() {
   return (
     <div className="mt-5">
       <div className="relative">
         <div
           aria-hidden="true"
-          className="absolute top-1.5 left-[12%] right-[12%] h-px bg-line"
+          className="absolute top-1.5 left-[8%] right-[8%] h-px bg-line"
         />
-        <div className="relative flex items-start justify-between">
-          <CycleNode label="Mon" sub="Opens" />
-          <CycleNode label="Sun" sub="Closes" />
-          <CycleNode label="Fri" sub="Releases" active />
+        <div className="relative flex items-start justify-between gap-1">
+          <FlowNode label="Earn" sub="From sales" />
+          <FlowNode label="Request" sub="At ₱500+" />
+          <FlowNode label="Review" sub="Admin OKs" />
+          <FlowNode label="Paid" sub="Lands in account" active />
         </div>
       </div>
     </div>
   );
 }
 
-function CycleNode({
+function FlowNode({
   label,
   sub,
   active = false,
@@ -256,7 +267,7 @@ function CycleNode({
   active?: boolean;
 }) {
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="flex flex-col items-center gap-2 min-w-0 flex-1">
       <span
         aria-hidden="true"
         className={
@@ -265,10 +276,10 @@ function CycleNode({
             : "block w-3 h-3 rounded-full bg-ink-soft ring-4 ring-bone"
         }
       />
-      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-ink tnum">
+      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-ink tnum text-center">
         {label}
       </p>
-      <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft text-center">
         {sub}
       </p>
     </div>
