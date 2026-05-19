@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
 import {
@@ -46,6 +47,7 @@ export function FilePayoutReportModal({
 }: FilePayoutReportModalProps) {
   const { user } = useAuth();
   const submitReport = useAdminPayoutReportStore((s) => s.submitReport);
+  const queryClient = useQueryClient();
   const { showToast } = useToast();
 
   const [reason, setReason] = useState<PayoutReportReason | null>(null);
@@ -99,9 +101,22 @@ export function FilePayoutReportModal({
         payoutId: cycle.id,
         reason,
         note: note.trim() || null,
-      }).catch((err) => {
-        console.error("[photographer/payout-report] submit failed", err);
-      });
+      })
+        .then(() => {
+          // Refresh photographer-side Track-your-report so the new row
+          // appears immediately, and the admin queue when they next open
+          // /admin/payouts (admin's React Query cache is keyed separately
+          // but invalidating both is cheap).
+          queryClient.invalidateQueries({
+            queryKey: ["photographer", "payouts", "reports"],
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["admin", "payouts", "reports"],
+          });
+        })
+        .catch((err) => {
+          console.error("[photographer/payout-report] submit failed", err);
+        });
       setSubmitting(false);
       showToast({
         kind: "success",

@@ -8,13 +8,14 @@ import {
 import { useEventCatalog } from "@/lib/event-catalog";
 import {
   useAdminPayoutStore,
-  getEffectivePayouts,
+  mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
 import {
   useAdminDisputeStore,
   getEffectiveDisputes,
 } from "@/store/admin-dispute-store";
 import {
+  useAdminPayouts,
   useAdminSalesKpisLive,
   useAdminSalesByEventLive,
 } from "@/hooks/use-admin-data";
@@ -40,11 +41,12 @@ export interface SalesKpis {
 
 export function useSalesKpis(): SalesKpis {
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
+  const serverPayouts = useAdminPayouts() ?? [];
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
 
   const derived = useMemo(() => {
-    const cycles = getEffectivePayouts(payoutOverrides);
+    const cycles = mergePayoutsWithOverrides(serverPayouts, payoutOverrides);
     const totalSalesCount = cycles.reduce((s, c) => s + c.itemCount, 0);
     const gmv = totalSalesCount * PHOTO_PRICE_PHP;
     const split = splitGmv(gmv);
@@ -64,7 +66,7 @@ export function useSalesKpis(): SalesKpis {
       photographerKeep: split.keep,
       totalSalesCount,
     };
-  }, [payoutOverrides, disputeOverrides, disputeSubmissions]);
+  }, [serverPayouts, payoutOverrides, disputeOverrides, disputeSubmissions]);
 
   // Live mode: prefer server data when present, fall back to derivation while
   // the query is loading or in mock mode.
@@ -100,9 +102,10 @@ export function useWeeklyGmvSeries(
   weeks: number = SALES_TREND_WEEKS,
 ): WeeklyGmvPoint[] {
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
+  const serverPayouts = useAdminPayouts() ?? [];
 
   return useMemo(() => {
-    const cycles = getEffectivePayouts(payoutOverrides);
+    const cycles = mergePayoutsWithOverrides(serverPayouts, payoutOverrides);
     const byWeek = new Map<string, number>();
     for (const cycle of cycles) {
       const gmv = cycle.itemCount * PHOTO_PRICE_PHP;
@@ -119,7 +122,7 @@ export function useWeeklyGmvSeries(
       points.push({ weekOf, gmv: byWeek.get(weekOf) ?? 0 });
     }
     return points;
-  }, [payoutOverrides, weeks]);
+  }, [serverPayouts, payoutOverrides, weeks]);
 }
 
 export interface TopPhotographer {
@@ -134,9 +137,10 @@ export interface TopPhotographer {
 
 export function useTopPhotographers(limit: number = 10): TopPhotographer[] {
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
+  const serverPayouts = useAdminPayouts() ?? [];
 
   return useMemo(() => {
-    const cycles = getEffectivePayouts(payoutOverrides);
+    const cycles = mergePayoutsWithOverrides(serverPayouts, payoutOverrides);
     const byPhotographer = new Map<string, TopPhotographer>();
     for (const cycle of cycles) {
       const gmv = cycle.itemCount * PHOTO_PRICE_PHP;
@@ -160,7 +164,7 @@ export function useTopPhotographers(limit: number = 10): TopPhotographer[] {
     return Array.from(byPhotographer.values())
       .sort((a, b) => b.gmv - a.gmv)
       .slice(0, limit);
-  }, [payoutOverrides, limit]);
+  }, [serverPayouts, payoutOverrides, limit]);
 }
 
 export interface SalesEventRow {
@@ -237,11 +241,12 @@ export interface RefundPulse {
 
 export function useRefundPulse(): RefundPulse {
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
+  const serverPayouts = useAdminPayouts() ?? [];
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
 
   return useMemo(() => {
-    const cycles = getEffectivePayouts(payoutOverrides);
+    const cycles = mergePayoutsWithOverrides(serverPayouts, payoutOverrides);
     const gmv =
       cycles.reduce((s, c) => s + c.itemCount, 0) * PHOTO_PRICE_PHP;
     const disputes = getEffectiveDisputes(disputeOverrides, disputeSubmissions);
@@ -265,5 +270,5 @@ export function useRefundPulse(): RefundPulse {
       openCount,
       escalatedCount,
     };
-  }, [payoutOverrides, disputeOverrides, disputeSubmissions]);
+  }, [serverPayouts, payoutOverrides, disputeOverrides, disputeSubmissions]);
 }

@@ -381,25 +381,38 @@ export interface BulkPayoutResult {
   results: Array<{ id: string; ok: boolean; error?: string }>;
 }
 
+// BE requires Idempotency-Key (UUID v4) on POST /admin/payouts/bulk per
+// AdminPayoutsController.bulk — retry safety hinges on it. The header is
+// generated per call so each batch is a distinct logical decision.
+function idempotencyHeader(): { headers: HeadersInit } {
+  return { headers: { "Idempotency-Key": crypto.randomUUID() } };
+}
+
 export async function bulkApprovePayouts(
   payoutIds: string[],
 ): Promise<BulkPayoutResult> {
-  return api.post<BulkPayoutResult>("/admin/payouts/bulk", {
-    ids: payoutIds,
-    action: "approve",
-  });
+  return api.post<BulkPayoutResult>(
+    "/admin/payouts/bulk",
+    { ids: payoutIds, action: "approve" },
+    idempotencyHeader(),
+  );
 }
 
 export async function bulkHoldPayouts(
   payoutIds: string[],
   reason: string,
 ): Promise<BulkPayoutResult> {
-  return api.post<BulkPayoutResult>("/admin/payouts/bulk", {
-    ids: payoutIds,
-    action: "hold",
-    reason,
-  });
+  return api.post<BulkPayoutResult>(
+    "/admin/payouts/bulk",
+    { ids: payoutIds, action: "hold", reason },
+    idempotencyHeader(),
+  );
 }
+
+// Admin-triggered cycle generator endpoint still exists on BE
+// (POST /admin/payouts/generate) as a safety hatch but the FE no longer
+// surfaces it — photographers request payouts via /dashboard/billing in the
+// request-based flow.
 
 // ───────────────────────────────────────────── Payout reports
 

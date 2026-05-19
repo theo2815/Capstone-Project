@@ -1,6 +1,10 @@
 import { useAdminDisputeStore, getEffectiveDisputes } from "@/store/admin-dispute-store";
 import { useAdminFlagStore, getEffectiveFlags } from "@/store/admin-flag-store";
-import { useAdminPayoutStore, getEffectivePayouts } from "@/store/admin-payout-store";
+import {
+  useAdminPayoutStore,
+  mergePayoutsWithOverrides,
+} from "@/store/admin-payout-store";
+import { useAdminPayouts } from "@/hooks/use-admin-data";
 import { getAdminUsersDataSnapshot } from "@/lib/admin-users-data";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 
@@ -23,8 +27,13 @@ function countPendingPhotographers(): number {
 //   1. Disputes  — money + customer-facing
 //   2. Flags     — content moderation, time-sensitive
 //   3. Verifications — photographer-onboarding-blocking
-//   4. Payouts   — cycle-based, lowest urgency
+//   4. Payouts   — request-based, lowest urgency
 // First non-zero queue wins.
+//
+// useAdminAttentionTarget / useAdminQueueCounts are hooks because the
+// payouts count now hydrates from BE via useAdminPayouts (React Query).
+// The other queues still read snapshot state from Zustand — the React
+// Query call is the only reactive piece that forces this to be a hook.
 
 export interface AdminAttentionTarget {
   href: string;
@@ -32,7 +41,9 @@ export interface AdminAttentionTarget {
   label: "Disputes" | "Flags" | "Verifications" | "Payouts";
 }
 
-export function getAdminAttentionTarget(): AdminAttentionTarget | null {
+export function useAdminAttentionTarget(): AdminAttentionTarget | null {
+  const serverPayouts = useAdminPayouts() ?? [];
+
   // Disputes — read effective state via store overrides + seed + submissions
   const disputeState = useAdminDisputeStore.getState();
   const openDisputes = getEffectiveDisputes(
@@ -75,11 +86,12 @@ export function getAdminAttentionTarget(): AdminAttentionTarget | null {
     };
   }
 
-  // Payouts
+  // Payouts — BE-hydrated count; mock seed is empty in the new flow.
   const payoutOverrides = useAdminPayoutStore.getState().overrides;
-  const pendingPayouts = getEffectivePayouts(payoutOverrides).filter(
-    (p) => p.status === "pending_review",
-  ).length;
+  const pendingPayouts = mergePayoutsWithOverrides(
+    serverPayouts,
+    payoutOverrides,
+  ).filter((p) => p.status === "pending_review").length;
   if (pendingPayouts > 0) {
     return {
       href: ROUTES.ADMIN_PAYOUTS,
@@ -101,9 +113,9 @@ export interface AdminQueueCounts {
 
 // Per-queue counts for the editorial-data rail. Consumed by <AdminRail>
 // to render the row-level count and the "QUEUES · N open / all clear"
-// summary line. Non-reactive (matches getAdminAttentionTarget): the rail
-// re-renders on pathname change which refreshes these on navigation.
-export function getAdminQueueCounts(): AdminQueueCounts {
+// summary line.
+export function useAdminQueueCounts(): AdminQueueCounts {
+  const serverPayouts = useAdminPayouts() ?? [];
   const disputeState = useAdminDisputeStore.getState();
   const payoutOverrides = useAdminPayoutStore.getState().overrides;
 
@@ -116,9 +128,10 @@ export function getAdminQueueCounts(): AdminQueueCounts {
         (f) => f.status === "open",
       ).length
     : 0;
-  const payouts = getEffectivePayouts(payoutOverrides).filter(
-    (p) => p.status === "pending_review",
-  ).length;
+  const payouts = mergePayoutsWithOverrides(
+    serverPayouts,
+    payoutOverrides,
+  ).filter((p) => p.status === "pending_review").length;
   const inbox = countPendingPhotographers();
 
   return {

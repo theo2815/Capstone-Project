@@ -15,8 +15,8 @@ import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { getAdminSectionGuideByHref } from "@/lib/admin-section-guide";
 import type { SectionGuideEntry } from "@/lib/section-guide";
 import {
-  getAdminAttentionTarget,
-  getAdminQueueCounts,
+  useAdminAttentionTarget,
+  useAdminQueueCounts,
 } from "@/lib/admin-queues";
 import { cn } from "@/lib/utils";
 
@@ -112,7 +112,7 @@ const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED
 //   - Active row: 1px fresh vertical bar on the left edge + fresh number
 //     (both tiny indicators per Quiet Studio rule, count as one active
 //     treatment).
-//   - Attention dot driven by getAdminAttentionTarget() — at most ONE
+//   - Attention dot driven by useAdminAttentionTarget() — at most ONE
 //     non-active queue row breathes fresh.
 //   - "QUEUES · all clear" tone="active" when total = 0; otherwise the
 //     line shows the open count in slate.
@@ -148,8 +148,8 @@ export function AdminRail() {
     });
   }
 
-  const attention = getAdminAttentionTarget();
-  const counts = getAdminQueueCounts();
+  const attention = useAdminAttentionTarget();
+  const counts = useAdminQueueCounts();
   const allClear = counts.total === 0;
 
   function getCountForHref(href: string): number | null {

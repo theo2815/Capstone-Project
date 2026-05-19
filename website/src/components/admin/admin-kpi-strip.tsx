@@ -15,10 +15,10 @@ import {
 } from "@/store/admin-flag-store";
 import {
   useAdminPayoutStore,
-  getEffectivePayouts,
+  mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
 import { cn } from "@/lib/utils";
-import { useAdminKpis } from "@/hooks/use-admin-data";
+import { useAdminKpis, useAdminPayouts } from "@/hooks/use-admin-data";
 
 // Compact at-a-glance metrics row. Sits above the inbox queue (Phase 1)
 // and any other admin route that wants a one-line read of every queue.
@@ -30,7 +30,7 @@ import { useAdminKpis } from "@/hooks/use-admin-data";
 // dot, honoring the one-fresh-per-viewport rule across the page (Inbox
 // header has no fresh accent of its own — the priority dot owns it).
 //
-// Priority order matches getAdminAttentionTarget: Disputes > Flags >
+// Priority order matches useAdminAttentionTarget: Disputes > Flags >
 // Verifications > Payouts. First non-zero wins.
 
 interface KpiEntry {
@@ -47,6 +47,9 @@ export function AdminKpiStrip() {
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
   const flagOverrides = useAdminFlagStore((s) => s.overrides);
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
+  // A-1 followup: hydrate payouts from BE so the fallback path matches the
+  // live data shape instead of the empty mock seed.
+  const serverPayouts = useAdminPayouts() ?? [];
   // Live-mode preference: when GET /admin/kpis returns, override the
   // 4 counts the strip surfaces. Falls back to derivation from the merged
   // admin users hook while the kpis endpoint is still loading.
@@ -71,9 +74,10 @@ export function AdminKpiStrip() {
     let openFlags = getEffectiveFlags(flagOverrides).filter(
       (f) => f.status === "open",
     ).length;
-    let pendingPayouts = getEffectivePayouts(payoutOverrides).filter(
-      (p) => p.status === "pending_review",
-    ).length;
+    let pendingPayouts = mergePayoutsWithOverrides(
+      serverPayouts,
+      payoutOverrides,
+    ).filter((p) => p.status === "pending_review").length;
 
     if (liveKpis) {
       pendingVerifications = liveKpis.pendingVerifications;
@@ -121,6 +125,7 @@ export function AdminKpiStrip() {
     disputeSubmissions,
     flagOverrides,
     payoutOverrides,
+    serverPayouts,
     liveKpis,
   ]);
 

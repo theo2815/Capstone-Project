@@ -11,10 +11,13 @@ import com.quickpitik.dto.admin.AdminPayoutQrDto
 import com.quickpitik.dto.admin.BulkPayoutItemResultDto
 import com.quickpitik.dto.admin.BulkPayoutResultDto
 import com.quickpitik.dto.admin.BulkPayoutsRequest
+import com.quickpitik.dto.admin.GenerateCyclesResultDto
 import com.quickpitik.dto.admin.MarkPayoutPaidRequest
+import com.quickpitik.dto.earnings.buildCycleId
 import com.quickpitik.entity.PayoutAccount
 import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
+import com.quickpitik.entity.PayoutMethod
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
@@ -23,13 +26,17 @@ import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
+import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.util.UUID
 
 @Service
@@ -39,6 +46,7 @@ class AdminPayoutService(
     private val payoutAccountRepository: PayoutAccountRepository,
     private val userRepository: UserRepository,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
+    private val transactionRepository: TransactionRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val adminDecisionLogService: AdminDecisionLogService,
@@ -310,6 +318,104 @@ class AdminPayoutService(
             body = "Payout cycle ${cycle.id} was placed on hold. Reason: $reason",
             sourceAdminId = adminId,
             sourceDecisionId = decision.id,
+        )
+    }
+
+    /**
+     * Admin-triggered cycle generator. Scans `transactions` for the given ISO
+     * week (Mon→Sun in Asia/Manila), groups by photographer, sums kept amount
+     * (refund rows are negative so they net out), counts non-refund sales, and
+     * upserts a PayoutCycle row per eligible photographer in pending_review
+     * (DB PENDING, settledAt null).
+     *
+     * Idempotent: re-running for the same week refreshes pending-review rows
+     * in place. Rows that already carry an admin decision (paid, held,
+     * approved=PENDING+settledAt) are skipped so the generator cannot clobber
+     * human judgment.
+     *
+     * Eligibility: any photographer with net amount > ₱0 in the window. The
+     * cycle's payout method is the photographer's primary account method, or
+     * GCASH as a safe default when no account is set — the admin still sees
+     * an empty payoutAccount snapshot in the queue and can hold for setup.
+     */
+    fun generateForWeek(weekOf: LocalDate): GenerateCyclesResultDto {
+        if (weekOf.dayOfWeek != java.time.DayOfWeek.MONDAY) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "weekOf must be a Monday (ISO week start)",
+                field = "weekOf",
+            )
+        }
+
+        val zone = ZoneId.of("Asia/Manila")
+        val from = weekOf.atStartOfDay(zone).toOffsetDateTime()
+        val to = weekOf.plusDays(7).atStartOfDay(zone).toOffsetDateTime()
+
+        val rows = transactionRepository.aggregateByPhotographerInWindow(from, to)
+
+        var created = 0
+        var updated = 0
+        var skipped = 0
+        var totalAmount = BigDecimal.ZERO
+
+        for (row in rows) {
+            val photographerId = row[0] as UUID
+            val amount = row[1] as BigDecimal
+            val itemCount = (row[2] as Number).toInt()
+
+            val settings = photographerSettingsRepository.findById(photographerId).orElse(null)
+            val handle = settings?.handle
+            val cycleId = buildCycleId(weekOf, handle)
+
+            val primaryAccount = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(photographerId)
+            val method = primaryAccount?.method ?: PayoutMethod.GCASH
+
+            val existing = payoutCycleRepository.findById(cycleId).orElse(null)
+
+            when {
+                existing == null -> {
+                    val cycle = PayoutCycle(
+                        id = cycleId,
+                        photographerId = photographerId,
+                        weekOf = weekOf,
+                        methodWire = method.wire,
+                    )
+                    cycle.amountPhp = amount
+                    cycle.itemCount = itemCount
+                    cycle.method = method
+                    cycle.status = PayoutCycleStatus.PENDING
+                    cycle.settledAt = null
+                    payoutCycleRepository.save(cycle)
+                    created++
+                    totalAmount = totalAmount.add(amount)
+                }
+                existing.status == PayoutCycleStatus.PAID ||
+                    existing.status == PayoutCycleStatus.HELD ||
+                    (existing.status == PayoutCycleStatus.PENDING && existing.settledAt != null) -> {
+                    // Paid, held, or already-approved (PENDING + settledAt set) —
+                    // leave alone. Re-summing would silently rewrite an amount
+                    // the admin already decided on.
+                    skipped++
+                }
+                else -> {
+                    existing.amountPhp = amount
+                    existing.itemCount = itemCount
+                    existing.method = method
+                    existing.status = PayoutCycleStatus.PENDING
+                    existing.settledAt = null
+                    payoutCycleRepository.save(existing)
+                    updated++
+                    totalAmount = totalAmount.add(amount)
+                }
+            }
+        }
+
+        return GenerateCyclesResultDto(
+            weekOf = weekOf.toString(),
+            created = created,
+            updated = updated,
+            skipped = skipped,
+            totalAmount = totalAmount,
         )
     }
 

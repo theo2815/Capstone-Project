@@ -23,6 +23,12 @@ import type { PaginatedResponse } from "@/types/api";
 //   GET  /api/v1/me/photographer/payouts/reports?cycleId=&status=        → PayoutReport[]
 //   GET  /api/v1/me/photographer/billing/transactions?offset=&limit=
 //        → PaginatedResponse<PhotographerTransaction> & { monthTotals: Record<string, number> }
+//
+// Photographer-initiated payout request flow (replaces the prior admin-
+// generated weekly cycles):
+//   GET  /api/v1/me/photographer/payouts/balance         → PayoutBalanceResponse
+//   POST /api/v1/me/photographer/payouts/request         → PhotographerPayout
+//   POST /api/v1/me/photographer/payouts/{id}/withdraw   → 204 (no body)
 
 // ───────────────────────────────────────────── Earnings overview
 
@@ -51,7 +57,10 @@ export async function fetchPerEventEarnings(
 ): Promise<PerEventEarning[]> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 8));
+  // Pre-fetch up to BE MAX_LIMIT so the Hybrid Load-More UI has rows to chunk
+  // through client-side. A bare default of 8 made the slab terminal at "All 8
+  // loaded" before the first Load More click.
+  p.set("limit", String(args.limit ?? 200));
   const res = await api.get<PaginatedResponse<PerEventEarning>>(
     `/me/photographer/earnings/per-event?${p.toString()}`,
   );
@@ -65,7 +74,9 @@ export async function fetchPhotographerPayouts(
 ): Promise<PhotographerPayout[]> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  // Pre-fetch up to BE MAX_LIMIT so the Recent-cycles list has rows to chunk
+  // through client-side (PAGE_SIZE.PAYOUT_INCREMENT at a time).
+  p.set("limit", String(args.limit ?? 200));
   const res = await api.get<PaginatedResponse<PhotographerPayout>>(
     `/me/photographer/payouts?${p.toString()}`,
   );
@@ -103,6 +114,29 @@ export async function fetchPhotographerPayoutReports(
   );
 }
 
+// ───────────────────────────────────────────── Payout requests
+
+export interface PayoutBalanceResponse {
+  unpaidBalance: number;
+  minimum: number;
+  hasOpenRequest: boolean;
+  openRequest: PhotographerPayout | null;
+}
+
+export async function fetchPhotographerPayoutBalance(): Promise<PayoutBalanceResponse | null> {
+  return api.get<PayoutBalanceResponse>("/me/photographer/payouts/balance");
+}
+
+export async function requestPhotographerPayout(): Promise<PhotographerPayout> {
+  return api.post<PhotographerPayout>("/me/photographer/payouts/request");
+}
+
+export async function withdrawPhotographerPayout(cycleId: string): Promise<void> {
+  await api.post<void>(
+    `/me/photographer/payouts/${encodeURIComponent(cycleId)}/withdraw`,
+  );
+}
+
 // ───────────────────────────────────────────── Transactions ledger
 
 export interface TransactionsResponse {
@@ -117,7 +151,12 @@ export async function fetchPhotographerTransactions(
   args: { offset?: number; limit?: number } = {},
 ): Promise<TransactionsResponse> {
   const offset = args.offset ?? 0;
-  const limit = args.limit ?? 25;
+  // Pre-fetch up to BE MAX_LIMIT (200) so the Hybrid Load-More UI has rows
+  // to chunk through client-side at PAGE_SIZE.TRANSACTION_INCREMENT each
+  // click. A bare default of 25 forced the slab to "All 25 loaded" before
+  // the first Load More appeared. Photographers with >200 sales would need
+  // true infinite-query — out of scope for capstone.
+  const limit = args.limit ?? 200;
 
   const p = new URLSearchParams();
   p.set("offset", String(offset));

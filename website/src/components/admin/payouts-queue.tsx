@@ -11,11 +11,13 @@ import { AdminPayoutHoldModal } from "@/components/admin/admin-payout-hold-modal
 import { AdminPayoutMarkPaidModal } from "@/components/admin/admin-payout-mark-paid-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { PayoutAccountCard } from "@/components/admin/payout-account-card";
+import { ReadyToSendCard } from "@/components/admin/ready-to-send-card";
 import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
 import {
   useAdminPayoutStore,
-  getEffectivePayouts,
+  mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
+import { useAdminPayouts } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -90,7 +92,16 @@ export function PayoutsQueue() {
   );
   const [rowId, setRowId] = useUrlState<string>("row", "");
 
-  const effective = useMemo(() => getEffectivePayouts(overrides), [overrides]);
+  // A-1: hydrate from BE rather than the mock seed. Local overrides still
+  // layer on top for instant-feedback after admin actions; the store fires
+  // the matching api-admin mutation in the background so the BE catches up
+  // before the next refetch. `useAdminPayouts()` returns null while in
+  // flight — `?? []` keeps the merge stable.
+  const serverPayouts = useAdminPayouts() ?? [];
+  const effective = useMemo(
+    () => mergePayoutsWithOverrides(serverPayouts, overrides),
+    [serverPayouts, overrides],
+  );
 
   const byId = useMemo(() => {
     const map = new Map<string, AdminPayoutCycle>();
@@ -532,23 +543,25 @@ export function PayoutsQueue() {
 
 export function usePendingPayoutsCount(): number {
   const overrides = useAdminPayoutStore((s) => s.overrides);
+  const serverPayouts = useAdminPayouts() ?? [];
   return useMemo(
     () =>
-      getEffectivePayouts(overrides).filter(
+      mergePayoutsWithOverrides(serverPayouts, overrides).filter(
         (c) => c.status === "pending_review",
       ).length,
-    [overrides],
+    [serverPayouts, overrides],
   );
 }
 
 export function usePendingPayoutsTotal(): number {
   const overrides = useAdminPayoutStore((s) => s.overrides);
+  const serverPayouts = useAdminPayouts() ?? [];
   return useMemo(
     () =>
-      getEffectivePayouts(overrides)
+      mergePayoutsWithOverrides(serverPayouts, overrides)
         .filter((c) => c.status === "pending_review")
         .reduce((acc, c) => acc + c.amount, 0),
-    [overrides],
+    [serverPayouts, overrides],
   );
 }
 
@@ -706,9 +719,15 @@ function PayoutDrawerActions({
 
 function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
   const weekEnd = addDays(cycle.weekOf, 6);
+  // "approved" is the post-review, pre-payment state — the moment the admin
+  // actually has to send money. Surface the focal ReadyToSendCard at the
+  // top; we hide the duplicate inline PayoutAccountCard below so the same
+  // account info doesn't appear twice on the same screen.
+  const isReadyToSend = cycle.status === "approved";
 
   return (
     <div className="space-y-10">
+      {isReadyToSend && <ReadyToSendCard cycle={cycle} />}
       <section>
         <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
           Cycle
@@ -758,7 +777,7 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
               </p>
             )}
           </div>
-          <PayoutAccountCard cycle={cycle} mode="drawer" />
+          {!isReadyToSend && <PayoutAccountCard cycle={cycle} mode="drawer" />}
         </div>
       </section>
 

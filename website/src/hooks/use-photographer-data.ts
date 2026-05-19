@@ -11,8 +11,10 @@ import {
   fetchPhotographerEarnings,
   fetchPerEventEarnings,
   fetchPhotographerPayouts,
+  fetchPhotographerPayoutBalance,
   fetchPhotographerPayoutReports,
   fetchPhotographerTransactions,
+  type PayoutBalanceResponse,
   type PerEventEarning,
   type TransactionsResponse,
 } from "@/lib/api-photographer-earnings";
@@ -116,6 +118,18 @@ export function usePhotographerPayouts(): PhotographerPayout[] | null {
     queryKey: ["photographer", "payouts"],
     queryFn: () => fetchPhotographerPayouts(),
     staleTime: EARNINGS_STALE_MS,
+  });
+  return query.data ?? null;
+}
+
+// Unpaid balance + open-request state for the Request Payout hero on
+// /dashboard/billing. Short stale time so the hero reacts quickly after a
+// request is submitted or admin acts on a cycle.
+export function usePhotographerPayoutBalance(): PayoutBalanceResponse | null {
+  const query = useQuery<PayoutBalanceResponse | null>({
+    queryKey: ["photographer", "payouts", "balance"],
+    queryFn: () => fetchPhotographerPayoutBalance(),
+    staleTime: 30_000,
   });
   return query.data ?? null;
 }

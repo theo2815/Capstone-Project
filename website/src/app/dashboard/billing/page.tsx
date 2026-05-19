@@ -6,11 +6,15 @@ import { Slab } from "@/components/profile-shell";
 import { HowPayoutsModal } from "@/components/dashboard/how-payouts-modal";
 import { FilePayoutReportModal } from "@/components/dashboard/file-payout-report-modal";
 import { TrackPayoutReportModal } from "@/components/dashboard/track-payout-report-modal";
+import { RequestPayoutModal } from "@/components/dashboard/request-payout-modal";
+import { WithdrawPayoutModal } from "@/components/dashboard/withdraw-payout-modal";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   usePhotographerPayouts,
+  usePhotographerPayoutBalance,
+  usePhotographerPayoutReports,
   usePhotographerTransactions,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
@@ -18,16 +22,13 @@ import { formatLongDate, formatMonthYear } from "@/lib/format";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
-  PHOTOGRAPHER_PAYOUTS,
-  PHOTOGRAPHER_TRANSACTIONS,
-  getPhotographerEventById,
   type PayoutStatus,
   type PhotographerPayout,
   type PhotographerTransaction,
 } from "@/lib/photographer-mock";
 import {
-  getEffectiveReports,
   getLatestReportForCycle,
+  mergeReportsWithOverrides,
   type PayoutReport,
 } from "@/lib/admin-payout-reports";
 import { useAdminPayoutReportStore } from "@/store/admin-payout-report-store";
@@ -43,15 +44,15 @@ const STATUS_LABEL: Record<PayoutStatus, string> = {
   paid: "PAID",
   pending: "PENDING",
   scheduled: "SCHEDULED",
+  held: "HELD",
 };
 
 const STATUS_TONE: Record<PayoutStatus, string> = {
   paid: "text-slate-soft",
   pending: "text-ink",
   scheduled: "text-slate",
+  held: "text-error",
 };
-
-const CYCLE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export default function BillingPage() {
   return (
@@ -64,23 +65,31 @@ export default function BillingPage() {
 
 function PayoutsSlab() {
   const [howOpen, setHowOpen] = useState(false);
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [reportingCycle, setReportingCycle] = useState<PhotographerPayout | null>(
     null,
   );
   const [trackingCycle, setTrackingCycle] = useState<PhotographerPayout | null>(
     null,
   );
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PAYOUT_INITIAL);
   const livePayouts = usePhotographerPayouts();
+  const balance = usePhotographerPayoutBalance();
   const payouts = livePayouts ?? [];
-  const isLoading = livePayouts === null;
+  const isLoading = livePayouts === null || balance === null;
   const { user } = useAuth();
   const photographer = resolveCurrentPhotographer(user);
-  const submissions = useAdminPayoutReportStore((s) => s.submissions);
+  // Read reports from BE so admin acknowledge/resolve responses surface to
+  // the photographer (the local submissions array only held reports from
+  // *this* browser session). overrides still apply for instant feedback
+  // after the photographer submits their own.
+  const serverReports = usePhotographerPayoutReports() ?? [];
   const overrides = useAdminPayoutReportStore((s) => s.overrides);
 
   const reports = useMemo(
-    () => getEffectiveReports(submissions, overrides),
-    [submissions, overrides],
+    () => mergeReportsWithOverrides(serverReports, overrides),
+    [serverReports, overrides],
   );
 
   // Lookup of latestReport per cycle id, scoped to the current photographer.
@@ -123,22 +132,18 @@ function PayoutsSlab() {
     );
   }
 
-  const next = pickNextScheduled(payouts);
-  const inReviewTotal = payouts
-    .filter((p) => p.status === "pending")
-    .reduce((sum, p) => sum + p.amount, 0);
-
   return (
     <Slab
       id="payouts"
       number="01"
       title="Payouts"
-      caption="Weekly · GCash"
+      caption="Request when ready"
     >
-      <NextPayoutHero
-        payout={next}
-        inReviewTotal={inReviewTotal}
+      <RequestPayoutHero
+        balance={balance}
         onOpenHow={() => setHowOpen(true)}
+        onRequest={() => setRequestOpen(true)}
+        onWithdraw={() => setWithdrawOpen(true)}
       />
 
       {payouts.length > 0 && (
@@ -152,7 +157,7 @@ function PayoutsSlab() {
             </Kicker>
           </div>
           <ul className="border-y border-line divide-y divide-line">
-            {payouts.map((payout) => (
+            {payouts.slice(0, loadedCount).map((payout) => (
               <li key={payout.id} id={`cycle-${payout.id}`}>
                 <PayoutRow
                   payout={payout}
@@ -163,10 +168,28 @@ function PayoutsSlab() {
               </li>
             ))}
           </ul>
+          <LoadMoreButton
+            shown={Math.min(loadedCount, payouts.length)}
+            total={payouts.length}
+            increment={PAGE_SIZE.PAYOUT_INCREMENT}
+            onLoadMore={() =>
+              setLoadedCount((n) => n + PAGE_SIZE.PAYOUT_INCREMENT)
+            }
+          />
         </div>
       )}
 
       <HowPayoutsModal isOpen={howOpen} onClose={() => setHowOpen(false)} />
+      <RequestPayoutModal
+        isOpen={requestOpen}
+        balance={balance}
+        onClose={() => setRequestOpen(false)}
+      />
+      <WithdrawPayoutModal
+        isOpen={withdrawOpen}
+        openRequest={balance?.openRequest ?? null}
+        onClose={() => setWithdrawOpen(false)}
+      />
       <FilePayoutReportModal
         cycle={reportingCycle}
         onClose={() => setReportingCycle(null)}
@@ -187,50 +210,77 @@ function PayoutsSlab() {
   );
 }
 
-function NextPayoutHero({
-  payout,
-  inReviewTotal,
+// Photographer-initiated payout hero. Three states:
+//   1. Open request — shows status (pending review / approved / held) +
+//      Withdraw button when held.
+//   2. No open request, balance ≥ minimum — Request payout CTA active.
+//   3. No open request, balance < minimum — muted "Available · ₱X" with
+//      helper "Reach ₱500 to request a payout."
+// A missing primary payout account shows a Set-up CTA instead of the
+// Request button — the BE rejects the request anyway, so block early.
+function RequestPayoutHero({
+  balance,
   onOpenHow,
+  onRequest,
+  onWithdraw,
 }: {
-  payout: PhotographerPayout | undefined;
-  inReviewTotal: number;
+  balance: PayoutBalanceResponseLike | null;
   onOpenHow: () => void;
+  onRequest: () => void;
+  onWithdraw: () => void;
 }) {
   const primary = usePhotographerSettingsStore((s) =>
     s.payouts.find((p) => p.isPrimary),
   );
-  const salesInCycle = payout ? countSalesInCycle(payout.weekOf) : 0;
 
-  if (!payout) {
+  if (!balance) {
     return (
       <div>
-        <Kicker as="p" tone="soft">
-          Next payout
-        </Kicker>
-        <p className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink mt-3">
-          No payout scheduled
-        </p>
-        <p className="font-sans text-sm md:text-base text-slate mt-3 max-w-md">
-          Cycles run Monday to Sunday. Your next sale opens the next cycle.
-        </p>
-        <HowItWorksLink onClick={onOpenHow} />
+        <Skeleton className="h-3 w-28" />
+        <Skeleton className="h-12 md:h-16 w-72 md:w-96 mt-3" />
+        <Skeleton className="h-4 w-56 mt-4" />
       </div>
     );
   }
 
+  if (balance.hasOpenRequest && balance.openRequest) {
+    return (
+      <OpenRequestHero
+        cycle={balance.openRequest}
+        primary={primary ?? null}
+        onWithdraw={onWithdraw}
+        onOpenHow={onOpenHow}
+      />
+    );
+  }
+
+  const eligible = balance.unpaidBalance >= balance.minimum;
+
   return (
     <div>
       <Kicker as="p" tone="soft">
-        Next payout
+        Available to request
       </Kicker>
-      <p className="font-display text-5xl md:text-7xl font-semibold tracking-tight text-fresh tnum mt-3 leading-none">
-        ₱{payout.amount.toLocaleString()}
+      <p
+        className={cn(
+          "font-display text-5xl md:text-7xl font-semibold tracking-tight tnum mt-3 leading-none",
+          eligible ? "text-fresh" : "text-slate",
+        )}
+      >
+        ₱{balance.unpaidBalance.toLocaleString()}
       </p>
-      <p className="font-sans text-base md:text-lg text-ink mt-4">
-        Releases{" "}
-        <span className="font-mono tnum">
-          {formatLongDate(payout.settledAt)}
-        </span>
+      <p className="font-sans text-sm md:text-base text-ink mt-4">
+        {eligible ? (
+          <>Ready to request — admin reviews each request.</>
+        ) : (
+          <>
+            Reach{" "}
+            <span className="font-mono tnum">
+              ₱{balance.minimum.toLocaleString()}
+            </span>{" "}
+            in unpaid earnings to request a payout.
+          </>
+        )}
       </p>
 
       <div className="mt-6 border-t border-line pt-5 max-w-lg">
@@ -265,28 +315,138 @@ function NextPayoutHero({
             </span>
           </Link>
         )}
-        <p className="font-sans text-sm text-slate mt-3">
-          {salesInCycle > 0 ? (
-            <>
-              Includes{" "}
-              <span className="font-mono tnum text-ink-soft">
-                {salesInCycle}
-              </span>{" "}
-              {salesInCycle === 1 ? "sale" : "sales"} ·{" "}
-            </>
-          ) : null}
-          processing 0–24h after release
-        </p>
       </div>
 
-      {inReviewTotal > 0 && (
-        <p className="font-sans text-sm text-ink-soft mt-5 max-w-md">
-          ₱
-          <span className="font-mono tnum">
-            {inReviewTotal.toLocaleString()}
-          </span>{" "}
-          still in review from last cycle.
-        </p>
+      <div className="mt-6">
+        <button
+          type="button"
+          onClick={onRequest}
+          disabled={!eligible || !primary}
+          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone bg-fresh hover:bg-fresh-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors rounded-full px-6 py-3"
+        >
+          Request payout
+        </button>
+      </div>
+
+      <HowItWorksLink onClick={onOpenHow} />
+    </div>
+  );
+}
+
+// Avoids importing the response type at the top to dodge a circular import
+// risk; mirrors the actual shape returned by GET /payouts/balance.
+interface PayoutBalanceResponseLike {
+  unpaidBalance: number;
+  minimum: number;
+  hasOpenRequest: boolean;
+  openRequest: PhotographerPayout | null;
+}
+
+interface PrimaryPayoutAccount {
+  method: "gcash" | "maya" | "gotyme";
+  accountNumber: string;
+  isPrimary: boolean;
+}
+
+function OpenRequestHero({
+  cycle,
+  primary,
+  onWithdraw,
+  onOpenHow,
+}: {
+  cycle: PhotographerPayout;
+  primary: PrimaryPayoutAccount | null;
+  onWithdraw: () => void;
+  onOpenHow: () => void;
+}) {
+  // BE returns DB wire ("pending" / "held" / "paid"). For pending, settledAt
+  // is null until admin approves, then populated — that's the photographer-
+  // visible "approved" stage.
+  const stage: "pending_review" | "approved" | "held" =
+    cycle.status === "held"
+      ? "held"
+      : cycle.settledAt
+        ? "approved"
+        : "pending_review";
+
+  const stageLabel: Record<typeof stage, string> = {
+    pending_review: "Pending review",
+    approved: "Approved · payment incoming",
+    held: "Held — needs attention",
+  };
+  const stageTone: Record<typeof stage, string> = {
+    pending_review: "text-ink",
+    approved: "text-fresh",
+    held: "text-error",
+  };
+
+  return (
+    <div>
+      <Kicker as="p" tone="soft" className="flex items-center gap-2 flex-wrap">
+        <span>Payout request</span>
+        <span className="text-slate-soft">·</span>
+        <span className={stageTone[stage]}>{stageLabel[stage]}</span>
+      </Kicker>
+      <p className="font-display text-5xl md:text-7xl font-semibold tracking-tight text-ink tnum mt-3 leading-none">
+        ₱{cycle.amount.toLocaleString()}
+      </p>
+      <p className="font-sans text-sm md:text-base text-ink mt-4 tnum">
+        {stage === "pending_review" && (
+          <>
+            Submitted{" "}
+            <span className="font-mono">
+              {formatLongDate(cycle.weekOf, true)}
+            </span>{" "}
+            · admin is reviewing
+          </>
+        )}
+        {stage === "approved" && (
+          <>
+            Approved{" "}
+            <span className="font-mono">
+              {formatLongDate(cycle.settledAt)}
+            </span>{" "}
+            · admin is processing the transfer
+          </>
+        )}
+        {stage === "held" && cycle.holdReason && (
+          <>
+            <span className="text-error">Reason: </span>
+            <span className="text-ink">{cycle.holdReason}</span>
+          </>
+        )}
+      </p>
+
+      {primary && (
+        <div className="mt-6 border-t border-line pt-5 max-w-lg">
+          <Kicker as="p" className="flex items-baseline gap-2 flex-wrap">
+            <span aria-hidden="true" className="text-slate-soft">
+              →
+            </span>
+            <span className="text-ink">
+              {PAYOUT_METHOD_LABEL[primary.method]}
+            </span>
+            <span className="text-slate-soft">·</span>
+            <span className="font-mono tnum text-ink">
+              {formatPayoutNumber(primary.method, primary.accountNumber)}
+            </span>
+          </Kicker>
+        </div>
+      )}
+
+      {stage === "held" && (
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={onWithdraw}
+            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-error border border-error hover:bg-error hover:text-bone transition-colors rounded-full px-5 py-2"
+          >
+            Withdraw request
+          </button>
+          <p className="font-sans text-sm text-slate mt-3 max-w-md">
+            Fix the issue above, withdraw this request, then submit a new one.
+          </p>
+        </div>
       )}
 
       <HowItWorksLink onClick={onOpenHow} />
@@ -503,7 +663,9 @@ function TransactionsSlab() {
 }
 
 function TransactionRow({ tx }: { tx: PhotographerTransaction }) {
-  const event = getPhotographerEventById(tx.eventId);
+  // BE snapshots eventName onto the row; only genuinely hard-deleted events
+  // fall through to the "Event archived" copy.
+  const eventLabel = tx.eventName ?? "Event archived";
 
   return (
     <div className="py-4 md:py-5 flex items-baseline justify-between gap-4">
@@ -512,7 +674,7 @@ function TransactionRow({ tx }: { tx: PhotographerTransaction }) {
           {formatLongDate(tx.paidAt)}
         </Kicker>
         <p className="font-sans text-base text-ink mt-2 truncate">
-          {event?.name ?? "Event archived"}
+          {eventLabel}
         </p>
         <p className="font-sans text-sm text-slate mt-1">
           <span className="font-mono">{tx.photoId.replace(/^mock-/, "")}</span>
@@ -525,25 +687,6 @@ function TransactionRow({ tx }: { tx: PhotographerTransaction }) {
       </p>
     </div>
   );
-}
-
-function pickNextScheduled(
-  payouts: ReadonlyArray<PhotographerPayout>,
-): PhotographerPayout | undefined {
-  return [...payouts]
-    .filter((p) => p.status === "scheduled")
-    .sort((a, b) => a.settledAt.localeCompare(b.settledAt))[0];
-}
-
-// Sales whose paidAt falls inside the cycle window [weekOf, weekOf + 7 days).
-function countSalesInCycle(weekOf: string): number {
-  const start = new Date(`${weekOf}T00:00:00.000Z`).getTime();
-  if (Number.isNaN(start)) return 0;
-  const end = start + CYCLE_MS;
-  return PHOTOGRAPHER_TRANSACTIONS.filter((tx) => {
-    const t = new Date(tx.paidAt).getTime();
-    return !Number.isNaN(t) && t >= start && t < end;
-  }).length;
 }
 
 interface MonthGroup {

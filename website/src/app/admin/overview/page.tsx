@@ -17,8 +17,9 @@ import {
 } from "@/store/admin-flag-store";
 import {
   useAdminPayoutStore,
-  getEffectivePayouts,
+  mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
+import { useAdminPayouts } from "@/hooks/use-admin-data";
 import { useEventCatalog } from "@/lib/event-catalog";
 import { type AdminUserRow } from "@/lib/admin-user-registry";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
@@ -41,6 +42,9 @@ export default function AdminOverviewPage() {
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
   const flagOverrides = useAdminFlagStore((s) => s.overrides);
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
+  // A-1 followup: hydrate payouts from BE instead of the mock seed so the
+  // pending-payouts KPI reflects real photographer-submitted requests.
+  const serverPayouts = useAdminPayouts() ?? [];
   const catalog = useEventCatalog();
 
   const kpis = useMemo(() => {
@@ -67,9 +71,10 @@ export default function AdminOverviewPage() {
       ? getEffectiveFlags(flagOverrides).filter((f) => f.status === "open")
           .length
       : 0;
-    const pendingPayouts = getEffectivePayouts(payoutOverrides).filter(
-      (p) => p.status === "pending_review",
-    ).length;
+    const pendingPayouts = mergePayoutsWithOverrides(
+      serverPayouts,
+      payoutOverrides,
+    ).filter((p) => p.status === "pending_review").length;
 
     return {
       pending,
@@ -89,6 +94,7 @@ export default function AdminOverviewPage() {
     disputeSubmissions,
     flagOverrides,
     payoutOverrides,
+    serverPayouts,
   ]);
 
   return (

@@ -42,7 +42,7 @@ export const SECTION_GUIDE: ReadonlyArray<SectionGuideEntry> = [
     number: "05",
     href: ROUTES.DASHBOARD_BILLING,
     label: "Billing",
-    body: "When the money lands and which account it lands in. Payouts cycle weekly via GCash.",
+    body: "Request a payout once your unpaid earnings reach ₱500. Admin reviews and sends to your primary account.",
   },
   {
     number: "06",

@@ -1,21 +1,25 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { DashboardActionGrid } from "@/components/dashboard/dashboard-action-grid";
 import { SetupJourney } from "@/components/dashboard/setup-journey";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import {
   usePhotographerEvents,
-  usePhotographerPayouts,
+  usePhotographerPayoutBalance,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import type {
   EventState,
   PhotographerEventSummary,
-  PhotographerPayout,
 } from "@/lib/photographer-mock";
+import { cn } from "@/lib/utils";
 
 // Two modes:
 //  - Setup mode (first-timer): linear 3-step journey while the photographer
@@ -46,12 +50,12 @@ export default function DashboardOverviewPage() {
   );
 }
 
+// Condensed mirror of the /dashboard/billing Request-payout hero. Three
+// states — open request / above threshold / below threshold. The full UI
+// (request modal, withdraw, recent cycles) lives on /dashboard/billing;
+// this is a glance card with an "Open billing" CTA.
 function BillingGlance() {
-  const payouts = usePhotographerPayouts() ?? [];
-  const next = pickNextScheduled(payouts);
-  const inReviewTotal = payouts
-    .filter((p) => p.status === "pending")
-    .reduce((sum, p) => sum + p.amount, 0);
+  const balance = usePhotographerPayoutBalance();
 
   return (
     <Slab
@@ -73,76 +77,148 @@ function BillingGlance() {
         </Link>
       }
     >
-      {next ? (
-        <>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-            Next payout
-          </p>
-          <p className="font-display text-5xl md:text-6xl font-semibold tracking-tight text-fresh tnum mt-3 leading-none">
-            ₱{next.amount.toLocaleString()}
-          </p>
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate mt-4 tnum">
-            {formatLongDate(next.settledAt)} ·{" "}
-            {payoutMethodLabel(next.method)}
-          </p>
-
-          {inReviewTotal > 0 && (
-            <p className="font-sans text-sm text-ink-soft mt-6 max-w-md">
-              ₱{inReviewTotal.toLocaleString()} still in review from last
-              cycle.
-            </p>
-          )}
-        </>
-      ) : (
-        <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-          <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
-            No payouts scheduled.
-          </p>
-          <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
-            Sales accrue weekly — your first payout cycle will show up here
-            after your first sale settles.
-          </p>
+      {balance === null ? (
+        <div>
+          <Skeleton className="h-3 w-28" />
+          <Skeleton className="h-12 md:h-14 w-64 mt-3" />
+          <Skeleton className="h-3 w-44 mt-4" />
         </div>
+      ) : balance.hasOpenRequest && balance.openRequest ? (
+        <OpenRequestGlance request={balance.openRequest} />
+      ) : (
+        <AvailableGlance
+          unpaidBalance={balance.unpaidBalance}
+          minimum={balance.minimum}
+        />
       )}
     </Slab>
   );
 }
 
-function pickNextScheduled(
-  payouts: ReadonlyArray<PhotographerPayout>,
-): PhotographerPayout | undefined {
-  return [...payouts]
-    .filter((p) => p.status === "scheduled")
-    .sort((a, b) => a.settledAt.localeCompare(b.settledAt))[0];
+function OpenRequestGlance({
+  request,
+}: {
+  request: NonNullable<
+    ReturnType<typeof usePhotographerPayoutBalance>
+  >["openRequest"] & object;
+}) {
+  const stage: "pending_review" | "approved" | "held" =
+    request.status === "held"
+      ? "held"
+      : request.settledAt
+        ? "approved"
+        : "pending_review";
+  const stageLabel = {
+    pending_review: "Pending review",
+    approved: "Approved · payment incoming",
+    held: "Held — needs attention",
+  } as const;
+  const stageTone = {
+    pending_review: "text-ink",
+    approved: "text-fresh",
+    held: "text-error",
+  } as const;
+
+  return (
+    <>
+      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft flex items-center gap-2 flex-wrap">
+        <span>Payout request</span>
+        <span className="text-slate-soft">·</span>
+        <span className={stageTone[stage]}>{stageLabel[stage]}</span>
+      </p>
+      <p className="font-display text-5xl md:text-6xl font-semibold tracking-tight text-ink tnum mt-3 leading-none">
+        ₱{request.amount.toLocaleString()}
+      </p>
+      {stage === "approved" && request.settledAt && (
+        <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate mt-4 tnum">
+          Approved {formatLongDate(request.settledAt)}
+        </p>
+      )}
+      {stage === "held" && request.holdReason && (
+        <p className="font-sans text-sm text-ink-soft mt-4 max-w-md">
+          <span className="text-error">Reason: </span>
+          {request.holdReason}
+        </p>
+      )}
+    </>
+  );
 }
 
-function payoutMethodLabel(method: PhotographerPayout["method"]): string {
-  if (method === "gcash") return "GCash";
-  if (method === "maya") return "Maya";
-  if (method === "gotyme") return "GoTyme";
-  return method;
+function AvailableGlance({
+  unpaidBalance,
+  minimum,
+}: {
+  unpaidBalance: number;
+  minimum: number;
+}) {
+  const eligible = unpaidBalance >= minimum;
+
+  if (!eligible && unpaidBalance === 0) {
+    return (
+      <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
+        <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+          No earnings yet.
+        </p>
+        <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
+          Your first sale opens up the request flow — reach ₱
+          {minimum.toLocaleString()} to request a payout.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        Available to request
+      </p>
+      <p
+        className={cn(
+          "font-display text-5xl md:text-6xl font-semibold tracking-tight tnum mt-3 leading-none",
+          eligible ? "text-fresh" : "text-slate",
+        )}
+      >
+        ₱{unpaidBalance.toLocaleString()}
+      </p>
+      <p className="font-sans text-sm text-ink-soft mt-4 max-w-md">
+        {eligible ? (
+          <>
+            Ready to request — open billing to confirm and submit.
+          </>
+        ) : (
+          <>
+            Reach{" "}
+            <span className="font-mono tnum">₱{minimum.toLocaleString()}</span>{" "}
+            in unpaid earnings to request a payout.
+          </>
+        )}
+      </p>
+    </>
+  );
 }
 
 function NextUpGlance() {
-  // Prefer a currently-live event over the next upcoming one — if the
-  // photographer has a coverage today, that's what they came to the
-  // dashboard for. Both route into /upload/[eventId]: live opens the
-  // dropzone, upcoming lands on the "Uploads open on race day" panel.
-  // /dashboard/events/[id] 404s for events without uploads, so we
-  // deliberately avoid that path here.
-  const events = usePhotographerEvents() ?? [];
-  const live = events.find((e) => e.state === "live");
-  const upcoming = [...events]
-    .filter((e) => e.state === "upcoming")
-    .sort((a, b) => a.date.localeCompare(b.date))[0];
-  const featured = live ?? upcoming;
-  const isLive = !!live;
+  // Lists every upcoming event the photographer is assigned to, soonest
+  // first. Rows route into /upload/[eventId] which shows the "Uploads
+  // open on race day" panel until the event flips to live state.
+  // Live events are intentionally NOT surfaced here — the dashboard's
+  // action grid handles "happening now"; this section is forward-looking.
+  const events = usePhotographerEvents();
+  const isLoading = events === null;
+  const upcoming = useMemo(
+    () =>
+      (events ?? [])
+        .filter((e) => e.state === "upcoming")
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    [events],
+  );
+  const [shown, setShown] = useState(PAGE_SIZE.UPCOMING_INITIAL);
 
   return (
     <Slab
       id="next-up"
       number="02"
-      title={isLive ? "Live now" : "Next up"}
+      title="Next up"
       trailing={
         <Link
           href={ROUTES.DASHBOARD_EVENTS}
@@ -158,21 +234,42 @@ function NextUpGlance() {
         </Link>
       }
     >
-      {!featured ? (
+      {isLoading ? (
+        <ul className="border-y border-line divide-y divide-line">
+          {[0, 1].map((i) => (
+            <li key={i} className="py-5 md:py-6">
+              <Skeleton className="h-3 w-40" />
+              <Skeleton className="h-5 md:h-6 w-64 mt-2" />
+            </li>
+          ))}
+        </ul>
+      ) : upcoming.length === 0 ? (
         <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
           <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
-            Nothing on the calendar.
+            No upcoming coverage.
           </p>
           <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
-            Schedule your next coverage to start showing up here.
+            Once organizers assign you to a future event, it shows up here.
           </p>
         </div>
       ) : (
-        <ul className="border-y border-line divide-y divide-line">
-          <li>
-            <FeaturedEventRow event={featured} />
-          </li>
-        </ul>
+        <>
+          <ul className="border-y border-line divide-y divide-line">
+            {upcoming.slice(0, shown).map((event) => (
+              <li key={event.id}>
+                <FeaturedEventRow event={event} />
+              </li>
+            ))}
+          </ul>
+          <LoadMoreButton
+            shown={Math.min(shown, upcoming.length)}
+            total={upcoming.length}
+            increment={PAGE_SIZE.UPCOMING_INCREMENT}
+            onLoadMore={() =>
+              setShown((n) => n + PAGE_SIZE.UPCOMING_INCREMENT)
+            }
+          />
+        </>
       )}
     </Slab>
   );
