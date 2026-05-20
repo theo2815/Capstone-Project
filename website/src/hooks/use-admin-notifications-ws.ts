@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { getAccessToken } from "@/lib/auth";
 import { buildWsUrl } from "@/lib/ws-url";
 import { useAdminUsersServerStore } from "@/lib/admin-users-data";
+import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 
 // WebSocket push for the admin queue. Subscribes to /ws/admin/notifications
 // (handshake gated on ADMIN role server-side) and reacts to every
@@ -60,6 +61,9 @@ export function useAdminNotificationsWs(enabled: boolean): void {
       ws.onopen = () => {
         if (cancelled) return;
         attemptsRef.current = 0;
+        // Publish status so useAdminQueueRealtime can drop to the slow
+        // 5-min heartbeat — the push channel is doing the heavy lifting.
+        useAdminWsStatusStore.getState().setStatus("healthy");
         // Reconnect grace — flush the user cache so any verification
         // submission that landed during the down window surfaces on the
         // next read by the queue page.
@@ -95,6 +99,10 @@ export function useAdminNotificationsWs(enabled: boolean): void {
       ws.onclose = () => {
         if (cancelled) return;
         wsRef.current = null;
+        // Connection gone — flip to the aggressive 30-s polling cadence
+        // until ws.onopen brings us back. Reconnect attempts continue in
+        // parallel via the backoff timer below.
+        useAdminWsStatusStore.getState().setStatus("degraded");
         attemptsRef.current += 1;
         const delay = Math.min(
           MAX_BACKOFF_MS,
@@ -115,6 +123,10 @@ export function useAdminNotificationsWs(enabled: boolean): void {
       clearReconnectTimer();
       wsRef.current?.close();
       wsRef.current = null;
+      // Teardown (signed out, role change, unmount) — force degraded so a
+      // subsequent re-mount starts with the aggressive interval until the
+      // new WS connects.
+      useAdminWsStatusStore.getState().setStatus("degraded");
     };
   }, [enabled]);
 }

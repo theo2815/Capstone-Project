@@ -25,6 +25,10 @@ export function useAuth() {
     logout: clearUser,
   } = useAuthStore();
 
+  // Returns the freshly-authed user so callers can route by role without
+  // racing the React render of `useAuthStore.user`. Zustand's setState is
+  // synchronous, so getState() would also work — but returning the value
+  // keeps the dataflow explicit at the call site.
   const login = useCallback(
     async (credentials: LoginRequest) => {
       const data = await api.post<AuthResponse>("/auth/login", credentials);
@@ -34,6 +38,7 @@ export function useAuth() {
       resetUserScopedStores();
       setTokens(data.accessToken, data.refreshToken);
       setUser(data.user);
+      return data.user;
     },
     [setUser],
   );
@@ -44,6 +49,7 @@ export function useAuth() {
       resetUserScopedStores();
       setTokens(data.accessToken, data.refreshToken);
       setUser(data.user);
+      return data.user;
     },
     [setUser],
   );

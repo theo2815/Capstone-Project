@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
 import { ApiError } from "@/lib/api";
-import { isSafeRedirect } from "@/lib/redirect";
+import { isSafeRedirect, roleHome } from "@/lib/redirect";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types/user";
 import {
@@ -52,8 +52,12 @@ export function RegisterForm() {
   const searchParams = useSearchParams();
   const { register } = useAuth();
 
+  // Preserved `?redirect=...` (set by <ProtectedRoute> + ApiClient 401)
+  // wins; otherwise we fall back to the user's role home once we have the
+  // auth response (registration logs the user in, so they land on their
+  // role's default).
   const rawRedirect = searchParams.get("redirect");
-  const redirectTo = isSafeRedirect(rawRedirect) ? rawRedirect : ROUTES.EVENTS;
+  const preservedRedirect = isSafeRedirect(rawRedirect) ? rawRedirect : null;
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -85,8 +89,13 @@ export function RegisterForm() {
 
     setIsLoading(true);
     try {
-      await register({ name: name.trim(), email: email.trim(), password, role });
-      router.push(redirectTo);
+      const user = await register({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        role,
+      });
+      router.push(preservedRedirect ?? roleHome(user.role));
     } catch (err) {
       setSubmitError(
         err instanceof ApiError
@@ -257,9 +266,9 @@ export function RegisterForm() {
           Already have an account?{" "}
           <Link
             href={
-              redirectTo === ROUTES.EVENTS
-                ? ROUTES.LOGIN
-                : `${ROUTES.LOGIN}?redirect=${encodeURIComponent(redirectTo)}`
+              preservedRedirect
+                ? `${ROUTES.LOGIN}?redirect=${encodeURIComponent(preservedRedirect)}`
+                : ROUTES.LOGIN
             }
             className="text-ink hover:text-fresh transition-colors"
           >

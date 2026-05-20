@@ -4,14 +4,9 @@ import { useEffect, useState, type SVGProps } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
+import { roleHome } from "@/lib/redirect";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types/user";
-
-const POST_ONBOARDING_ROUTE: Record<Role, string> = {
-  RUNNER: ROUTES.EVENTS,
-  PHOTOGRAPHER: ROUTES.DASHBOARD,
-  ADMIN: ROUTES.ADMIN,
-};
 
 export function OnboardingForm() {
   const router = useRouter();
@@ -32,7 +27,7 @@ export function OnboardingForm() {
     if (!role || isSubmitting) return;
     setIsSubmitting(true);
     completeOnboarding(role);
-    router.replace(POST_ONBOARDING_ROUTE[role]);
+    router.replace(roleHome(role));
   }
 
   function handleSignOut() {
