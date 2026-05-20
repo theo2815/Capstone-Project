@@ -26,13 +26,18 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("price") price: BigDecimal,
     ): Int
 
+    // Bib filter is a substring (contains) match — OCR routinely clips digits
+    // (e.g. "7202" stored as "720" or "71830" when the bib is "183") so exact
+    // match is too brittle for real-world race photos. Substring also lets a
+    // runner type just "183" if they only remember part of their bib. Anchored
+    // prefix would be the next step up if false-positives become an issue.
     @Query(
         """
         SELECT DISTINCT p FROM Photo p
         LEFT JOIN p.bibs b
         WHERE p.eventId = :eventId
           AND p.status = :status
-          AND (:bib = '' OR UPPER(b.bibNumber) = UPPER(:bib))
+          AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
         countQuery = """
@@ -40,7 +45,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         LEFT JOIN p.bibs b
         WHERE p.eventId = :eventId
           AND p.status = :status
-          AND (:bib = '' OR UPPER(b.bibNumber) = UPPER(:bib))
+          AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
         """,
     )
     fun searchForEvent(

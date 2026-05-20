@@ -87,9 +87,12 @@ class Settings(BaseSettings):
     # Blob store — images written to shared volume instead of base64-in-Redis
     BLOB_STORE_PATH: str = "/tmp/quickpitik-blobs"
 
-    # Image preprocessing — downscale large images before inference
-    # Models resize internally to 640x640 so images beyond this are wasted memory
-    MAX_INFERENCE_DIMENSION: int = 640  # Match model input size to avoid double resize
+    # Image preprocessing — downscale large images before inference.
+    # 640 was too aggressive for marathon photos: a 2400x1600 frame got shrunk
+    # to 426x640, leaving the bib at ~40x27px which is below the YOLO bib
+    # detector's effective range. 1280 keeps inference fast while preserving
+    # enough bib pixels for OCR (~80x54px on a typical race shot).
+    MAX_INFERENCE_DIMENSION: int = 1280
 
     model_config = {
         "env_file": ".env",

@@ -189,19 +189,32 @@ class PhotoUploadService(
             facesOk = true
             try {
                 val facesResult = aiApiClient.facesDetect(bytes, contentType, filename)
+                // ai-api requires person_id be a valid UUID (or omitted, in which
+                // case it auto-generates one). The previous "$photoId:$index" form
+                // failed UUID parsing → "Invalid person_id format". Let ai-api mint
+                // the UUID and store whichever id it returns. Note: ai-api's enroll
+                // picks the best face from the image regardless of how many faces
+                // detect() returned, so the per-face loop is functionally a no-op
+                // for index > 0 on multi-face shots — same "best face" gets enrolled
+                // under N different UUIDs. Acceptable for v1; refine when we crop
+                // per-face before enroll.
                 facesResult.faces.forEachIndexed { index, _ ->
-                    val personId = "$photoId:$index"
                     runCatching {
-                        aiApiClient.facesEnroll(
+                        val enrollResult = aiApiClient.facesEnroll(
                             file = bytes,
                             contentType = contentType,
                             filename = filename,
                             personName = photoId.toString(),
-                            personId = personId,
+                            personId = null,
                             eventId = eventId,
                         )
-                        photo.facePersons.add(PhotoFacePersonEmbed(faceIndex = index, aiPersonId = personId))
-                    }.onFailure { log.warn("Face enroll failed for {}: {}", personId, it.message) }
+                        photo.facePersons.add(
+                            PhotoFacePersonEmbed(
+                                faceIndex = index,
+                                aiPersonId = enrollResult.person_id,
+                            )
+                        )
+                    }.onFailure { log.warn("Face enroll failed for photo {} face {}: {}", photoId, index, it.message) }
                 }
             } catch (ex: Exception) {
                 facesOk = false
