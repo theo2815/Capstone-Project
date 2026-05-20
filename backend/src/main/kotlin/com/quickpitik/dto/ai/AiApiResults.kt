@@ -16,7 +16,16 @@ data class FacesDetectResult(
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class FaceDetection(
     val confidence: Double = 0.0,
-    val bbox: List<Double> = emptyList(),
+    val bbox: FaceBBox? = null,
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class FaceBBox(
+    val x1: Double = 0.0,
+    val y1: Double = 0.0,
+    val x2: Double = 0.0,
+    val y2: Double = 0.0,
+    val confidence: Double = 0.0,
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

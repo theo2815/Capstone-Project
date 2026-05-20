@@ -110,7 +110,7 @@ class FaceRepository:
                     SELECT
                         fe.person_id,
                         p.name AS person_name,
-                        1 - (fe.embedding <=> :query::vector) AS similarity
+                        1 - (fe.embedding <=> CAST(:query AS vector)) AS similarity
                     FROM face_embeddings fe
                     JOIN persons p ON p.id = fe.person_id
                     WHERE 1 = 1 {tenant_filter}

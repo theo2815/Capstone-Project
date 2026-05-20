@@ -95,6 +95,29 @@ async def recognize_bibs(
                             ],
                         )
                     )
+
+        # Fallback: YOLO bib detector misses bibs on side-angle running poses,
+        # waist-mounted bibs, or low-contrast night shots. When the detector
+        # returns 0 crops, run OCR on the full image — the BibRecognizer's
+        # character filter (numeric + alphanumeric + min_chars) keeps most
+        # non-bib text out. Acceptable false-positive trade-off for v1; tune
+        # by raising min_chars or retraining the detector.
+        if not bib_results:
+            full_ocr = await asyncio.to_thread(
+                bib_ocr.recognize, image, min_chars_override=min_chars
+            )
+            if full_ocr["bib_number"]:
+                bib_results.append(
+                    BibDetection(
+                        bib_number=full_ocr["bib_number"],
+                        confidence=full_ocr["confidence"],
+                        bbox={"x1": 0.0, "y1": 0.0, "x2": float(w), "y2": float(h)},
+                        all_candidates=[
+                            BibCandidate(**c) for c in full_ocr["all_candidates"]
+                        ],
+                    )
+                )
+                warnings = ["Bib detector missed this image — used full-image OCR fallback."]
     else:
         # Fallback: run OCR on the full image
         warnings = [

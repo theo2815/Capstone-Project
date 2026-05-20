@@ -41,7 +41,7 @@ class BibDetector:
             self.model = None
 
     def detect_batch(
-        self, images: list[np.ndarray], confidence: float = 0.5
+        self, images: list[np.ndarray], confidence: float = 0.15
     ) -> list[list[dict]]:
         """Detect bib regions in multiple images in one YOLO inference call.
 
@@ -83,7 +83,7 @@ class BibDetector:
             all_detections.append(detections)
         return all_detections
 
-    def detect(self, image: np.ndarray, confidence: float = 0.5) -> list[dict]:
+    def detect(self, image: np.ndarray, confidence: float = 0.15) -> list[dict]:
         """Detect bib regions in an image.
 
         Only returns detections whose class name is in ``_BIB_CLASS_NAMES``

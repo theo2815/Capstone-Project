@@ -27,7 +27,9 @@ os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "False")
 
 
 class BibRecognizer:
-    """OCR for bib number text recognition using PaddleOCR 3.x (PP-OCRv5)."""
+    """OCR for bib number text recognition. Primary target is PaddleOCR 3.x
+    (PP-OCRv5); a 2.x compat branch is included so the dev shell can run
+    without forcing the PaddlePaddle 3.x upgrade on Windows."""
 
     def __init__(self, use_gpu: bool = False, min_chars: int = 2) -> None:
         from paddleocr import PaddleOCR
@@ -37,11 +39,25 @@ class BibRecognizer:
             os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
         self.min_chars = min_chars
-        self.ocr = PaddleOCR(
-            use_textline_orientation=True,
-            lang="en",
-        )
-        logger.info("BibRecognizer initialized", gpu=use_gpu)
+        # Version-string sniff. PaddleOCR 2.x silently accepts unknown kwargs
+        # (so try/except on constructor doesn't distinguish), and a 2.x
+        # PaddleOCR object lacks `.predict`. Branch off the package version.
+        import paddleocr as _pp
+        major = int(str(getattr(_pp, "__version__", "0")).split(".")[0] or 0)
+        if major >= 3:
+            self.ocr = PaddleOCR(
+                use_textline_orientation=True,
+                lang="en",
+            )
+            self._api_version = 3
+        else:
+            self.ocr = PaddleOCR(
+                use_angle_cls=True,
+                lang="en",
+                show_log=False,
+            )
+            self._api_version = 2
+        logger.info("BibRecognizer initialized", gpu=use_gpu, paddleocr_api=self._api_version)
 
     def recognize_batch(
         self,
@@ -106,19 +122,35 @@ class BibRecognizer:
             Dict with bib_number, confidence, and all_candidates.
         """
         min_chars = min_chars_override if min_chars_override is not None else self.min_chars
-        # PaddleOCR 3.x uses predict() — ocr() is deprecated.
         # Called directly (no timeout thread) — the ThreadPoolExecutor in
         # recognize_batch() provides per-crop timeout via future.result(timeout=),
         # and Celery task_soft_time_limit is the outer safety net.
-        results = list(self.ocr.predict(cropped_bib_image))
-        if not results:
-            return {"bib_number": "", "confidence": 0.0, "all_candidates": []}
-
-        # PaddleOCR 3.x returns OCRResult objects (dict-like) with:
-        #   rec_texts: list[str], rec_scores: list[float]
-        result = results[0]
-        rec_texts = result.get("rec_texts", [])
-        rec_scores = result.get("rec_scores", [])
+        if self._api_version == 3:
+            # PaddleOCR 3.x: predict() returns OCRResult objects (dict-like)
+            # with rec_texts: list[str] and rec_scores: list[float].
+            results = list(self.ocr.predict(cropped_bib_image))
+            if not results:
+                return {"bib_number": "", "confidence": 0.0, "all_candidates": []}
+            result = results[0]
+            rec_texts = result.get("rec_texts", [])
+            rec_scores = result.get("rec_scores", [])
+        else:
+            # PaddleOCR 2.x: ocr() returns [[ [bbox, (text, score)], ... ]] —
+            # one outer list per page, one inner list per detected line.
+            raw = self.ocr.ocr(cropped_bib_image, cls=True)
+            if not raw or raw[0] is None:
+                return {"bib_number": "", "confidence": 0.0, "all_candidates": []}
+            rec_texts = []
+            rec_scores = []
+            for line in raw[0]:
+                # line is [bbox, (text, score)]; defensive against shape drift
+                if not line or len(line) < 2:
+                    continue
+                text_score = line[1]
+                if not text_score or len(text_score) < 2:
+                    continue
+                rec_texts.append(text_score[0])
+                rec_scores.append(text_score[1])
 
         if not rec_texts:
             return {"bib_number": "", "confidence": 0.0, "all_candidates": []}
