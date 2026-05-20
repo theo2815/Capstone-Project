@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
 import { ApiError } from "@/lib/api";
-import { useRedirectTarget } from "@/hooks/use-redirect-target";
+import { isSafeRedirect, roleHome } from "@/lib/redirect";
 import { validateEmail, validatePassword } from "@/lib/auth-validation";
 import {
   AuthDivider,
@@ -22,7 +22,14 @@ interface FieldErrors {
 
 export function LoginForm() {
   const router = useRouter();
-  const redirectTo = useRedirectTarget(ROUTES.EVENTS);
+  const searchParams = useSearchParams();
+  // Preserved `?redirect=...` (set by <ProtectedRoute> and the ApiClient
+  // 401 handler) wins; otherwise we fall back to the user's role home
+  // after we get the auth response. See `roleHome()` in lib/redirect.
+  const preservedRedirect = (() => {
+    const raw = searchParams?.get("redirect");
+    return isSafeRedirect(raw) ? raw : null;
+  })();
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -49,8 +56,8 @@ export function LoginForm() {
 
     setIsLoading(true);
     try {
-      await login({ email: email.trim(), password });
-      router.push(redirectTo);
+      const user = await login({ email: email.trim(), password });
+      router.push(preservedRedirect ?? roleHome(user.role));
     } catch (err) {
       setSubmitError(
         err instanceof ApiError ? err.message : "Login failed. Please try again.",
@@ -163,9 +170,9 @@ export function LoginForm() {
           New here?{" "}
           <Link
             href={
-              redirectTo === ROUTES.EVENTS
-                ? ROUTES.REGISTER
-                : `${ROUTES.REGISTER}?redirect=${encodeURIComponent(redirectTo)}`
+              preservedRedirect
+                ? `${ROUTES.REGISTER}?redirect=${encodeURIComponent(preservedRedirect)}`
+                : ROUTES.REGISTER
             }
             className="text-ink hover:text-fresh transition-colors"
           >

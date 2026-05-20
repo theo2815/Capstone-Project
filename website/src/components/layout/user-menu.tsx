@@ -109,7 +109,11 @@ export function UserMenu({ user }: UserMenuProps) {
     }
 
     logout();
-    router.replace(ROUTES.HOME);
+    // Sign-out always lands on /login. The pre-2026-05-20 path was the
+    // splash chooser (/), but that's confusing for a user who just signed
+    // out — they almost always either want to sign back in or pick a
+    // different account. Landing on /login matches that intent directly.
+    router.replace(ROUTES.LOGIN);
   }
 
   const initials = getInitials(user.name);
