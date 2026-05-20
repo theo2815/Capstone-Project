@@ -37,6 +37,7 @@ class EventPhotoController(
 ) {
     @GetMapping("/{slug}/photos")
     fun list(
+        @AuthenticationPrincipal principal: AuthPrincipal?,
         @PathVariable slug: String,
         @RequestParam(required = false) bib: String?,
         @RequestParam(required = false) offset: Int?,
@@ -44,7 +45,12 @@ class EventPhotoController(
     ): PaginatedResponse<PhotoDto> {
         val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
-        return photoService.listForEvent(event.id, bib, PaginationParams.of(offset, limit))
+        return photoService.listForEvent(
+            eventId = event.id,
+            bib = bib,
+            pagination = PaginationParams.of(offset, limit),
+            requesterUserId = principal?.userId,
+        )
     }
 
     @PostMapping(
@@ -52,6 +58,7 @@ class EventPhotoController(
         consumes = [MediaType.MULTIPART_FORM_DATA_VALUE],
     )
     fun searchByFaceMultipart(
+        @AuthenticationPrincipal principal: AuthPrincipal?,
         @PathVariable slug: String,
         @RequestPart("selfie") selfie: MultipartFile,
         @RequestParam(required = false) offset: Int?,
@@ -65,6 +72,7 @@ class EventPhotoController(
             contentType = selfie.contentType ?: MediaType.APPLICATION_OCTET_STREAM_VALUE,
             filename = selfie.originalFilename ?: "selfie",
             pagination = PaginationParams.of(offset, limit),
+            requesterUserId = principal?.userId,
         )
     }
 
@@ -118,6 +126,7 @@ class EventPhotoController(
             contentType = contentTypeOf(selfie.s3Key),
             filename = selfie.s3Key.substringAfterLast('/'),
             pagination = PaginationParams.of(body.offset, body.limit),
+            requesterUserId = principal.userId,
         )
     }
 

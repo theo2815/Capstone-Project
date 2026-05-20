@@ -580,9 +580,16 @@ class OrderService(
     }
 
     private fun previewUrlOf(photo: Photo): String {
-        // Preview = watermarked variant if available, otherwise the thumbnail.
-        val key = photo.watermarkS3Key ?: photo.thumbnailS3Key ?: photo.s3Key
-        return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
+        // Owned-mode preview = the clean original. OrderDetailDto is only ever
+        // returned to the order's owner (JWT user_id match) or the share-token
+        // holder, so by the time we render `previewUrl` the requester has
+        // already proven ownership. Serving the watermarked variant here was
+        // the G-2 bug — photographer mark + QuickPitik tile were baked into
+        // the JPEG and still visible to paying users. Falls back to the
+        // watermarked variant only when s3_key is somehow missing (defensive;
+        // the column is NOT NULL).
+        val key = photo.s3Key.ifBlank { photo.watermarkS3Key ?: photo.thumbnailS3Key.orEmpty() }
+        return storageService.presignedGetUrl(key, storageProperties.presignedTtl.runnerDownload)
     }
 
     private fun downloadUrlOf(photo: Photo, grant: DownloadGrant?): String? {

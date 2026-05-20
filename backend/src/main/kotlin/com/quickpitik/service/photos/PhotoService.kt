@@ -8,6 +8,7 @@ import com.quickpitik.dto.photos.PhotoDto
 import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
@@ -18,6 +19,7 @@ import java.util.UUID
 @Transactional(readOnly = true)
 class PhotoService(
     private val photoRepository: PhotoRepository,
+    private val downloadGrantRepository: DownloadGrantRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
 ) {
@@ -25,6 +27,7 @@ class PhotoService(
         eventId: UUID,
         bib: String?,
         pagination: PaginationParams,
+        requesterUserId: UUID? = null,
     ): PaginatedResponse<PhotoDto> {
         val cleanedBib = normalizeBib(bib)
         val page = photoRepository.searchForEvent(
@@ -33,18 +36,14 @@ class PhotoService(
             bib = cleanedBib,
             pageable = OffsetLimitPageable(pagination),
         )
-        return PaginatedResponse(
-            items = page.content.map { it.toDto(::resolveThumbnailUrl) },
-            total = page.totalElements,
-            offset = pagination.offset,
-            limit = pagination.limit,
-        )
+        return toPaginatedDto(page.content, page.totalElements, pagination, requesterUserId)
     }
 
     fun findByEventAndPersonIds(
         eventId: UUID,
         aiPersonIds: Collection<String>,
         pagination: PaginationParams,
+        requesterUserId: UUID? = null,
     ): PaginatedResponse<PhotoDto> {
         if (aiPersonIds.isEmpty()) {
             return PaginatedResponse.empty(pagination)
@@ -55,18 +54,48 @@ class PhotoService(
             aiPersonIds = aiPersonIds,
             pageable = OffsetLimitPageable(pagination),
         )
+        return toPaginatedDto(page.content, page.totalElements, pagination, requesterUserId)
+    }
+
+    private fun toPaginatedDto(
+        photos: List<Photo>,
+        total: Long,
+        pagination: PaginationParams,
+        requesterUserId: UUID?,
+    ): PaginatedResponse<PhotoDto> {
+        val ownedIds = resolveOwnedIds(requesterUserId, photos)
         return PaginatedResponse(
-            items = page.content.map { it.toDto(::resolveThumbnailUrl) },
-            total = page.totalElements,
+            items = photos.map {
+                it.toDto(
+                    thumbnailUrlResolver = ::resolveThumbnailUrl,
+                    cleanUrlResolver = { photo ->
+                        if (photo.id in ownedIds) resolveCleanUrl(photo) else null
+                    },
+                )
+            },
+            total = total,
             offset = pagination.offset,
             limit = pagination.limit,
         )
+    }
+
+    private fun resolveOwnedIds(requesterUserId: UUID?, photos: List<Photo>): Set<UUID> {
+        if (requesterUserId == null || photos.isEmpty()) return emptySet()
+        return downloadGrantRepository
+            .findOwnedPhotoIdsByUserAndPhotoIds(requesterUserId, photos.map { it.id })
+            .toSet()
     }
 
     private fun resolveThumbnailUrl(photo: Photo): String? {
         val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
+
+    // The clean original. Reuses the runner-download TTL since the lightbox
+    // surface and the actual download share the same security envelope —
+    // both are gated on proof of ownership upstream.
+    private fun resolveCleanUrl(photo: Photo): String =
+        storageService.presignedGetUrl(photo.s3Key, storageProperties.presignedTtl.runnerDownload)
 
     private fun normalizeBib(raw: String?): String {
         if (raw.isNullOrBlank()) return ""

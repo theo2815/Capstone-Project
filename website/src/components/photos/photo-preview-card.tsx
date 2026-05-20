@@ -20,6 +20,10 @@ export interface PhotoPreviewItem {
   price: number;
   span?: "default" | "wide";
   imageUrl?: string | null;
+  // BE-provided clean URL — only set when the requester owns the photo.
+  // The lightbox prefers it over `imageUrl` so owned-mode (and any owned
+  // gallery thumbnail upgraded mid-browse) renders an unwatermarked source.
+  cleanUrl?: string | null;
   alt?: string;
 }
 
@@ -87,14 +91,17 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
 
   const colorIdx = photo.tone % TONE_COLORS.length;
   const wide = photo.span === "wide";
-  const hasImage = Boolean(photo.imageUrl);
+  // Owned-mode photos get the clean original from BE; everyone else sees the
+  // watermarked thumbnail. Closes G-2.
+  const renderedSrc = photo.cleanUrl ?? photo.imageUrl ?? null;
+  const hasImage = Boolean(renderedSrc);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     setImageLoaded(false);
     setImageFailed(false);
-  }, [photo.id, photo.imageUrl]);
+  }, [photo.id, renderedSrc]);
 
   if (!mounted) return null;
 
@@ -212,11 +219,15 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             animation: "fade-in 0.4s ease-out both",
           }}
         >
-          {mode === "browse" && hasImage && imageLoaded && !imageFailed && (
+          {mode === "browse" && hasImage && imageLoaded && !imageFailed && !photo.cleanUrl && (
             // Platform watermark — bottom-LEFT of the image area. Pairs with the
             // BE-baked photographer watermark in the bottom-RIGHT of the JPEG
             // (see backend WatermarkService.drawWatermark). Two corner marks:
             // photographer (BE) + QuickPitik (FE). No diagonal/tile overlays.
+            //
+            // Suppressed when the BE handed us a `cleanUrl` — the requester
+            // owns the photo, so the FE-rendered platform mark would defeat
+            // the point of serving the unwatermarked original.
             //
             // TODO: replace the `bg-bone/35` square with the QuickPitik logo SVG
             // once the asset lands in /public. Keep the flex row + spacing so
@@ -249,7 +260,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           {hasImage && !imageFailed && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={photo.imageUrl ?? ""}
+              src={renderedSrc ?? ""}
               alt={
                 photo.alt ??
                 (photo.bib

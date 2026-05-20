@@ -10,8 +10,6 @@ export const ROUTES = {
   FORGOT_PASSWORD: "/forgot-password",
   ONBOARDING: "/onboarding",
   EVENTS: "/events",
-  CART: "/cart",
-  CHECKOUT: "/checkout",
   ORDERS: "/orders",
   PROFILE: "/profile",
   ACCOUNT: "/account",
