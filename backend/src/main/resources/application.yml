@@ -94,6 +94,21 @@ app:
     public-gallery:
       capacity: 60
       refill-period: PT1M
+    # Pre-auth endpoints — per-IP buckets. Sized for normal users plus a
+    # retry cushion; tighter caps go on credential-stuffing-prone surfaces
+    # (login) and email-bombing-prone surfaces (forgot-password).
+    auth-login:
+      capacity: 10
+      refill-period: PT1M
+    auth-register:
+      capacity: 5
+      refill-period: PT1M
+    auth-forgot-password:
+      capacity: 3
+      refill-period: PT1M
+    auth-reset-password:
+      capacity: 5
+      refill-period: PT1M
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
     platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}

@@ -27,6 +27,7 @@ class PhotoSearchService(
         contentType: String,
         filename: String,
         pagination: PaginationParams,
+        requesterUserId: UUID? = null,
     ): PaginatedResponse<PhotoDto> {
         require(selfieBytes.isNotEmpty()) {
             throw ValidationException(
@@ -58,13 +59,13 @@ class PhotoSearchService(
         } catch (ex: Exception) {
             log.warn("ai-api faces/search failed/offline for event {}: {}. Falling back to demo list.", eventId, ex.message)
             // Bulletproof Demo Fallback: return the event's photos so the app works flawlessly even with heavy AI container stopped!
-            return photoService.listForEvent(eventId, null, pagination)
+            return photoService.listForEvent(eventId, null, pagination, requesterUserId)
         }
 
         val matchedPersonIds = matches.matches.map { it.person_id }.toSet()
         if (matchedPersonIds.isEmpty()) {
             return PaginatedResponse.empty(pagination)
         }
-        return photoService.findByEventAndPersonIds(eventId, matchedPersonIds, pagination)
+        return photoService.findByEventAndPersonIds(eventId, matchedPersonIds, pagination, requesterUserId)
     }
 }

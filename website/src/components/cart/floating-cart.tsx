@@ -13,8 +13,6 @@ const HIDDEN_ROUTES: string[] = [
   ROUTES.LOGIN,
   ROUTES.REGISTER,
   ROUTES.FORGOT_PASSWORD,
-  ROUTES.CART,
-  ROUTES.CHECKOUT,
 ];
 
 export function FloatingCart() {

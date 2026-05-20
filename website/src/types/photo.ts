@@ -17,6 +17,12 @@ export interface MockPhoto {
   span: "default" | "wide";
   price: number;
   imageUrl?: string | null;
+  // Presigned URL for the clean original. Populated by the BE only when the
+  // requester owns the photo (an unexpired DownloadGrant exists). When set,
+  // the lightbox swaps `imageUrl` for `cleanUrl` so a runner who already
+  // bought a photo sees an unwatermarked preview while browsing the event.
+  // Null for everyone else — closes G-2.
+  cleanUrl?: string | null;
   alt?: string;
 }
 
