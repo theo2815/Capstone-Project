@@ -22,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.shape.CircleShape
 import com.quickpitik.mobile.data.local.SessionManager
@@ -172,37 +173,51 @@ fun RunnerGalleryScreen(
                 border = BorderStroke(1.dp, Line),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "SELECTED MARATHON",
-                            style = Typography.labelSmall,
-                            color = Slate
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = activeEvent?.name ?: "Loading Events...",
-                            style = Typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Ink
-                        )
-                        Text(
-                            text = activeEvent?.location ?: "Please select an event",
-                            style = Typography.bodySmall,
-                            color = SlateSoft
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (!activeEvent?.bannerUrl.isNullOrEmpty()) {
+                        AsyncImage(
+                            model = activeEvent?.bannerUrl,
+                            contentDescription = "Event Banner",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
+                            contentScale = ContentScale.Crop
                         )
                     }
-                    Icon(
-                        imageVector = Icons.Default.ArrowDropDown,
-                        contentDescription = "Expand",
-                        tint = Ink
-                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "SELECTED MARATHON",
+                                style = Typography.labelSmall,
+                                color = Slate
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = activeEvent?.name ?: "Loading Events...",
+                                style = Typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Ink
+                            )
+                            Text(
+                                text = activeEvent?.location ?: "Please select an event",
+                                style = Typography.bodySmall,
+                                color = SlateSoft
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Default.ArrowDropDown,
+                            contentDescription = "Expand",
+                            tint = Ink
+                        )
+                    }
                 }
 
                 DropdownMenu(
