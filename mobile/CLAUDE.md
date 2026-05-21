@@ -1,6 +1,6 @@
 # CLAUDE.md — QuickPitik Mobile App (Kotlin/Compose)
 
-**Status:** MVVM Architecture, Room Local SQLite Caching, Retrofit Network Syncing, Session Management, and DSLR Background Uploads **100% Operational & Compiled.**
+**Status:** MVVM Architecture, Room Local SQLite Caching, Retrofit Network Syncing, Session Management, DSLR Background Uploads, and Mobile Marketplace Flow (Cart, Checkout, Orders History) **100% Operational & Compiled.**
 
 ---
 

@@ -14,7 +14,10 @@ import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
+import coil.compose.AsyncImage
+import com.quickpitik.mobile.data.remote.PhotoDto
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,11 +33,15 @@ import com.quickpitik.mobile.ui.theme.*
 @Composable
 fun RunnerGalleryScreen(
     viewModel: RunnerGalleryViewModel,
+    cartViewModel: CartViewModel,
+    onNavigateToCart: () -> Unit,
+    onNavigateToOrders: () -> Unit,
     onLogout: () -> Unit
 ) {
     var bibSearchQuery by remember { mutableStateOf("") }
     var activeSearchTab by remember { mutableStateOf(0) } // 0 = Selfie, 1 = Bib Number
     var showEventDropdown by remember { mutableStateOf(false) }
+    var selectedPhotoForDetail by remember { mutableStateOf<PhotoDto?>(null) }
 
     val eventsState by viewModel.eventsState.collectAsState()
     val activeEvent by viewModel.activeEvent.collectAsState()
@@ -71,12 +78,29 @@ fun RunnerGalleryScreen(
                         color = Ink
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val cartItems by cartViewModel.cartItems.collectAsState()
                     IconButton(
-                        onClick = {},
+                        onClick = onNavigateToCart,
                         colors = IconButtonDefaults.iconButtonColors(containerColor = BoneDeep)
                     ) {
-                        Icon(Icons.Default.ShoppingCart, contentDescription = "Cart", tint = Ink)
+                        BadgedBox(
+                            badge = {
+                                if (cartItems.isNotEmpty()) {
+                                    Badge(containerColor = Fresh, contentColor = Bone) {
+                                        Text("${cartItems.size}")
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.ShoppingCart, contentDescription = "Cart", tint = Ink)
+                        }
+                    }
+                    IconButton(
+                        onClick = onNavigateToOrders,
+                        colors = IconButtonDefaults.iconButtonColors(containerColor = BoneDeep)
+                    ) {
+                        Icon(Icons.Default.List, contentDescription = "Orders", tint = Ink)
                     }
                     Button(
                         onClick = onLogout,
@@ -338,7 +362,7 @@ fun RunnerGalleryScreen(
                                         .aspectRatio(0.85f)
                                         .clip(RoundedCornerShape(16.dp))
                                         .background(BoneDeep)
-                                        .clickable {},
+                                        .clickable { selectedPhotoForDetail = photo },
                                     contentAlignment = Alignment.Center
                                 ) {
                                     // Background mock runner photo texture details
@@ -413,5 +437,98 @@ fun RunnerGalleryScreen(
                 }
             }
         }
+    }
+
+    if (selectedPhotoForDetail != null) {
+        val photo = selectedPhotoForDetail!!
+        val cartItems by cartViewModel.cartItems.collectAsState()
+        val isInCart = cartItems.any { it.photoId == photo.id }
+        
+        AlertDialog(
+            onDismissRequest = { selectedPhotoForDetail = null },
+            title = { Text("Photo Details", fontWeight = FontWeight.Bold, color = Ink) },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(BoneDeep),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (photo.imageUrl != null) {
+                            AsyncImage(
+                                model = photo.imageUrl,
+                                contentDescription = "Photo preview",
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Text("QUICKPITIK PREVIEW", fontWeight = FontWeight.Bold, color = SlateSoft)
+                        }
+                        
+                        // Watermark overlay
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.04f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "QUICKPITIK\nPREVIEW",
+                                color = Color.White.copy(alpha = 0.35f),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Bib Number: ${photo.bib ?: "N/A"}", style = Typography.bodyMedium, color = Ink)
+                    Text("Timestamp: ${photo.time}", style = Typography.bodyMedium, color = Ink)
+                    Text("Distance Mark: KM ${photo.km ?: 0}", style = Typography.bodyMedium, color = Ink)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Price:", style = Typography.titleMedium, color = Slate)
+                        Text(
+                            text = String.format("₱%,.2f", photo.price),
+                            style = Typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Fresh
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val event = activeEvent
+                        if (event != null) {
+                            if (isInCart) {
+                                cartViewModel.removeFromCart(photo.id)
+                            } else {
+                                cartViewModel.addToCart(photo, event.id, event.slug, event.name)
+                            }
+                        }
+                        selectedPhotoForDetail = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = if (isInCart) ErrorRed else Fresh, contentColor = Bone),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(if (isInCart) "REMOVE FROM CART" else "ADD TO CART")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedPhotoForDetail = null }) {
+                    Text("CLOSE", color = Ink)
+                }
+            },
+            containerColor = Bone,
+            shape = RoundedCornerShape(16.dp)
+        )
     }
 }

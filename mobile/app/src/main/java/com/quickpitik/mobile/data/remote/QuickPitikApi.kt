@@ -47,4 +47,52 @@ interface QuickPitikApi {
         @Query("offset") offset: Int = 0,
         @Query("limit") limit: Int = 100
     ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
+
+    @GET("api/v1/me/cart")
+    suspend fun getCart(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<List<CartItemDto>>
+
+    @POST("api/v1/me/cart/items")
+    suspend fun addCartItem(
+        @Header("Authorization") token: String,
+        @Body request: AddCartItemRequest
+    ): ApiResponseEnvelope<CartItemDto>
+
+    @DELETE("api/v1/me/cart/items/{photoId}")
+    suspend fun removeCartItem(
+        @Header("Authorization") token: String,
+        @Path("photoId") photoId: String
+    ): ApiResponseEnvelope<RemovedResponse>
+
+    @POST("api/v1/me/cart/merge")
+    suspend fun mergeCart(
+        @Header("Authorization") token: String,
+        @Body request: MergeCartRequest
+    ): ApiResponseEnvelope<List<CartItemDto>>
+
+    @DELETE("api/v1/me/cart")
+    suspend fun clearCart(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<ClearedResponse>
+
+    @POST("api/v1/orders")
+    suspend fun createOrder(
+        @Header("Authorization") token: String?,
+        @Header("Idempotency-Key") idempotencyKey: String,
+        @Body request: CreateOrderRequest
+    ): ApiResponseEnvelope<OrderResponse>
+
+    @GET("api/v1/me/orders")
+    suspend fun getOrders(
+        @Header("Authorization") token: String,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 100
+    ): ApiResponseEnvelope<PaginatedResponse<OrderListItemDto>>
+
+    @GET("api/v1/me/orders/{id}")
+    suspend fun getOrderDetail(
+        @Header("Authorization") token: String,
+        @Path("id") orderId: String
+    ): ApiResponseEnvelope<OrderDetailDto>
 }
