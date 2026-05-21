@@ -22,6 +22,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.shape.CircleShape
+import com.quickpitik.mobile.data.local.SessionManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -36,6 +39,8 @@ fun RunnerGalleryScreen(
     cartViewModel: CartViewModel,
     onNavigateToCart: () -> Unit,
     onNavigateToOrders: () -> Unit,
+    onNavigateToProfile: () -> Unit,
+    onNavigateToSettings: () -> Unit,
     onLogout: () -> Unit
 ) {
     var bibSearchQuery by remember { mutableStateOf("") }
@@ -96,18 +101,64 @@ fun RunnerGalleryScreen(
                             Icon(Icons.Default.ShoppingCart, contentDescription = "Cart", tint = Ink)
                         }
                     }
-                    IconButton(
-                        onClick = onNavigateToOrders,
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = BoneDeep)
-                    ) {
-                        Icon(Icons.Default.List, contentDescription = "Orders", tint = Ink)
-                    }
-                    Button(
-                        onClick = onLogout,
-                        colors = ButtonDefaults.buttonColors(containerColor = BoneDeep, contentColor = Ink),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("LEAVE", style = Typography.labelMedium)
+
+                    var menuExpanded by remember { mutableStateOf(false) }
+                    val context = LocalContext.current
+                    val sessionManager = remember { SessionManager.getInstance(context) }
+                    val userName = sessionManager.getUserName() ?: "Runner"
+
+                    Box {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(Fresh)
+                                .clickable { menuExpanded = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = userName.take(1).uppercase(),
+                                color = Bone,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false },
+                            modifier = Modifier.background(Bone)
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Profile & Selfies", color = Ink) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onNavigateToProfile()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Account Settings", color = Ink) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onNavigateToSettings()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Purchased Photos", color = Ink) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onNavigateToOrders()
+                                }
+                            )
+                            Divider(color = SlateSoft)
+                            DropdownMenuItem(
+                                text = { Text("Sign Out", color = ErrorRed) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onLogout()
+                                }
+                            )
+                        }
                     }
                 }
             }
