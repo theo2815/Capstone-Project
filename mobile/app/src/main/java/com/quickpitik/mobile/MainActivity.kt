@@ -14,6 +14,10 @@ import com.quickpitik.mobile.ui.photographer.PhotographerDashboardScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
 import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
 import com.quickpitik.mobile.ui.runner.RunnerGalleryViewModel
+import com.quickpitik.mobile.ui.runner.CartViewModel
+import com.quickpitik.mobile.ui.runner.CartScreen
+import com.quickpitik.mobile.ui.runner.CheckoutScreen
+import com.quickpitik.mobile.ui.runner.OrdersScreen
 import com.quickpitik.mobile.ui.theme.QuickPitikMobileTheme
 
 class MainActivity : ComponentActivity() {
@@ -23,6 +27,7 @@ class MainActivity : ComponentActivity() {
             QuickPitikMobileTheme {
                 val navController = rememberNavController()
                 val authViewModel: AuthViewModel = viewModel()
+                val cartViewModel: CartViewModel = viewModel()
 
                 NavHost(
                     navController = navController,
@@ -72,11 +77,51 @@ class MainActivity : ComponentActivity() {
                         val runnerViewModel: RunnerGalleryViewModel = viewModel()
                         RunnerGalleryScreen(
                             viewModel = runnerViewModel,
+                            cartViewModel = cartViewModel,
+                            onNavigateToCart = {
+                                navController.navigate("cart")
+                            },
+                            onNavigateToOrders = {
+                                navController.navigate("orders")
+                            },
                             onLogout = {
                                 authViewModel.resetState()
+                                cartViewModel.clearCart()
                                 navController.navigate("login") {
                                     popUpTo("gallery") { inclusive = true }
                                 }
+                            }
+                        )
+                    }
+                    composable("cart") {
+                        CartScreen(
+                            viewModel = cartViewModel,
+                            onNavigateBack = {
+                                navController.popBackStack()
+                            },
+                            onNavigateToCheckout = {
+                                navController.navigate("checkout")
+                            }
+                        )
+                    }
+                    composable("checkout") {
+                        CheckoutScreen(
+                            viewModel = cartViewModel,
+                            onNavigateBack = {
+                                navController.popBackStack()
+                            },
+                            onCheckoutSuccess = {
+                                navController.navigate("orders") {
+                                    popUpTo("cart") { inclusive = true }
+                                }
+                            }
+                        )
+                    }
+                    composable("orders") {
+                        OrdersScreen(
+                            viewModel = cartViewModel,
+                            onNavigateBack = {
+                                navController.popBackStack()
                             }
                         )
                     }

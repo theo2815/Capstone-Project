@@ -47,6 +47,10 @@ class SessionManager private constructor(context: Context) {
         return prefs.getString(KEY_USER_NAME, null)
     }
 
+    fun getUserEmail(): String? {
+        return prefs.getString(KEY_USER_EMAIL, null)
+    }
+
     fun clearSession() {
         prefs.edit().clear().apply()
     }
