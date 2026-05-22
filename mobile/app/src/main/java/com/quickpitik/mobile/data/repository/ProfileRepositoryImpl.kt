@@ -17,7 +17,7 @@ class ProfileRepositoryImpl : ProfileRepository {
                 Result.failure(Exception(response.error ?: "Failed to fetch selfies"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(Exception(RetrofitClient.parseError(e)))
         }
     }
 
@@ -39,7 +39,7 @@ class ProfileRepositoryImpl : ProfileRepository {
                 Result.failure(Exception(response.error ?: "Failed to upload selfie"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(Exception(RetrofitClient.parseError(e)))
         }
     }
 
@@ -52,7 +52,7 @@ class ProfileRepositoryImpl : ProfileRepository {
                 Result.failure(Exception(response.error ?: "Failed to delete selfie"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(Exception(RetrofitClient.parseError(e)))
         }
     }
 
@@ -65,7 +65,7 @@ class ProfileRepositoryImpl : ProfileRepository {
                 Result.failure(Exception(response.error ?: "Failed to set primary selfie"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(Exception(RetrofitClient.parseError(e)))
         }
     }
 
@@ -78,7 +78,7 @@ class ProfileRepositoryImpl : ProfileRepository {
                 Result.failure(Exception(response.error ?: "Failed to update profile name"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(Exception(RetrofitClient.parseError(e)))
         }
     }
 
@@ -95,7 +95,7 @@ class ProfileRepositoryImpl : ProfileRepository {
                 Result.failure(Exception(response.error ?: "Failed to change password"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(Exception(RetrofitClient.parseError(e)))
         }
     }
 }

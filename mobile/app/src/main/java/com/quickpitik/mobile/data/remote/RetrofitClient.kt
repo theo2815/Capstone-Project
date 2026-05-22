@@ -4,6 +4,8 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import com.google.gson.Gson
+import retrofit2.HttpException
 
 object RetrofitClient {
     // When debugging on physical phones via USB, run "adb reverse tcp:8080 tcp:8080"
@@ -25,5 +27,18 @@ object RetrofitClient {
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(QuickPitikApi::class.java)
+    }
+
+    fun parseError(e: Throwable): String {
+        if (e is HttpException) {
+            return try {
+                val errorBody = e.response()?.errorBody()?.string()
+                val parsedError = Gson().fromJson(errorBody, ApiErrorEnvelope::class.java)
+                parsedError?.errors?.firstOrNull()?.message ?: "HTTP ${e.code()}"
+            } catch (ex: Exception) {
+                "HTTP ${e.code()}"
+            }
+        }
+        return e.localizedMessage ?: "An unexpected error occurred"
     }
 }
