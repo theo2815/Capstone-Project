@@ -8,7 +8,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 object RetrofitClient {
     // When debugging on physical phones via USB, run "adb reverse tcp:8080 tcp:8080"
     // to map localhost:8080 straight to your PC's Spring Boot backend container.
-    private const val BASE_URL = "http://10.0.2.2:8080/"
+    private const val BASE_URL = "http://localhost:8080/"
 
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY
