@@ -18,6 +18,9 @@ import com.quickpitik.mobile.ui.runner.CartViewModel
 import com.quickpitik.mobile.ui.runner.CartScreen
 import com.quickpitik.mobile.ui.runner.CheckoutScreen
 import com.quickpitik.mobile.ui.runner.OrdersScreen
+import com.quickpitik.mobile.ui.runner.ProfileViewModel
+import com.quickpitik.mobile.ui.runner.ProfileScreen
+import com.quickpitik.mobile.ui.runner.AccountSettingsScreen
 import com.quickpitik.mobile.ui.theme.QuickPitikMobileTheme
 
 class MainActivity : ComponentActivity() {
@@ -28,6 +31,7 @@ class MainActivity : ComponentActivity() {
                 val navController = rememberNavController()
                 val authViewModel: AuthViewModel = viewModel()
                 val cartViewModel: CartViewModel = viewModel()
+                val profileViewModel: ProfileViewModel = viewModel()
 
                 NavHost(
                     navController = navController,
@@ -84,12 +88,35 @@ class MainActivity : ComponentActivity() {
                             onNavigateToOrders = {
                                 navController.navigate("orders")
                             },
+                            onNavigateToProfile = {
+                                navController.navigate("profile")
+                            },
+                            onNavigateToSettings = {
+                                navController.navigate("settings")
+                            },
                             onLogout = {
                                 authViewModel.resetState()
                                 cartViewModel.clearCart()
                                 navController.navigate("login") {
                                     popUpTo("gallery") { inclusive = true }
                                 }
+                            }
+                        )
+                    }
+                    composable("profile") {
+                        ProfileScreen(
+                            viewModel = profileViewModel,
+                            cartViewModel = cartViewModel,
+                            onNavigateBack = {
+                                navController.popBackStack()
+                            }
+                        )
+                    }
+                    composable("settings") {
+                        AccountSettingsScreen(
+                            viewModel = profileViewModel,
+                            onNavigateBack = {
+                                navController.popBackStack()
                             }
                         )
                     }

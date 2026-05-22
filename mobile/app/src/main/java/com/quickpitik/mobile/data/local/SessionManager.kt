@@ -35,6 +35,10 @@ class SessionManager private constructor(context: Context) {
         }
     }
 
+    fun saveUserName(name: String) {
+        prefs.edit().putString(KEY_USER_NAME, name).apply()
+    }
+
     fun getAccessToken(): String? {
         return prefs.getString(KEY_ACCESS_TOKEN, null)
     }
