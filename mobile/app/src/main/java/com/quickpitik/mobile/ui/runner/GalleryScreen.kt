@@ -3,6 +3,8 @@ package com.quickpitik.mobile.ui.runner
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -52,6 +54,7 @@ fun RunnerGalleryScreen(
     val eventsState by viewModel.eventsState.collectAsState()
     val activeEvent by viewModel.activeEvent.collectAsState()
     val searchState by viewModel.searchState.collectAsState()
+    val isFiltered by viewModel.isFiltered.collectAsState()
 
     // Lock the Runner Dashboard to the uniform Light Warm Cream Brand Theme
     Surface(
@@ -62,6 +65,7 @@ fun RunnerGalleryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(24.dp)
+                .verticalScroll(rememberScrollState())
                 .statusBarsPadding()
                 .navigationBarsPadding()
         ) {
@@ -328,20 +332,20 @@ fun RunnerGalleryScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Button(
-                                onClick = {},
-                                shape = RoundedCornerShape(percent = 100),
-                                colors = ButtonDefaults.buttonColors(containerColor = Line, contentColor = Ink),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("CAMERA SCAN", style = Typography.labelMedium)
-                            }
-                            Button(
-                                onClick = { viewModel.simulateSelfieSearch() },
+                                onClick = { viewModel.searchByStoredSelfie() },
                                 shape = RoundedCornerShape(percent = 100),
                                 colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
                                 modifier = Modifier.weight(1.2f)
                             ) {
-                                Text("⚡ SIMULATE MATCH", style = Typography.labelMedium)
+                                Text("USE STORED SELFIE", style = Typography.labelMedium)
+                            }
+                            Button(
+                                onClick = { viewModel.simulateSelfieSearch() },
+                                shape = RoundedCornerShape(percent = 100),
+                                colors = ButtonDefaults.buttonColors(containerColor = Line, contentColor = Ink),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("SIMULATE UPLOAD", style = Typography.labelMedium)
                             }
                         }
                     }
@@ -370,19 +374,39 @@ fun RunnerGalleryScreen(
             }
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Watermarked Photo Stream Title
-            Text(
-                text = "MATCHED PHOTOS (WATERMARKED PREVIEW)",
-                style = Typography.labelMedium,
-                color = Slate
-            )
+            // Watermarked Photo Stream Title with Reset Button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "MATCHED PHOTOS (WATERMARKED PREVIEW)",
+                    style = Typography.labelMedium,
+                    color = Slate
+                )
+                if (isFiltered || searchState is PhotosSearchState.Error) {
+                    Text(
+                        text = "Reset Search",
+                        style = Typography.labelMedium,
+                        color = Fresh,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable {
+                            bibSearchQuery = ""
+                            viewModel.clearFilter()
+                        }
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(12.dp))
 
             // Beautiful Watermarked Photo Grid
             when (val state = searchState) {
                 is PhotosSearchState.Loading -> {
                     Box(
-                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         CircularProgressIndicator(color = Fresh)
@@ -390,7 +414,9 @@ fun RunnerGalleryScreen(
                 }
                 is PhotosSearchState.Error -> {
                     Box(
-                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -404,7 +430,9 @@ fun RunnerGalleryScreen(
                 is PhotosSearchState.Success -> {
                     if (state.photos.isEmpty()) {
                         Box(
-                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 32.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -415,82 +443,102 @@ fun RunnerGalleryScreen(
                             )
                         }
                     } else {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.fillMaxWidth().weight(1f)
-                        ) {
-                            items(state.photos) { photo ->
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .aspectRatio(0.85f)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(BoneDeep)
-                                        .clickable { selectedPhotoForDetail = photo },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    // Background mock runner photo texture details
-                                    Column(
-                                        modifier = Modifier.fillMaxSize().padding(12.dp),
-                                        verticalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        // Header Tag (KM check)
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = Fresh.copy(alpha = 0.15f),
-                                            modifier = Modifier.padding(4.dp)
-                                        ) {
-                                            Text(
-                                                text = "KM ${photo.km ?: 0}",
-                                                color = Fresh,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                            )
-                                        }
-
-                                        // Footer metadata
-                                        Column {
-                                            Text(
-                                                text = "Bib: ${photo.bib ?: "N/A"}",
-                                                style = Typography.bodyMedium,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Ink
-                                            )
-                                            Text(
-                                                text = "Time: ${photo.time}",
-                                                style = Typography.bodySmall,
-                                                color = SlateSoft
-                                            )
-                                        }
-                                    }
-
-                                    // Premium transparent watermark overlay (Fulfills NFR-P-2 security preview)
+                        state.photos.chunked(2).forEach { rowPhotos ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                rowPhotos.forEach { photo ->
                                     Box(
                                         modifier = Modifier
-                                            .fillMaxSize()
-                                            .background(Color.Black.copy(alpha = 0.04f)),
+                                            .weight(1f)
+                                            .aspectRatio(0.85f)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(BoneDeep)
+                                            .clickable { selectedPhotoForDetail = photo },
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Text(
-                                            text = "QUICKPITIK\nPREVIEW",
-                                            color = Color.White.copy(alpha = 0.35f),
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            textAlign = TextAlign.Center,
-                                            letterSpacing = 1.5.sp
-                                        )
+                                        if (photo.imageUrl != null) {
+                                            AsyncImage(
+                                                model = photo.imageUrl,
+                                                contentDescription = "Photo preview",
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(Color.Black.copy(alpha = 0.3f))
+                                            )
+                                        }
+
+                                        // Background mock runner photo texture details
+                                        Column(
+                                            modifier = Modifier.fillMaxSize().padding(12.dp),
+                                            verticalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            // Header Tag (KM check)
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Fresh.copy(alpha = 0.15f),
+                                                modifier = Modifier.padding(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = "KM ${photo.km ?: 0}",
+                                                    color = Fresh,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                )
+                                            }
+
+                                            // Footer metadata
+                                            Column {
+                                                Text(
+                                                    text = "Bib: ${photo.bib ?: "N/A"}",
+                                                    style = Typography.bodyMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (photo.imageUrl != null) Color.White else Ink
+                                                )
+                                                Text(
+                                                    text = "Time: ${photo.time}",
+                                                    style = Typography.bodySmall,
+                                                    color = if (photo.imageUrl != null) Color.White.copy(alpha = 0.8f) else SlateSoft
+                                                )
+                                            }
+                                        }
+
+                                        // Premium transparent watermark overlay (Fulfills NFR-P-2 security preview)
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(Color.Black.copy(alpha = 0.04f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "QUICKPITIK\nPREVIEW",
+                                                color = Color.White.copy(alpha = 0.35f),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                textAlign = TextAlign.Center,
+                                                letterSpacing = 1.5.sp
+                                            )
+                                        }
                                     }
                                 }
+                                if (rowPhotos.size == 1) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
                             }
+                            Spacer(modifier = Modifier.height(12.dp))
                         }
                     }
                 }
                 else -> {
                     Box(
-                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(

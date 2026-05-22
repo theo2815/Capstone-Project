@@ -146,10 +146,18 @@ interface QuickPitikApi {
     @Multipart
     @POST("api/v1/events/{slug}/photos/search-by-face")
     suspend fun searchPhotosByFace(
+        @Header("Authorization") token: String,
         @Path("slug") slug: String,
         @Part selfie: MultipartBody.Part,
         @Query("offset") offset: Int = 0,
         @Query("limit") limit: Int = 100
+    ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
+
+    @POST("api/v1/events/{slug}/photos/search-by-face")
+    suspend fun searchPhotosByFaceJson(
+        @Header("Authorization") token: String,
+        @Path("slug") slug: String,
+        @Body request: SearchByFaceJsonRequest
     ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
 
     @GET("api/v1/me/cart")
