@@ -17,6 +17,11 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.net.Uri
+import android.provider.MediaStore
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -29,6 +34,8 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.ui.theme.*
 import com.quickpitik.mobile.data.remote.*
+import java.io.File
+import java.io.FileOutputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,10 +59,23 @@ fun ProfileScreen(
         viewModel.fetchSelfies()
     }
 
+    val context = LocalContext.current
+    var tempImageUri by remember { mutableStateOf<Uri?>(null) }
+
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let { viewModel.uploadSelfie(it) }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) {
+            tempImageUri?.let { uri ->
+                viewModel.uploadSelfie(uri)
+            }
+        }
     }
 
     Surface(
@@ -165,13 +185,44 @@ fun ProfileScreen(
                                     color = Slate
                                 )
                             }
-                            Button(
-                                onClick = { galleryLauncher.launch("image/*") },
-                                colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("+ UPLOAD", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Button(
+                                    onClick = {
+                                        try {
+                                            val values = ContentValues().apply {
+                                                put(MediaStore.Images.Media.TITLE, "captured_selfie_${System.currentTimeMillis()}")
+                                                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                            }
+                                            val uri = context.contentResolver.insert(
+                                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                                values
+                                            )
+                                            tempImageUri = uri
+                                            if (uri != null) {
+                                                cameraLauncher.launch(uri)
+                                            }
+                                        } catch (e: Exception) {
+                                            // Handle exception
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = BoneDeep, contentColor = Ink),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    border = BorderStroke(1.dp, Line)
+                                ) {
+                                    Text("📷 CAMERA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = { galleryLauncher.launch("image/*") },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text("🖼️ GALLERY", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                         

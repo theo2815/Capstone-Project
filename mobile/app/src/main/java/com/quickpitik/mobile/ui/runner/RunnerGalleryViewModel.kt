@@ -6,6 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.SelfieRefDto
+import com.quickpitik.mobile.data.remote.SearchByFaceJsonRequest
+import com.quickpitik.mobile.data.local.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -37,6 +40,9 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     private val _searchState = MutableStateFlow<PhotosSearchState>(PhotosSearchState.Idle)
     val searchState: StateFlow<PhotosSearchState> = _searchState
 
+    private val _isFiltered = MutableStateFlow(false)
+    val isFiltered: StateFlow<Boolean> = _isFiltered
+
     init {
         fetchPublicEvents()
     }
@@ -66,11 +72,13 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
 
     fun selectEvent(event: EventDto) {
         _activeEvent.value = event
+        _isFiltered.value = false
         searchByBib("")
     }
 
     fun searchByBib(bib: String) {
         val event = _activeEvent.value ?: return
+        _isFiltered.value = bib.trim().isNotEmpty()
         viewModelScope.launch {
             _searchState.value = PhotosSearchState.Loading
             try {
@@ -85,13 +93,26 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     _searchState.value = PhotosSearchState.Error(response.error ?: "Search lookup failed.")
                 }
             } catch (e: Exception) {
-                _searchState.value = PhotosSearchState.Error(e.localizedMessage ?: "Failed to query event photos.")
+                _searchState.value = PhotosSearchState.Error(RetrofitClient.parseError(e))
             }
         }
     }
 
+    fun clearFilter() {
+        _isFiltered.value = false
+        searchByBib("")
+    }
+
     fun searchBySelfie(selfieFile: File) {
         val event = _activeEvent.value ?: return
+        _isFiltered.value = true
+        val application = getApplication<Application>()
+        val sessionManager = SessionManager.getInstance(application)
+        val token = sessionManager.getAccessToken()
+        if (token == null) {
+            _searchState.value = PhotosSearchState.Error("Authentication token not found. Please log in.")
+            return
+        }
         viewModelScope.launch {
             _searchState.value = PhotosSearchState.Loading
             try {
@@ -99,6 +120,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 val selfiePart = MultipartBody.Part.createFormData("selfie", selfieFile.name, requestFile)
 
                 val response = RetrofitClient.apiService.searchPhotosByFace(
+                    token = "Bearer $token",
                     slug = event.slug,
                     selfie = selfiePart
                 )
@@ -108,7 +130,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     _searchState.value = PhotosSearchState.Error(response.error ?: "AI Face Recognition returned error.")
                 }
             } catch (e: Exception) {
-                _searchState.value = PhotosSearchState.Error(e.localizedMessage ?: "AI Service connection timed out.")
+                _searchState.value = PhotosSearchState.Error(RetrofitClient.parseError(e))
             }
         }
     }
@@ -132,6 +154,49 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 searchBySelfie(mockFile)
             } catch (e: Exception) {
                 _searchState.value = PhotosSearchState.Error("Simulation setup failed: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    fun searchByStoredSelfie() {
+        val event = _activeEvent.value ?: return
+        _isFiltered.value = true
+        val application = getApplication<Application>()
+        val sessionManager = SessionManager.getInstance(application)
+        val token = sessionManager.getAccessToken()
+        if (token == null) {
+            _searchState.value = PhotosSearchState.Error("Authentication token not found. Please log in.")
+            return
+        }
+        viewModelScope.launch {
+            _searchState.value = PhotosSearchState.Loading
+            try {
+                // 1. Fetch user's selfies to find the primary selfie ID
+                val selfiesResponse = RetrofitClient.apiService.getSelfies("Bearer $token")
+                if (!selfiesResponse.success || selfiesResponse.data == null) {
+                    _searchState.value = PhotosSearchState.Error(selfiesResponse.error ?: "Failed to retrieve user selfies.")
+                    return@launch
+                }
+                
+                val primarySelfie = selfiesResponse.data.find { it.isPrimary }
+                if (primarySelfie == null) {
+                    _searchState.value = PhotosSearchState.Error("No primary selfie set. Please upload a selfie and set it as primary first.")
+                    return@launch
+                }
+                
+                // 2. Perform the JSON search using the primary selfie's ID
+                val response = RetrofitClient.apiService.searchPhotosByFaceJson(
+                    token = "Bearer $token",
+                    slug = event.slug,
+                    request = SearchByFaceJsonRequest(selfieId = primarySelfie.id)
+                )
+                if (response.success && response.data != null) {
+                    _searchState.value = PhotosSearchState.Success(response.data.items)
+                } else {
+                    _searchState.value = PhotosSearchState.Error(response.error ?: "AI Face search returned an error.")
+                }
+            } catch (e: Exception) {
+                _searchState.value = PhotosSearchState.Error(e.localizedMessage ?: "Failed to query event photos with stored selfie.")
             }
         }
     }

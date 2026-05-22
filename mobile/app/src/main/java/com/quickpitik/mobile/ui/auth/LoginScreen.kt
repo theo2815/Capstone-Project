@@ -15,6 +15,12 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.*
 import com.quickpitik.mobile.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -26,6 +32,7 @@ fun LoginScreen(
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
 
     val authState by viewModel.authState.collectAsState()
 
@@ -51,7 +58,38 @@ fun LoginScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.Top
         ) {
-            Spacer(modifier = Modifier.height(56.dp))
+            Spacer(modifier = Modifier.height(40.dp))
+
+            // Logo Row
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(bottom = 24.dp)
+            ) {
+                Box(
+                    modifier = Modifier.size(28.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                        drawCircle(
+                            color = Ink,
+                            radius = size.minDimension / 2f,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
+                        )
+                        drawCircle(
+                            color = Fresh,
+                            radius = size.minDimension / 5.6f
+                        )
+                    }
+                }
+                Text(
+                    text = "QuickPitik",
+                    style = Typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                    fontSize = 18.sp
+                )
+            }
 
             // Eyebrow kicker
             Text(
@@ -125,7 +163,17 @@ fun LoginScreen(
                         enabled = authState !is AuthState.Loading,
                         placeholder = { Text("Your password", color = SlateSoft) },
                         singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            Text(
+                                text = if (passwordVisible) "HIDE" else "SHOW",
+                                color = Slate,
+                                style = Typography.labelMedium,
+                                modifier = Modifier
+                                    .clickable { passwordVisible = !passwordVisible }
+                                    .padding(end = 12.dp)
+                            )
+                        },
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = Color.Transparent,
                             unfocusedContainerColor = Color.Transparent,
@@ -202,6 +250,66 @@ fun LoginScreen(
                         }
                     }
                 )
+            }
+
+            if (authState is AuthState.Loading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Bone),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                        val scale by infiniteTransition.animateFloat(
+                            initialValue = 0.9f,
+                            targetValue = 1.1f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(1000, easing = LinearEasing),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "scale"
+                        )
+                        
+                        Box(
+                            modifier = Modifier
+                                .size(80.dp)
+                                .graphicsLayer(scaleX = scale, scaleY = scale),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                                drawCircle(
+                                    color = Ink,
+                                    radius = size.minDimension / 2f,
+                                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4.dp.toPx())
+                                )
+                                drawCircle(
+                                    color = Fresh,
+                                    radius = size.minDimension / 5.6f
+                                )
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(24.dp))
+                        
+                        Text(
+                            text = "QuickPitik",
+                            style = Typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Ink,
+                            fontSize = 22.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Securing your connection...",
+                            style = Typography.bodyMedium,
+                            color = SlateSoft
+                        )
+                    }
+                }
             }
         }
     }

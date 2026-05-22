@@ -23,3 +23,9 @@ data class PhotoDto(
     val imageUrl: String?,
     val alt: String?
 )
+
+data class SearchByFaceJsonRequest(
+    val selfieId: String,
+    val offset: Int = 0,
+    val limit: Int = 100
+)
