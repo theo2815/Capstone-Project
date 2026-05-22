@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.jetbrainsKotlinAndroid)
+    kotlin("kapt")
 }
 
 android {
@@ -69,7 +70,7 @@ dependencies {
     // SQLite Persistence (Room)
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
-    annotationProcessor(libs.room.compiler)
+    kapt(libs.room.compiler)
 
     // Background Sync (WorkManager)
     implementation(libs.work.runtime.ktx)

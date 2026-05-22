@@ -16,5 +16,145 @@ data class PhotographerEventSummaryDto(
     val state: String, // "live", "upcoming", "open", "past"
     val photoCount: Int,
     val salesCount: Int,
-    val revenueKept: Double
+    val revenueKept: Double,
+    val bannerUrl: String? = null
 )
+
+data class WeeklyRevenuePointDto(
+    val weekOf: String,
+    val amount: Double
+)
+
+data class EarningsOverviewDto(
+    val lifetimeKept: Double,
+    val thisWeek: Double,
+    val thisMonth: Double,
+    val payoutPending: Double,
+    val payoutScheduledFor: String?,
+    val weeklySeries: List<WeeklyRevenuePointDto>,
+    val thisWeekSold: Long,
+    val thisMonthSold: Long
+)
+
+data class PhotographerPayoutDto(
+    val id: String,
+    val weekOf: String,
+    val amount: Double,
+    val status: String,
+    val settledAt: String?,
+    val method: String,
+    val reference: String?,
+    val holdReason: String?
+)
+
+data class PayoutBalanceDto(
+    val unpaidBalance: Double,
+    val minimum: Double,
+    val hasOpenRequest: Boolean,
+    val openRequest: PhotographerPayoutDto?
+)
+
+data class PhotographerTransactionDto(
+    val id: String,
+    val paidAt: String,
+    val eventId: String,
+    val eventName: String?,
+    val eventSlug: String?,
+    val photoId: String,
+    val buyer: String,
+    val amountKept: Double
+)
+
+data class TransactionsLedgerResponse(
+    val items: List<PhotographerTransactionDto>,
+    val total: Long,
+    val offset: Int,
+    val limit: Int,
+    val monthTotals: Map<String, Double>
+)
+
+data class VerificationSubmitResponseDto(
+    val status: String, // "incomplete", "pending", "approved", "rejected"
+    val missing: List<String>?,
+    val suspendedAt: String?,
+    val suspensionReason: String?
+)
+
+data class BrandPatchRequest(
+    val brandName: String?,
+    val brandColor: String?,
+    val bio: String?
+)
+
+data class BrandSettingsResponseDto(
+    val brandName: String?,
+    val brandColor: String?,
+    val bio: String?,
+    val handle: String?,
+    val regionCode: String?,
+    val provinceCode: String?,
+    val coverUrl: String?,
+    val watermarkUrl: String?,
+    val avatarUrl: String?
+)
+
+data class MediaUploadResponseDto(
+    val url: String,
+    val uploadedAt: String
+)
+
+data class CreatePayoutRequest(
+    val method: String,
+    val accountNumber: String,
+    val accountName: String
+)
+
+data class PayoutQrDto(
+    val dataUrl: String,
+    val uploadedAt: String
+)
+
+data class PayoutAccountDto(
+    val id: String,
+    val method: String,
+    val accountNumber: String,
+    val accountName: String,
+    val qr: PayoutQrDto?,
+    val isPrimary: Boolean
+)
+
+data class HandlePatchRequest(
+    val handle: String
+)
+
+data class RegionPatchRequest(
+    val regionCode: String,
+    val provinceCode: String
+)
+
+data class CreateSocialRequest(
+    val platform: String,
+    val url: String
+)
+
+data class SocialLinkDto(
+    val id: String,
+    val platform: String,
+    val url: String
+)
+
+data class PhotographerMessageDto(
+    val id: String,
+    val kind: String,
+    val title: String?,
+    val body: String,
+    val sourceDecisionId: String?,
+    val createdAt: String,
+    val readAt: String?
+)
+
+data class MarkAllReadResponse(
+    val markedRead: Int
+)
+
+

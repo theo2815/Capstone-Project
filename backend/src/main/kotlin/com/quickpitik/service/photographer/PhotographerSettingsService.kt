@@ -74,6 +74,33 @@ class PhotographerSettingsService(
     fun findByHandle(handle: String): PhotographerSettings? =
         photographerSettingsRepository.findByHandleIgnoreCase(handle.trim().lowercase())
 
+    @Transactional(readOnly = true)
+    fun getBrandDetails(userId: UUID): Map<String, Any?> {
+        val settings = getOrCreate(userId)
+        val user = userRepository.findById(userId).orElse(null)
+        val coverUrl = settings.coverS3Key?.let {
+            storageService.presignedGetUrl(it, storageProperties.presignedTtl.cover)
+        }
+        val watermarkUrl = settings.watermarkS3Key?.let {
+            storageService.presignedGetUrl(it, storageProperties.presignedTtl.watermark)
+        }
+        val avatarUrl = user?.avatarS3Key?.let {
+            storageService.presignedGetUrl(it, storageProperties.presignedTtl.avatar)
+        } ?: user?.avatarUrl
+
+        return mapOf(
+            "brandName" to settings.brandName.orEmpty(),
+            "brandColor" to settings.brandColor,
+            "bio" to settings.bio,
+            "handle" to settings.handle.orEmpty(),
+            "regionCode" to settings.regionCode.orEmpty(),
+            "provinceCode" to settings.provinceCode.orEmpty(),
+            "coverUrl" to coverUrl.orEmpty(),
+            "watermarkUrl" to watermarkUrl.orEmpty(),
+            "avatarUrl" to avatarUrl.orEmpty()
+        )
+    }
+
     // ─── Brand ────────────────────────────────────────────────────────────
     fun putBrand(userId: UUID, req: BrandPatchRequest): PhotographerSettings {
         val settings = getOrCreate(userId)
@@ -265,7 +292,8 @@ class PhotographerSettingsService(
     fun getVerificationStatus(userId: UUID): VerificationSubmitResponseDto {
         val settings = photographerSettingsRepository.findById(userId).orElse(null)
         val status = settings?.verificationStatus ?: VerificationStatus.INCOMPLETE
-        return buildVerificationResponse(userId, status)
+        val incomplete = collectMissing(userId, settings)
+        return buildVerificationResponse(userId, status, missing = incomplete.missing)
     }
 
     // ─── Verification withdraw ────────────────────────────────────────────
@@ -280,7 +308,8 @@ class PhotographerSettingsService(
             settings.verificationStatus = VerificationStatus.INCOMPLETE
             photographerSettingsRepository.save(settings)
         }
-        return buildVerificationResponse(userId, settings.verificationStatus)
+        val incomplete = collectMissing(userId, settings)
+        return buildVerificationResponse(userId, settings.verificationStatus, missing = incomplete.missing)
     }
 
     // ─── Verification submit ──────────────────────────────────────────────
