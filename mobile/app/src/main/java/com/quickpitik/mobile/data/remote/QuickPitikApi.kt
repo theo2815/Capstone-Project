@@ -215,4 +215,40 @@ interface QuickPitikApi {
     suspend fun markAllMessagesRead(
         @Header("Authorization") token: String
     ): ApiResponseEnvelope<MarkAllReadResponse>
+
+    @GET("api/v1/me/selfies")
+    suspend fun getSelfies(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<List<SelfieRefDto>>
+
+    @Multipart
+    @POST("api/v1/me/selfies")
+    suspend fun uploadSelfie(
+        @Header("Authorization") token: String,
+        @Part file: MultipartBody.Part
+    ): ApiResponseEnvelope<SelfieRefDto>
+
+    @DELETE("api/v1/me/selfies/{id}")
+    suspend fun deleteSelfie(
+        @Header("Authorization") token: String,
+        @Path("id") selfieId: String
+    ): ApiResponseEnvelope<RemovedResponse>
+
+    @POST("api/v1/me/selfies/{id}/set-primary")
+    suspend fun setPrimarySelfie(
+        @Header("Authorization") token: String,
+        @Path("id") selfieId: String
+    ): ApiResponseEnvelope<List<SelfieRefDto>>
+
+    @PUT("api/v1/me/profile")
+    suspend fun updateProfile(
+        @Header("Authorization") token: String,
+        @Body request: ProfileUpdateRequest
+    ): ApiResponseEnvelope<UserDto>
+
+    @PUT("api/v1/me/password")
+    suspend fun changePassword(
+        @Header("Authorization") token: String,
+        @Body request: PasswordChangeRequest
+    ): ApiResponseEnvelope<Map<String, String>>
 }
