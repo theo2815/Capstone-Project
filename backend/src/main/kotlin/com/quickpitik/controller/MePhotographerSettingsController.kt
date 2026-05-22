@@ -56,6 +56,11 @@ class MePhotographerSettingsController(
     private val payoutCycleService: PayoutCycleService,
 ) {
     // ─── Brand / Handle / Region ──────────────────────────────────────────
+    @GetMapping("/brand")
+    fun getBrand(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+    ): Map<String, Any?> = photographerSettingsService.getBrandDetails(principal.userId)
+
     @PutMapping("/brand")
     fun putBrand(
         @AuthenticationPrincipal principal: AuthPrincipal,

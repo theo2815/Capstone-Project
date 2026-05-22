@@ -36,7 +36,7 @@ fun RegisterScreen(
     LaunchedEffect(authState) {
         if (authState is AuthState.Success) {
             val user = (authState as AuthState.Success).response.user
-            onRegisterSuccess(user.role == "PHOTOGRAPHER")
+            onRegisterSuccess(user.role.contains("PHOTO", ignoreCase = true))
             viewModel.resetState()
         }
     }

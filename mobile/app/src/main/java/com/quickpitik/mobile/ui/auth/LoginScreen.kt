@@ -33,7 +33,7 @@ fun LoginScreen(
     LaunchedEffect(authState) {
         if (authState is AuthState.Success) {
             val user = (authState as AuthState.Success).response.user
-            onLoginSuccess(user.role == "PHOTOGRAPHER")
+            onLoginSuccess(user.role.contains("PHOTO", ignoreCase = true))
             viewModel.resetState()
         }
     }

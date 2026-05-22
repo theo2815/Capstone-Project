@@ -24,6 +24,110 @@ interface QuickPitikApi {
         @Query("withUploads") withUploads: Boolean = false
     ): ApiResponseEnvelope<PaginatedResponse<PhotographerEventSummaryDto>>
 
+    @GET("api/v1/me/photographer/verification")
+    suspend fun getVerificationStatus(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<VerificationSubmitResponseDto>
+
+    @GET("api/v1/me/photographer/brand")
+    suspend fun getBrandSettings(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<BrandSettingsResponseDto>
+
+    @PUT("api/v1/me/photographer/brand")
+    suspend fun updateBrand(
+        @Header("Authorization") token: String,
+        @Body request: BrandPatchRequest
+    ): ApiResponseEnvelope<Map<String, Any?>>
+
+    @PUT("api/v1/me/photographer/handle")
+    suspend fun updateHandle(
+        @Header("Authorization") token: String,
+        @Body request: HandlePatchRequest
+    ): ApiResponseEnvelope<Map<String, Any?>>
+
+    @PUT("api/v1/me/photographer/region")
+    suspend fun updateRegion(
+        @Header("Authorization") token: String,
+        @Body request: RegionPatchRequest
+    ): ApiResponseEnvelope<Map<String, Any?>>
+
+    @POST("api/v1/me/photographer/socials")
+    suspend fun createSocial(
+        @Header("Authorization") token: String,
+        @Body request: CreateSocialRequest
+    ): ApiResponseEnvelope<Map<String, Any?>>
+
+    @GET("api/v1/me/photographer/socials")
+    suspend fun getSocials(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<List<SocialLinkDto>>
+
+    @POST("api/v1/me/photographer/payouts")
+    suspend fun createPayoutAccount(
+        @Header("Authorization") token: String,
+        @Body request: CreatePayoutRequest
+    ): ApiResponseEnvelope<PayoutAccountDto>
+
+    @Multipart
+    @POST("api/v1/me/photographer/watermark")
+    suspend fun uploadWatermark(
+        @Header("Authorization") token: String,
+        @Part file: MultipartBody.Part
+    ): ApiResponseEnvelope<MediaUploadResponseDto>
+
+    @Multipart
+    @POST("api/v1/me/avatar")
+    suspend fun uploadAvatar(
+        @Header("Authorization") token: String,
+        @Part file: MultipartBody.Part
+    ): ApiResponseEnvelope<UserDto>
+
+    @Multipart
+    @POST("api/v1/me/photographer/cover")
+    suspend fun uploadCover(
+        @Header("Authorization") token: String,
+        @Part file: MultipartBody.Part
+    ): ApiResponseEnvelope<MediaUploadResponseDto>
+
+    @POST("api/v1/me/photographer/verification")
+    suspend fun submitVerification(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<VerificationSubmitResponseDto>
+
+    @POST("api/v1/me/photographer/verification/withdraw")
+    suspend fun withdrawVerification(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<VerificationSubmitResponseDto>
+
+
+    @GET("api/v1/me/photographer/earnings")
+    suspend fun getEarningsOverview(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<EarningsOverviewDto>
+
+    @GET("api/v1/me/photographer/payouts/balance")
+    suspend fun getPayoutBalance(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<PayoutBalanceDto>
+
+    @GET("api/v1/me/photographer/payouts")
+    suspend fun getPayoutAccounts(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<List<PayoutAccountDto>>
+
+    @POST("api/v1/me/photographer/payouts/request")
+    suspend fun requestPayout(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<PhotographerPayoutDto>
+
+    @GET("api/v1/me/photographer/billing/transactions")
+    suspend fun getTransactionsLedger(
+        @Header("Authorization") token: String,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 50
+    ): ApiResponseEnvelope<TransactionsLedgerResponse>
+
     @GET("api/v1/events")
     suspend fun getPublicEvents(
         @Query("status") status: String = "ACTIVE",
@@ -95,4 +199,20 @@ interface QuickPitikApi {
         @Header("Authorization") token: String,
         @Path("id") orderId: String
     ): ApiResponseEnvelope<OrderDetailDto>
+
+    @GET("api/v1/me/photographer/messages")
+    suspend fun getPhotographerMessages(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<List<PhotographerMessageDto>>
+
+    @PATCH("api/v1/me/photographer/messages/{id}/read")
+    suspend fun markMessageRead(
+        @Header("Authorization") token: String,
+        @Path("id") id: String
+    ): ApiResponseEnvelope<PhotographerMessageDto>
+
+    @PATCH("api/v1/me/photographer/messages/read-all")
+    suspend fun markAllMessagesRead(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<MarkAllReadResponse>
 }
