@@ -93,7 +93,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     _searchState.value = PhotosSearchState.Error(response.error ?: "Search lookup failed.")
                 }
             } catch (e: Exception) {
-                _searchState.value = PhotosSearchState.Error(e.localizedMessage ?: "Failed to query event photos.")
+                _searchState.value = PhotosSearchState.Error(RetrofitClient.parseError(e))
             }
         }
     }
@@ -130,7 +130,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     _searchState.value = PhotosSearchState.Error(response.error ?: "AI Face Recognition returned error.")
                 }
             } catch (e: Exception) {
-                _searchState.value = PhotosSearchState.Error(e.localizedMessage ?: "AI Service connection timed out.")
+                _searchState.value = PhotosSearchState.Error(RetrofitClient.parseError(e))
             }
         }
     }
