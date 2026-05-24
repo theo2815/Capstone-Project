@@ -74,7 +74,11 @@ class PhotographerSettingsService(
     fun findByHandle(handle: String): PhotographerSettings? =
         photographerSettingsRepository.findByHandleIgnoreCase(handle.trim().lowercase())
 
-    @Transactional(readOnly = true)
+    // Read-write (inherits class-level @Transactional) despite being a getter:
+    // getOrCreate() lazy-creates the photographer_settings row on first read.
+    // A readOnly tx suppresses the flush, so that INSERT silently never persists.
+    // See vault backend/notes/jpa-pitfalls + decisions 2026-05-18 (@DynamicUpdate).
+    @Transactional
     fun getBrandDetails(userId: UUID): Map<String, Any?> {
         val settings = getOrCreate(userId)
         val user = userRepository.findById(userId).orElse(null)
