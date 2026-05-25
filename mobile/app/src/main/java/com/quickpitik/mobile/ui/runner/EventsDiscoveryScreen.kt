@@ -125,15 +125,15 @@ fun EventsDiscoveryScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val cartItems by cartViewModel.cartItems.collectAsState()
-                    IconButton(
-                        onClick = onNavigateToCart,
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = BoneDeep)
-                    ) {
-                        BadgedBox(badge = {
-                            if (cartItems.isNotEmpty()) {
-                                Badge(containerColor = Fresh, contentColor = Bone) { Text("${cartItems.size}") }
-                            }
-                        }) {
+                    BadgedBox(badge = {
+                        if (cartItems.isNotEmpty()) {
+                            Badge(containerColor = Fresh, contentColor = Bone) { Text("${cartItems.size}") }
+                        }
+                    }) {
+                        IconButton(
+                            onClick = onNavigateToCart,
+                            colors = IconButtonDefaults.iconButtonColors(containerColor = BoneDeep)
+                        ) {
                             Icon(Icons.Default.ShoppingCart, contentDescription = "Cart", tint = Ink)
                         }
                     }
