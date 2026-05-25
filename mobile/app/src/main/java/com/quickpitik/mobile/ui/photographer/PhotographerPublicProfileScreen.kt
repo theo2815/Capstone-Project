@@ -91,15 +91,15 @@ fun PhotographerPublicProfileScreen(
                     CoverBanner(cover = profile.cover, brandColor = profile.brandColor, displayName = profile.displayName)
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Text("@${profile.handle}", style = Typography.labelMedium, color = Fresh, fontWeight = FontWeight.Bold)
+                    Text("@${profile.handle ?: "photographer"}", style = Typography.labelMedium, color = Fresh, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(4.dp))
                     val sub = buildString {
                         profile.city?.takeIf { it.isNotBlank() }?.let { append(it); append("  ·  ") }
-                        append("Member since ${profile.memberSince}")
+                        append("Member since ${profile.memberSince ?: "2026"}")
                     }
                     Text(sub, style = Typography.bodySmall, color = SlateSoft)
 
-                    if (profile.bio.isNotBlank()) {
+                    if (!profile.bio.isNullOrBlank()) {
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(profile.bio, style = Typography.bodyMedium, color = InkSoft)
                     }
@@ -126,7 +126,7 @@ fun PhotographerPublicProfileScreen(
 }
 
 @Composable
-private fun CoverBanner(cover: CoverSourceDto?, brandColor: String, displayName: String) {
+private fun CoverBanner(cover: CoverSourceDto?, brandColor: String?, displayName: String?) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -154,7 +154,7 @@ private fun CoverBanner(cover: CoverSourceDto?, brandColor: String, displayName:
         // Scrim for legible name
         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f)))
         Text(
-            text = displayName,
+            text = displayName ?: "Photographer",
             color = Color.White,
             fontSize = 26.sp,
             fontWeight = FontWeight.Bold,

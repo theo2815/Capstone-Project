@@ -35,6 +35,13 @@ fun PhotographerDashboardScreen(
     var shareEvent by remember { mutableStateOf<PhotographerEventSummaryDto?>(null) }
     var showProfilePreview by remember { mutableStateOf(false) }
 
+    LaunchedEffect(Unit) {
+        viewModel.fetchVerificationStatus()
+        viewModel.fetchEvents()
+        viewModel.fetchEarningsAndTransactions()
+        viewModel.fetchMessages()
+    }
+
     val verificationState by viewModel.verificationState.collectAsState()
     val showSettingsBadge = when (val state = verificationState) {
         is VerificationUiState.Success -> state.verification.status.lowercase() != "approved"
@@ -182,12 +189,21 @@ fun PhotographerDashboardScreen(
                             currentTab = 4
                             viewModel.fetchVerificationStatus()
                         },
+                        onNavigateToTab = { tab ->
+                            currentTab = tab
+                            when (tab) {
+                                0 -> viewModel.fetchVerificationStatus()
+                                2 -> viewModel.fetchEvents()
+                                3 -> viewModel.fetchEarningsAndTransactions()
+                                4 -> viewModel.fetchVerificationStatus()
+                            }
+                        },
                         onPreviewProfile = { showProfilePreview = true }
                     )
-                    1 -> TetherConsoleView(viewModel = viewModel, onLogout = onLogout)
+                    1 -> TetherConsoleView(viewModel = viewModel)
                     2 -> PhotographerEventsScreen(viewModel = viewModel, onOpenShare = { shareEvent = it })
                     3 -> PhotographerEarningsScreen(viewModel = viewModel)
-                    4 -> PhotographerSettingsScreen(viewModel = viewModel)
+                    4 -> PhotographerSettingsScreen(viewModel = viewModel, onLogout = onLogout)
                 }
             }
         }
@@ -199,7 +215,6 @@ fun PhotographerDashboardScreen(
 @Composable
 private fun TetherConsoleView(
     viewModel: PhotographerDashboardViewModel,
-    onLogout: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val activeEvent by viewModel.activeEvent.collectAsState()
@@ -218,56 +233,38 @@ private fun TetherConsoleView(
             .navigationBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Premium Header Row
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        // 1. Premium Header
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
         ) {
-            Column {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .background(Fresh.copy(alpha = 0.1f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+            ) {
+                Box(
                     modifier = Modifier
-                        .background(Fresh.copy(alpha = 0.1f), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(Fresh)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "TETHER STREAM ACTIVE",
-                        color = Fresh,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    )
-                }
-                Spacer(modifier = Modifier.height(4.dp))
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(Fresh)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "DSLR Tether Console",
-                    color = Ink,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold
+                    text = "TETHER STREAM ACTIVE",
+                    color = Fresh,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.5.sp
                 )
             }
-            
-            Button(
-                onClick = onLogout,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = BoneDeep,
-                    contentColor = Ink
-                ),
-                border = BorderStroke(1.dp, Line),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                modifier = Modifier.height(36.dp)
-            ) {
-                Text("LEAVE", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "DSLR Tether Console",
+                color = Ink,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
 
         // 2. Active Event Selector Card

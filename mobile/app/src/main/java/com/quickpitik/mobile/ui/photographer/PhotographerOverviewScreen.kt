@@ -2,6 +2,7 @@ package com.quickpitik.mobile.ui.photographer
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,15 +18,21 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.local.SessionManager
-import com.quickpitik.mobile.data.remote.VerificationSubmitResponseDto
+import com.quickpitik.mobile.data.remote.*
 import com.quickpitik.mobile.ui.theme.*
 
 data class NotifItem(
@@ -47,10 +54,14 @@ data class SetupStep(
 fun PhotographerOverviewScreen(
     viewModel: PhotographerDashboardViewModel,
     onNavigateToSettings: () -> Unit,
+    onNavigateToTab: (Int) -> Unit,
     onPreviewProfile: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val verificationState by viewModel.verificationState.collectAsState()
+    val eventsState by viewModel.eventsState.collectAsState()
+    val earningsUiState by viewModel.earningsUiState.collectAsState()
+    val brandSettings by viewModel.brandSettings.collectAsState()
     val messages by viewModel.messages.collectAsState()
     val context = LocalContext.current
     val sessionManager = remember { SessionManager.getInstance(context) }
@@ -59,8 +70,7 @@ fun PhotographerOverviewScreen(
     // Notifications state
     var showNotifDialog by remember { mutableStateOf(false) }
 
-    // Derive rejection from real inbox messages:
-    // If the latest message is a rejection and status is incomplete/rejected, treat onboarding as rejected.
+    // Derive rejection from real inbox messages
     val latestMessage = remember(messages) { messages.maxByOrNull { it.createdAt } }
     val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
     val isRejected = (currentStatus == "incomplete" || currentStatus == "rejected") && (latestMessage?.kind == "verification_rejected")
@@ -85,6 +95,15 @@ fun PhotographerOverviewScreen(
         messages.count { it.readAt == null }
     }
 
+    val events = remember(eventsState) {
+        when (val state = eventsState) {
+            is EventsState.Success -> state.events
+            else -> emptyList()
+        }
+    }
+    val earnings = (earningsUiState as? EarningsUiState.Success)?.overview
+    val balance = (earningsUiState as? EarningsUiState.Success)?.balance
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -92,194 +111,300 @@ fun PhotographerOverviewScreen(
             .padding(20.dp)
             .verticalScroll(rememberScrollState())
     ) {
-        // Upper dynamic metadata kicker
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = "CEBU SINCE 2026",
-                color = SlateSoft,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp
-            )
-            Text(
-                text = "ONLINE SESSIONS ACTIVE",
-                color = Fresh,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp
-            )
-        }
-
-        // Dashboard Header Title & Notification Bell Icon Row
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Welcome, $photographerName",
-                color = Ink,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
-            )
-
-            // Interactive Bell Button with Red Unread Counter Badge
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(BoneDeep)
-                    .border(1.dp, Line, CircleShape)
-                    .clickable {
-                        showNotifDialog = true
-                        viewModel.markAllMessagesAsRead()
-                    },
-                contentAlignment = Alignment.Center
+        if (currentStatus == "approved") {
+            // --- DATA MODE (Dynamic Web Mirror) ---
+            
+            // Upper dynamic metadata kicker
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Icon(
-                    imageVector = Icons.Default.Notifications,
-                    contentDescription = "Notifications Inbox",
-                    tint = if (unreadCount > 0) Fresh else SlateSoft,
-                    modifier = Modifier.size(22.dp)
+                Text(
+                    text = "OVERVIEW · CEBU",
+                    color = SlateSoft,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                Text(
+                    text = "ONLINE SESSIONS ACTIVE",
+                    color = Fresh,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+            }
+
+            // Dashboard Header Title & Notification Bell Icon Row
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Welcome back, ${photographerName.split("\\s+".toRegex()).firstOrNull() ?: "there"}.",
+                    color = Ink,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
                 )
 
-                if (unreadCount > 0) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 4.dp, end = 4.dp)
-                            .size(18.dp)
-                            .clip(CircleShape)
-                            .background(ErrorRed),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = unreadCount.toString(),
-                            color = Color.White,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-        }
-
-        // Dynamic Status Notifications (Alerts at the top)
-        if (verificationState is VerificationUiState.Success) {
-            val status = if (isRejected) "rejected" else (verificationState as VerificationUiState.Success).verification.status.lowercase()
-            val finalRejectionReason = if (isRejected) rejectionReason else (verificationState as VerificationUiState.Success).verification.suspensionReason
-            if (status == "approved") {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Fresh.copy(alpha = 0.1f)),
-                    border = BorderStroke(1.dp, Fresh.copy(alpha = 0.4f)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                // Interactive Bell Button
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(BoneDeep)
+                        .border(1.dp, Line, CircleShape)
+                        .clickable {
+                            showNotifDialog = true
+                            viewModel.markAllMessagesAsRead()
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "Approved",
-                            tint = Fresh,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = "Notifications Inbox",
+                        tint = if (unreadCount > 0) Fresh else SlateSoft,
+                        modifier = Modifier.size(22.dp)
+                    )
+
+                    if (unreadCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 4.dp, end = 4.dp)
+                                .size(18.dp)
+                                .clip(CircleShape)
+                                .background(ErrorRed),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Text(
-                                text = "ONBOARDING APPROVED",
-                                color = Fresh,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 0.5.sp
-                            )
-                            Text(
-                                text = "Your professional studio is verified and live! You can now start syncing DSLR photos.",
-                                color = Ink,
-                                fontSize = 12.sp
+                                text = unreadCount.toString(),
+                                color = Color.White,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
                 }
-            } else if (status == "rejected") {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = ErrorRed.copy(alpha = 0.08f)),
-                    border = BorderStroke(1.dp, ErrorRed.copy(alpha = 0.3f)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+            }
+
+            // 2x2 Action Grid
+            DashboardActionGrid(
+                events = events,
+                brandSettings = brandSettings,
+                photographerName = photographerName,
+                earnings = earnings,
+                onNavigateToTab = onNavigateToTab,
+                onPreviewProfile = onPreviewProfile
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Billing slab card
+            BillingGlance(
+                balance = balance,
+                onNavigateToTab = { onNavigateToTab(3) }
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Next-Up slab card
+            NextUpGlance(
+                events = events,
+                onNavigateToTab = { onNavigateToTab(2) }
+            )
+
+        } else {
+            // --- SETUP MODE (Dynamic Verification Checklist) ---
+            
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "CEBU SINCE 2026",
+                    color = SlateSoft,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                Text(
+                    text = "ONLINE SESSIONS ACTIVE",
+                    color = Fresh,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Welcome, $photographerName",
+                    color = Ink,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(BoneDeep)
+                        .border(1.dp, Line, CircleShape)
+                        .clickable {
+                            showNotifDialog = true
+                            viewModel.markAllMessagesAsRead()
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = "Notifications Inbox",
+                        tint = if (unreadCount > 0) Fresh else SlateSoft,
+                        modifier = Modifier.size(22.dp)
+                    )
+
+                    if (unreadCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 4.dp, end = 4.dp)
+                                .size(18.dp)
+                                .clip(CircleShape)
+                                .background(ErrorRed),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = unreadCount.toString(),
+                                color = Color.White,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Dynamic Status Notifications
+            if (verificationState is VerificationUiState.Success) {
+                val status = if (isRejected) "rejected" else (verificationState as VerificationUiState.Success).verification.status.lowercase()
+                val finalRejectionReason = if (isRejected) rejectionReason else (verificationState as VerificationUiState.Success).verification.suspensionReason
+                if (status == "approved") {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Fresh.copy(alpha = 0.1f)),
+                        border = BorderStroke(1.dp, Fresh.copy(alpha = 0.4f)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = "Rejected",
-                            tint = ErrorRed,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "ONBOARDING REJECTED",
-                                color = ErrorRed,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 0.5.sp
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Approved",
+                                tint = Fresh,
+                                modifier = Modifier.size(24.dp)
                             )
-                            Text(
-                                text = "Updates Required: " + (finalRejectionReason ?: "Review missing details."),
-                                color = Ink,
-                                fontSize = 12.sp
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "ONBOARDING APPROVED",
+                                    color = Fresh,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 0.5.sp
+                                )
+                                Text(
+                                    text = "Your professional studio is verified and live! You can now start syncing DSLR photos.",
+                                    color = Ink,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                } else if (status == "rejected") {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = ErrorRed.copy(alpha = 0.08f)),
+                        border = BorderStroke(1.dp, ErrorRed.copy(alpha = 0.3f)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Rejected",
+                                tint = ErrorRed,
+                                modifier = Modifier.size(24.dp)
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Button(
-                                onClick = onNavigateToSettings,
-                                colors = ButtonDefaults.buttonColors(containerColor = ErrorRed),
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Text("FIX ON SETTINGS PAGE", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "ONBOARDING REJECTED",
+                                    color = ErrorRed,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 0.5.sp
+                                )
+                                Text(
+                                    text = "Updates Required: " + (finalRejectionReason ?: "Review missing details."),
+                                    color = Ink,
+                                    fontSize = 12.sp
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = onNavigateToSettings,
+                                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRed),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Text("FIX ON SETTINGS PAGE", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // Verification Panel State
-        when (val state = verificationState) {
-            is VerificationUiState.Loading -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(300.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = Fresh, strokeWidth = 3.dp)
+            // Verification Panel State
+            when (val state = verificationState) {
+                is VerificationUiState.Loading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(300.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = Fresh, strokeWidth = 3.dp)
+                    }
                 }
-            }
-            is VerificationUiState.Error -> {
-                ErrorStateCard(message = state.message, onRetry = { viewModel.fetchVerificationStatus() })
-            }
-            is VerificationUiState.Success -> {
-                val verification = state.verification
-                VerificationPanel(
-                    verification = verification,
-                    isRejected = isRejected,
-                    rejectionReason = rejectionReason,
-                    onRefresh = { 
-                        viewModel.fetchVerificationStatus()
-                        viewModel.fetchMessages()
-                    },
-                    onNavigateToSettings = onNavigateToSettings
-                )
+                is VerificationUiState.Error -> {
+                    ErrorStateCard(message = state.message, onRetry = { viewModel.fetchVerificationStatus() })
+                }
+                is VerificationUiState.Success -> {
+                    val verification = state.verification
+                    VerificationPanel(
+                        verification = verification,
+                        isRejected = isRejected,
+                        rejectionReason = rejectionReason,
+                        onRefresh = { 
+                            viewModel.fetchVerificationStatus()
+                            viewModel.fetchMessages()
+                        },
+                        onNavigateToSettings = onNavigateToSettings
+                    )
+                }
             }
         }
 
@@ -295,7 +420,7 @@ fun PhotographerOverviewScreen(
         }
     }
 
-    // --- Interactive Notifications Dialog ---
+    // --- Interactive Notifications Inbox Dialog ---
     if (showNotifDialog) {
         AlertDialog(
             onDismissRequest = { showNotifDialog = false },
@@ -407,6 +532,695 @@ fun PhotographerOverviewScreen(
 }
 
 @Composable
+private fun Sparkline(
+    data: List<Double>,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        if (data.isEmpty()) return@Canvas
+        val maxVal = data.maxOrNull() ?: 1.0
+        val minVal = data.minOrNull() ?: 0.0
+        val range = if (maxVal == minVal) 1.0 else maxVal - minVal
+        val path = Path()
+        val width = size.width
+        val height = size.height
+        val dx = if (data.size > 1) width / (data.size - 1) else width
+        
+        data.forEachIndexed { index, value ->
+            val x = index * dx
+            val y = height - ((value - minVal) / range).toFloat() * height
+            if (index == 0) {
+                path.moveTo(x, y)
+            } else {
+                path.lineTo(x, y)
+            }
+        }
+        drawPath(
+            path = path,
+            color = Fresh,
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+        )
+    }
+}
+
+@Composable
+private fun Slab(
+    number: String,
+    title: String,
+    trailing: @Composable () -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = BoneDeep),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, Line),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = number,
+                        color = Fresh,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text(
+                        text = title.uppercase(),
+                        color = Ink,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+                trailing()
+            }
+            content()
+        }
+    }
+}
+
+@Composable
+private fun DashboardActionGrid(
+    events: List<PhotographerEventSummaryDto>,
+    brandSettings: com.quickpitik.mobile.data.remote.BrandSettingsResponseDto?,
+    photographerName: String,
+    earnings: EarningsOverviewDto?,
+    onNavigateToTab: (Int) -> Unit,
+    onPreviewProfile: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            UploadCard(modifier = Modifier.weight(1f), onClick = { onNavigateToTab(1) })
+            ProfileCard(
+                brandSettings = brandSettings,
+                photographerName = photographerName,
+                modifier = Modifier.weight(1f),
+                onClick = onPreviewProfile
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            EarningsCard(
+                earnings = earnings,
+                modifier = Modifier.weight(1f),
+                onClick = { onNavigateToTab(3) }
+            )
+            EventsCard(
+                events = events,
+                modifier = Modifier.weight(1f),
+                onClick = { onNavigateToTab(2) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun UploadCard(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = BoneDeep),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Line),
+        modifier = modifier
+            .height(130.dp)
+            .clickable { onClick() }
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp).fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                val colors = listOf(Ink, InkSoft, Slate, SlateSoft, Ink)
+                colors.forEach { col ->
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(32.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(col)
+                    )
+                }
+            }
+            
+            Column {
+                Text(
+                    text = "+ Upload photos",
+                    color = Ink,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "any Cebu race",
+                        color = Fresh,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.ArrowForward,
+                        contentDescription = "Go",
+                        tint = Fresh,
+                        modifier = Modifier.size(10.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileCard(
+    brandSettings: com.quickpitik.mobile.data.remote.BrandSettingsResponseDto?,
+    photographerName: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val brandColorHex = remember(brandSettings) {
+        val raw = brandSettings?.brandColor?.uppercase() ?: ""
+        if (raw.startsWith("#")) {
+            try { Color(android.graphics.Color.parseColor(raw)) } catch (e: Exception) { Fresh }
+        } else {
+            Fresh
+        }
+    }
+    
+    Card(
+        colors = CardDefaults.cardColors(containerColor = BoneDeep),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Line),
+        modifier = modifier
+            .height(130.dp)
+            .clickable { onClick() }
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp).fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(100.dp))
+                        .background(brandColorHex)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val resolvedAvatarUrl = brandSettings?.avatarUrl?.replace("localhost", "10.0.2.2")
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(Bone)
+                            .border(1.dp, Line, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (!resolvedAvatarUrl.isNullOrEmpty()) {
+                            AsyncImage(
+                                model = resolvedAvatarUrl,
+                                contentDescription = "Avatar",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                              )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = "No Avatar",
+                                tint = SlateSoft,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = brandSettings?.brandName?.ifBlank { photographerName } ?: photographerName,
+                        color = Ink,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            
+            Column {
+                Text(
+                    text = "Open profile",
+                    color = Ink,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                val handleText = brandSettings?.handle?.ifBlank { "set URL" } ?: "set URL"
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (handleText == "set URL") handleText else "quickpitik.com/$handleText",
+                        color = SlateSoft,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.ArrowForward,
+                        contentDescription = "Go",
+                        tint = SlateSoft,
+                        modifier = Modifier.size(10.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EarningsCard(
+    earnings: EarningsOverviewDto?,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = BoneDeep),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Line),
+        modifier = modifier
+            .height(130.dp)
+            .clickable { onClick() }
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp).fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            val weeklyAmounts = remember(earnings) {
+                earnings?.weeklySeries?.map { it.amount } ?: emptyList()
+            }
+            
+            if (weeklyAmounts.size >= 2) {
+                Sparkline(
+                    data = weeklyAmounts,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                )
+            } else {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                ) {
+                    val path = Path()
+                    path.moveTo(0f, size.height * 0.7f)
+                    path.lineTo(size.width * 0.3f, size.height * 0.5f)
+                    path.lineTo(size.width * 0.6f, size.height * 0.8f)
+                    path.lineTo(size.width, size.height * 0.2f)
+                    drawPath(
+                        path = path,
+                        color = Line,
+                        style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                }
+            }
+            
+            Column {
+                Text(
+                    text = "View earnings",
+                    color = Ink,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "₱${String.format("%,.0f", earnings?.thisWeek ?: 0.0)} this week",
+                        color = SlateSoft,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.ArrowForward,
+                        contentDescription = "Go",
+                        tint = SlateSoft,
+                        modifier = Modifier.size(10.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EventsCard(
+    events: List<PhotographerEventSummaryDto>,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val live = remember(events) { events.filter { it.state.lowercase() == "live" }.size }
+    val upcoming = remember(events) { events.filter { it.state.lowercase() == "upcoming" }.size }
+    val archived = remember(events) { events.filter { it.state.lowercase() == "open" || it.state.lowercase() == "past" }.size }
+    
+    Card(
+        colors = CardDefaults.cardColors(containerColor = BoneDeep),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Line),
+        modifier = modifier
+            .height(130.dp)
+            .clickable { onClick() }
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp).fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(if (live > 0) Fresh else Line)
+                    )
+                    Text(
+                        text = "$live Live",
+                        color = Ink,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(SlateSoft)
+                    )
+                    Text(
+                        text = "$upcoming Upcoming",
+                        color = Ink,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(Line)
+                    )
+                    Text(
+                        text = "$archived Archived",
+                        color = Ink,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            
+            Column {
+                Text(
+                    text = "Manage events",
+                    color = Ink,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "your covered races",
+                        color = SlateSoft,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.ArrowForward,
+                        contentDescription = "Go",
+                        tint = SlateSoft,
+                        modifier = Modifier.size(10.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BillingGlance(
+    balance: PayoutBalanceDto?,
+    onNavigateToTab: () -> Unit
+) {
+    Slab(
+        number = "01",
+        title = "Billing",
+        trailing = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { onNavigateToTab() }
+            ) {
+                Text(
+                    text = "Open billing",
+                    color = SlateSoft,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = Icons.Default.ArrowForward,
+                    contentDescription = "Open billing",
+                    tint = SlateSoft,
+                    modifier = Modifier.size(12.dp)
+                )
+            }
+        }
+    ) {
+        if (balance == null) {
+            CircularProgressIndicator(color = Fresh, modifier = Modifier.size(24.dp))
+        } else if (balance.unpaidBalance == 0.0 && !balance.hasOpenRequest) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(BorderStroke(1.dp, Line), RoundedCornerShape(12.dp))
+                    .padding(20.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "No earnings yet.",
+                        color = Ink,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Your first sale opens up the request flow — reach ₱${String.format("%,.0f", balance.minimum)} to request a payout.",
+                        color = SlateSoft,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        } else if (balance.hasOpenRequest && balance.openRequest != null) {
+            val request = balance.openRequest
+            val statusText = when (request.status.lowercase()) {
+                "settled", "paid" -> "Approved · payment incoming"
+                "held" -> "Held — needs attention"
+                else -> "Pending review"
+            }
+            val statusColor = when (request.status.lowercase()) {
+                "settled", "paid" -> Fresh
+                "held" -> ErrorRed
+                else -> Ink
+            }
+            
+            Text(
+                text = "Payout Request · $statusText",
+                color = statusColor,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
+            )
+            Text(
+                text = "₱${String.format("%,.0f", request.amount)}",
+                color = Ink,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            if (request.holdReason != null && request.status.lowercase() == "held") {
+                Text(
+                    text = "Reason: ${request.holdReason}",
+                    color = ErrorRed,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+        } else {
+            val eligible = balance.unpaidBalance >= balance.minimum
+            Text(
+                text = "Available to request",
+                color = SlateSoft,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
+            )
+            Text(
+                text = "₱${String.format("%,.0f", balance.unpaidBalance)}",
+                color = if (eligible) Fresh else SlateSoft,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Text(
+                text = if (eligible) "Ready to request — open billing to confirm and submit."
+                       else "Reach ₱${String.format("%,.0f", balance.minimum)} in unpaid earnings to request a payout.",
+                color = SlateSoft,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun NextUpGlance(
+    events: List<PhotographerEventSummaryDto>,
+    onNavigateToTab: () -> Unit
+) {
+    val upcomingEvents = remember(events) {
+        events.filter { it.state.lowercase() == "upcoming" }
+            .sortedBy { it.date }
+    }
+    
+    Slab(
+        number = "02",
+        title = "Next up",
+        trailing = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { onNavigateToTab() }
+            ) {
+                Text(
+                    text = "All events",
+                    color = SlateSoft,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = Icons.Default.ArrowForward,
+                    contentDescription = "All events",
+                    tint = SlateSoft,
+                    modifier = Modifier.size(12.dp)
+                )
+            }
+        }
+    ) {
+        if (upcomingEvents.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(BorderStroke(1.dp, Line), RoundedCornerShape(12.dp))
+                    .padding(20.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "No upcoming coverage.",
+                        color = Ink,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Once organizers assign you to a future event, it shows up here.",
+                        color = SlateSoft,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        } else {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                upcomingEvents.take(3).forEach { event ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(BorderStroke(1.dp, Line), RoundedCornerShape(12.dp))
+                            .background(BoneDeep.copy(alpha = 0.5f))
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = event.date,
+                                color = SlateSoft,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = event.name,
+                                color = Ink,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                        Button(
+                            onClick = onNavigateToTab,
+                            colors = ButtonDefaults.buttonColors(containerColor = Fresh),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("Open", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ErrorStateCard(message: String, onRetry: () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = BoneDeep),
@@ -455,7 +1269,6 @@ private fun VerificationPanel(
     val status = if (isRejected) "rejected" else verification.status.lowercase()
     val missingList = verification.missing ?: emptyList()
 
-    // 1. Account Suspension Banner
     if (verification.suspendedAt != null) {
         Card(
             colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1F2)),
@@ -491,7 +1304,6 @@ private fun VerificationPanel(
         }
     }
 
-    // 2. Main Verification Onboarding Layout
     Card(
         colors = CardDefaults.cardColors(containerColor = BoneDeep),
         border = BorderStroke(1.dp, Line),
@@ -501,7 +1313,6 @@ private fun VerificationPanel(
         Column(modifier = Modifier.padding(20.dp)) {
             when (status) {
                 "approved" -> {
-                    // Beautiful Approved Badge
                     Row(
                         modifier = Modifier
                             .background(Fresh.copy(alpha = 0.1f), RoundedCornerShape(6.dp))
@@ -539,7 +1350,6 @@ private fun VerificationPanel(
                     )
                 }
                 "pending" -> {
-                    // Review Pulsing Indicator
                     val infiniteTransition = rememberInfiniteTransition()
                     val pulseAlpha by infiniteTransition.animateFloat(
                         initialValue = 0.4f,
@@ -623,7 +1433,7 @@ private fun VerificationPanel(
                         modifier = Modifier.padding(top = 4.dp, bottom = 20.dp)
                     )
                 }
-                else -> { // "incomplete"
+                else -> {
                     Text(
                         text = "ONBOARDING CHECKLIST",
                         color = SlateSoft,
@@ -647,9 +1457,7 @@ private fun VerificationPanel(
                 }
             }
 
-            // Checklist & Progress Widget (Visible if incomplete or pending or rejected)
             if (status != "approved") {
-                // 1. Dynamic Progress bar
                 val hasAvatar = !missingList.any { it.lowercase().contains("profile") || it.lowercase().contains("avatar") }
                 val hasCover = !missingList.any { it.lowercase().contains("cover") }
                 val hasBrand = !missingList.any { it.lowercase().contains("brand") }
@@ -671,8 +1479,6 @@ private fun VerificationPanel(
                 )
 
                 val completedCount = items.count { it.isCompleted }
-                
-                // If rejected, cap the progress value so that it never shows 100% (indicating correction/fixes are needed)
                 val progressValue = if (isRejected) {
                     minOf(completedCount.toFloat() / items.size.toFloat(), 0.85f)
                 } else {
@@ -681,7 +1487,6 @@ private fun VerificationPanel(
 
                 val progressColor = if (isRejected) ErrorRed else Fresh
 
-                // Progress Indicator Row
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -713,7 +1518,6 @@ private fun VerificationPanel(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // 2. Interactive Setup Grid (2 Columns)
                 Column {
                     for (i in items.indices step 2) {
                         Row(
@@ -744,7 +1548,6 @@ private fun VerificationPanel(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Open Dashboard Settings Button
             OutlinedButton(
                 onClick = onNavigateToSettings,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Fresh),
@@ -761,7 +1564,6 @@ private fun VerificationPanel(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Refresh Status Action Button
             Button(
                 onClick = onRefresh,
                 colors = ButtonDefaults.buttonColors(containerColor = Fresh),
