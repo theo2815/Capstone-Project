@@ -50,13 +50,13 @@ fun RunnerGalleryScreen(
     onNavigateToOrders: () -> Unit,
     onNavigateToProfile: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateBack: () -> Unit,
     onLogout: () -> Unit
 ) {
     var bibSearchQuery by remember { mutableStateOf("") }
     var activeSearchTab by remember { mutableStateOf(0) } // 0 = Selfie, 1 = Bib Number
     var selectedPhotoForDetail by remember { mutableStateOf<PhotoDto?>(null) }
 
-    val eventsState by viewModel.eventsState.collectAsState()
     val activeEvent by viewModel.activeEvent.collectAsState()
     val searchState by viewModel.searchState.collectAsState()
     val isFiltered by viewModel.isFiltered.collectAsState()
@@ -189,189 +189,13 @@ fun RunnerGalleryScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             if (activeEvent == null) {
-                // RUNNING EVENTS TITLE & HEADER
-                Text(
-                    text = "RUNNING EVENTS",
-                    style = Typography.labelMedium,
-                    color = Slate,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Choose a Marathon",
-                    style = Typography.titleLarge,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Ink
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-
-                when (val state = eventsState) {
-                    is RunnerEventsState.Loading -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 64.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(color = Fresh)
-                        }
-                    }
-                    is RunnerEventsState.Error -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = state.message,
-                                color = ErrorRed,
-                                textAlign = TextAlign.Center,
-                                style = Typography.bodyMedium
-                            )
-                        }
-                    }
-                    is RunnerEventsState.Success -> {
-                        if (state.events.isEmpty()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 64.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "No active running events found at the moment.",
-                                    color = SlateSoft,
-                                    textAlign = TextAlign.Center,
-                                    style = Typography.bodyMedium
-                                )
-                            }
-                        } else {
-                            state.events.forEach { event ->
-                                Card(
-                                    onClick = { viewModel.selectEvent(event) },
-                                    shape = RoundedCornerShape(20.dp),
-                                    colors = CardDefaults.cardColors(containerColor = BoneDeep),
-                                    border = BorderStroke(1.dp, Line),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(bottom = 20.dp)
-                                ) {
-                                    Column(modifier = Modifier.fillMaxWidth()) {
-                                        if (!event.bannerUrl.isNullOrEmpty()) {
-                                            AsyncImage(
-                                                model = event.bannerUrl,
-                                                contentDescription = "Event Banner",
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(180.dp)
-                                                    .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)),
-                                                contentScale = ContentScale.Crop
-                                            )
-                                        } else {
-                                            // Beautiful brand gradient placeholder
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(180.dp)
-                                                    .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                                                    .background(
-                                                        androidx.compose.ui.graphics.Brush.linearGradient(
-                                                            colors = listOf(Fresh, FreshDeep)
-                                                        )
-                                                    ),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    text = event.name,
-                                                    color = Bone,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 18.sp,
-                                                    textAlign = TextAlign.Center,
-                                                    modifier = Modifier.padding(16.dp)
-                                                )
-                                            }
-                                        }
-
-                                        Column(modifier = Modifier.padding(20.dp)) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = event.date.uppercase(),
-                                                    style = Typography.labelSmall,
-                                                    color = Fresh,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                                Surface(
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    color = if (event.status == "LIVE") Fresh.copy(alpha = 0.15f) else Line,
-                                                    modifier = Modifier.padding(4.dp)
-                                                ) {
-                                                    Text(
-                                                        text = event.status,
-                                                        color = if (event.status == "LIVE") Fresh else Slate,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                                    )
-                                                }
-                                            }
-                                            Spacer(modifier = Modifier.height(8.dp))
-                                            Text(
-                                                text = event.name,
-                                                style = Typography.titleLarge,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Ink
-                                            )
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                text = event.location,
-                                                style = Typography.bodyMedium,
-                                                color = SlateSoft
-                                            )
-                                            Spacer(modifier = Modifier.height(16.dp))
-                                            Divider(color = Line)
-                                            Spacer(modifier = Modifier.height(12.dp))
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(24.dp)
-                                            ) {
-                                                Column {
-                                                    Text(
-                                                        text = "AVAILABLE PHOTOS",
-                                                        style = Typography.labelSmall,
-                                                        color = Slate
-                                                    )
-                                                    Text(
-                                                        text = "${event.photoCount}",
-                                                        style = Typography.titleMedium,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Ink
-                                                    )
-                                                }
-                                                Column {
-                                                    Text(
-                                                        text = "PARTICIPANTS",
-                                                        style = Typography.labelSmall,
-                                                        color = Slate
-                                                    )
-                                                    Text(
-                                                        text = "${event.participantCount}",
-                                                        style = Typography.titleMedium,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Ink
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 64.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = Fresh)
                 }
             } else {
                 // SELECTED EVENT GALLERY VIEW
@@ -401,7 +225,10 @@ fun RunnerGalleryScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             IconButton(
-                                onClick = { viewModel.clearSelectedEvent() },
+                                onClick = {
+                                    viewModel.clearSelectedEvent()
+                                    onNavigateBack()
+                                },
                                 modifier = Modifier.padding(end = 8.dp)
                             ) {
                                 Icon(

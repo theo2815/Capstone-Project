@@ -52,20 +52,33 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         viewModelScope.launch {
             _eventsState.value = RunnerEventsState.Loading
             try {
-                // Fetch public ACTIVE status events
-                val response = RetrofitClient.apiService.getPublicEvents("ACTIVE")
+                // Browse-first, like the website's /events: pull every publicly
+                // visible lifecycle bucket so the discovery screen can segment
+                // Upcoming / Live / Recent / Archive. Selection is explicit (a
+                // card tap calls selectEvent) — we no longer auto-select the first
+                // event, since the runner now lands on the browse screen, not the
+                // cockpit. Backend EventController.parseStatusList accepts the CSV.
+                val response = RetrofitClient.apiService.getPublicEvents(
+                    status = "ACTIVE,COMPLETED,ARCHIVED",
+                    offset = 0,
+                    limit = 200
+                )
                 if (response.success && response.data != null) {
-                    val list = response.data.items
-                    _eventsState.value = RunnerEventsState.Success(list)
-                    // Do not auto-select the first event; let user choose from the events list first.
+                    _eventsState.value = RunnerEventsState.Success(response.data.items)
                 } else {
-                    _eventsState.value = RunnerEventsState.Error(response.error ?: "Failed to load active events.")
+                    _eventsState.value = RunnerEventsState.Error(response.error ?: "Failed to load events.")
                 }
             } catch (e: Exception) {
                 _eventsState.value = RunnerEventsState.Error(e.localizedMessage ?: "Failed to connect to backend server.")
             }
         }
     }
+
+    // Resolve a loaded event by slug. Used by the profile race log's "Open →" to
+    // jump straight into the cockpit for a saved/purchased event without a second
+    // round-trip. Returns null if events haven't loaded yet or there's no match.
+    fun eventBySlug(slug: String): EventDto? =
+        (_eventsState.value as? RunnerEventsState.Success)?.events?.firstOrNull { it.slug == slug }
 
     fun selectEvent(event: EventDto) {
         _activeEvent.value = event

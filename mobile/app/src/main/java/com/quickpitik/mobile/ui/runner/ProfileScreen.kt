@@ -42,7 +42,10 @@ import java.io.FileOutputStream
 fun ProfileScreen(
     viewModel: ProfileViewModel,
     cartViewModel: CartViewModel,
-    onNavigateBack: () -> Unit
+    savedEventsViewModel: SavedEventsViewModel,
+    onNavigateBack: () -> Unit,
+    onOpenEvent: (String) -> Unit,
+    onBrowseEvents: () -> Unit
 ) {
     val selfies by viewModel.selfiesState.collectAsState()
     val isLoading by viewModel.selfiesLoading.collectAsState()
@@ -50,14 +53,22 @@ fun ProfileScreen(
     val name by viewModel.profileName.collectAsState()
     val email by viewModel.profileEmail.collectAsState()
 
-    // Observe orders from CartViewModel for the Race Log
+    // The race log is the union of saved (bookmarked) events and events the runner
+    // has bought photos from — same as the website /profile race log. Orders come
+    // from CartViewModel; saved events from the shared SavedEventsViewModel store.
     val ordersState by cartViewModel.ordersState.collectAsState()
+    val savedEvents by savedEventsViewModel.savedEvents.collectAsState()
 
-    // Trigger orders fetch if not loaded
+    // Trigger fetches if not loaded
     LaunchedEffect(Unit) {
         cartViewModel.fetchOrders()
+        savedEventsViewModel.refresh()
         viewModel.fetchSelfies()
     }
+
+    val orders = (ordersState as? OrdersState.Success)?.orders ?: emptyList()
+    val raceLog = remember(orders, savedEvents) { buildRaceLog(savedEvents, orders) }
+    val ordersLoading = ordersState is OrdersState.Loading
 
     val context = LocalContext.current
     var tempImageUri by remember { mutableStateOf<Uri?>(null) }
@@ -288,7 +299,7 @@ fun ProfileScreen(
                     }
                 }
 
-                // Race Log Section
+                // Race Log Section — saved ∪ purchased, deduped by event (web /profile)
                 item {
                     Text(
                         text = "02. Race Log",
@@ -297,58 +308,62 @@ fun ProfileScreen(
                         color = Ink
                     )
                     Text(
-                        text = "Events bookmarked or containing purchased photos",
+                        text = "Events you saved or bought photos from",
                         style = Typography.bodySmall,
                         color = Slate
                     )
                 }
 
-                when (val state = ordersState) {
-                    is OrdersState.Loading -> {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(100.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(color = Fresh)
-                            }
+                if (ordersLoading && raceLog.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(100.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = Fresh)
                         }
                     }
-                    is OrdersState.Error -> {
-                        item {
+                } else if (raceLog.isEmpty()) {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, SlateSoft, RoundedCornerShape(12.dp))
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
                             Text(
-                                text = "Failed to load race log: ${state.message}",
-                                color = ErrorRed,
+                                text = "No races yet.",
+                                color = Ink,
+                                fontWeight = FontWeight.Bold,
                                 style = Typography.bodyMedium
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Save a race or buy a photo and it'll show up here.",
+                                color = Slate,
+                                textAlign = TextAlign.Center,
+                                style = Typography.bodySmall
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Browse races →",
+                                color = Fresh,
+                                fontWeight = FontWeight.Bold,
+                                style = Typography.labelMedium,
+                                modifier = Modifier.clickable { onBrowseEvents() }
                             )
                         }
                     }
-                    is OrdersState.Success -> {
-                        val orders = state.orders
-                        if (orders.isEmpty()) {
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .border(1.dp, SlateSoft, RoundedCornerShape(12.dp))
-                                        .padding(24.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "Your race log is empty.\nPurchase photos to keep track of completed races.",
-                                        color = Slate,
-                                        textAlign = TextAlign.Center,
-                                        style = Typography.bodyMedium
-                                    )
-                                }
-                            }
-                        } else {
-                            items(orders) { order ->
-                                RaceLogItem(order = order)
-                            }
-                        }
+                } else {
+                    items(raceLog) { entry ->
+                        RaceLogRow(
+                            entry = entry,
+                            onOpen = { entry.eventSlug?.let { onOpenEvent(it) } },
+                            onUnsave = { savedEventsViewModel.unsave(entry.eventId, entry.eventName) }
+                        )
                     }
                 }
 
@@ -452,40 +467,127 @@ fun SelfieCard(
     }
 }
 
+// One de-duplicated race-log row: an event the runner saved, bought photos from,
+// or both. Photo counts + spend come from the purchased side; the saved-only side
+// contributes the bookmark + an Unsave affordance when the race is still upcoming.
+private data class RaceLogEntry(
+    val eventId: String,
+    val eventName: String,
+    val eventSlug: String?,
+    val eventDate: String?,
+    val photosBought: Int,
+    val totalSpent: Double,
+    val saved: Boolean,
+    val purchased: Boolean
+)
+
+// saved ∪ purchased, keyed by eventId. Photos-bought and spend are summed across a
+// runner's orders for the same event; saved flags the bookmark. Sorted newest-first
+// by event date (nulls last). Mirrors the website's race-log derivation.
+private fun buildRaceLog(
+    saved: List<SavedEventSummaryDto>,
+    orders: List<OrderListItemDto>
+): List<RaceLogEntry> {
+    val byEvent = LinkedHashMap<String, RaceLogEntry>()
+    orders.forEach { order ->
+        val existing = byEvent[order.eventId]
+        byEvent[order.eventId] = RaceLogEntry(
+            eventId = order.eventId,
+            eventName = order.eventName ?: existing?.eventName ?: "Marathon Event",
+            eventSlug = order.eventSlug ?: existing?.eventSlug,
+            eventDate = order.eventDate ?: existing?.eventDate,
+            photosBought = (existing?.photosBought ?: 0) + order.photoIds.size,
+            totalSpent = (existing?.totalSpent ?: 0.0) + order.total,
+            saved = existing?.saved ?: false,
+            purchased = true
+        )
+    }
+    saved.forEach { ev ->
+        val existing = byEvent[ev.id]
+        byEvent[ev.id] = RaceLogEntry(
+            eventId = ev.id,
+            eventName = existing?.eventName ?: ev.name,
+            eventSlug = existing?.eventSlug ?: ev.slug,
+            eventDate = existing?.eventDate ?: ev.date,
+            photosBought = existing?.photosBought ?: 0,
+            totalSpent = existing?.totalSpent ?: 0.0,
+            saved = true,
+            purchased = existing?.purchased ?: false
+        )
+    }
+    return byEvent.values.sortedByDescending { it.eventDate ?: "" }
+}
+
 @Composable
-fun RaceLogItem(order: OrderListItemDto) {
+private fun RaceLogRow(
+    entry: RaceLogEntry,
+    onOpen: () -> Unit,
+    onUnsave: () -> Unit
+) {
+    val upcoming = entry.eventDate?.let { deriveEventState(it) == EventState.UPCOMING } ?: false
+    val openable = !upcoming && entry.eventSlug != null
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(BoneDeep, RoundedCornerShape(12.dp))
+            .then(if (openable) Modifier.clickable { onOpen() } else Modifier)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = order.eventName ?: "Marathon Event",
+                text = entry.eventName,
                 style = Typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 color = Ink
             )
             Text(
-                text = "Race Date: ${order.eventDate ?: "N/A"}",
+                text = entry.eventDate?.let { eventDateLabel(it) } ?: "Date TBA",
                 style = Typography.bodySmall,
                 color = Slate
             )
-            Text(
-                text = "${order.photoIds.size} Photo(s) Kept",
-                style = Typography.bodySmall,
-                color = Fresh,
-                fontWeight = FontWeight.Bold
-            )
+            if (entry.purchased) {
+                Text(
+                    text = "${entry.photosBought} photo${if (entry.photosBought == 1) "" else "s"} kept",
+                    style = Typography.bodySmall,
+                    color = Fresh,
+                    fontWeight = FontWeight.Bold
+                )
+            } else if (entry.saved) {
+                Text(
+                    text = if (upcoming) "Saved · photos coming on race day" else "Saved",
+                    style = Typography.bodySmall,
+                    color = SlateSoft
+                )
+            }
         }
-        Text(
-            text = "₱%,.2f".format(order.total),
-            style = Typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            color = Ink
-        )
+        Column(horizontalAlignment = Alignment.End) {
+            if (entry.purchased) {
+                Text(
+                    text = "₱%,.2f".format(entry.totalSpent),
+                    style = Typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            if (upcoming && entry.saved && !entry.purchased) {
+                Text(
+                    text = "UNSAVE",
+                    style = Typography.labelMedium,
+                    color = ErrorRed,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable { onUnsave() }
+                )
+            } else if (openable) {
+                Text(
+                    text = "Open →",
+                    style = Typography.labelMedium,
+                    color = Fresh,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
     }
 }
