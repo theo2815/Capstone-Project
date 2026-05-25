@@ -10,7 +10,7 @@ import retrofit2.HttpException
 object RetrofitClient {
     // When using the Android Studio Emulator, use "http://10.0.2.2:8080/" to route requests to your PC's backend.
     // If you switch to a physical phone via USB, run "adb reverse tcp:8080 tcp:8080" in the terminal.
-    private const val BASE_URL = "http://10.0.2.2:8080/"
+    private const val BASE_URL = "http://localhost:8080/"
 
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY

@@ -125,6 +125,9 @@ class MainActivity : ComponentActivity() {
                             onNavigateToSettings = {
                                 navController.navigate("settings")
                             },
+                            onNavigateBack = {
+                                navController.popBackStack()
+                            },
                             onLogout = {
                                 authViewModel.resetState()
                                 cartViewModel.clearCart()

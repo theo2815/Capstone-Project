@@ -86,6 +86,12 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         searchByBib("")
     }
 
+    fun clearSelectedEvent() {
+        _activeEvent.value = null
+        _searchState.value = PhotosSearchState.Idle
+        _isFiltered.value = false
+    }
+
     fun searchByBib(bib: String) {
         val event = _activeEvent.value ?: return
         _isFiltered.value = bib.trim().isNotEmpty()
