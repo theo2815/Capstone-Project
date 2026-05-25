@@ -423,6 +423,7 @@ fun PhotographerSettingsScreen(
                             value = brandName,
                             onValueChange = { brandName = it },
                             label = { Text("Brand Name / Studio Name", color = SlateSoft) },
+                            shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
                                 unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
@@ -439,6 +440,7 @@ fun PhotographerSettingsScreen(
                             value = handle,
                             onValueChange = { handle = it },
                             label = { Text("Public Handle (e.g. studio-handle)", color = SlateSoft) },
+                            shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
                                 unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
@@ -466,6 +468,7 @@ fun PhotographerSettingsScreen(
                                         modifier = Modifier.clickable { regionDropdownExpanded = true }
                                     )
                                 },
+                                shape = RoundedCornerShape(12.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Fresh,
                                     unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
@@ -511,6 +514,7 @@ fun PhotographerSettingsScreen(
                                         modifier = Modifier.clickable { provinceDropdownExpanded = true }
                                     )
                                 },
+                                shape = RoundedCornerShape(12.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Fresh,
                                     unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
@@ -552,6 +556,7 @@ fun PhotographerSettingsScreen(
                             value = socialUrl,
                             onValueChange = { socialUrl = it },
                             label = { Text("Facebook Social Profile URL", color = SlateSoft) },
+                            shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
                                 unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
@@ -568,6 +573,7 @@ fun PhotographerSettingsScreen(
                             value = bio,
                             onValueChange = { bio = it },
                             label = { Text("Brand Biography", color = SlateSoft) },
+                            shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
                                 unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
@@ -598,6 +604,7 @@ fun PhotographerSettingsScreen(
                             value = gcashName,
                             onValueChange = { gcashName = it },
                             label = { Text("Account Holder Full Name", color = SlateSoft) },
+                            shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
                                 unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
@@ -614,6 +621,7 @@ fun PhotographerSettingsScreen(
                             onValueChange = { gcashNumber = it },
                             label = { Text("GCash Mobile Number (11-Digits)", color = SlateSoft) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
                                 unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
