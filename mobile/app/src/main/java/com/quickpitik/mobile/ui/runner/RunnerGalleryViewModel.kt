@@ -57,11 +57,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 if (response.success && response.data != null) {
                     val list = response.data.items
                     _eventsState.value = RunnerEventsState.Success(list)
-                    if (_activeEvent.value == null && list.isNotEmpty()) {
-                        _activeEvent.value = list.first()
-                        // Initial photo stream load
-                        searchByBib("")
-                    }
+                    // Do not auto-select the first event; let user choose from the events list first.
                 } else {
                     _eventsState.value = RunnerEventsState.Error(response.error ?: "Failed to load active events.")
                 }
@@ -75,6 +71,12 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         _activeEvent.value = event
         _isFiltered.value = false
         searchByBib("")
+    }
+
+    fun clearSelectedEvent() {
+        _activeEvent.value = null
+        _searchState.value = PhotosSearchState.Idle
+        _isFiltered.value = false
     }
 
     fun searchByBib(bib: String) {
