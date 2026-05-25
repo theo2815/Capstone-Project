@@ -1,8 +1,13 @@
 package com.quickpitik.mobile.ui.runner
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -11,21 +16,33 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.quickpitik.mobile.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountSettingsScreen(
     viewModel: ProfileViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onLogout: () -> Unit
 ) {
     val name by viewModel.profileName.collectAsState()
     val email by viewModel.profileEmail.collectAsState()
+
+    val avatarUrl by viewModel.avatarUrl.collectAsState()
+    val avatarUploading by viewModel.avatarUploading.collectAsState()
+    val avatarError by viewModel.avatarError.collectAsState()
+
+    val avatarPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { viewModel.uploadAvatar(it) } }
 
     val nameSuccess by viewModel.nameUpdateSuccess.collectAsState()
     val nameError by viewModel.nameUpdateError.collectAsState()
@@ -162,7 +179,86 @@ fun AccountSettingsScreen(
                     }
                 }
 
-                // Section 2: Email Card (Read-only)
+                // Section 2: Profile Picture (avatar)
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(BoneDeep, RoundedCornerShape(16.dp))
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(
+                            text = "02. Profile Picture",
+                            style = Typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Ink
+                        )
+                        Text(
+                            text = "Shown next to your name across QuickPitik.",
+                            style = Typography.bodySmall,
+                            color = Slate
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(CircleShape)
+                                    .background(Fresh)
+                                    .clickable(enabled = !avatarUploading) { avatarPicker.launch("image/*") },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (!avatarUrl.isNullOrEmpty()) {
+                                    AsyncImage(
+                                        model = avatarUrl,
+                                        contentDescription = "Profile picture",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                } else {
+                                    Text(
+                                        text = name.ifBlank { "Runner" }.take(1).uppercase(),
+                                        color = Bone,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 28.sp
+                                    )
+                                }
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Button(
+                                    onClick = { avatarPicker.launch("image/*") },
+                                    enabled = !avatarUploading,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Fresh,
+                                        contentColor = Bone,
+                                        disabledContainerColor = SlateSoft,
+                                        disabledContentColor = Slate
+                                    ),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = if (avatarUploading) "UPLOADING…" else "CHANGE PHOTO",
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                if (avatarError != null) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = avatarError ?: "",
+                                        color = ErrorRed,
+                                        style = Typography.bodySmall
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Section 3: Email Card (Read-only)
                 item {
                     Column(
                         modifier = Modifier
@@ -172,7 +268,7 @@ fun AccountSettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "02. Sign-In Email",
+                            text = "03. Sign-In Email",
                             style = Typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = Ink
@@ -209,7 +305,7 @@ fun AccountSettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         Text(
-                            text = "03. Update Password",
+                            text = "04. Update Password",
                             style = Typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = Ink
@@ -307,6 +403,43 @@ fun AccountSettingsScreen(
                         ) {
                             Text("UPDATE PASSWORD", fontWeight = FontWeight.Bold)
                         }
+                    }
+                }
+
+                // Section 5: Sign out + account help
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(BoneDeep, RoundedCornerShape(16.dp))
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "05. Sign Out",
+                            style = Typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Ink
+                        )
+                        Text(
+                            text = "You'll need to sign in again on this device to access your profile, selfies, and orders.",
+                            style = Typography.bodySmall,
+                            color = Slate
+                        )
+                        OutlinedButton(
+                            onClick = onLogout,
+                            border = BorderStroke(1.dp, Ink),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("SIGN OUT", fontWeight = FontWeight.Bold)
+                        }
+                        Text(
+                            text = "Need to delete your account? Contact support@quickpitik.com and we'll handle it within 7 days.",
+                            style = Typography.bodySmall,
+                            color = Slate
+                        )
                     }
                 }
 

@@ -2,6 +2,38 @@
 
 **Status:** MVVM Architecture, Room Local SQLite Caching, Retrofit Network Syncing, Session Management, DSLR Background Uploads, Mobile Marketplace Flow, and Runner Profile, Selfie Library, & Account Settings **100% Operational & Compiled.**
 
+> **Standing directive for all mobile work → read [Build Mandate](#-build-mandate--website-parity-protocol-read-first) FIRST.** Replicate the exact website flows (runner + photographer) and connect to the already-working backend. Do not change the backend or website. Tether auto-upload ships last.
+
+---
+
+## 🎯 Build Mandate — Website Parity Protocol (READ FIRST)
+
+**The mobile app's job is to replicate the EXACT flows of the already-working website + backend — for both the runner and the photographer — and to connect to the existing backend. Nothing more, until parity is reached.**
+
+This is the standing directive for every mobile task. It **overrides** any default instinct to redesign, re-architect, "improve," or simplify a flow. When a default approach conflicts with this mandate, the mandate wins.
+
+### The four rules
+
+1. **Replicate the website flow exactly — both roles.** Every runner and photographer surface in `website/` must have a faithful mobile equivalent: same steps, same states, same order of actions, same validation rules, same intent of copy. The source of truth for "what the flow is" = the website (`website/src/app/`, `website/src/components/`) and the backend contract it calls.
+2. **Backend + website are FROZEN — connect, don't change.** The Spring Boot backend and the Next.js website already work. Mobile only wires Retrofit to **existing** endpoints. **Never edit the backend or the website to make mobile easier.** If mobile needs something the backend doesn't already expose (a missing field, a missing endpoint, a shape mismatch), **STOP and report the exact gap to the user.** Do not invent a workaround, a mock, a local-only field, or a new feature flag — and do not modify the backend yourself.
+3. **Parity is priority #1.** Build runner + photographer website-flow parity before any net-new, mobile-only capability. `/admin/*` is OUT of scope (web-only ops console). `/onboarding` is N/A (role is chosen at register).
+4. **The USB-C tethered-camera auto-upload is the FINAL milestone — build it LAST.** The photographer MVP — connect a camera over USB-C, auto-upload every shot to the backend, and have it appear in **both** the mobile app and the website — is deferred until website-flow parity (rules 1–3) is complete. Do not start it early. It is the last thing built, not the first.
+
+### The workflow for any parity task
+
+1. **Find the website flow.** Read the matching `website/src/app/...` page + its components and trace every step, state, and API call.
+2. **Find the backend contract.** Read the controller + DTOs the website calls. Match field names and request/response shapes **exactly** in the mobile DTOs (the envelope is `ApiResponseEnvelope<T>`).
+3. **Replicate in Compose** following the existing mobile MVVM layering: DTO → `QuickPitikApi` → Repository (contract + impl) → ViewModel (StateFlow + sealed UI-state) → Screen. Reuse the existing mobile design tokens (`com.quickpitik.mobile.ui.theme.*` — Bone / Ink / Fresh / Slate / Line / etc.); match the app's current look — **do not introduce a new design system.** Functional-first; polish is a later pass.
+4. **Confirm the boundary held.** No backend or website edits. If a gap forced a stop, it was *reported to the user*, not patched locally.
+5. **Compile-check** with `.\gradlew.bat compileDebugKotlin` before declaring a task done. Runtime verification needs a device/emulator — if you could not actually run it, **say so explicitly**; a clean compile is necessary but not sufficient.
+
+### For sub-agents (IMPORTANT)
+
+Sub-agents (feature / Explore / general-purpose) do **NOT** automatically load this file — only the main session gets it injected. Whoever dispatches a mobile feature agent **MUST paste the four rules + the workflow above into that agent's prompt.** Otherwise the mandate never reaches the agent doing the work.
+
+> **Live task list + current parity scope:** vault `mobile/tasks.md`.
+> **Rationale (why parity-first, tether-last, backend-frozen):** vault `mobile/decisions.md` — 2026-05-25 parity-mandate ADR.
+
 ---
 
 ## 🛠️ Build and Developer Commands
@@ -110,7 +142,11 @@ graph TD
 ---
 
 ## 🎯 Next Steps for Development
-When continuing in a new conversation or context, prioritize the following tasks:
-1. **Unit Test Room & WorkManager:** Create Android instrumented unit tests testing `UploadRecord` insertions, `UploadQueueDao` queries, and `PhotoUploadWorker` queue synchronization.
-2. **Implement DSLR Camera OTG WiFi/USB SDK Hook:** Connect the Photographer console to raw camera file listeners.
-3. **AI Face Search Trigger:** Connect the face-based photo search in the runner gallery hub to query the backend with the runner's primary selfie ID.
+
+**Priority order is governed by the [Build Mandate](#-build-mandate--website-parity-protocol-read-first) — parity first, tether last.** The authoritative, always-current list lives in vault `mobile/tasks.md`. Summary:
+
+1. **Website-flow parity (priority #1):** finish replicating every remaining runner + photographer website surface (auth recovery screens, marketing/explainer pages, any settings/profile gaps) — exact flow, connect to existing backend only. `/admin/*` excluded.
+2. **Unit Test Room & WorkManager:** instrumented tests for `UploadRecord` inserts, `UploadQueueDao` queries, and `PhotoUploadWorker` sync.
+3. **FINAL milestone (build LAST):** USB-C tethered-camera auto-upload — auto-upload every shot to the backend, display in **both** mobile and website. Deferred until parity is complete (Build Mandate rule 4).
+
+> Done since the last revision (verified 2026-05-25): AI face-search trigger (live camera + stored-selfie), order refund flow, account parity, photographer public-profile + event-share pages. See vault `mobile/tasks.md`.

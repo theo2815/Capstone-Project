@@ -1,5 +1,10 @@
 package com.quickpitik.mobile.ui.runner
 
+import android.content.ContentValues
+import android.net.Uri
+import android.provider.MediaStore
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -56,6 +61,21 @@ fun RunnerGalleryScreen(
     val searchState by viewModel.searchState.collectAsState()
     val isFiltered by viewModel.isFiltered.collectAsState()
 
+    // Live selfie capture (camera) + gallery pick — reuse the proven ProfileScreen
+    // pattern: a MediaStore URI handed to TakePicture(), then face-search the bytes.
+    val context = LocalContext.current
+    var pendingSelfieUri by remember { mutableStateOf<Uri?>(null) }
+    val selfieCameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) pendingSelfieUri?.let { viewModel.searchBySelfieUri(it) }
+    }
+    val selfieGalleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let { viewModel.searchBySelfieUri(it) }
+    }
+
     // Lock the Runner Dashboard to the uniform Light Warm Cream Brand Theme
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -108,7 +128,6 @@ fun RunnerGalleryScreen(
                     }
 
                     var menuExpanded by remember { mutableStateOf(false) }
-                    val context = LocalContext.current
                     val sessionManager = remember { SessionManager.getInstance(context) }
                     val userName = sessionManager.getUserName() ?: "Runner"
 
@@ -327,25 +346,52 @@ fun RunnerGalleryScreen(
                             color = InkSoft
                         )
                         Spacer(modifier = Modifier.height(16.dp))
+                        // Primary: search with a saved library selfie
+                        Button(
+                            onClick = { viewModel.searchByStoredSelfie() },
+                            shape = RoundedCornerShape(percent = 100),
+                            colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("USE STORED SELFIE", style = Typography.labelMedium)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
+                            // Take a selfie now — opens the camera via a MediaStore URI
                             Button(
-                                onClick = { viewModel.searchByStoredSelfie() },
+                                onClick = {
+                                    try {
+                                        val values = ContentValues().apply {
+                                            put(MediaStore.Images.Media.TITLE, "selfie_search_${System.currentTimeMillis()}")
+                                            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                        }
+                                        val uri = context.contentResolver.insert(
+                                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                            values
+                                        )
+                                        pendingSelfieUri = uri
+                                        if (uri != null) selfieCameraLauncher.launch(uri)
+                                    } catch (e: Exception) {
+                                        // Swallow — camera unavailable; user can still use Upload/Stored.
+                                    }
+                                },
                                 shape = RoundedCornerShape(percent = 100),
-                                colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
-                                modifier = Modifier.weight(1.2f)
+                                colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Bone),
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Text("USE STORED SELFIE", style = Typography.labelMedium)
+                                Text("TAKE SELFIE", style = Typography.labelMedium)
                             }
+                            // Upload an existing photo from the device
                             Button(
-                                onClick = { viewModel.simulateSelfieSearch() },
+                                onClick = { selfieGalleryLauncher.launch("image/*") },
                                 shape = RoundedCornerShape(percent = 100),
                                 colors = ButtonDefaults.buttonColors(containerColor = Line, contentColor = Ink),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("SIMULATE UPLOAD", style = Typography.labelMedium)
+                                Text("UPLOAD", style = Typography.labelMedium)
                             }
                         }
                     }

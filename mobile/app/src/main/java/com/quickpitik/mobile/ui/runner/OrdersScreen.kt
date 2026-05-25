@@ -34,16 +34,28 @@ fun OrdersScreen(
 ) {
     val ordersState by viewModel.ordersState.collectAsState()
     val orderDetailState by viewModel.orderDetailState.collectAsState()
+    val refundAction by viewModel.refundActionState.collectAsState()
 
     var selectedOrderId by remember { mutableStateOf<String?>(null) }
+    var showRefundDialog by remember { mutableStateOf(false) }
     val uriHandler = LocalUriHandler.current
 
     LaunchedEffect(selectedOrderId) {
         if (selectedOrderId != null) {
+            viewModel.resetRefundActionState()
             viewModel.fetchOrderDetail(selectedOrderId!!)
         } else {
             viewModel.fetchOrders()
             viewModel.resetOrderDetailState()
+            viewModel.resetRefundActionState()
+        }
+    }
+
+    // Close the dialog once the server accepts the request; the banner + refreshed
+    // timeline then render in place behind it.
+    LaunchedEffect(refundAction) {
+        if (refundAction is RefundActionState.Success) {
+            showRefundDialog = false
         }
     }
 
@@ -227,64 +239,86 @@ fun OrdersScreen(
                     }
                     is OrderDetailState.Success -> {
                         val order = detailState.order
-                        Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                            // Order Summary Summary Header Card
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
-                                border = BorderStroke(1.dp, Line),
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Text(
-                                        text = order.eventName ?: "Event Photos Bundle",
-                                        style = Typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Ink
-                                    )
-                                    Text(
-                                        text = "Status: ${order.status} | Recipient: ${order.recipientEmail}",
-                                        style = Typography.bodySmall,
-                                        color = SlateSoft
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            // Order summary header card + bundle download
+                            item {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
+                                    border = BorderStroke(1.dp, Line),
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
                                         Text(
-                                            text = String.format("Total paid: ₱%,.2f", order.total),
-                                            style = Typography.titleSmall,
+                                            text = order.eventName ?: "Event Photos Bundle",
+                                            style = Typography.titleMedium,
                                             fontWeight = FontWeight.Bold,
-                                            color = Fresh
+                                            color = Ink
                                         )
-                                        if (order.downloadBundleUrl != null) {
-                                            Button(
-                                                onClick = { uriHandler.openUri(order.downloadBundleUrl) },
-                                                colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
-                                                shape = RoundedCornerShape(8.dp)
-                                            ) {
-                                                Text("ZIP BUNDLE", style = Typography.labelSmall)
+                                        Text(
+                                            text = "Status: ${order.status} | Recipient: ${order.recipientEmail}",
+                                            style = Typography.bodySmall,
+                                            color = SlateSoft
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = String.format("Total paid: ₱%,.2f", order.total),
+                                                style = Typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Fresh
+                                            )
+                                            if (order.downloadBundleUrl != null) {
+                                                Button(
+                                                    onClick = { uriHandler.openUri(order.downloadBundleUrl) },
+                                                    colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
+                                                    shape = RoundedCornerShape(8.dp)
+                                                ) {
+                                                    Text("ZIP BUNDLE", style = Typography.labelSmall)
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
-                            Spacer(modifier = Modifier.height(16.dp))
 
-                            Text(
-                                text = "PURCHASED PHOTO STREAM",
-                                style = Typography.labelSmall,
-                                color = Slate,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
+                            // Success / error feedback from the latest refund action
+                            (refundAction as? RefundActionState.Success)?.let {
+                                item { RefundStatusBanner(it.message, isError = false) }
+                            }
+                            (refundAction as? RefundActionState.Error)?.let {
+                                item { RefundStatusBanner(it.message, isError = true) }
+                            }
 
-                            LazyColumn(
-                                modifier = Modifier.fillMaxWidth().weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                items(order.photos) { photo ->
+                            // Refund request / cancel actions
+                            item {
+                                RefundActionsRow(
+                                    order = order,
+                                    submitting = refundAction is RefundActionState.Submitting,
+                                    onRequest = {
+                                        viewModel.resetRefundActionState()
+                                        showRefundDialog = true
+                                    },
+                                    onCancel = { disputeId -> viewModel.withdrawDispute(order.id, disputeId) }
+                                )
+                            }
+
+                            item {
+                                Text(
+                                    text = "PURCHASED PHOTO STREAM",
+                                    style = Typography.labelSmall,
+                                    color = Slate
+                                )
+                            }
+
+                            items(order.photos) { photo ->
                                     Card(
                                         colors = CardDefaults.cardColors(containerColor = BoneDeep),
                                         border = BorderStroke(1.dp, Line),
@@ -351,7 +385,22 @@ fun OrdersScreen(
                                         }
                                     }
                                 }
+
+                            // Refund history timeline (per-dispute lifecycle)
+                            if (order.disputes.isNotEmpty()) {
+                                item { RefundTimeline(order.disputes) }
                             }
+                        }
+
+                        if (showRefundDialog) {
+                            RefundRequestDialog(
+                                order = order,
+                                submitting = refundAction is RefundActionState.Submitting,
+                                onDismiss = { showRefundDialog = false },
+                                onSubmit = { photoIds, reason, note ->
+                                    viewModel.submitRefund(order.id, photoIds, reason, note)
+                                }
+                            )
                         }
                     }
                     else -> {}

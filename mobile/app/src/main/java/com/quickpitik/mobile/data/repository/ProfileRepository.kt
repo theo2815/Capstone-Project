@@ -18,7 +18,14 @@ interface ProfileRepository {
     suspend fun setPrimarySelfie(token: String, selfieId: String): Result<List<SelfieRefDto>>
     
     suspend fun updateProfile(token: String, name: String): Result<UserDto>
-    
+
+    suspend fun uploadAvatar(
+        token: String,
+        fileBytes: ByteArray,
+        filename: String,
+        contentType: String
+    ): Result<UserDto>
+
     suspend fun changePassword(
         token: String,
         current: String,

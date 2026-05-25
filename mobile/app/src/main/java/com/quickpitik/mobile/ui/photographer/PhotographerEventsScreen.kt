@@ -28,7 +28,8 @@ import androidx.compose.ui.platform.LocalContext
 @Composable
 fun PhotographerEventsScreen(
     viewModel: PhotographerDashboardViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenShare: (PhotographerEventSummaryDto) -> Unit = {}
 ) {
     val eventsState by viewModel.eventsState.collectAsState()
     val publicEventsState by viewModel.publicEventsState.collectAsState()
@@ -205,6 +206,7 @@ fun PhotographerEventsScreen(
                         items(filteredList) { event ->
                             EventCard(
                                 event = event,
+                                onOpenShare = { onOpenShare(event) },
                                 onSelectEvent = {
                                     if (currentStatus == "approved") {
                                         viewModel.selectEvent(event)
@@ -272,6 +274,7 @@ fun PhotographerEventsScreen(
 fun EventCard(
     event: PhotographerEventSummaryDto,
     onSelectEvent: () -> Unit,
+    onOpenShare: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val isLive = event.state.lowercase() == "live" || event.state.lowercase() == "open" || event.state.lowercase() == "active"
@@ -381,6 +384,25 @@ fun EventCard(
                     ) {
                         Text(
                             text = "SET AS ACTIVE TETHER EVENT",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                // View & share the public gallery for any covered event
+                if (event.photoCount > 0) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = onOpenShare,
+                        border = BorderStroke(1.dp, Ink),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().height(36.dp),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text(
+                            text = "VIEW & SHARE GALLERY",
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp
                         )

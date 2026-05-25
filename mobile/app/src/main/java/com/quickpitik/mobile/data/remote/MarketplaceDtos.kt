@@ -72,7 +72,8 @@ data class OrderListItemDto(
     val eventSlug: String?,
     val eventDate: String?,
     val eventState: String?,
-    val status: String?
+    val status: String?,
+    val disputes: List<RunnerDisputeDto> = emptyList()
 )
 
 data class OrderDetailDto(
@@ -88,7 +89,8 @@ data class OrderDetailDto(
     val photos: List<OrderPhotoDetailDto>,
     val downloadBundleUrl: String? = null,
     val recipientEmail: String = "",
-    val shareToken: String? = null
+    val shareToken: String? = null,
+    val disputes: List<RunnerDisputeDto> = emptyList()
 )
 
 data class OrderPhotoDetailDto(
@@ -99,4 +101,43 @@ data class OrderPhotoDetailDto(
     val thumbnailUrl: String? = null,
     val previewUrl: String? = null,
     val downloadUrl: String? = null
+)
+
+// Mirrors backend RefundRequest — one Dispute row is created per photoId;
+// reason + note are shared across the batch. reason is one of:
+// "wrong_runner" | "low_quality" | "not_received" | "duplicate_charge" | "other".
+data class RefundRequest(
+    val photoIds: List<String>,
+    val reason: String,
+    val note: String = ""
+)
+
+data class RefundResponse(
+    val orderId: String,
+    val disputes: List<RefundDisputeDto> = emptyList()
+)
+
+data class RefundDisputeDto(
+    val id: String,
+    val photoId: String,
+    val status: String,
+    val openedAt: String
+)
+
+// Embedded on every order payload. Carries everything the runner-side refund
+// surface needs to render status chips, the timeline, the admin's resolution
+// note, and the cancel button. status is the lowercase wire string:
+// "open" | "escalated" | "resolved" | "denied" | "withdrawn".
+data class RunnerDisputeDto(
+    val id: String,
+    val photoId: String,
+    val reason: String,
+    val note: String,
+    val status: String,
+    val resolution: String? = null,
+    val refundAmount: Double? = null,
+    val resolutionNote: String? = null,
+    val openedAt: String,
+    val resolvedAt: String? = null,
+    val withdrawnAt: String? = null
 )

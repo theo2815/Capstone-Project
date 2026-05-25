@@ -24,6 +24,14 @@ interface QuickPitikApi {
         @Query("withUploads") withUploads: Boolean = false
     ): ApiResponseEnvelope<PaginatedResponse<PhotographerEventSummaryDto>>
 
+    @GET("api/v1/me/photographer/events/{eventId}/photos")
+    suspend fun getPhotographerEventPhotos(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 100
+    ): ApiResponseEnvelope<PaginatedResponse<PhotographerLibraryPhotoDto>>
+
     @GET("api/v1/me/photographer/verification")
     suspend fun getVerificationStatus(
         @Header("Authorization") token: String
@@ -128,6 +136,19 @@ interface QuickPitikApi {
         @Query("limit") limit: Int = 50
     ): ApiResponseEnvelope<TransactionsLedgerResponse>
 
+    @GET("api/v1/public/photographers/{handle}")
+    suspend fun getPublicPhotographerProfile(
+        @Path("handle") handle: String
+    ): ApiResponseEnvelope<PhotographerProfileDto>
+
+    @GET("api/v1/public/photographers/{handle}/events/{slug}/photos")
+    suspend fun getPublicPhotographerEventPhotos(
+        @Path("handle") handle: String,
+        @Path("slug") slug: String,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 100
+    ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
+
     @GET("api/v1/events")
     suspend fun getPublicEvents(
         @Query("status") status: String = "ACTIVE",
@@ -207,6 +228,19 @@ interface QuickPitikApi {
         @Header("Authorization") token: String,
         @Path("id") orderId: String
     ): ApiResponseEnvelope<OrderDetailDto>
+
+    @POST("api/v1/me/orders/{id}/refund")
+    suspend fun submitRefund(
+        @Header("Authorization") token: String,
+        @Path("id") orderId: String,
+        @Body request: RefundRequest
+    ): ApiResponseEnvelope<RefundResponse>
+
+    @POST("api/v1/me/disputes/{id}/withdraw")
+    suspend fun withdrawDispute(
+        @Header("Authorization") token: String,
+        @Path("id") disputeId: String
+    ): ApiResponseEnvelope<RunnerDisputeDto>
 
     @GET("api/v1/me/photographer/messages")
     suspend fun getPhotographerMessages(

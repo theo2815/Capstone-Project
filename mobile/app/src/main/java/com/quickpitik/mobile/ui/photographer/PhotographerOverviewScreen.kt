@@ -47,6 +47,7 @@ data class SetupStep(
 fun PhotographerOverviewScreen(
     viewModel: PhotographerDashboardViewModel,
     onNavigateToSettings: () -> Unit,
+    onPreviewProfile: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val verificationState by viewModel.verificationState.collectAsState()
@@ -280,6 +281,17 @@ fun PhotographerOverviewScreen(
                     onNavigateToSettings = onNavigateToSettings
                 )
             }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        OutlinedButton(
+            onClick = onPreviewProfile,
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
+            border = BorderStroke(1.dp, Ink),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp)
+        ) {
+            Text("PREVIEW PUBLIC PROFILE", fontWeight = FontWeight.Bold, fontSize = 12.sp)
         }
     }
 

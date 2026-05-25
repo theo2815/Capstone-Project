@@ -82,6 +82,28 @@ class ProfileRepositoryImpl : ProfileRepository {
         }
     }
 
+    override suspend fun uploadAvatar(
+        token: String,
+        fileBytes: ByteArray,
+        filename: String,
+        contentType: String
+    ): Result<UserDto> {
+        return try {
+            val mediaType = contentType.toMediaTypeOrNull() ?: "image/jpeg".toMediaTypeOrNull()
+            val requestBody = fileBytes.toRequestBody(mediaType)
+            val part = MultipartBody.Part.createFormData("file", filename, requestBody)
+
+            val response = api.uploadAvatar("Bearer $token", part)
+            if (response.success && response.data != null) {
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Failed to upload avatar"))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(RetrofitClient.parseError(e)))
+        }
+    }
+
     override suspend fun changePassword(
         token: String,
         current: String,

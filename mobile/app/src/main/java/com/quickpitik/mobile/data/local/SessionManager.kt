@@ -12,6 +12,7 @@ class SessionManager private constructor(context: Context) {
         private const val KEY_USER_ROLE = "user_role"
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_USER_EMAIL = "user_email"
+        private const val KEY_USER_AVATAR = "user_avatar"
 
         @Volatile
         private var INSTANCE: SessionManager? = null
@@ -25,18 +26,23 @@ class SessionManager private constructor(context: Context) {
         }
     }
 
-    fun saveSession(token: String, role: String, name: String, email: String) {
+    fun saveSession(token: String, role: String, name: String, email: String, avatarUrl: String? = null) {
         prefs.edit().apply {
             putString(KEY_ACCESS_TOKEN, token)
             putString(KEY_USER_ROLE, role)
             putString(KEY_USER_NAME, name)
             putString(KEY_USER_EMAIL, email)
+            putString(KEY_USER_AVATAR, avatarUrl)
             apply()
         }
     }
 
     fun saveUserName(name: String) {
         prefs.edit().putString(KEY_USER_NAME, name).apply()
+    }
+
+    fun saveAvatarUrl(url: String?) {
+        prefs.edit().putString(KEY_USER_AVATAR, url).apply()
     }
 
     fun getAccessToken(): String? {
@@ -53,6 +59,10 @@ class SessionManager private constructor(context: Context) {
 
     fun getUserEmail(): String? {
         return prefs.getString(KEY_USER_EMAIL, null)
+    }
+
+    fun getAvatarUrl(): String? {
+        return prefs.getString(KEY_USER_AVATAR, null)
     }
 
     fun clearSession() {

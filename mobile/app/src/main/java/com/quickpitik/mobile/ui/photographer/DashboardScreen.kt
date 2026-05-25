@@ -32,6 +32,8 @@ fun PhotographerDashboardScreen(
     onLogout: () -> Unit
 ) {
     var currentTab by remember { mutableStateOf(0) } // 0 = Overview, 1 = Tether, 2 = Events, 3 = Earnings, 4 = Settings
+    var shareEvent by remember { mutableStateOf<PhotographerEventSummaryDto?>(null) }
+    var showProfilePreview by remember { mutableStateOf(false) }
 
     val verificationState by viewModel.verificationState.collectAsState()
     val showSettingsBadge = when (val state = verificationState) {
@@ -51,6 +53,22 @@ fun PhotographerDashboardScreen(
             outline = Line
         )
     ) {
+        val activeShareEvent = shareEvent
+        if (activeShareEvent != null) {
+            PhotographerEventShareScreen(
+                event = activeShareEvent,
+                viewModel = viewModel,
+                onBack = { shareEvent = null }
+            )
+            return@MaterialTheme
+        }
+        if (showProfilePreview) {
+            PhotographerPublicProfileScreen(
+                viewModel = viewModel,
+                onBack = { showProfilePreview = false }
+            )
+            return@MaterialTheme
+        }
         Scaffold(
             bottomBar = {
                 NavigationBar(
@@ -160,13 +178,14 @@ fun PhotographerDashboardScreen(
                 when (currentTab) {
                     0 -> PhotographerOverviewScreen(
                         viewModel = viewModel,
-                        onNavigateToSettings = { 
+                        onNavigateToSettings = {
                             currentTab = 4
                             viewModel.fetchVerificationStatus()
-                        }
+                        },
+                        onPreviewProfile = { showProfilePreview = true }
                     )
                     1 -> TetherConsoleView(viewModel = viewModel, onLogout = onLogout)
-                    2 -> PhotographerEventsScreen(viewModel = viewModel)
+                    2 -> PhotographerEventsScreen(viewModel = viewModel, onOpenShare = { shareEvent = it })
                     3 -> PhotographerEarningsScreen(viewModel = viewModel)
                     4 -> PhotographerSettingsScreen(viewModel = viewModel)
                 }

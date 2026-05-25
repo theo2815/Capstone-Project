@@ -44,6 +44,15 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _passwordUpdateError = MutableStateFlow<String?>(null)
     val passwordUpdateError: StateFlow<String?> = _passwordUpdateError.asStateFlow()
 
+    private val _avatarUrl = MutableStateFlow(sessionManager.getAvatarUrl())
+    val avatarUrl: StateFlow<String?> = _avatarUrl.asStateFlow()
+
+    private val _avatarUploading = MutableStateFlow(false)
+    val avatarUploading: StateFlow<Boolean> = _avatarUploading.asStateFlow()
+
+    private val _avatarError = MutableStateFlow<String?>(null)
+    val avatarError: StateFlow<String?> = _avatarError.asStateFlow()
+
     init {
         fetchSelfies()
     }
@@ -181,5 +190,39 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     fun resetPasswordState() {
         _passwordUpdateSuccess.value = false
         _passwordUpdateError.value = null
+    }
+
+    fun uploadAvatar(uri: Uri) {
+        val token = sessionManager.getAccessToken() ?: return
+        viewModelScope.launch {
+            _avatarUploading.value = true
+            _avatarError.value = null
+            try {
+                val contentResolver = getApplication<Application>().contentResolver
+                val inputStream = contentResolver.openInputStream(uri)
+                if (inputStream != null) {
+                    val bytes = inputStream.readBytes()
+                    inputStream.close()
+
+                    val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
+                    val filename = "avatar_${System.currentTimeMillis()}.jpg"
+
+                    repository.uploadAvatar(token, bytes, filename, mimeType)
+                        .onSuccess { userDto ->
+                            sessionManager.saveAvatarUrl(userDto.avatarUrl)
+                            _avatarUrl.value = userDto.avatarUrl
+                        }
+                        .onFailure { err ->
+                            _avatarError.value = err.message ?: "Avatar upload failed"
+                        }
+                } else {
+                    _avatarError.value = "Unable to read image file"
+                }
+            } catch (e: Exception) {
+                _avatarError.value = e.message ?: "An unexpected error occurred during image reading"
+            } finally {
+                _avatarUploading.value = false
+            }
+        }
     }
 }

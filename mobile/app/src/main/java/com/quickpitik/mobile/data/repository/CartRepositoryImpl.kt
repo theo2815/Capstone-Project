@@ -205,4 +205,40 @@ class CartRepositoryImpl : CartRepository {
             Result.failure(e)
         }
     }
+
+    override suspend fun submitRefund(
+        token: String,
+        orderId: String,
+        photoIds: List<String>,
+        reason: String,
+        note: String
+    ): Result<RefundResponse> {
+        return try {
+            val response = api.submitRefund(
+                "Bearer $token",
+                orderId,
+                RefundRequest(photoIds = photoIds, reason = reason, note = note)
+            )
+            if (response.success && response.data != null) {
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Failed to submit refund request"))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(RetrofitClient.parseError(e)))
+        }
+    }
+
+    override suspend fun withdrawDispute(token: String, disputeId: String): Result<RunnerDisputeDto> {
+        return try {
+            val response = api.withdrawDispute("Bearer $token", disputeId)
+            if (response.success && response.data != null) {
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Failed to cancel refund request"))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(RetrofitClient.parseError(e)))
+        }
+    }
 }

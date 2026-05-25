@@ -9,6 +9,7 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SelfieRefDto
 import com.quickpitik.mobile.data.remote.SearchByFaceJsonRequest
 import com.quickpitik.mobile.data.local.SessionManager
+import android.net.Uri
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -135,25 +136,28 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    fun simulateSelfieSearch() {
+    // Real selfie capture/upload path: read the bytes the camera (or gallery
+    // picker) handed us via the content URI, spool them to a cache file, then
+    // run the same multipart face-search the stored-selfie path uses.
+    fun searchBySelfieUri(uri: Uri) {
         _activeEvent.value ?: return
         viewModelScope.launch {
+            _searchState.value = PhotosSearchState.Loading
             try {
-                // 1. Create a simulated physical JPEG image on phone cache storage
-                val cacheDir = getApplication<Application>().cacheDir
-                val mockFile = File(cacheDir, "simulated_selfie_${System.currentTimeMillis()}.jpg")
-                
-                // Write standard JPEG header bytes
-                val jpegHeader = byteArrayOf(
-                    0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 
-                    0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00
+                val resolver = getApplication<Application>().contentResolver
+                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes == null || bytes.isEmpty()) {
+                    _searchState.value = PhotosSearchState.Error("Couldn't read that photo. Please try again.")
+                    return@launch
+                }
+                val cacheFile = File(
+                    getApplication<Application>().cacheDir,
+                    "selfie_search_${System.currentTimeMillis()}.jpg"
                 )
-                mockFile.writeBytes(jpegHeader)
-
-                // 2. Fire the multipart search
-                searchBySelfie(mockFile)
+                cacheFile.writeBytes(bytes)
+                searchBySelfie(cacheFile)
             } catch (e: Exception) {
-                _searchState.value = PhotosSearchState.Error("Simulation setup failed: ${e.localizedMessage}")
+                _searchState.value = PhotosSearchState.Error(e.localizedMessage ?: "Failed to process the selfie image.")
             }
         }
     }

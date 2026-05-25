@@ -117,6 +117,13 @@ class MainActivity : ComponentActivity() {
                             viewModel = profileViewModel,
                             onNavigateBack = {
                                 navController.popBackStack()
+                            },
+                            onLogout = {
+                                authViewModel.resetState()
+                                cartViewModel.clearCart()
+                                navController.navigate("login") {
+                                    popUpTo("gallery") { inclusive = true }
+                                }
                             }
                         )
                     }

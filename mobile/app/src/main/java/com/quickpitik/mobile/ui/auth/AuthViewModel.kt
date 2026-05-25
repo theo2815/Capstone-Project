@@ -34,7 +34,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         token = authData.accessToken,
                         role = authData.user.role,
                         name = authData.user.name,
-                        email = authData.user.email
+                        email = authData.user.email,
+                        avatarUrl = authData.user.avatarUrl
                     )
                     _authState.value = AuthState.Success(authData)
                 } else {
@@ -62,7 +63,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         token = authData.accessToken,
                         role = authData.user.role,
                         name = authData.user.name,
-                        email = authData.user.email
+                        email = authData.user.email,
+                        avatarUrl = authData.user.avatarUrl
                     )
                     _authState.value = AuthState.Success(authData)
                 } else {

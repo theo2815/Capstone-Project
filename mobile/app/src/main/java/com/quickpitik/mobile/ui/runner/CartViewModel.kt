@@ -34,6 +34,13 @@ sealed class OrderDetailState {
     data class Error(val message: String) : OrderDetailState()
 }
 
+sealed class RefundActionState {
+    object Idle : RefundActionState()
+    object Submitting : RefundActionState()
+    data class Success(val message: String) : RefundActionState()
+    data class Error(val message: String) : RefundActionState()
+}
+
 class CartViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionManager = SessionManager.getInstance(application)
     private val repository: CartRepository = CartRepositoryImpl()
@@ -52,6 +59,9 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _orderDetailState = MutableStateFlow<OrderDetailState>(OrderDetailState.Idle)
     val orderDetailState: StateFlow<OrderDetailState> = _orderDetailState
+
+    private val _refundActionState = MutableStateFlow<RefundActionState>(RefundActionState.Idle)
+    val refundActionState: StateFlow<RefundActionState> = _refundActionState
 
     init {
         // Initial sync if logged in
@@ -148,6 +158,70 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetOrderDetailState() {
         _orderDetailState.value = OrderDetailState.Idle
+    }
+
+    // Files one Dispute per selected photo (reason + note shared). On success
+    // we re-fetch the order so the embedded `disputes` payload — chips, photo
+    // locks, timeline — comes straight from the server, never a local mirror.
+    fun submitRefund(orderId: String, photoIds: List<String>, reason: String, note: String) {
+        val token = sessionManager.getAccessToken()
+        if (token == null) {
+            _refundActionState.value = RefundActionState.Error("Please log in to request a refund.")
+            return
+        }
+        if (photoIds.isEmpty()) {
+            _refundActionState.value = RefundActionState.Error("Pick at least one photo to refund.")
+            return
+        }
+        viewModelScope.launch {
+            _refundActionState.value = RefundActionState.Submitting
+            repository.submitRefund(token, orderId, photoIds, reason, note)
+                .onSuccess {
+                    val count = photoIds.size
+                    _refundActionState.value = RefundActionState.Success(
+                        "Refund request sent for $count photo${if (count == 1) "" else "s"}. We'll review within 3 business days."
+                    )
+                    refreshOrderDetailSilently(orderId, token)
+                }
+                .onFailure { exception ->
+                    _refundActionState.value = RefundActionState.Error(
+                        exception.localizedMessage ?: "We couldn't send your request. Try again in a moment."
+                    )
+                }
+        }
+    }
+
+    fun withdrawDispute(orderId: String, disputeId: String) {
+        val token = sessionManager.getAccessToken()
+        if (token == null) {
+            _refundActionState.value = RefundActionState.Error("Please log in to cancel a refund request.")
+            return
+        }
+        viewModelScope.launch {
+            _refundActionState.value = RefundActionState.Submitting
+            repository.withdrawDispute(token, disputeId)
+                .onSuccess {
+                    _refundActionState.value = RefundActionState.Success("Refund request cancelled.")
+                    refreshOrderDetailSilently(orderId, token)
+                }
+                .onFailure { exception ->
+                    _refundActionState.value = RefundActionState.Error(
+                        exception.localizedMessage ?: "We couldn't cancel that request. Try again in a moment."
+                    )
+                }
+        }
+    }
+
+    // Re-pull the order detail without flipping the screen back to a spinner —
+    // the refund banner stays visible while the timeline/chips refresh in place.
+    private suspend fun refreshOrderDetailSilently(orderId: String, token: String) {
+        repository.getOrderDetail(token, orderId).onSuccess { order ->
+            _orderDetailState.value = OrderDetailState.Success(order)
+        }
+    }
+
+    fun resetRefundActionState() {
+        _refundActionState.value = RefundActionState.Idle
     }
 
     fun getLoggedInUserEmail(): String {

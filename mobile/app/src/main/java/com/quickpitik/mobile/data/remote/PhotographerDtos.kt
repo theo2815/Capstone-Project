@@ -157,4 +157,42 @@ data class MarkAllReadResponse(
     val markedRead: Int
 )
 
+data class PhotographerLibraryPhotoDto(
+    val id: String,
+    val bib: String?,
+    val status: String,
+    val salesCount: Int,
+    val uploadedAt: String,
+    val tone: Int,
+    val span: String,
+    val thumbnailUrl: String? = null
+)
+
+// --- Public photographer profile (GET /public/photographers/{handle}) ---
+data class CoverSourceDto(
+    val kind: String, // "gradient" | "image"
+    val from: String? = null,
+    val to: String? = null,
+    val url: String? = null
+)
+
+data class PhotographerEventCoverageDto(
+    val eventSlug: String,
+    val state: String,
+    val photoCount: Int,
+    val salesCount: Int
+)
+
+data class PhotographerProfileDto(
+    val handle: String,
+    val displayName: String,
+    val brandColor: String,
+    val bio: String,
+    val city: String? = null,
+    val memberSince: String,
+    val cover: CoverSourceDto? = null,
+    val watermarkLabel: String? = null,
+    val events: List<PhotographerEventCoverageDto> = emptyList()
+)
+
 
