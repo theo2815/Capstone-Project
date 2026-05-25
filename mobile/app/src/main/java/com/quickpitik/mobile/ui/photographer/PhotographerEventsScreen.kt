@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
@@ -22,8 +23,6 @@ import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.ui.theme.*
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
-import android.widget.Toast
-import androidx.compose.ui.platform.LocalContext
 
 @Composable
 fun PhotographerEventsScreen(
@@ -32,20 +31,8 @@ fun PhotographerEventsScreen(
     onOpenShare: (PhotographerEventSummaryDto) -> Unit = {}
 ) {
     val eventsState by viewModel.eventsState.collectAsState()
-    val publicEventsState by viewModel.publicEventsState.collectAsState()
-    val verificationState by viewModel.verificationState.collectAsState()
-    val messages by viewModel.messages.collectAsState()
     val activeEvent by viewModel.activeEvent.collectAsState()
-    val context = LocalContext.current
-    var selectedTab by remember { mutableStateOf(0) } // 0 = Discover Platform, 1 = Covered (Live), 2 = Covered (Past)
-
-    var showPendingAlert by remember { mutableStateOf(false) }
-    var showIncompleteAlert by remember { mutableStateOf(false) }
-
-    // Derive rejection from real inbox messages:
-    val latestMessage = remember(messages) { messages.maxByOrNull { it.createdAt } }
-    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
-    val isRejected = (currentStatus == "incomplete" || currentStatus == "rejected") && (latestMessage?.kind == "verification_rejected")
+    var selectedTab by remember { mutableStateOf(0) } // 0 = Covered (Live), 1 = Covered (Past)
 
     Column(
         modifier = modifier
@@ -64,10 +51,7 @@ fun PhotographerEventsScreen(
 
         // Subtitle instructions
         Text(
-            text = if (selectedTab == 0) 
-                "Discover published marathons and events in the system. Select one to set as your active DSLR tether event."
-            else 
-                "Below are marathons and races you are assigned to shoot. Use the Tether console to synchronize DSLR captures.",
+            text = "Below are marathons and races you are assigned to shoot. Use the Upload Pics tab to synchronize DSLR or gallery captures.",
             color = SlateSoft,
             fontSize = 13.sp,
             modifier = Modifier.padding(bottom = 16.dp)
@@ -91,7 +75,7 @@ fun PhotographerEventsScreen(
                 onClick = { selectedTab = 0 },
                 text = {
                     Text(
-                        text = "Discover Platform",
+                        text = "Covered (Live)",
                         fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
                         fontSize = 12.sp
                     )
@@ -104,21 +88,8 @@ fun PhotographerEventsScreen(
                 onClick = { selectedTab = 1 },
                 text = {
                     Text(
-                        text = "Covered (Live)",
-                        fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
-                        fontSize = 12.sp
-                    )
-                },
-                selectedContentColor = Fresh,
-                unselectedContentColor = SlateSoft
-            )
-            Tab(
-                selected = selectedTab == 2,
-                onClick = { selectedTab = 2 },
-                text = {
-                    Text(
                         text = "Covered (Past)",
-                        fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal,
+                        fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
                         fontSize = 12.sp
                     )
                 },
@@ -128,7 +99,7 @@ fun PhotographerEventsScreen(
         }
 
         // Render List based on States
-        val currentState = if (selectedTab == 0) publicEventsState else eventsState
+        val currentState = eventsState
 
         when (val state = currentState) {
             is EventsState.Loading -> {
@@ -147,11 +118,7 @@ fun PhotographerEventsScreen(
                         )
                         Button(
                             onClick = { 
-                                if (selectedTab == 0) {
-                                    viewModel.fetchPublicEvents()
-                                } else {
-                                    viewModel.fetchEvents()
-                                }
+                                viewModel.fetchEvents()
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Fresh)
                         ) {
@@ -162,22 +129,18 @@ fun PhotographerEventsScreen(
             }
             is EventsState.Success -> {
                 // Filter items
-                val filteredList = if (selectedTab == 0) {
-                    state.events
-                } else {
-                    val baseList = state.events.filter { event ->
-                        val isLiveOrActive = event.state.lowercase() == "live" || event.state.lowercase() == "open" || event.state.lowercase() == "active"
-                        if (selectedTab == 1) isLiveOrActive else !isLiveOrActive
-                    }
-                    if (selectedTab == 1 && activeEvent != null) {
-                        if (baseList.none { it.id == activeEvent?.id }) {
-                            listOf(activeEvent!!) + baseList
-                        } else {
-                            baseList
-                        }
+                val baseList = state.events.filter { event ->
+                    val isLiveOrActive = event.state.lowercase() == "live" || event.state.lowercase() == "open" || event.state.lowercase() == "active"
+                    if (selectedTab == 0) isLiveOrActive else !isLiveOrActive
+                }
+                val filteredList = if (selectedTab == 0 && activeEvent != null) {
+                    if (baseList.none { it.id == activeEvent?.id }) {
+                        listOf(activeEvent!!) + baseList
                     } else {
                         baseList
                     }
+                } else {
+                    baseList
                 }
 
                 if (filteredList.isEmpty()) {
@@ -189,9 +152,8 @@ fun PhotographerEventsScreen(
                     ) {
                         Text(
                             text = when (selectedTab) {
-                                1 -> "No active or live events assigned right now."
-                                2 -> "No past or upcoming events scheduled."
-                                else -> "No published platform events available."
+                                0 -> "No active or live events assigned right now."
+                                else -> "No past or upcoming events scheduled."
                             },
                             color = SlateSoft,
                             fontSize = 14.sp,
@@ -206,19 +168,7 @@ fun PhotographerEventsScreen(
                         items(filteredList) { event ->
                             EventCard(
                                 event = event,
-                                onOpenShare = { onOpenShare(event) },
-                                onSelectEvent = {
-                                    if (currentStatus == "approved") {
-                                        viewModel.selectEvent(event)
-                                        Toast.makeText(context, "Active event set to: ${event.name}", Toast.LENGTH_SHORT).show()
-                                    } else if (isRejected) {
-                                        showIncompleteAlert = true
-                                    } else if (currentStatus == "pending") {
-                                        showPendingAlert = true
-                                    } else {
-                                        showIncompleteAlert = true
-                                    }
-                                }
+                                onOpenShare = { onOpenShare(event) }
                             )
                         }
                     }
@@ -226,54 +176,11 @@ fun PhotographerEventsScreen(
             }
         }
     }
-
-    if (showPendingAlert) {
-        AlertDialog(
-            onDismissRequest = { showPendingAlert = false },
-            confirmButton = {
-                Button(
-                    onClick = { showPendingAlert = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = Fresh)
-                ) {
-                    Text("OK", color = Color.White)
-                }
-            },
-            title = {
-                Text("Verification Review Pending", fontWeight = FontWeight.Bold, color = Ink)
-            },
-            text = {
-                Text("Your professional studio setup is currently being reviewed by an administrator. Please wait for approval before covering events.", color = Ink)
-            },
-            containerColor = BoneDeep
-        )
-    }
-
-    if (showIncompleteAlert) {
-        AlertDialog(
-            onDismissRequest = { showIncompleteAlert = false },
-            confirmButton = {
-                Button(
-                    onClick = { showIncompleteAlert = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = Fresh)
-                ) {
-                    Text("OK", color = Color.White)
-                }
-            },
-            title = {
-                Text("Onboarding Setup Required", fontWeight = FontWeight.Bold, color = Ink)
-            },
-            text = {
-                Text("Your studio setup is not approved. Please complete the setup on the Settings tab and wait for administrator approval.", color = Ink)
-            },
-            containerColor = BoneDeep
-        )
-    }
 }
 
 @Composable
 fun EventCard(
     event: PhotographerEventSummaryDto,
-    onSelectEvent: () -> Unit,
     onOpenShare: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -282,73 +189,95 @@ fun EventCard(
 
     Card(
         colors = CardDefaults.cardColors(containerColor = BoneDeep),
-        shape = RoundedCornerShape(12.dp),
-        modifier = modifier
-            .fillMaxWidth()
-            .border(BorderStroke(1.dp, borderStrokeColor), RoundedCornerShape(12.dp))
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, borderStrokeColor),
+        modifier = modifier.fillMaxWidth()
     ) {
         Column {
             val resolvedUrl = resolveImageUrl(event.bannerUrl)
-            if (resolvedUrl != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(130.dp)
-                        .background(Line)
-                ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(130.dp)
+                    .background(Line)
+            ) {
+                if (resolvedUrl != null) {
                     AsyncImage(
                         model = resolvedUrl,
                         contentDescription = "Event banner",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
+                } else {
+                    Text(
+                        "BANNER · SOON",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Ink.copy(alpha = 0.3f),
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
+
+                // State indicator Badge inside the banner top-left (matches Buyer design)
+                val badgeColor = when (event.state.lowercase()) {
+                    "live", "open" -> Fresh
+                    "upcoming" -> MaterialTheme.colorScheme.primary
+                    else -> SlateSoft
+                }
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(10.dp)
+                        .clip(RoundedCornerShape(percent = 100))
+                        .background(Ink.copy(alpha = 0.55f))
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(badgeColor)
+                        )
+                        Text(
+                            text = if (event.state.lowercase() == "live" || event.state.lowercase() == "open") "PHOTOS UPLOADING" else event.state.uppercase(),
+                            color = badgeColor,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp
+                        )
+                    }
                 }
             }
 
             Column(
-                modifier = Modifier.padding(16.dp)
+                modifier = Modifier.padding(14.dp)
             ) {
-                // Event State Badges & Title Row
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = event.name,
-                        color = Ink,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    // State indicator Badge
-                    val badgeColor = when (event.state.lowercase()) {
-                        "live", "open" -> Fresh
-                        "upcoming" -> MaterialTheme.colorScheme.primary
-                        else -> SlateSoft
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(badgeColor.copy(alpha = 0.15f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = event.state.uppercase(),
-                            color = badgeColor,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
+                // Header Kicker matching Buyer card: Date · CITY (uppercase)
+                val cityLabel = extractCity(event.location).uppercase()
+                Text(
+                    text = "${event.date} · ${if (cityLabel.isNotBlank()) cityLabel else "CEBU"}",
+                    color = Slate,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // Location
                 Text(
-                    text = "${event.location} • ${event.date}",
+                    text = event.name,
+                    color = Ink,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                Text(
+                    text = event.location,
                     color = SlateSoft,
                     fontSize = 12.sp
                 )
@@ -369,26 +298,7 @@ fun EventCard(
                     )
                 }
 
-                // Quick set-active action button for TETHERING
-                if (isLive) {
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Button(
-                        onClick = onSelectEvent,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Fresh.copy(alpha = 0.15f),
-                            contentColor = Fresh
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth().height(36.dp),
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Text(
-                            text = "SET AS ACTIVE TETHER EVENT",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        )
-                    }
-                }
+
 
                 // View & share the public gallery for any covered event
                 if (event.photoCount > 0) {
@@ -444,3 +354,9 @@ private fun resolveImageUrl(url: String?): String? {
     }
     return url.replace("localhost", "10.0.2.2").replace("127.0.0.1", "10.0.2.2")
 }
+
+private fun extractCity(location: String): String {
+    val idx = location.lastIndexOf(',')
+    return if (idx == -1) location.trim() else location.substring(idx + 1).trim()
+}
+

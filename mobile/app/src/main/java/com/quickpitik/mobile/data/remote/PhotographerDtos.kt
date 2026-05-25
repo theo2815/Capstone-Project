@@ -184,15 +184,13 @@ data class PhotographerEventCoverageDto(
 )
 
 data class PhotographerProfileDto(
-    val handle: String,
-    val displayName: String,
-    val brandColor: String,
-    val bio: String,
+    val handle: String? = null,
+    val displayName: String? = null,
+    val brandColor: String? = null,
+    val bio: String? = null,
     val city: String? = null,
-    val memberSince: String,
+    val memberSince: String? = null,
     val cover: CoverSourceDto? = null,
     val watermarkLabel: String? = null,
     val events: List<PhotographerEventCoverageDto> = emptyList()
 )
-
-

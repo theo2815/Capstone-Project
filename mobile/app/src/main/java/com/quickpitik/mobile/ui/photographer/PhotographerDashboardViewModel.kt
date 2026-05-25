@@ -1,6 +1,8 @@
 package com.quickpitik.mobile.ui.photographer
 
 import android.app.Application
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.Constraints
@@ -22,10 +24,13 @@ import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
 
 
 sealed class EventsState {
@@ -253,9 +258,46 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
-    fun selectEvent(event: PhotographerEventSummaryDto) {
+    fun selectEvent(event: PhotographerEventSummaryDto?) {
         _activeEvent.value = event
     }
+
+    fun queuePhotosFromGallery(context: Context, uris: List<Uri>) {
+        val event = _activeEvent.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            uris.forEachIndexed { index, uri ->
+                try {
+                    val cacheDir = context.cacheDir
+                    val targetFile = File(cacheDir, "gallery_upload_${System.currentTimeMillis()}_$index.jpg")
+                    
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        targetFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+
+                    if (targetFile.exists() && targetFile.length() > 0) {
+                        database.uploadQueueDao().insertRecord(
+                            UploadRecord(
+                                filePath = targetFile.absolutePath,
+                                eventId = event.id,
+                                photographerId = sessionManager.getUserEmail() ?: "gallery_upload",
+                                captureTimestamp = System.currentTimeMillis(),
+                                uploadStatus = "QUEUED"
+                            )
+                        )
+                    }
+                } catch (e: Exception) {
+                    // Fail silently or handle error log
+                }
+            }
+            
+            withContext(Dispatchers.Main) {
+                runSyncEngine()
+            }
+        }
+    }
+
 
     private fun observeQueue() {
         viewModelScope.launch {

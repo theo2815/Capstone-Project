@@ -120,6 +120,7 @@ val PH_REGIONS = listOf(
 @Composable
 fun PhotographerSettingsScreen(
     viewModel: PhotographerDashboardViewModel,
+    onLogout: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -776,6 +777,37 @@ fun PhotographerSettingsScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("SAVE SETTINGS CHANGES", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
+                }
+            }
+        }
+
+        PaddingContainer {
+            SlabContainer(
+                title = "Account Session",
+                kicker = "Sign Out"
+            ) {
+                Text(
+                    text = "You will need to sign in again to access your photographer dashboard, events, and stream photos.",
+                    color = SlateSoft,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedButton(
+                    onClick = onLogout,
+                    border = BorderStroke(1.dp, Ink),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ExitToApp,
+                        contentDescription = "Sign Out",
+                        tint = Ink,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("SIGN OUT FROM DEVICE", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
             }
         }
