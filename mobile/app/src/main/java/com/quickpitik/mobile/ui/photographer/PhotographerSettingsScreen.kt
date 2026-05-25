@@ -425,7 +425,7 @@ fun PhotographerSettingsScreen(
                             label = { Text("Brand Name / Studio Name", color = SlateSoft) },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
-                                unfocusedBorderColor = Line,
+                                unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
                                 focusedTextColor = Ink,
                                 unfocusedTextColor = Ink,
                                 focusedContainerColor = BoneDeep,
@@ -441,7 +441,7 @@ fun PhotographerSettingsScreen(
                             label = { Text("Public Handle (e.g. studio-handle)", color = SlateSoft) },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
-                                unfocusedBorderColor = Line,
+                                unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
                                 focusedTextColor = Ink,
                                 unfocusedTextColor = Ink,
                                 focusedContainerColor = BoneDeep,
@@ -468,7 +468,7 @@ fun PhotographerSettingsScreen(
                                 },
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Fresh,
-                                    unfocusedBorderColor = Line,
+                                    unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
                                     focusedTextColor = Ink,
                                     unfocusedTextColor = Ink,
                                     focusedContainerColor = BoneDeep,
@@ -513,7 +513,7 @@ fun PhotographerSettingsScreen(
                                 },
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Fresh,
-                                    unfocusedBorderColor = Line,
+                                    unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
                                     focusedTextColor = Ink,
                                     unfocusedTextColor = Ink,
                                     focusedContainerColor = BoneDeep,
@@ -554,7 +554,7 @@ fun PhotographerSettingsScreen(
                             label = { Text("Facebook Social Profile URL", color = SlateSoft) },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
-                                unfocusedBorderColor = Line,
+                                unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
                                 focusedTextColor = Ink,
                                 unfocusedTextColor = Ink,
                                 focusedContainerColor = BoneDeep,
@@ -570,7 +570,7 @@ fun PhotographerSettingsScreen(
                             label = { Text("Brand Biography", color = SlateSoft) },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
-                                unfocusedBorderColor = Line,
+                                unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
                                 focusedTextColor = Ink,
                                 unfocusedTextColor = Ink,
                                 focusedContainerColor = BoneDeep,
@@ -600,7 +600,7 @@ fun PhotographerSettingsScreen(
                             label = { Text("Account Holder Full Name", color = SlateSoft) },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
-                                unfocusedBorderColor = Line,
+                                unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
                                 focusedTextColor = Ink,
                                 unfocusedTextColor = Ink,
                                 focusedContainerColor = BoneDeep,
@@ -616,7 +616,7 @@ fun PhotographerSettingsScreen(
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Fresh,
-                                unfocusedBorderColor = Line,
+                                unfocusedBorderColor = SlateSoft.copy(alpha = 0.5f),
                                 focusedTextColor = Ink,
                                 unfocusedTextColor = Ink,
                                 focusedContainerColor = BoneDeep,
