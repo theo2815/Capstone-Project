@@ -1,15 +1,22 @@
 package com.quickpitik.mobile.ui.photographer
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 
@@ -22,8 +29,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.ui.theme.*
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,6 +100,10 @@ fun PhotographerDashboardScreen(
                         onClick = { 
                             currentTab = 0 
                             viewModel.fetchVerificationStatus()
+                            viewModel.fetchEvents()
+                            viewModel.fetchEarningsAndTransactions()
+                            viewModel.fetchMessages()
+                            viewModel.fetchSettings()
                         },
                         icon = { Icon(Icons.Default.Info, contentDescription = "Overview") },
                         label = { Text("Overview", fontSize = 11.sp) },
@@ -105,8 +118,8 @@ fun PhotographerDashboardScreen(
                     NavigationBarItem(
                         selected = currentTab == 1,
                         onClick = { currentTab = 1 },
-                        icon = { Icon(Icons.Default.Face, contentDescription = "Tether") },
-                        label = { Text("Tether", fontSize = 11.sp) },
+                        icon = { Icon(Icons.Default.AddCircle, contentDescription = "Upload") },
+                        label = { Text("Upload", fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Fresh,
                             selectedTextColor = Fresh,
@@ -195,7 +208,13 @@ fun PhotographerDashboardScreen(
                         onNavigateToTab = { tab ->
                             currentTab = tab
                             when (tab) {
-                                0 -> viewModel.fetchVerificationStatus()
+                                0 -> {
+                                    viewModel.fetchVerificationStatus()
+                                    viewModel.fetchEvents()
+                                    viewModel.fetchEarningsAndTransactions()
+                                    viewModel.fetchMessages()
+                                    viewModel.fetchSettings()
+                                }
                                 2 -> viewModel.fetchEvents()
                                 3 -> viewModel.fetchEarningsAndTransactions()
                                 4 -> viewModel.fetchVerificationStatus()
@@ -203,7 +222,19 @@ fun PhotographerDashboardScreen(
                         },
                         onPreviewProfile = { showProfilePreview = true }
                     )
-                    1 -> TetherConsoleView(viewModel = viewModel)
+                    1 -> {
+                        val activeEvent by viewModel.activeEvent.collectAsState()
+                        if (activeEvent == null) {
+                            PublicEventPickerList(
+                                viewModel = viewModel,
+                                onSelectEvent = { event ->
+                                    viewModel.selectEvent(event)
+                                }
+                            )
+                        } else {
+                            TetherConsoleView(viewModel = viewModel)
+                        }
+                    }
                     2 -> PhotographerEventsScreen(viewModel = viewModel, onOpenShare = { shareEvent = it })
                     3 -> PhotographerEarningsScreen(viewModel = viewModel)
                     4 -> PhotographerSettingsScreen(viewModel = viewModel, onLogout = onLogout)
@@ -225,6 +256,15 @@ private fun TetherConsoleView(
     val queueStats by viewModel.queueStats.collectAsState()
     var showDropdown by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
+
+    val pickMultipleMedia = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 100)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            viewModel.queuePhotosFromGallery(context, uris)
+        }
+    }
 
     Column(
         modifier = modifier
@@ -236,6 +276,28 @@ private fun TetherConsoleView(
             .navigationBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // 0. Back button to clear active event and go to the picker list
+        Row(
+            modifier = Modifier
+                .clickable { viewModel.selectEvent(null) }
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.ArrowBack,
+                contentDescription = "Back",
+                tint = Fresh,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "Back to event picker",
+                color = Fresh,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
         // 1. Premium Header
         Column(
             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
@@ -269,6 +331,7 @@ private fun TetherConsoleView(
                 fontWeight = FontWeight.Bold
             )
         }
+
 
         // 2. Active Event Selector Card
         Card(
@@ -462,6 +525,50 @@ private fun TetherConsoleView(
             }
         }
 
+        // 4b. MANUAL GALLERY UPLOAD card
+        Card(
+            onClick = {
+                pickMultipleMedia.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            },
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = BoneDeep),
+            border = BorderStroke(1.5.dp, Fresh.copy(alpha = 0.6f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(18.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.AddCircle,
+                        contentDescription = "Gallery",
+                        tint = Fresh,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "CHOOSE PHOTOS FROM GALLERY",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Fresh,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Select one or more photos from your local device to upload to this event",
+                    fontSize = 11.sp,
+                    color = SlateSoft,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+
         // 5. Sync Queue Stats Card
         Card(
             shape = RoundedCornerShape(20.dp),
@@ -552,4 +659,308 @@ private fun TetherConsoleView(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PublicEventPickerList(
+    viewModel: PhotographerDashboardViewModel,
+    onSelectEvent: (PhotographerEventSummaryDto) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val publicEventsState by viewModel.publicEventsState.collectAsState()
+    val eventsState by viewModel.eventsState.collectAsState()
+    val verificationState by viewModel.verificationState.collectAsState()
+    val messages by viewModel.messages.collectAsState()
+
+    var showPendingAlert by remember { mutableStateOf(false) }
+    var showIncompleteAlert by remember { mutableStateOf(false) }
+
+    val latestMessage = remember(messages) { messages.maxByOrNull { it.createdAt } }
+    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
+    val isRejected = (currentStatus == "incomplete" || currentStatus == "rejected") && (latestMessage?.kind == "verification_rejected")
+
+    val assignedEvents = when (val state = eventsState) {
+        is EventsState.Success -> state.events
+        else -> emptyList()
+    }
+    
+    LaunchedEffect(Unit) {
+        viewModel.fetchPublicEvents()
+        viewModel.fetchEvents()
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Bone)
+            .padding(18.dp)
+            .statusBarsPadding()
+            .navigationBarsPadding(),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .background(Fresh.copy(alpha = 0.1f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(Fresh)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "SELECT AN EVENT TO START UPLOADING",
+                    color = Fresh,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.5.sp
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Upload Pictures",
+                color = Ink,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Select one of the public marathons or platform events below that you are not actively covering to start uploading photos.",
+                color = SlateSoft,
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+        }
+
+        when (val state = publicEventsState) {
+            is EventsState.Loading -> {
+                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Fresh)
+                }
+            }
+            is EventsState.Error -> {
+                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = state.message,
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                        Button(
+                            onClick = { viewModel.fetchPublicEvents() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Fresh)
+                        ) {
+                            Text("Retry", color = Color.White)
+                        }
+                    }
+                }
+            }
+            is EventsState.Success -> {
+                val notJoinedEvents = state.events.filter { pub ->
+                    assignedEvents.none { ass -> ass.id == pub.id }
+                }
+
+                if (notJoinedEvents.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().weight(1f).padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No new platform events to join. You are actively covering all available events!",
+                            color = SlateSoft,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(notJoinedEvents) { event ->
+                            Card(
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = BoneDeep),
+                                border = BorderStroke(1.dp, Line),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column {
+                                    val resolvedUrl = event.bannerUrl?.let { url ->
+                                        if (url.startsWith("/")) "http://10.0.2.2:8080$url"
+                                        else url.replace("localhost", "10.0.2.2").replace("127.0.0.1", "10.0.2.2")
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(130.dp)
+                                            .background(Line)
+                                    ) {
+                                        if (resolvedUrl != null) {
+                                            AsyncImage(
+                                                model = resolvedUrl,
+                                                contentDescription = "Event banner",
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            Text(
+                                                "BANNER · SOON",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Ink.copy(alpha = 0.3f),
+                                                modifier = Modifier.align(Alignment.Center)
+                                            )
+                                        }
+
+                                        // Status Chip at top-left of image
+                                        val badgeColor = when (event.state.lowercase()) {
+                                            "live", "open" -> Fresh
+                                            "upcoming" -> MaterialTheme.colorScheme.primary
+                                            else -> SlateSoft
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopStart)
+                                                .padding(10.dp)
+                                                .clip(RoundedCornerShape(percent = 100))
+                                                .background(Ink.copy(alpha = 0.55f))
+                                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(6.dp)
+                                                        .clip(CircleShape)
+                                                        .background(badgeColor)
+                                                )
+                                                Text(
+                                                    text = if (event.state.lowercase() == "live" || event.state.lowercase() == "open") "PHOTOS UPLOADING" else event.state.uppercase(),
+                                                    color = badgeColor,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    letterSpacing = 0.8.sp
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Column(modifier = Modifier.padding(14.dp)) {
+                                        // Header kicker matching Buyer card: Date · CITY (uppercase)
+                                        val cityLabel = extractCity(event.location).uppercase()
+                                        Text(
+                                            text = "${event.date} · ${if (cityLabel.isNotBlank()) cityLabel else "CEBU"}",
+                                            color = Slate,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+
+                                        Text(
+                                            text = event.name,
+                                            color = Ink,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+
+                                        Spacer(modifier = Modifier.height(2.dp))
+
+                                        Text(
+                                            text = event.location,
+                                            color = SlateSoft,
+                                            fontSize = 11.sp
+                                        )
+
+                                        Spacer(modifier = Modifier.height(12.dp))
+
+                                        Button(
+                                            onClick = {
+                                                if (currentStatus == "approved") {
+                                                    onSelectEvent(event)
+                                                } else if (isRejected) {
+                                                    showIncompleteAlert = true
+                                                } else if (currentStatus == "pending") {
+                                                    showPendingAlert = true
+                                                } else {
+                                                    showIncompleteAlert = true
+                                                }
+                                            },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = Fresh.copy(alpha = 0.15f),
+                                                contentColor = Fresh
+                                            ),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.fillMaxWidth().height(36.dp),
+                                            contentPadding = PaddingValues(0.dp)
+                                        ) {
+                                            Text(
+                                                text = "UPLOAD PHOTOS",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showPendingAlert) {
+        AlertDialog(
+            onDismissRequest = { showPendingAlert = false },
+            confirmButton = {
+                Button(
+                    onClick = { showPendingAlert = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = Fresh)
+                ) {
+                    Text("OK", color = Color.White)
+                }
+            },
+            title = {
+                Text("Verification Review Pending", fontWeight = FontWeight.Bold, color = Ink)
+            },
+            text = {
+                Text("Your professional studio setup is currently being reviewed by an administrator. Please wait for approval before covering events.", color = Ink)
+            },
+            containerColor = BoneDeep
+        )
+    }
+
+    if (showIncompleteAlert) {
+        AlertDialog(
+            onDismissRequest = { showIncompleteAlert = false },
+            confirmButton = {
+                Button(
+                    onClick = { showIncompleteAlert = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = Fresh)
+                ) {
+                    Text("OK", color = Color.White)
+                }
+            },
+            title = {
+                Text("Onboarding Setup Required", fontWeight = FontWeight.Bold, color = Ink)
+            },
+            text = {
+                Text("Your studio setup is not approved. Please complete the setup on the Settings tab and wait for administrator approval.", color = Ink)
+            },
+            containerColor = BoneDeep
+        )
+    }
+}
+
+private fun extractCity(location: String): String {
+    val idx = location.lastIndexOf(',')
+    return if (idx == -1) location.trim() else location.substring(idx + 1).trim()
 }

@@ -67,6 +67,14 @@ fun PhotographerOverviewScreen(
     val sessionManager = remember { SessionManager.getInstance(context) }
     val photographerName = sessionManager.getUserName() ?: "Photographer"
 
+    LaunchedEffect(Unit) {
+        viewModel.fetchVerificationStatus()
+        viewModel.fetchEvents()
+        viewModel.fetchEarningsAndTransactions()
+        viewModel.fetchMessages()
+        viewModel.fetchSettings()
+    }
+
     // Notifications state
     var showNotifDialog by remember { mutableStateOf(false) }
 
@@ -390,7 +398,13 @@ fun PhotographerOverviewScreen(
                     }
                 }
                 is VerificationUiState.Error -> {
-                    ErrorStateCard(message = state.message, onRetry = { viewModel.fetchVerificationStatus() })
+                    ErrorStateCard(message = state.message, onRetry = { 
+                        viewModel.fetchVerificationStatus()
+                        viewModel.fetchEvents()
+                        viewModel.fetchEarningsAndTransactions()
+                        viewModel.fetchMessages()
+                        viewModel.fetchSettings()
+                    })
                 }
                 is VerificationUiState.Success -> {
                     val verification = state.verification
@@ -400,7 +414,10 @@ fun PhotographerOverviewScreen(
                         rejectionReason = rejectionReason,
                         onRefresh = { 
                             viewModel.fetchVerificationStatus()
+                            viewModel.fetchEvents()
+                            viewModel.fetchEarningsAndTransactions()
                             viewModel.fetchMessages()
+                            viewModel.fetchSettings()
                         },
                         onNavigateToSettings = onNavigateToSettings
                     )
@@ -900,9 +917,9 @@ private fun EventsCard(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val live = remember(events) { events.filter { it.state.lowercase() == "live" }.size }
+    val live = remember(events) { events.filter { it.state.lowercase() in listOf("live", "active", "open") }.size }
     val upcoming = remember(events) { events.filter { it.state.lowercase() == "upcoming" }.size }
-    val archived = remember(events) { events.filter { it.state.lowercase() == "open" || it.state.lowercase() == "past" }.size }
+    val archived = remember(events) { events.filter { it.state.lowercase() in listOf("past", "completed", "archived") }.size }
     
     Card(
         colors = CardDefaults.cardColors(containerColor = BoneDeep),
