@@ -2,14 +2,17 @@ package com.quickpitik.mobile.ui.theme
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextStyle
 import androidx.core.view.WindowCompat
 
 private val DarkColorScheme = darkColorScheme(
@@ -71,7 +74,17 @@ fun QuickPitikMobileTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+        typography = Typography
+    ) {
+        // Default every bare Text() to the Funnel body font so the website type
+        // shows app-wide without touching each call site. Explicit
+        // `style = Typography.label*/title*` still wins (mono kickers, display
+        // headings); this only sets the fallback family.
+        CompositionLocalProvider(
+            LocalTextStyle provides LocalTextStyle.current.merge(
+                TextStyle(fontFamily = BodyFontFamily)
+            ),
+            content = content
+        )
+    }
 }

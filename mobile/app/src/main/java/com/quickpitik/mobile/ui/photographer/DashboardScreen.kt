@@ -51,7 +51,10 @@ fun PhotographerDashboardScreen(
             surface = BoneDeep,
             onSurface = Ink,
             outline = Line
-        )
+        ),
+        // Carry the Quiet Studio type scale into the nested theme — otherwise the
+        // whole photographer dashboard reverts to the system font (Material default).
+        typography = Typography
     ) {
         val activeShareEvent = shareEvent
         if (activeShareEvent != null) {
