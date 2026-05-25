@@ -293,4 +293,21 @@ interface QuickPitikApi {
         @Header("Authorization") token: String,
         @Body request: PasswordChangeRequest
     ): ApiResponseEnvelope<Map<String, String>>
+
+    @GET("api/v1/me/saved-events")
+    suspend fun getSavedEvents(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<List<SavedEventSummaryDto>>
+
+    @POST("api/v1/me/saved-events")
+    suspend fun saveEvent(
+        @Header("Authorization") token: String,
+        @Body request: SaveEventRequest
+    ): ApiResponseEnvelope<SavedEventSummaryDto>
+
+    @DELETE("api/v1/me/saved-events/{eventId}")
+    suspend fun unsaveEvent(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String
+    ): ApiResponseEnvelope<RemovedResponse>
 }

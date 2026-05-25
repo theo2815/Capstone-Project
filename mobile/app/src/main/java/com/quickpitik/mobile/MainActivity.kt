@@ -12,8 +12,10 @@ import com.quickpitik.mobile.ui.auth.LoginScreen
 import com.quickpitik.mobile.ui.auth.RegisterScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
+import com.quickpitik.mobile.ui.runner.EventsDiscoveryScreen
 import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
 import com.quickpitik.mobile.ui.runner.RunnerGalleryViewModel
+import com.quickpitik.mobile.ui.runner.SavedEventsViewModel
 import com.quickpitik.mobile.ui.runner.CartViewModel
 import com.quickpitik.mobile.ui.runner.CartScreen
 import com.quickpitik.mobile.ui.runner.CheckoutScreen
@@ -32,6 +34,11 @@ class MainActivity : ComponentActivity() {
                 val authViewModel: AuthViewModel = viewModel()
                 val cartViewModel: CartViewModel = viewModel()
                 val profileViewModel: ProfileViewModel = viewModel()
+                // Hoisted to the NavHost scope so the events-discovery browse screen,
+                // the gallery cockpit, and the profile race log all read/write the one
+                // shared instance (selected event + saved-events store stay in sync).
+                val runnerViewModel: RunnerGalleryViewModel = viewModel()
+                val savedEventsViewModel: SavedEventsViewModel = viewModel()
 
                 NavHost(
                     navController = navController,
@@ -44,7 +51,7 @@ class MainActivity : ComponentActivity() {
                                 navController.navigate("register")
                             },
                             onLoginSuccess = { isPhotographer ->
-                                val target = if (isPhotographer) "dashboard" else "gallery"
+                                val target = if (isPhotographer) "dashboard" else "events"
                                 navController.navigate(target) {
                                     popUpTo("login") { inclusive = true }
                                 }
@@ -58,7 +65,7 @@ class MainActivity : ComponentActivity() {
                                 navController.navigate("login")
                             },
                             onRegisterSuccess = { isPhotographer ->
-                                val target = if (isPhotographer) "dashboard" else "gallery"
+                                val target = if (isPhotographer) "dashboard" else "events"
                                 navController.navigate(target) {
                                     popUpTo("login") { inclusive = true }
                                 }
@@ -77,8 +84,32 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     }
+                    // Runner landing — browse every race (web /events), then tap a card
+                    // to open its cockpit. Selecting an event seeds the shared
+                    // RunnerGalleryViewModel before navigating to the gallery.
+                    composable("events") {
+                        EventsDiscoveryScreen(
+                            viewModel = runnerViewModel,
+                            cartViewModel = cartViewModel,
+                            savedEventsViewModel = savedEventsViewModel,
+                            onEventSelected = { event ->
+                                runnerViewModel.selectEvent(event)
+                                navController.navigate("gallery")
+                            },
+                            onNavigateToCart = { navController.navigate("cart") },
+                            onNavigateToOrders = { navController.navigate("orders") },
+                            onNavigateToProfile = { navController.navigate("profile") },
+                            onNavigateToSettings = { navController.navigate("settings") },
+                            onLogout = {
+                                authViewModel.resetState()
+                                cartViewModel.clearCart()
+                                navController.navigate("login") {
+                                    popUpTo("events") { inclusive = true }
+                                }
+                            }
+                        )
+                    }
                     composable("gallery") {
-                        val runnerViewModel: RunnerGalleryViewModel = viewModel()
                         RunnerGalleryScreen(
                             viewModel = runnerViewModel,
                             cartViewModel = cartViewModel,
@@ -98,7 +129,7 @@ class MainActivity : ComponentActivity() {
                                 authViewModel.resetState()
                                 cartViewModel.clearCart()
                                 navController.navigate("login") {
-                                    popUpTo("gallery") { inclusive = true }
+                                    popUpTo("events") { inclusive = true }
                                 }
                             }
                         )
@@ -107,8 +138,22 @@ class MainActivity : ComponentActivity() {
                         ProfileScreen(
                             viewModel = profileViewModel,
                             cartViewModel = cartViewModel,
+                            savedEventsViewModel = savedEventsViewModel,
                             onNavigateBack = {
                                 navController.popBackStack()
+                            },
+                            onOpenEvent = { slug ->
+                                val event = runnerViewModel.eventBySlug(slug)
+                                if (event != null) {
+                                    runnerViewModel.selectEvent(event)
+                                    navController.navigate("gallery")
+                                } else {
+                                    // Event not in the loaded set — fall back to browse.
+                                    navController.navigate("events")
+                                }
+                            },
+                            onBrowseEvents = {
+                                navController.navigate("events")
                             }
                         )
                     }
@@ -122,7 +167,7 @@ class MainActivity : ComponentActivity() {
                                 authViewModel.resetState()
                                 cartViewModel.clearCart()
                                 navController.navigate("login") {
-                                    popUpTo("gallery") { inclusive = true }
+                                    popUpTo("events") { inclusive = true }
                                 }
                             }
                         )
