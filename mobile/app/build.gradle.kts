@@ -60,6 +60,8 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    // Downloadable Google Fonts (Bricolage Grotesque / Funnel Sans / Geist Mono — website parity)
+    implementation(libs.androidx.ui.text.google.fonts)
 
     // Networking
     implementation(libs.retrofit)
