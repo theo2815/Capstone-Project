@@ -13,6 +13,7 @@ import { useAdminPayoutReportStore } from "@/store/admin-payout-report-store";
 import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 import { useAdminUsersServerStore } from "@/lib/admin-users-data";
+import { useMyPhotographerMessagesStore } from "@/lib/me-photographer-messages-data";
 
 // Reset every Zustand store that carries user-scoped data + clears the
 // underlying localStorage slot each one persists into. Call this on every
@@ -41,6 +42,11 @@ export function resetUserScopedStores(): void {
   useSavedEventsStore.getState().setSyncEnabled(false);
 
   usePhotographerSettingsStore.getState().reset();
+  // PF-9 (2026-05-27): the photographer-messages inbox cache survived logout
+  // — next photographer login saw stale messages + unread badge from the
+  // previous account until the first refetch. Same class as the 9 admin-store
+  // leaks closed 2026-05-27 (see admin-flow audit P0).
+  useMyPhotographerMessagesStore.getState().reset();
   useUserMediaStore.getState().clear();
   useOrdersStore.getState().clear();
   useCartStore.getState().clear();

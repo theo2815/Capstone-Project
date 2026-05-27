@@ -301,7 +301,7 @@ function RequestPayoutHero({
           </Kicker>
         ) : (
           <Link
-            href={`${ROUTES.DASHBOARD_SETTINGS}#payouts`}
+            href={`${ROUTES.DASHBOARD_SETTINGS}#payout`}
             className="inline-flex items-center gap-1.5 font-sans text-sm text-fresh hover:text-fresh/80 transition-colors group"
           >
             <span className="underline decoration-fresh/40 underline-offset-4 decoration-1 group-hover:decoration-fresh">
