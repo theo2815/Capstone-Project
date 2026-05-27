@@ -304,6 +304,32 @@ interface QuickPitikApi {
         @Path("id") id: String
     ): ApiResponseEnvelope<MessageRemovedResponse>
 
+    // F8 (2026-05-27): Runner inbox endpoints. Mirrors photographer messages
+    // above; backend controller is MeRunnerMessagesController (PreAuthorize
+    // hasRole RUNNER). DTOs share MarkAllReadResponse + MessageRemovedResponse
+    // with the photographer flow.
+    @GET("api/v1/me/runner/messages")
+    suspend fun getRunnerMessages(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<List<RunnerMessageDto>>
+
+    @PATCH("api/v1/me/runner/messages/{id}/read")
+    suspend fun markRunnerMessageRead(
+        @Header("Authorization") token: String,
+        @Path("id") id: String
+    ): ApiResponseEnvelope<RunnerMessageDto>
+
+    @PATCH("api/v1/me/runner/messages/read-all")
+    suspend fun markAllRunnerMessagesRead(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<MarkAllReadResponse>
+
+    @DELETE("api/v1/me/runner/messages/{id}")
+    suspend fun removeRunnerMessage(
+        @Header("Authorization") token: String,
+        @Path("id") id: String
+    ): ApiResponseEnvelope<MessageRemovedResponse>
+
     @GET("api/v1/me/selfies")
     suspend fun getSelfies(
         @Header("Authorization") token: String

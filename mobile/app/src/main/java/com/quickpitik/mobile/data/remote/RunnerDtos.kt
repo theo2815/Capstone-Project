@@ -29,3 +29,18 @@ data class SearchByFaceJsonRequest(
     val offset: Int = 0,
     val limit: Int = 100
 )
+
+// F8 (2026-05-27): Mirror of backend dto/runner/RunnerMessageDto. Same shape
+// as PhotographerMessageDto + an `orderId` for deep-linking from a dispute
+// outcome notification back to the /orders detail page on the website
+// (mobile reuses the same field to mark the related order in its inbox UI).
+data class RunnerMessageDto(
+    val id: String,
+    val kind: String,           // snake_case wire form, see backend RunnerMessageKind
+    val title: String?,
+    val body: String,
+    val orderId: String?,
+    val sourceDecisionId: String?,
+    val createdAt: String,
+    val readAt: String?,
+)
