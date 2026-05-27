@@ -33,6 +33,7 @@ import { ROUTES } from "@/lib/constants";
 import { formatMemberSince, formatRaceDate } from "@/lib/format";
 import type { PhotographerEventSummary } from "@/lib/photographer-mock";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
+import { deriveEventState } from "@/lib/event-catalog";
 import {
   usePhotographerSettingsStore,
   BRAND_COLOR_HEX,
@@ -327,7 +328,10 @@ function buildRaceLog(
       slug: summary.slug,
       name: summary.name,
       date: summary.date,
-      state: summary.state,
+      // BE sends `state` as the raw EventStatus enum ("ACTIVE"/"COMPLETED"/...);
+      // the race log compares against the derived lifecycle state (upcoming/
+      // live/open/past). Derive from date here — `summary.state` ignored.
+      state: deriveEventState(summary.date),
       photosBought: photosByEvent.get(summary.id) ?? 0,
       isSaved: true,
       location: summary.location,
