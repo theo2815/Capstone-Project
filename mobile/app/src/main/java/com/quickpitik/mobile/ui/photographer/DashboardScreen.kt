@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerMessageDto
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.usb.CameraConnectionState
 import com.quickpitik.mobile.ui.runner.canUploadToEvent
 import com.quickpitik.mobile.ui.theme.*
@@ -64,7 +65,10 @@ fun PhotographerDashboardScreen(
     }
     val unreadCount = remember(messages) { messages.count { it.readAt == null } }
     val resolvedAvatarUrl = brandSettings?.avatarUrl?.let {
-        it.replace("localhost", "10.0.2.2").replace("127.0.0.1", "10.0.2.2")
+        // M-2 (2026-05-27 PM): derive host from RetrofitClient.BASE_URL so
+        // physical-device Wi-Fi setups pick up the right host without an edit here.
+        it.replace("localhost", RetrofitClient.backendHost)
+            .replace("127.0.0.1", RetrofitClient.backendHost)
     }
 
     // Explicitly lock the Photographer Dashboard into the premium athletic warm cream theme
@@ -646,8 +650,10 @@ private fun EventPickerCard(
     onClick: () -> Unit,
 ) {
     val resolvedUrl = event.bannerUrl?.let { url ->
-        if (url.startsWith("/")) "http://10.0.2.2:8080$url"
-        else url.replace("localhost", "10.0.2.2").replace("127.0.0.1", "10.0.2.2")
+        // M-2 (2026-05-27 PM): host derived from RetrofitClient.BASE_URL.
+        if (url.startsWith("/")) "${RetrofitClient.backendOrigin}$url"
+        else url.replace("localhost", RetrofitClient.backendHost)
+            .replace("127.0.0.1", RetrofitClient.backendHost)
     }
     val stateLabel = event.state.uppercase()
     val tone = when (stateLabel) {
