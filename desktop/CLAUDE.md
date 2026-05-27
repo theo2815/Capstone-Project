@@ -5,7 +5,8 @@
 ## Actual location
 
 ```
-C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos
+C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos 
+Github Repo: https://github.com/theo2815/Batch-My-Photos.git
 ```
 
 **Access rule:** only when the user explicitly asks. Do NOT pre-emptively read or edit files in that path. Treat it as a separate environment. This `CLAUDE.md` exists only to document the integration contract from this monorepo's point of view.

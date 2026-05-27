@@ -77,6 +77,46 @@ interface QuickPitikApi {
         @Body request: CreatePayoutRequest
     ): ApiResponseEnvelope<PayoutAccountDto>
 
+    @PATCH("api/v1/me/photographer/socials/{id}")
+    suspend fun patchSocial(
+        @Header("Authorization") token: String,
+        @Path("id") id: String,
+        @Body request: PatchSocialRequest
+    ): ApiResponseEnvelope<SocialLinkDto>
+
+    @DELETE("api/v1/me/photographer/socials/{id}")
+    suspend fun deleteSocial(
+        @Header("Authorization") token: String,
+        @Path("id") id: String
+    ): ApiResponseEnvelope<RemovedResponse>
+
+    @PATCH("api/v1/me/photographer/payouts/{id}")
+    suspend fun patchPayout(
+        @Header("Authorization") token: String,
+        @Path("id") id: String,
+        @Body request: PatchPayoutRequest
+    ): ApiResponseEnvelope<PayoutAccountDto>
+
+    @DELETE("api/v1/me/photographer/payouts/{id}")
+    suspend fun deletePayout(
+        @Header("Authorization") token: String,
+        @Path("id") id: String
+    ): ApiResponseEnvelope<RemovedResponse>
+
+    @PATCH("api/v1/me/photographer/payouts/{id}/primary")
+    suspend fun setPrimaryPayout(
+        @Header("Authorization") token: String,
+        @Path("id") id: String
+    ): ApiResponseEnvelope<List<PayoutAccountDto>>
+
+    @Multipart
+    @POST("api/v1/me/photographer/payouts/{id}/qr")
+    suspend fun uploadPayoutQr(
+        @Header("Authorization") token: String,
+        @Path("id") id: String,
+        @Part file: MultipartBody.Part
+    ): ApiResponseEnvelope<PayoutAccountDto>
+
     @Multipart
     @POST("api/v1/me/photographer/watermark")
     suspend fun uploadWatermark(
@@ -257,6 +297,12 @@ interface QuickPitikApi {
     suspend fun markAllMessagesRead(
         @Header("Authorization") token: String
     ): ApiResponseEnvelope<MarkAllReadResponse>
+
+    @DELETE("api/v1/me/photographer/messages/{id}")
+    suspend fun removePhotographerMessage(
+        @Header("Authorization") token: String,
+        @Path("id") id: String
+    ): ApiResponseEnvelope<MessageRemovedResponse>
 
     @GET("api/v1/me/selfies")
     suspend fun getSelfies(

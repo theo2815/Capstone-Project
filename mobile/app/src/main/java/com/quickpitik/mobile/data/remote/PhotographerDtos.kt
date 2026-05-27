@@ -137,6 +137,15 @@ data class CreateSocialRequest(
     val url: String
 )
 
+data class PatchSocialRequest(
+    val url: String
+)
+
+data class PatchPayoutRequest(
+    val accountNumber: String? = null,
+    val accountName: String? = null
+)
+
 data class SocialLinkDto(
     val id: String,
     val platform: String,
@@ -155,6 +164,10 @@ data class PhotographerMessageDto(
 
 data class MarkAllReadResponse(
     val markedRead: Int
+)
+
+data class MessageRemovedResponse(
+    val removed: Boolean
 )
 
 data class PhotographerLibraryPhotoDto(

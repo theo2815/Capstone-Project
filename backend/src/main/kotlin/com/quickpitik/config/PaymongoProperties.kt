@@ -23,6 +23,14 @@ data class PaymongoProperties(
     val webhookSecret: String = "whsk_dev-only-DO-NOT-USE-IN-PRODUCTION",
     val successUrl: String = "http://localhost:3000/orders/return",
     val cancelUrl: String = "http://localhost:3000/cart",
+    // Mobile redirect targets. PayMongo redirects the in-browser tab to these
+    // after pay/cancel for orders created with clientPlatform="android". The
+    // bridge endpoints (MobileReturnController) emit HTML that opens
+    // `quickpitik://` deep links, returning the user to the app. Default
+    // points at the Android-emulator-reachable backend address; override per
+    // environment via PAYMONGO_MOBILE_SUCCESS_URL / PAYMONGO_MOBILE_CANCEL_URL.
+    val mobileSuccessUrl: String = "http://10.0.2.2:8080/api/v1/orders/mobile-return",
+    val mobileCancelUrl: String = "http://10.0.2.2:8080/api/v1/orders/mobile-cancel",
     val baseUrl: String = "https://api.paymongo.com/v1",
     val connectTimeout: Duration = Duration.ofSeconds(5),
     val readTimeout: Duration = Duration.ofSeconds(15),

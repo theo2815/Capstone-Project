@@ -26,8 +26,12 @@ data class MergeCartItem(
     val eventId: String
 )
 
+// Mirrors backend dto.cart.ClearedResponse — `cleared` is the COUNT of items
+// removed (Int), not a Boolean. Used to be Boolean here, which Gson silently
+// failed to parse against the int payload; the catch block then reverted the
+// optimistic local clear and the cart kept its items after PayMongo paid.
 data class ClearedResponse(
-    val cleared: Boolean
+    val cleared: Int
 )
 
 data class RemovedResponse(
@@ -37,7 +41,11 @@ data class RemovedResponse(
 data class CreateOrderRequest(
     val items: List<CreateOrderItem>,
     val paymentMethod: String,
-    val recipientEmail: String?
+    val recipientEmail: String?,
+    // Sent as "android" so the backend points PayMongo's success/cancel URLs
+    // at the MobileReturnController bridge, which deep-links back into the app
+    // via `quickpitik://` instead of stranding the user on localhost:3000.
+    val clientPlatform: String = "android",
 )
 
 data class CreateOrderItem(

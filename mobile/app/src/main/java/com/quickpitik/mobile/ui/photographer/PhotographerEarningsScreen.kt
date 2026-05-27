@@ -1,31 +1,70 @@
 package com.quickpitik.mobile.ui.photographer
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.*
+import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickpitik.mobile.data.remote.EarningsOverviewDto
 import com.quickpitik.mobile.data.remote.PayoutBalanceDto
+import com.quickpitik.mobile.data.remote.PhotographerPayoutDto
 import com.quickpitik.mobile.data.remote.PhotographerTransactionDto
-import com.quickpitik.mobile.ui.theme.*
+import com.quickpitik.mobile.data.remote.WeeklyRevenuePointDto
+import com.quickpitik.mobile.ui.theme.BadgeShape
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.ErrorRed
+import com.quickpitik.mobile.ui.theme.ErrorView
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.GhostCta
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.Kicker
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.LoadingSkeleton
+import com.quickpitik.mobile.ui.theme.NumeralStyle
+import com.quickpitik.mobile.ui.theme.QpCard
+import com.quickpitik.mobile.ui.theme.Slate
+import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.SparklineBarShape
+import com.quickpitik.mobile.ui.theme.StatusChip
+import com.quickpitik.mobile.ui.theme.StatusTone
+import com.quickpitik.mobile.ui.theme.Typography
+import com.quickpitik.mobile.ui.theme.WarningOrange
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -33,7 +72,7 @@ import java.util.Locale
 @Composable
 fun PhotographerEarningsScreen(
     viewModel: PhotographerDashboardViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val earningsState by viewModel.earningsUiState.collectAsState()
     val payoutActionState by viewModel.payoutActionState.collectAsState()
@@ -41,443 +80,541 @@ fun PhotographerEarningsScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Bone) // warm cream background
-            .padding(16.dp)
+            .background(Bone)
+            .padding(horizontal = 16.dp)
+            .padding(top = 12.dp),
     ) {
-        // Header
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(bottom = 12.dp)
-        ) {
-            Column {
-                Text(
-                    text = "Earnings & Wallet",
-                    color = Ink,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Track your platform payouts and digital receipts",
-                    color = SlateSoft,
-                    fontSize = 13.sp
-                )
-            }
-        }
+        Kicker(text = "Earnings · kept after platform cut", color = Slate)
+        Spacer(modifier = Modifier.height(20.dp))
 
-        // Main State Handling
         when (val state = earningsState) {
-            is EarningsUiState.Loading -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Fresh)
-                }
-            }
-            is EarningsUiState.Error -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = state.message,
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(16.dp)
-                        )
-                        Button(
-                            onClick = { viewModel.fetchEarningsAndTransactions() },
-                            colors = ButtonDefaults.buttonColors(containerColor = Fresh)
-                        ) {
-                            Text("Retry", color = Color.White)
-                        }
-                    }
-                }
-            }
-            is EarningsUiState.Success -> {
-                SuccessContent(
-                    overview = state.overview,
-                    balance = state.balance,
-                    transactions = state.transactions,
-                    payoutActionState = payoutActionState,
-                    onRequestPayout = { viewModel.submitPayoutRequest() },
-                    onClearActionState = { viewModel.clearPayoutActionState() },
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            is EarningsUiState.Loading -> EarningsLoadingSkeleton()
+            is EarningsUiState.Error -> ErrorView(
+                message = state.message,
+                onRetry = { viewModel.fetchEarningsAndTransactions() },
+            )
+            is EarningsUiState.Success -> EarningsContent(
+                overview = state.overview,
+                balance = state.balance,
+                transactions = state.transactions,
+                payoutActionState = payoutActionState,
+                onRequestPayout = { viewModel.submitPayoutRequest() },
+                onClearActionState = { viewModel.clearPayoutActionState() },
+            )
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SuccessContent(
+private fun EarningsContent(
     overview: EarningsOverviewDto,
     balance: PayoutBalanceDto,
     transactions: List<PhotographerTransactionDto>,
     payoutActionState: String?,
     onRequestPayout: () -> Unit,
     onClearActionState: () -> Unit,
-    modifier: Modifier = Modifier
 ) {
+    var showHistory by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     LazyColumn(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(vertical = 8.dp)
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+        contentPadding = PaddingValues(bottom = 32.dp),
     ) {
-        // 1. Metric Overview Cards
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                MetricCard(
-                    title = "Lifetime Kept",
-                    value = "₱%,.2f".format(overview.lifetimeKept),
-                    modifier = Modifier.weight(1f)
-                )
-                MetricCard(
-                    title = "This Month",
-                    value = "₱%,.2f".format(overview.thisMonth),
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                MetricCard(
-                    title = "Pending Review",
-                    value = "₱%,.2f".format(overview.payoutPending),
-                    modifier = Modifier.weight(1f)
-                )
-                MetricCard(
-                    title = "Payout Cycle",
-                    value = overview.payoutScheduledFor ?: "Weekly Review",
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-
-        // 2. GCash Withdrawal Card
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = BoneDeep),
-                border = BorderStroke(1.dp, Line),
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "GCASH WALLET BALANCE",
-                            color = SlateSoft,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .background(Fresh.copy(alpha = 0.1f), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                        ) {
-                            Text(
-                                text = "INSTANT TRANSFER",
-                                color = Fresh,
-                                fontSize = 8.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 0.5.sp
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "₱%,.2f".format(balance.unpaidBalance),
-                        color = Fresh,
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    val hasOpen = balance.hasOpenRequest || balance.openRequest != null
-                    if (hasOpen) {
-                        val openRequest = balance.openRequest
-                        val status = openRequest?.status?.uppercase() ?: "PENDING_REVIEW"
-                        val statusColor = when (status) {
-                            "HELD" -> ErrorRed
-                            "APPROVED" -> Fresh
-                            else -> WarningOrange
-                        }
-                        
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(Bone.copy(alpha = 0.9f))
-                                .border(1.dp, Line, RoundedCornerShape(14.dp))
-                                .padding(14.dp)
-                        ) {
-                            Column {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(statusColor)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "Payout: $status",
-                                            color = statusColor,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                    Text(
-                                        text = "₱%,.2f".format(openRequest?.amount ?: balance.unpaidBalance),
-                                        color = Ink,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                                if (status == "HELD" && !openRequest?.holdReason.isNullOrBlank()) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = "Hold Reason: ${openRequest?.holdReason}",
-                                        color = ErrorRed,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
-                        }
-                    } else {
-                        // Allow withdrawal if balance >= minimum
-                        val canWithdraw = balance.unpaidBalance >= balance.minimum
-                        Button(
-                            onClick = onRequestPayout,
-                            enabled = canWithdraw && payoutActionState != "processing",
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Fresh,
-                                contentColor = Color.White,
-                                disabledContainerColor = Line,
-                                disabledContentColor = SlateSoft
-                            ),
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.fillMaxWidth().height(48.dp)
-                        ) {
-                            if (payoutActionState == "processing") {
-                                CircularProgressIndicator(
-                                    color = Color.White,
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Text(
-                                    text = "REQUEST PAYOUT TO GCASH",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp,
-                                    letterSpacing = 0.5.sp
-                                )
-                            }
-                        }
-                        
-                        if (!canWithdraw) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Minimum withdrawal is ₱500.00",
-                                color = SlateSoft,
-                                fontSize = 11.sp,
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.Center,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-
-                    // Payout Action Result Alert Dialog / Snackbar Trigger
-                    payoutActionState?.let { actionState ->
-                        if (actionState != "processing") {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            val isError = actionState.startsWith("Error:")
-                            val alertColor = if (isError) ErrorRed else Fresh
-                            
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(alertColor.copy(alpha = 0.1f))
-                                    .border(1.dp, alertColor.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
-                                    .padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = actionState.replace("Error: ", "").replace("Success: ", ""),
-                                    color = alertColor,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                TextButton(
-                                    onClick = onClearActionState,
-                                    contentPadding = PaddingValues(horizontal = 8.dp)
-                                ) {
-                                    Text("Dismiss", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Transactions Header
-        item {
-            Text(
-                text = "Recent Sales History",
-                color = Ink,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+        item("lifetime") {
+            LifetimeSlab(
+                lifetimeKept = overview.lifetimeKept,
+                weeklySeries = overview.weeklySeries,
             )
         }
+        item("breakdown") {
+            Divider(thickness = 1.dp, color = Line)
+            Spacer(modifier = Modifier.height(24.dp))
+            BreakdownSlab(overview = overview)
+        }
+        item("wallet") {
+            Spacer(modifier = Modifier.height(24.dp))
+            Divider(thickness = 1.dp, color = Line)
+            Spacer(modifier = Modifier.height(24.dp))
+            WalletSlab(
+                balance = balance,
+                payoutActionState = payoutActionState,
+                onRequestPayout = onRequestPayout,
+                onClearActionState = onClearActionState,
+            )
+        }
+        item("transactionsLink") {
+            Spacer(modifier = Modifier.height(24.dp))
+            Divider(thickness = 1.dp, color = Line)
+            Spacer(modifier = Modifier.height(8.dp))
+            TransactionsLink(
+                count = transactions.size,
+                onClick = { showHistory = true },
+            )
+        }
+    }
 
-        // 4. Transactions List
-        if (transactions.isEmpty()) {
-            item {
+    if (showHistory) {
+        ModalBottomSheet(
+            onDismissRequest = { showHistory = false },
+            sheetState = sheetState,
+            containerColor = Bone,
+        ) {
+            TransactionsSheet(transactions = transactions)
+        }
+    }
+}
+
+@Composable
+private fun LifetimeSlab(
+    lifetimeKept: Double,
+    weeklySeries: List<WeeklyRevenuePointDto>,
+) {
+    Column {
+        Kicker(text = "Lifetime kept", color = SlateSoft)
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = "₱%,.0f".format(lifetimeKept),
+            style = NumeralStyle.copy(fontSize = 44.sp, fontWeight = FontWeight.SemiBold),
+            color = Fresh,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "After platform cut",
+            color = Slate,
+            style = Typography.bodyMedium,
+        )
+
+        Spacer(modifier = Modifier.height(28.dp))
+        Kicker(text = "12-week trend", color = SlateSoft)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "Tap a bar for week details",
+            color = SlateSoft,
+            style = Typography.bodySmall,
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (weeklySeries.isEmpty()) {
+            Text(
+                text = "No earnings yet — your first weeks will plot here.",
+                color = SlateSoft,
+                style = Typography.bodySmall,
+            )
+        } else {
+            Sparkline(data = weeklySeries)
+        }
+    }
+}
+
+@Composable
+private fun Sparkline(
+    data: List<WeeklyRevenuePointDto>,
+    modifier: Modifier = Modifier,
+) {
+    val max = remember(data) { data.maxOf { it.amount }.coerceAtLeast(1.0) }
+    var selectedIndex by remember(data) { mutableStateOf(data.lastIndex) }
+    val selected = data.getOrNull(selectedIndex)
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            data.forEachIndexed { index, point ->
+                val targetHeight = (point.amount / max).toFloat().coerceAtLeast(0.04f)
+                val animatedHeight by animateFloatAsState(
+                    targetValue = targetHeight,
+                    animationSpec = tween(durationMillis = 220),
+                    label = "qp-sparkline-bar-h",
+                )
+                val animatedColor by animateColorAsState(
+                    targetValue = if (index == selectedIndex) Ink else Line,
+                    animationSpec = tween(durationMillis = 180),
+                    label = "qp-sparkline-bar-c",
+                )
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 32.dp),
-                    contentAlignment = Alignment.Center
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable { selectedIndex = index },
+                    contentAlignment = Alignment.BottomCenter,
                 ) {
-                    Text(
-                        text = "No sales recorded yet. Keep uploading!",
-                        color = SlateSoft,
-                        fontSize = 14.sp
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(animatedHeight)
+                            .clip(SparklineBarShape)
+                            .background(animatedColor),
                     )
                 }
             }
-        } else {
-            items(transactions) { tx ->
-                TransactionItem(transaction = tx)
+        }
+        if (selected != null) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Week of ${formatWeekLabel(selected.weekOf)}",
+                    color = Slate,
+                    style = Typography.bodySmall,
+                )
+                Text(
+                    text = "₱%,.0f".format(selected.amount),
+                    style = NumeralStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                    color = Ink,
+                )
             }
         }
     }
 }
 
 @Composable
-fun MetricCard(
-    title: String,
-    value: String,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = BoneDeep),
-        border = BorderStroke(1.dp, Line),
-        shape = RoundedCornerShape(16.dp),
-        modifier = modifier
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth()
+private fun BreakdownSlab(overview: EarningsOverviewDto) {
+    Column {
+        Kicker(text = "Breakdown · current cycle", color = SlateSoft)
+        Spacer(modifier = Modifier.height(16.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top,
         ) {
-            Text(
-                text = title.uppercase(),
-                color = SlateSoft,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 0.5.sp
+            BreakdownStat(
+                kicker = "This week",
+                value = "₱%,.0f".format(overview.thisWeek),
+                caption = "+${overview.thisWeekSold} sold",
+                modifier = Modifier.weight(1f),
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = value,
-                color = Ink,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
+            Divider(
+                color = Line,
+                modifier = Modifier
+                    .height(60.dp)
+                    .width(1.dp),
             )
-        }
-    }
-}
-
-@Composable
-fun TransactionItem(transaction: PhotographerTransactionDto) {
-    val buyerName = transaction.buyer.ifBlank { "Runner" }
-    val initial = buyerName.firstOrNull()?.toString()?.uppercase() ?: "R"
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp)
-            .background(BoneDeep, RoundedCornerShape(16.dp))
-            .border(1.dp, Line, RoundedCornerShape(16.dp))
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Initials Avatar Circle
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(Fresh.copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = initial,
-                color = Fresh,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp
+            BreakdownStat(
+                kicker = "This month",
+                value = "₱%,.0f".format(overview.thisMonth),
+                caption = "+${overview.thisMonthSold} sold",
+                modifier = Modifier.weight(1f),
             )
         }
-        
-        Spacer(modifier = Modifier.width(12.dp))
-        
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Purchased by $buyerName",
-                color = Ink,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = transaction.eventName ?: "Event archived",
-                color = SlateSoft,
-                fontSize = 12.sp
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = formatIsoTimestamp(transaction.paidAt),
-                color = SlateSoft,
-                fontSize = 10.sp
-            )
-        }
-        
+        Spacer(modifier = Modifier.height(20.dp))
+        Divider(thickness = 1.dp, color = Line)
+        Spacer(modifier = Modifier.height(16.dp))
+        Kicker(text = "Payout pending", color = SlateSoft)
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "+₱%,.2f".format(transaction.amountKept),
-            color = Fresh,
-            fontWeight = FontWeight.ExtraBold,
-            fontSize = 15.sp
+            text = "₱%,.0f".format(overview.payoutPending),
+            style = NumeralStyle.copy(fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
+            color = Ink,
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "Releases ${overview.payoutScheduledFor ?: "on weekly review"}",
+            color = Slate,
+            style = Typography.bodySmall,
         )
     }
 }
 
-private fun formatIsoTimestamp(isoString: String): String {
-    return try {
-        val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
-        val formatter = SimpleDateFormat("MMM d, yyyy h:mm a", Locale.getDefault())
-        val date = parser.parse(isoString.substring(0, 19)) ?: Date()
-        formatter.format(date)
-    } catch (e: Exception) {
-        isoString.substringBefore("T")
+@Composable
+private fun BreakdownStat(
+    kicker: String,
+    value: String,
+    caption: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Kicker(text = kicker, color = Slate)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = value,
+            style = NumeralStyle.copy(fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
+            color = Ink,
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = caption,
+            color = Slate,
+            style = Typography.bodySmall,
+        )
     }
+}
+
+@Composable
+private fun WalletSlab(
+    balance: PayoutBalanceDto,
+    payoutActionState: String?,
+    onRequestPayout: () -> Unit,
+    onClearActionState: () -> Unit,
+) {
+    QpCard(modifier = Modifier.fillMaxWidth(), padding = 16.dp) {
+        Kicker(text = "Unpaid balance · GCash", color = SlateSoft)
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = "₱%,.2f".format(balance.unpaidBalance),
+            style = NumeralStyle.copy(fontSize = 32.sp, fontWeight = FontWeight.SemiBold),
+            color = Ink,
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        val hasOpen = balance.hasOpenRequest || balance.openRequest != null
+        if (hasOpen) {
+            OpenRequestBlock(openRequest = balance.openRequest, fallbackAmount = balance.unpaidBalance)
+        } else {
+            val canWithdraw = balance.unpaidBalance >= balance.minimum
+            val isProcessing = payoutActionState == "processing"
+            GhostCta(
+                text = if (isProcessing) "Requesting…" else "Request payout to GCash",
+                onClick = onRequestPayout,
+                enabled = canWithdraw && !isProcessing,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = if (canWithdraw) {
+                    "Minimum withdrawal ₱%,.0f".format(balance.minimum)
+                } else {
+                    "Reach ₱%,.0f to request a payout".format(balance.minimum)
+                },
+                color = SlateSoft,
+                style = Typography.bodySmall,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+            )
+        }
+
+        if (payoutActionState != null && payoutActionState != "processing") {
+            Spacer(modifier = Modifier.height(12.dp))
+            ActionResultStrip(
+                rawState = payoutActionState,
+                onDismiss = onClearActionState,
+            )
+        }
+    }
+}
+
+@Composable
+private fun OpenRequestBlock(
+    openRequest: PhotographerPayoutDto?,
+    fallbackAmount: Double,
+) {
+    val status = openRequest?.status?.uppercase() ?: "PENDING_REVIEW"
+    val tone = when (status) {
+        "HELD" -> StatusTone.Danger
+        "APPROVED" -> StatusTone.Approved
+        else -> StatusTone.Warning
+    }
+    val statusLabel = when (status) {
+        "HELD" -> "Payout · held"
+        "APPROVED" -> "Payout · approved"
+        else -> "Payout · pending"
+    }
+
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            StatusChip(text = statusLabel, tone = tone)
+            Text(
+                text = "₱%,.2f".format(openRequest?.amount ?: fallbackAmount),
+                style = NumeralStyle.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
+                color = Ink,
+            )
+        }
+        if (status == "HELD" && !openRequest?.holdReason.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Hold reason · ${openRequest?.holdReason}",
+                color = ErrorRed,
+                style = Typography.bodySmall,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActionResultStrip(
+    rawState: String,
+    onDismiss: () -> Unit,
+) {
+    val isError = rawState.startsWith("Error:")
+    val tone = if (isError) StatusTone.Danger else StatusTone.Approved
+    val toneColor = if (isError) ErrorRed else Fresh
+    val message = rawState.removePrefix("Error: ").removePrefix("Success: ")
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(BadgeShape)
+            .background(toneColor.copy(alpha = 0.08f))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        StatusChip(
+            text = if (isError) "Error" else "Submitted",
+            tone = tone,
+        )
+        Text(
+            text = message,
+            color = Slate,
+            style = Typography.bodySmall,
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 10.dp),
+        )
+        TextButton(onClick = onDismiss) {
+            Text(
+                text = "Dismiss",
+                style = Typography.bodySmall,
+                color = Ink,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TransactionsLink(count: Int, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = if (count == 0) "No transactions yet" else "View transactions ($count) →",
+            style = Typography.bodyMedium,
+            color = if (count == 0) SlateSoft else Ink,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+@Composable
+private fun TransactionsSheet(transactions: List<PhotographerTransactionDto>) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 24.dp),
+    ) {
+        Kicker(text = "Recent sales history", color = Slate)
+        Spacer(modifier = Modifier.height(16.dp))
+        if (transactions.isEmpty()) {
+            Text(
+                text = "No sales recorded yet. Keep uploading.",
+                color = SlateSoft,
+                style = Typography.bodyMedium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 32.dp),
+                textAlign = TextAlign.Center,
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(420.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(transactions, key = { it.id }) { tx ->
+                    TransactionRow(transaction = tx)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TransactionRow(transaction: PhotographerTransactionDto) {
+    val buyerName = transaction.buyer.ifBlank { "Runner" }
+    val initial = buyerName.firstOrNull()?.toString()?.uppercase() ?: "R"
+
+    QpCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(BoneDeep),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = initial,
+                    color = Slate,
+                    style = Typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = buyerName,
+                    color = Ink,
+                    style = Typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = transaction.eventName ?: "Event archived",
+                    color = Slate,
+                    style = Typography.bodySmall,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = formatIsoTimestamp(transaction.paidAt),
+                    color = SlateSoft,
+                    style = Typography.bodySmall,
+                )
+            }
+            Text(
+                text = "+₱%,.0f".format(transaction.amountKept),
+                style = NumeralStyle.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
+                color = Ink,
+            )
+        }
+    }
+}
+
+@Composable
+private fun EarningsLoadingSkeleton() {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        LoadingSkeleton(modifier = Modifier.fillMaxWidth().height(56.dp))
+        LoadingSkeleton(modifier = Modifier.fillMaxWidth().height(64.dp))
+        Divider(thickness = 1.dp, color = Line)
+        LoadingSkeleton(modifier = Modifier.fillMaxWidth().height(80.dp))
+        Divider(thickness = 1.dp, color = Line)
+        LoadingSkeleton(modifier = Modifier.fillMaxWidth().height(120.dp))
+    }
+}
+
+private fun formatWeekLabel(weekOf: String): String = try {
+    val parser = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    val formatter = SimpleDateFormat("MMM d", Locale.getDefault())
+    val date = parser.parse(weekOf) ?: Date()
+    formatter.format(date)
+} catch (e: Exception) {
+    weekOf
+}
+
+private fun formatIsoTimestamp(isoString: String): String = try {
+    val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
+    val formatter = SimpleDateFormat("MMM d, yyyy · h:mm a", Locale.getDefault())
+    val date = parser.parse(isoString.substring(0, 19)) ?: Date()
+    formatter.format(date)
+} catch (e: Exception) {
+    isoString.substringBefore("T")
 }

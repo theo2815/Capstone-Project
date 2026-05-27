@@ -64,10 +64,8 @@ private const val FLAT_PAGE_SIZE = 12
 @Composable
 fun EventsDiscoveryScreen(
     viewModel: RunnerGalleryViewModel,
-    cartViewModel: CartViewModel,
     savedEventsViewModel: SavedEventsViewModel,
     onEventSelected: (EventDto) -> Unit,
-    onNavigateToCart: () -> Unit,
     onNavigateToOrders: () -> Unit,
     onNavigateToProfile: () -> Unit,
     onNavigateToSettings: () -> Unit,
@@ -124,20 +122,8 @@ fun EventsDiscoveryScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val cartItems by cartViewModel.cartItems.collectAsState()
-                    BadgedBox(badge = {
-                        if (cartItems.isNotEmpty()) {
-                            Badge(containerColor = Fresh, contentColor = Bone) { Text("${cartItems.size}") }
-                        }
-                    }) {
-                        IconButton(
-                            onClick = onNavigateToCart,
-                            colors = IconButtonDefaults.iconButtonColors(containerColor = BoneDeep)
-                        ) {
-                            Icon(Icons.Default.ShoppingCart, contentDescription = "Cart", tint = Ink)
-                        }
-                    }
-
+                    // Cart access lives in the global FloatingCart pill — header icon dropped
+                    // to avoid two affordances pointing at the same overlay.
                     var menuExpanded by remember { mutableStateOf(false) }
                     val sessionManager = remember { SessionManager.getInstance(context) }
                     val userName = sessionManager.getUserName() ?: "Runner"
@@ -146,13 +132,13 @@ fun EventsDiscoveryScreen(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .background(Fresh)
+                                .background(BoneDeep)
                                 .clickable { menuExpanded = true },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 userName.take(1).uppercase(),
-                                color = Bone,
+                                color = Ink,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp
                             )
@@ -209,30 +195,16 @@ fun EventsDiscoveryScreen(
             // ---- Content ----
             when (val state = eventsState) {
                 is RunnerEventsState.Loading -> {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
-                        contentAlignment = Alignment.Center
-                    ) { CircularProgressIndicator(color = Fresh) }
+                    EventGridSkeleton()
                 }
 
                 is RunnerEventsState.Error -> {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            state.message,
-                            color = ErrorRed,
-                            textAlign = TextAlign.Center,
-                            style = Typography.bodyMedium
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        Button(
-                            onClick = { viewModel.fetchPublicEvents() },
-                            colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
-                            shape = RoundedCornerShape(percent = 100)
-                        ) { Text("RETRY", style = Typography.labelMedium) }
-                    }
+                    ErrorView(
+                        message = state.message,
+                        onRetry = { viewModel.fetchPublicEvents() },
+                        retryLabel = "Try again",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
 
                 is RunnerEventsState.Success -> {
@@ -259,7 +231,7 @@ fun EventsDiscoveryScreen(
                     // Live-today banner — jump nothing, just a presence cue like the web.
                     if (liveCount > 0) {
                         Surface(
-                            shape = RoundedCornerShape(12.dp),
+                            shape = QpCardShape,
                             color = Fresh.copy(alpha = 0.10f),
                             border = BorderStroke(1.dp, Fresh.copy(alpha = 0.4f)),
                             modifier = Modifier.fillMaxWidth()
@@ -346,20 +318,18 @@ fun EventsDiscoveryScreen(
                         Spacer(Modifier.height(12.dp))
                         if (filtered.isEmpty()) {
                             EmptyState(
-                                "Nothing here yet.",
-                                "Try clearing the search, or change the city or date above."
+                                "No races match your filters.",
+                                "Try adjusting the date, city, or search above."
                             )
                         } else {
                             EventGrid(filtered.take(visibleCount), savedIds, onEventSelected, savedEventsViewModel::toggle)
                             if (filtered.size > visibleCount) {
                                 Spacer(Modifier.height(16.dp))
-                                OutlinedButton(
+                                GhostCta(
+                                    text = "LOAD MORE",
                                     onClick = { visibleCount += FLAT_PAGE_SIZE },
-                                    border = BorderStroke(1.dp, Line),
-                                    shape = RoundedCornerShape(percent = 100),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) { Text("LOAD MORE", style = Typography.labelMedium) }
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
                             }
                         }
                     }
@@ -396,7 +366,7 @@ private fun SearchField(query: String, onChange: (String) -> Unit) {
             focusedTextColor = Ink,
             unfocusedTextColor = InkSoft
         ),
-        shape = RoundedCornerShape(12.dp),
+        shape = FieldShape,
         modifier = Modifier.fillMaxWidth()
     )
 }
@@ -413,7 +383,7 @@ private fun FilterDropdown(
     Box(modifier = modifier) {
         Surface(
             onClick = { expanded = true },
-            shape = RoundedCornerShape(12.dp),
+            shape = FieldShape,
             color = BoneDeep,
             border = BorderStroke(1.dp, Line),
             modifier = Modifier.fillMaxWidth()
@@ -620,7 +590,12 @@ private fun StatusChip(state: EventState, modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(accent))
-            Text(label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = accent, letterSpacing = 0.8.sp)
+            Text(
+                label,
+                style = Typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = accent,
+            )
         }
     }
 }
@@ -634,5 +609,29 @@ private fun EmptyState(title: String, body: String) {
         Text(title, style = Typography.titleMedium, fontWeight = FontWeight.Bold, color = Ink)
         Spacer(Modifier.height(6.dp))
         Text(body, style = Typography.bodyMedium, color = SlateSoft, textAlign = TextAlign.Center)
+    }
+}
+
+// 2×3 skeleton grid that mirrors the EventTile footprint (4:3 banner + footer ≈ aspect 0.75).
+// Replaces the centered spinner so the loading state hints at the final layout.
+@Composable
+private fun EventGridSkeleton() {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        repeat(3) { rowIndex ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                repeat(2) {
+                    LoadingSkeleton(
+                        shape = QpCardShape,
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(0.75f),
+                    )
+                }
+            }
+            if (rowIndex < 2) Spacer(Modifier.height(12.dp))
+        }
     }
 }

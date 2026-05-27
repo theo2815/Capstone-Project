@@ -181,16 +181,13 @@ fun RefundTimeline(disputes: List<RunnerDisputeDto>) {
     Card(
         colors = CardDefaults.cardColors(containerColor = BoneDeep),
         border = BorderStroke(1.dp, Line),
-        shape = RoundedCornerShape(16.dp),
+        shape = QpCardShape,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column {
-            Text(
-                text = "REFUND HISTORY",
-                style = Typography.labelSmall,
-                color = Slate,
-                modifier = Modifier.padding(16.dp)
-            )
+            Box(modifier = Modifier.padding(16.dp)) {
+                Kicker("Refund history")
+            }
             ordered.forEachIndexed { index, dispute ->
                 if (index > 0) Divider(color = Line)
                 RefundTimelineRow(dispute)
@@ -394,14 +391,12 @@ fun RefundRequestDialog(
                                             }
                                         }
                                         Spacer(Modifier.width(12.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = "Bib ${photo.bib ?: "—"}",
-                                                style = Typography.bodyMedium,
-                                                color = if (isLocked) SlateSoft else Ink
-                                            )
-                                            Text(photo.time, style = Typography.bodySmall, color = SlateSoft)
-                                        }
+                                        Text(
+                                            text = "Photo ${index + 1}",
+                                            style = Typography.bodyMedium,
+                                            color = if (isLocked) SlateSoft else Ink,
+                                            modifier = Modifier.weight(1f),
+                                        )
                                         if (isLocked && lockedDispute != null) {
                                             Text(
                                                 text = "Refund ${refundChipLabel(lockedDispute.status)}",
@@ -501,19 +496,17 @@ fun RefundRequestDialog(
                         enabled = !submitting,
                         colors = ButtonDefaults.textButtonColors(contentColor = Slate)
                     ) {
-                        Text("CANCEL", style = Typography.labelMedium)
+                        Text("Cancel", style = Typography.labelMedium)
                     }
-                    Button(
+                    PrimaryCta(
+                        text = "Send request",
                         onClick = {
-                            val r = reason ?: return@Button
+                            val r = reason ?: return@PrimaryCta
                             onSubmit(selected.toList(), r, note.trim())
                         },
                         enabled = canSubmit,
-                        colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Bone),
-                        shape = RoundedCornerShape(percent = 100)
-                    ) {
-                        Text(if (submitting) "SENDING…" else "SEND REQUEST", style = Typography.labelMedium)
-                    }
+                        loading = submitting,
+                    )
                 }
             }
         }

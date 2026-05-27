@@ -313,8 +313,6 @@ private fun ProfileEventGalleryView(
                         }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("Bib: ${preview.bib ?: "N/A"}", style = Typography.bodyMedium, color = Ink)
-                    Text("Time: ${preview.time}", style = Typography.bodyMedium, color = Ink)
                     Text(String.format("Price: ₱%,.2f", preview.price), style = Typography.bodyMedium, color = Ink)
                 }
             },

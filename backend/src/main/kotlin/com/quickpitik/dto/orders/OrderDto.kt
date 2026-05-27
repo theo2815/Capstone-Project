@@ -19,6 +19,10 @@ data class CreateOrderRequest(
     val paymentMethod: String = "",
     @field:Email(message = "recipientEmail must be a valid email")
     val recipientEmail: String? = null,
+    // When "android", OrderService picks the MobileReturnController bridge URLs
+    // for PayMongo success/cancel so the user lands back in the app via the
+    // quickpitik:// deep link instead of the website. null/empty → website flow.
+    val clientPlatform: String? = null,
 )
 
 data class CreateOrderItem(

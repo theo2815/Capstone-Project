@@ -3,173 +3,182 @@ package com.quickpitik.mobile.ui.photographer
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.*
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
-import com.quickpitik.mobile.ui.theme.*
 import coil.compose.AsyncImage
-import androidx.compose.ui.layout.ContentScale
+import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
+import com.quickpitik.mobile.ui.runner.EventState
+import com.quickpitik.mobile.ui.runner.deriveEventState
+import com.quickpitik.mobile.ui.runner.extractCity
+import com.quickpitik.mobile.ui.theme.*
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
+
+private enum class StatusFilter(val label: String, val tone: StatusTone) {
+    LIVE("Live", StatusTone.Approved),
+    UPCOMING("Upcoming", StatusTone.Warning),
+    COMPLETED("Completed", StatusTone.Neutral),
+}
+
+private fun PhotographerEventSummaryDto.filterBucket(today: LocalDate = LocalDate.now()): StatusFilter =
+    when (deriveEventState(date, today)) {
+        EventState.LIVE -> StatusFilter.LIVE
+        EventState.UPCOMING -> StatusFilter.UPCOMING
+        EventState.OPEN, EventState.PAST -> StatusFilter.COMPLETED
+    }
 
 @Composable
 fun PhotographerEventsScreen(
     viewModel: PhotographerDashboardViewModel,
     modifier: Modifier = Modifier,
-    onOpenShare: (PhotographerEventSummaryDto) -> Unit = {}
+    onOpenShare: (PhotographerEventSummaryDto) -> Unit = {},
+    onSyncEvent: (PhotographerEventSummaryDto) -> Unit = {},
 ) {
     val eventsState by viewModel.eventsState.collectAsState()
     val activeEvent by viewModel.activeEvent.collectAsState()
-    var selectedTab by remember { mutableStateOf(0) } // 0 = Covered (Live), 1 = Covered (Past)
+    val today = remember { LocalDate.now() }
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Bone) // warm cream background
-            .padding(16.dp)
+            .background(Bone)
+            .padding(horizontal = 16.dp)
+            .padding(top = 12.dp),
     ) {
-        // Header
-        Text(
-            text = "Event Schedule",
-            color = Ink,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 12.dp)
-        )
+        Kicker(text = "Covered events", color = Slate)
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Subtitle instructions
-        Text(
-            text = "Below are marathons and races you are assigned to shoot. Use the Upload Pics tab to synchronize DSLR or gallery captures.",
-            color = SlateSoft,
-            fontSize = 13.sp,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
-
-        // Tab Selector Row
-        TabRow(
-            selectedTabIndex = selectedTab,
-            containerColor = Bone,
-            contentColor = Fresh,
-            indicator = { tabPositions ->
-                TabRowDefaults.Indicator(
-                    modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
-                    color = Fresh
-                )
-            },
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
-        ) {
-            Tab(
-                selected = selectedTab == 0,
-                onClick = { selectedTab = 0 },
-                text = {
-                    Text(
-                        text = "Covered (Live)",
-                        fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
-                        fontSize = 12.sp
-                    )
-                },
-                selectedContentColor = Fresh,
-                unselectedContentColor = SlateSoft
-            )
-            Tab(
-                selected = selectedTab == 1,
-                onClick = { selectedTab = 1 },
-                text = {
-                    Text(
-                        text = "Covered (Past)",
-                        fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
-                        fontSize = 12.sp
-                    )
-                },
-                selectedContentColor = Fresh,
-                unselectedContentColor = SlateSoft
-            )
-        }
-
-        // Render List based on States
-        val currentState = eventsState
-
-        when (val state = currentState) {
+        when (val state = eventsState) {
             is EventsState.Loading -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Fresh)
+                    CircularProgressIndicator(color = Slate, strokeWidth = 2.dp)
                 }
             }
             is EventsState.Error -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = state.message,
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(16.dp)
-                        )
-                        Button(
-                            onClick = { 
-                                viewModel.fetchEvents()
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Fresh)
-                        ) {
-                            Text("Retry", color = Color.White)
-                        }
-                    }
-                }
+                ErrorView(
+                    message = state.message,
+                    onRetry = { viewModel.fetchEvents() },
+                )
             }
             is EventsState.Success -> {
-                // Filter items
-                val baseList = state.events.filter { event ->
-                    val isLiveOrActive = event.state.lowercase() == "live" || event.state.lowercase() == "open" || event.state.lowercase() == "active"
-                    if (selectedTab == 0) isLiveOrActive else !isLiveOrActive
-                }
-                val filteredList = if (selectedTab == 0 && activeEvent != null) {
-                    if (baseList.none { it.id == activeEvent?.id }) {
-                        listOf(activeEvent!!) + baseList
-                    } else {
-                        baseList
-                    }
-                } else {
-                    baseList
+                // Drop the active-event injection from the prior pass — the picker
+                // owns "what's active." This screen is about the photographer's
+                // covered set, plus their upcoming roster.
+                val all = state.events
+                val buckets = remember(all) { all.groupBy { it.filterBucket(today) } }
+                val liveCount = buckets[StatusFilter.LIVE]?.size ?: 0
+                val upcomingCount = buckets[StatusFilter.UPCOMING]?.size ?: 0
+                val completedCount = buckets[StatusFilter.COMPLETED]?.size ?: 0
+
+                // Smart default: pick the bucket where the photographer's attention
+                // most likely belongs — LIVE > UPCOMING > COMPLETED.
+                var selectedFilter by remember(liveCount, upcomingCount, completedCount) {
+                    mutableStateOf(
+                        when {
+                            liveCount > 0 -> StatusFilter.LIVE
+                            upcomingCount > 0 -> StatusFilter.UPCOMING
+                            else -> StatusFilter.COMPLETED
+                        }
+                    )
                 }
 
-                if (filteredList.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = when (selectedTab) {
-                                0 -> "No active or live events assigned right now."
-                                else -> "No past or upcoming events scheduled."
-                            },
-                            color = SlateSoft,
-                            fontSize = 14.sp,
-                            textAlign = TextAlign.Center
-                        )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    StatusFilterChip(
+                        label = StatusFilter.LIVE.label,
+                        count = liveCount,
+                        tone = StatusFilter.LIVE.tone,
+                        selected = selectedFilter == StatusFilter.LIVE,
+                        onClick = { selectedFilter = StatusFilter.LIVE },
+                    )
+                    StatusFilterChip(
+                        label = StatusFilter.UPCOMING.label,
+                        count = upcomingCount,
+                        tone = StatusFilter.UPCOMING.tone,
+                        selected = selectedFilter == StatusFilter.UPCOMING,
+                        onClick = { selectedFilter = StatusFilter.UPCOMING },
+                    )
+                    StatusFilterChip(
+                        label = StatusFilter.COMPLETED.label,
+                        count = completedCount,
+                        tone = StatusFilter.COMPLETED.tone,
+                        selected = selectedFilter == StatusFilter.COMPLETED,
+                        onClick = { selectedFilter = StatusFilter.COMPLETED },
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                EventsSectionHeader(
+                    label = when (selectedFilter) {
+                        StatusFilter.LIVE -> "Live today"
+                        StatusFilter.UPCOMING -> "Upcoming"
+                        StatusFilter.COMPLETED -> "Completed"
                     }
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val visible = buckets[selectedFilter].orEmpty()
+                if (visible.isEmpty()) {
+                    EmptyEventsCard(
+                        message = when (selectedFilter) {
+                            StatusFilter.LIVE -> "Nothing live right now. Race-day coverage will land here."
+                            StatusFilter.UPCOMING -> "No upcoming events on your roster yet."
+                            StatusFilter.COMPLETED -> "Your completed coverage will land here."
+                        },
+                    )
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth().weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(bottom = 24.dp),
                     ) {
-                        items(filteredList) { event ->
-                            EventCard(
-                                event = event,
-                                onOpenShare = { onOpenShare(event) }
-                            )
+                        items(visible, key = { it.id }) { event ->
+                            // Per-event variant — picked from the same client-side
+                            // lifecycle as the bucket. The filter union (OPEN+PAST →
+                            // COMPLETED) does NOT change the card variant; each row
+                            // still renders against its own state.
+                            when (deriveEventState(event.date, today)) {
+                                EventState.LIVE -> LiveEventCard(
+                                    event = event,
+                                    isActive = activeEvent?.id == event.id,
+                                    onSync = { onSyncEvent(event) },
+                                    onOpenShare = { onOpenShare(event) },
+                                )
+                                EventState.UPCOMING -> UpcomingEventCard(
+                                    event = event,
+                                    today = today,
+                                )
+                                EventState.OPEN, EventState.PAST -> CompletedEventCard(
+                                    event = event,
+                                    onOpenShare = { onOpenShare(event) },
+                                )
+                            }
                         }
                     }
                 }
@@ -179,144 +188,156 @@ fun PhotographerEventsScreen(
 }
 
 @Composable
-fun EventCard(
-    event: PhotographerEventSummaryDto,
-    onOpenShare: () -> Unit = {},
-    modifier: Modifier = Modifier
+private fun StatusFilterChip(
+    label: String,
+    count: Int,
+    tone: StatusTone,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val isLive = event.state.lowercase() == "live" || event.state.lowercase() == "open" || event.state.lowercase() == "active"
-    val borderStrokeColor = if (isLive) Fresh else Line
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = BoneDeep),
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, borderStrokeColor),
-        modifier = modifier.fillMaxWidth()
+    val toneColor = when (tone) {
+        StatusTone.Approved -> SuccessGreen
+        StatusTone.Warning -> WarningOrange
+        StatusTone.Danger -> ErrorRed
+        StatusTone.Neutral -> Slate
+    }
+    val bg = if (selected) Ink else BoneDeep
+    val textColor = if (selected) Bone else toneColor
+    val dotColor = toneColor
+    Row(
+        modifier = modifier
+            .clip(BadgeShape)
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Column {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(dotColor),
+        )
+        Text(
+            text = "${label.uppercase()} · $count",
+            style = Typography.labelMedium,
+            color = textColor,
+        )
+    }
+}
+
+@Composable
+private fun EventsSectionHeader(label: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Kicker(text = label, color = Slate)
+        Divider(
+            modifier = Modifier.weight(1f),
+            thickness = 1.dp,
+            color = Line,
+        )
+    }
+}
+
+@Composable
+private fun LiveEventCard(
+    event: PhotographerEventSummaryDto,
+    isActive: Boolean,
+    onSync: () -> Unit,
+    onOpenShare: () -> Unit,
+) {
+    QpCard(modifier = Modifier.fillMaxWidth(), padding = 0.dp) {
+        // 16:9 banner with StatusChip overlay.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .background(Line),
+        ) {
             val resolvedUrl = resolveImageUrl(event.bannerUrl)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(130.dp)
-                    .background(Line)
-            ) {
-                if (resolvedUrl != null) {
-                    AsyncImage(
-                        model = resolvedUrl,
-                        contentDescription = "Event banner",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Text(
-                        "BANNER · SOON",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Ink.copy(alpha = 0.3f),
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                }
-
-                // State indicator Badge inside the banner top-left (matches Buyer design)
-                val badgeColor = when (event.state.lowercase()) {
-                    "live", "open" -> Fresh
-                    "upcoming" -> MaterialTheme.colorScheme.primary
-                    else -> SlateSoft
-                }
-
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(10.dp)
-                        .clip(RoundedCornerShape(percent = 100))
-                        .background(Ink.copy(alpha = 0.55f))
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(badgeColor)
-                        )
-                        Text(
-                            text = if (event.state.lowercase() == "live" || event.state.lowercase() == "open") "PHOTOS UPLOADING" else event.state.uppercase(),
-                            color = badgeColor,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.8.sp
-                        )
-                    }
-                }
-            }
-
-            Column(
-                modifier = Modifier.padding(14.dp)
-            ) {
-                // Header Kicker matching Buyer card: Date · CITY (uppercase)
-                val cityLabel = extractCity(event.location).uppercase()
-                Text(
-                    text = "${event.date} · ${if (cityLabel.isNotBlank()) cityLabel else "CEBU"}",
-                    color = Slate,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
+            if (resolvedUrl != null) {
+                AsyncImage(
+                    model = resolvedUrl,
+                    contentDescription = "Event banner",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-
+            } else {
                 Text(
-                    text = event.name,
-                    color = Ink,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Spacer(modifier = Modifier.height(2.dp))
-
-                Text(
-                    text = event.location,
+                    text = "BANNER · SOON",
+                    style = Typography.labelSmall,
                     color = SlateSoft,
-                    fontSize = 12.sp
+                    modifier = Modifier.align(Alignment.Center),
                 )
+            }
+            StatusChip(
+                text = if (isActive) "Live · syncing here" else "Live",
+                tone = StatusTone.Approved,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(10.dp),
+            )
+        }
 
-                Spacer(modifier = Modifier.height(16.dp))
+        Column(modifier = Modifier.padding(16.dp)) {
+            val city = extractCity(event.location).uppercase().ifBlank { "CEBU" }
+            Kicker(text = "${event.date} · $city", color = Slate)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = event.name,
+                color = Ink,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 22.sp,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = event.location,
+                color = SlateSoft,
+                style = Typography.bodySmall,
+            )
 
-                // Statistics Row
-                Row(
+            Spacer(modifier = Modifier.height(14.dp))
+            Divider(thickness = 1.dp, color = Line)
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Compact single-line stats (no per-stat StatNumber blocks — the Fresh
+            // belongs to the Sync CTA, not the revenue figure on a live row).
+            Text(
+                text = "${event.photoCount} photos · ${event.salesCount} sold",
+                color = Slate,
+                style = Typography.bodyMedium,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "₱%,.2f earned".format(event.revenueKept),
+                style = NumeralStyle.copy(fontSize = 16.sp),
+                color = Ink,
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            PrimaryCta(
+                text = if (isActive) "Continue syncing" else "Sync from camera",
+                onClick = onSync,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (event.photoCount > 0) {
+                Spacer(modifier = Modifier.height(6.dp))
+                TextButton(
+                    onClick = onOpenShare,
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    StatItem(label = "Photos Shot", value = "${event.photoCount}")
-                    StatItem(label = "Photos Sold", value = "${event.salesCount}")
-                    StatItem(
-                        label = "Revenue Kept", 
-                        value = "₱%,.2f".format(event.revenueKept), 
-                        valueColor = Fresh
+                    Text(
+                        text = "View & share gallery",
+                        style = Typography.bodyMedium,
+                        color = Ink,
+                        fontWeight = FontWeight.Medium,
                     )
-                }
-
-
-
-                // View & share the public gallery for any covered event
-                if (event.photoCount > 0) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedButton(
-                        onClick = onOpenShare,
-                        border = BorderStroke(1.dp, Ink),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth().height(36.dp),
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Text(
-                            text = "VIEW & SHARE GALLERY",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        )
-                    }
                 }
             }
         }
@@ -324,26 +345,139 @@ fun EventCard(
 }
 
 @Composable
-private fun StatItem(
-    label: String,
-    value: String,
-    valueColor: Color = Ink
+private fun UpcomingEventCard(
+    event: PhotographerEventSummaryDto,
+    today: LocalDate,
 ) {
-    Column {
-        Text(
-            text = label.uppercase(),
-            color = SlateSoft,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.5.sp
-        )
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = value,
-            color = valueColor,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold
-        )
+    QpCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            EventCoverThumbnail(url = event.bannerUrl)
+            Column(modifier = Modifier.weight(1f)) {
+                val city = extractCity(event.location).uppercase().ifBlank { "CEBU" }
+                Kicker(text = "${event.date} · $city", color = Slate)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = event.name,
+                    color = Ink,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 20.sp,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = formatOpensIn(event.date, today),
+                    color = SlateSoft,
+                    style = Typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompletedEventCard(
+    event: PhotographerEventSummaryDto,
+    onOpenShare: () -> Unit,
+) {
+    QpCard(modifier = Modifier.fillMaxWidth(), padding = 0.dp) {
+        Row(
+            modifier = Modifier
+                .clickable(onClick = onOpenShare)
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            EventCoverThumbnail(url = event.bannerUrl)
+            Column(modifier = Modifier.weight(1f)) {
+                val city = extractCity(event.location).uppercase().ifBlank { "CEBU" }
+                Kicker(text = "${event.date} · $city", color = Slate)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = event.name,
+                    color = Ink,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 20.sp,
+                    maxLines = 2,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "₱%,.0f · %d sold".format(event.revenueKept, event.salesCount),
+                    color = Slate,
+                    style = Typography.bodySmall,
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowRight,
+                contentDescription = null,
+                tint = SlateSoft,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun EventCoverThumbnail(url: String?, size: Int = 72) {
+    val resolved = resolveImageUrl(url)
+    Box(
+        modifier = Modifier
+            .size(size.dp)
+            .clip(QpCardShape)
+            .background(Line),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (resolved != null) {
+            AsyncImage(
+                model = resolved,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Text(
+                text = "·",
+                color = SlateSoft,
+                fontSize = 18.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyEventsCard(message: String) {
+    Surface(
+        shape = QpCardShape,
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, Line),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = message,
+                color = SlateSoft,
+                style = Typography.bodyMedium,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+private fun formatOpensIn(date: String, today: LocalDate): String {
+    val eventDate = runCatching { LocalDate.parse(date) }.getOrNull() ?: return "Opens soon"
+    val days = ChronoUnit.DAYS.between(today, eventDate)
+    return when {
+        days <= 0L -> "Opens today"
+        days == 1L -> "Opens tomorrow"
+        else -> "Opens in $days days"
     }
 }
 
@@ -354,9 +488,3 @@ private fun resolveImageUrl(url: String?): String? {
     }
     return url.replace("localhost", "10.0.2.2").replace("127.0.0.1", "10.0.2.2")
 }
-
-private fun extractCity(location: String): String {
-    val idx = location.lastIndexOf(',')
-    return if (idx == -1) location.trim() else location.substring(idx + 1).trim()
-}
-

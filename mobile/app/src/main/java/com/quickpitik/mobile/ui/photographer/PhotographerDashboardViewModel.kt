@@ -14,6 +14,8 @@ import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.usb.CameraConnectionManager
+import com.quickpitik.mobile.data.usb.CameraConnectionState
 import com.quickpitik.mobile.data.remote.EarningsOverviewDto
 import com.quickpitik.mobile.data.remote.PayoutBalanceDto
 import com.quickpitik.mobile.data.remote.PhotographerPayoutDto
@@ -86,6 +88,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     private val database = AppDatabase.getDatabase(application)
     private val sessionManager = SessionManager.getInstance(application)
     private val workManager = WorkManager.getInstance(application)
+    private val cameraManager = CameraConnectionManager(application)
+    val cameraConnectionState: StateFlow<CameraConnectionState> = cameraManager.state
 
     private val _eventsState = MutableStateFlow<EventsState>(EventsState.Loading)
     val eventsState: StateFlow<EventsState> = _eventsState
@@ -137,6 +141,16 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         fetchVerificationStatus()
         fetchSettings()
         fetchMessages()
+        cameraManager.start()
+    }
+
+    override fun onCleared() {
+        cameraManager.stop()
+        super.onCleared()
+    }
+
+    fun refreshCameraConnection() {
+        cameraManager.refresh()
     }
 
     fun fetchEarningsAndTransactions() {
@@ -214,11 +228,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             try {
                 val response = RetrofitClient.apiService.getPhotographerEvents("Bearer $token")
                 if (response.success && response.data != null) {
-                    val list = response.data.items
-                    _eventsState.value = EventsState.Success(list)
-                    if (_activeEvent.value == null && list.isNotEmpty()) {
-                        _activeEvent.value = list.first()
-                      }
+                    _eventsState.value = EventsState.Success(response.data.items)
                 } else {
                     _eventsState.value = EventsState.Error(response.error ?: "Failed to load events.")
                 }
@@ -428,6 +438,34 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             val token = sessionManager.getAccessToken() ?: return@launch
             try {
                 val response = RetrofitClient.apiService.markAllMessagesRead("Bearer $token")
+                if (response.success) {
+                    fetchMessages()
+                }
+            } catch (e: Exception) {
+                // Fail silently
+            }
+        }
+    }
+
+    fun markMessageAsRead(messageId: String) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            try {
+                val response = RetrofitClient.apiService.markMessageRead("Bearer $token", messageId)
+                if (response.success) {
+                    fetchMessages()
+                }
+            } catch (e: Exception) {
+                // Fail silently
+            }
+        }
+    }
+
+    fun removeMessage(messageId: String) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            try {
+                val response = RetrofitClient.apiService.removePhotographerMessage("Bearer $token", messageId)
                 if (response.success) {
                     fetchMessages()
                 }
@@ -682,6 +720,179 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     _settingsActionState.value = "Success: Verification review rescinded."
                 } else {
                     _settingsActionState.value = "Error: " + (response.error ?: "Failed to withdraw verification.")
+                }
+            } catch (e: Exception) {
+                _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
+            }
+        }
+    }
+
+    // ── Socials immediate-CRUD ────────────────────────────────────────────
+    fun addSocialAccount(platform: String, url: String) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            _settingsActionState.value = "Saving social..."
+            try {
+                val response = RetrofitClient.apiService.createSocial(
+                    "Bearer $token",
+                    com.quickpitik.mobile.data.remote.CreateSocialRequest(platform, url),
+                )
+                if (response.success) {
+                    _settingsActionState.value = "Success: Social added."
+                    fetchSettings()
+                } else {
+                    _settingsActionState.value = "Error: " + (response.error ?: "Failed to add social.")
+                }
+            } catch (e: Exception) {
+                _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
+            }
+        }
+    }
+
+    fun updateSocialAccount(id: String, url: String) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            _settingsActionState.value = "Updating social..."
+            try {
+                val response = RetrofitClient.apiService.patchSocial(
+                    "Bearer $token",
+                    id,
+                    com.quickpitik.mobile.data.remote.PatchSocialRequest(url),
+                )
+                if (response.success) {
+                    _settingsActionState.value = "Success: Social updated."
+                    fetchSettings()
+                } else {
+                    _settingsActionState.value = "Error: " + (response.error ?: "Failed to update social.")
+                }
+            } catch (e: Exception) {
+                _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
+            }
+        }
+    }
+
+    fun deleteSocialAccount(id: String) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            _settingsActionState.value = "Removing social..."
+            try {
+                val response = RetrofitClient.apiService.deleteSocial("Bearer $token", id)
+                if (response.success) {
+                    _settingsActionState.value = "Success: Social removed."
+                    fetchSettings()
+                } else {
+                    _settingsActionState.value = "Error: " + (response.error ?: "Failed to remove social.")
+                }
+            } catch (e: Exception) {
+                _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
+            }
+        }
+    }
+
+    // ── Payouts immediate-CRUD ────────────────────────────────────────────
+    fun addPayoutAccount(
+        method: String,
+        accountName: String,
+        accountNumber: String,
+        qrBytes: ByteArray? = null,
+    ) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            _settingsActionState.value = "Saving payout..."
+            try {
+                val createResponse = RetrofitClient.apiService.createPayoutAccount(
+                    "Bearer $token",
+                    com.quickpitik.mobile.data.remote.CreatePayoutRequest(method, accountNumber, accountName),
+                )
+                if (!createResponse.success || createResponse.data == null) {
+                    _settingsActionState.value = "Error: " + (createResponse.error ?: "Failed to add payout.")
+                    return@launch
+                }
+                if (qrBytes != null) {
+                    val newId = createResponse.data.id
+                    val requestFile = qrBytes.toRequestBody("image/png".toMediaTypeOrNull(), 0, qrBytes.size)
+                    val part = MultipartBody.Part.createFormData("file", "qr.png", requestFile)
+                    RetrofitClient.apiService.uploadPayoutQr("Bearer $token", newId, part)
+                }
+                _settingsActionState.value = "Success: Payout added."
+                fetchSettings()
+            } catch (e: Exception) {
+                _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
+            }
+        }
+    }
+
+    fun updatePayoutAccount(id: String, accountName: String, accountNumber: String) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            _settingsActionState.value = "Updating payout..."
+            try {
+                val response = RetrofitClient.apiService.patchPayout(
+                    "Bearer $token",
+                    id,
+                    com.quickpitik.mobile.data.remote.PatchPayoutRequest(accountNumber, accountName),
+                )
+                if (response.success) {
+                    _settingsActionState.value = "Success: Payout updated."
+                    fetchSettings()
+                } else {
+                    _settingsActionState.value = "Error: " + (response.error ?: "Failed to update payout.")
+                }
+            } catch (e: Exception) {
+                _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
+            }
+        }
+    }
+
+    fun deletePayoutAccount(id: String) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            _settingsActionState.value = "Removing payout..."
+            try {
+                val response = RetrofitClient.apiService.deletePayout("Bearer $token", id)
+                if (response.success) {
+                    _settingsActionState.value = "Success: Payout removed."
+                    fetchSettings()
+                } else {
+                    _settingsActionState.value = "Error: " + (response.error ?: "Failed to remove payout.")
+                }
+            } catch (e: Exception) {
+                _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
+            }
+        }
+    }
+
+    fun setPrimaryPayoutAccount(id: String) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            _settingsActionState.value = "Updating primary…"
+            try {
+                val response = RetrofitClient.apiService.setPrimaryPayout("Bearer $token", id)
+                if (response.success && response.data != null) {
+                    _payoutAccounts.value = response.data
+                    _settingsActionState.value = "Success: Primary updated."
+                } else {
+                    _settingsActionState.value = "Error: " + (response.error ?: "Failed to set primary.")
+                }
+            } catch (e: Exception) {
+                _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
+            }
+        }
+    }
+
+    fun uploadPayoutAccountQr(id: String, qrBytes: ByteArray) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            _settingsActionState.value = "Uploading QR…"
+            try {
+                val requestFile = qrBytes.toRequestBody("image/png".toMediaTypeOrNull(), 0, qrBytes.size)
+                val part = MultipartBody.Part.createFormData("file", "qr.png", requestFile)
+                val response = RetrofitClient.apiService.uploadPayoutQr("Bearer $token", id, part)
+                if (response.success) {
+                    _settingsActionState.value = "Success: QR uploaded."
+                    fetchSettings()
+                } else {
+                    _settingsActionState.value = "Error: " + (response.error ?: "Failed to upload QR.")
                 }
             } catch (e: Exception) {
                 _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")

@@ -110,8 +110,11 @@ class CartRepositoryImpl : CartRepository {
         if (token != null) {
             return try {
                 val response = api.clearCart("Bearer $token")
-                if (response.success && response.data != null) {
-                    Result.success(response.data.cleared)
+                if (response.success) {
+                    // `cleared` is the count of rows deleted; zero is still
+                    // success (the BE removes cart rows during order creation,
+                    // so a follow-up DELETE legitimately finds nothing left).
+                    Result.success(true)
                 } else {
                     _cartItems.value = originalList
                     Result.failure(Exception(response.error ?: "Server refused to clear cart"))
@@ -169,8 +172,10 @@ class CartRepositoryImpl : CartRepository {
         return try {
             val response = api.createOrder(formattedToken, idempotencyKey, request)
             if (response.success && response.data != null) {
-                // Clear the cart on successful order
-                clearCart(token)
+                // Match website: cart is cleared on PAID confirmation in
+                // /orders/return, NOT on order creation. Pre-clearing here
+                // strands the local cart empty if the user cancels PayMongo
+                // and bounces back to retry — and the website doesn't do it.
                 Result.success(response.data)
             } else {
                 Result.failure(Exception(response.error ?: "Checkout failed"))
