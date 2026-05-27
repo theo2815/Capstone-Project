@@ -53,6 +53,13 @@ class AuthService(
         if (!passwordEncoder.matches(req.password, user.passwordHash)) {
             throw BadCredentialsException("Invalid email or password")
         }
+        // F4 (2026-05-27): suspended users must not get fresh tokens.
+        // Phase G admin suspension was previously a client-side-only block
+        // — an existing token kept working until 15-min TTL expiry, and the
+        // suspended user could log back in to mint a new one.
+        if (user.suspendedAt != null) {
+            throw UnauthorizedException("Account suspended", "ACCOUNT_SUSPENDED")
+        }
         return buildAuthResponse(user)
     }
 
