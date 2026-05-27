@@ -8,6 +8,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { Kicker } from "@/components/ui/kicker";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
+import { ApiError } from "@/lib/api";
 import {
   buildOrderBundleUrl,
   fetchOrderDetail,
@@ -80,8 +81,16 @@ function ReturnBody() {
           setPollState("failed");
           return;
         }
-      } catch {
-        // Transient (e.g. token not visible yet, BE hiccup) — keep polling.
+      } catch (err) {
+        // 404 means the orderId/token combo is genuinely wrong (fat-fingered
+        // return URL, expired guest token) — fail fast instead of spinning
+        // for 60s and landing on the friendly-but-misleading TimeoutState.
+        // Other errors (network blip, BE hiccup, token not visible yet)
+        // stay transient and keep polling.
+        if (err instanceof ApiError && err.status === 404) {
+          if (!cancelled) setPollState("failed");
+          return;
+        }
       }
       if (attempts >= POLL_MAX_ATTEMPTS) {
         if (!cancelled) setPollState("timeout");
