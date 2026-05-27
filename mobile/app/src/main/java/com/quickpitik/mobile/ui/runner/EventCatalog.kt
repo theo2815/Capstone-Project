@@ -42,3 +42,9 @@ fun eventDateLabel(date: String): String =
 
 // Lifecycle stage paired with the event, computed once so filtering/segmenting reuses it.
 fun EventDto.lifecycleState(today: LocalDate = LocalDate.now()): EventState = deriveEventState(date, today)
+
+// Mirrors the website's `canUploadToEvent` (event-catalog.ts) — uploadable only
+// during the race-day + 3-day grace window. Verbatim: uploadable ⟺ state == LIVE.
+// Backend enforces the same window server-side as EVENT_NOT_UPLOADABLE.
+fun canUploadToEvent(date: String, today: LocalDate = LocalDate.now()): Boolean =
+    deriveEventState(date, today) == EventState.LIVE

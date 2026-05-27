@@ -32,8 +32,20 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto
+import com.quickpitik.mobile.ui.runner.PhotoPreview
+import com.quickpitik.mobile.ui.runner.PhotoPreviewData
+import com.quickpitik.mobile.ui.runner.PhotoPreviewMode
 import com.quickpitik.mobile.ui.theme.*
 import java.net.URLEncoder
+
+private fun PhotographerLibraryPhotoDto.toOwnerPreviewData(eventName: String?): PhotoPreviewData =
+    PhotoPreviewData(
+        id = id,
+        price = 0.0,
+        imageUrl = resolveShareImageUrl(thumbnailUrl),
+        eventName = eventName,
+        salesCount = salesCount,
+    )
 
 // Focused share page — mobile mirror of website /dashboard/events/[id].
 // Layout: back → hero → public-gallery share band (copy + native share + social
@@ -50,7 +62,7 @@ fun PhotographerEventShareScreen(
     val context = LocalContext.current
     val brand by viewModel.brandSettings.collectAsState()
     val photosState by viewModel.sharePhotosState.collectAsState()
-    var selectedPhoto by remember { mutableStateOf<PhotographerLibraryPhotoDto?>(null) }
+    var selectedIndex by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(event.id) {
         viewModel.fetchSharePhotos(event.id)
@@ -223,16 +235,17 @@ fun PhotographerEventShareScreen(
                             )
                         }
                     } else {
-                        state.photos.chunked(2).forEach { rowPhotos ->
+                        state.photos.chunked(2).forEachIndexed { rowIdx, rowPhotos ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                rowPhotos.forEach { photo ->
+                                rowPhotos.forEachIndexed { colIdx, photo ->
+                                    val flatIdx = rowIdx * 2 + colIdx
                                     SharePhotoTile(
                                         photo = photo,
                                         modifier = Modifier.weight(1f),
-                                        onClick = { selectedPhoto = photo }
+                                        onClick = { selectedIndex = flatIdx }
                                     )
                                 }
                                 if (rowPhotos.size == 1) {
@@ -247,44 +260,23 @@ fun PhotographerEventShareScreen(
         }
     }
 
-    val preview = selectedPhoto
-    if (preview != null) {
-        AlertDialog(
-            onDismissRequest = { selectedPhoto = null },
-            title = { Text("Photo", fontWeight = FontWeight.Bold, color = Ink) },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(BoneDeep),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val url = resolveShareImageUrl(preview.thumbnailUrl)
-                        if (url != null) {
-                            AsyncImage(
-                                model = url,
-                                contentDescription = "Photo preview",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Text("QUICKPITIK PREVIEW", color = SlateSoft, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("Sold: ${preview.salesCount}", style = Typography.bodyMedium, color = Ink)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { selectedPhoto = null }) {
-                    Text("CLOSE", color = Ink, fontWeight = FontWeight.Bold)
-                }
-            },
-            containerColor = Bone,
-            shape = RoundedCornerShape(16.dp)
+    // Reuses the runner-side PhotoPreview lightbox in OwnerReview mode — swipe
+    // through all uploaded photos, no purchase UI. Same Dialog/Pager visual as
+    // the runner browse flow, so the photographer sees their work in the
+    // primary lightbox experience (not a cramped AlertDialog).
+    val idx = selectedIndex
+    val current = photosState
+    if (idx != null && current is SharePhotosState.Success && current.photos.isNotEmpty()) {
+        val previewPhotos = remember(current.photos, event.name) {
+            current.photos.map { it.toOwnerPreviewData(event.name) }
+        }
+        val safeIdx = idx.coerceIn(0, previewPhotos.size - 1)
+        PhotoPreview(
+            photos = previewPhotos,
+            currentIndex = safeIdx,
+            onClose = { selectedIndex = null },
+            onIndexChange = { selectedIndex = it },
+            mode = PhotoPreviewMode.OwnerReview,
         )
     }
 }

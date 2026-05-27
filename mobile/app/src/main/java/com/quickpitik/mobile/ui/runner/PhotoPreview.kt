@@ -51,7 +51,14 @@ data class PhotoPreviewData(
     val price: Double,
     val imageUrl: String?,
     val eventName: String?,
+    val salesCount: Int? = null,
 )
+
+// PhotoPreview has two flavors. Browse is the runner buy-flow (Add to cart /
+// Buy now). OwnerReview is for the photographer reviewing their own uploads
+// from the event-share page — same Dialog/Pager shell, no purchase UI,
+// "X sold" stat in place of price.
+enum class PhotoPreviewMode { Browse, OwnerReview }
 
 fun PhotoDto.toPreviewData(eventName: String?): PhotoPreviewData = PhotoPreviewData(
     id = id,
@@ -72,11 +79,12 @@ fun CartItemDto.toPreviewData(): PhotoPreviewData = PhotoPreviewData(
 fun PhotoPreview(
     photos: List<PhotoPreviewData>,
     currentIndex: Int,
-    isInCart: (PhotoPreviewData) -> Boolean,
     onClose: () -> Unit,
     onIndexChange: (Int) -> Unit,
-    onToggleCart: (PhotoPreviewData) -> Unit,
-    onBuyNow: (PhotoPreviewData) -> Unit,
+    isInCart: (PhotoPreviewData) -> Boolean = { false },
+    onToggleCart: (PhotoPreviewData) -> Unit = {},
+    onBuyNow: (PhotoPreviewData) -> Unit = {},
+    mode: PhotoPreviewMode = PhotoPreviewMode.Browse,
 ) {
     if (photos.isEmpty()) {
         onClose()
@@ -242,7 +250,8 @@ fun PhotoPreview(
                         }
                         // "In cart" pill — overlay outside the pager so it doesn't
                         // scroll with the photo. Reflects the active page's status.
-                        if (photoInCart) {
+                        // Browse-mode only; the OwnerReview flow has no cart.
+                        if (photoInCart && mode == PhotoPreviewMode.Browse) {
                             Row(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
@@ -268,42 +277,72 @@ fun PhotoPreview(
                         }
                     }
 
-                    // ── Price + actions ─────────────────────────────
+                    // ── Bottom row ──────────────────────────────────
+                    // Browse: price + Add/Buy actions (runner buy-flow).
+                    // OwnerReview: "X sold" stat + single Close (photographer
+                    // reviewing their own uploads — no purchase UI).
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 20.dp, vertical = 16.dp),
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Bottom,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Kicker("Price", color = SlateSoft)
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "₱${"%,.2f".format(activePhoto.price)}",
-                                    style = NumeralStyle.copy(fontSize = 22.sp),
-                                    color = Ink,
+                        when (mode) {
+                            PhotoPreviewMode.Browse -> {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.Bottom,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Kicker("Price", color = SlateSoft)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "₱${"%,.2f".format(activePhoto.price)}",
+                                            style = NumeralStyle.copy(fontSize = 22.sp),
+                                            color = Ink,
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    GhostCta(
+                                        text = if (photoInCart) "− Remove" else "+ Add to cart",
+                                        onClick = { onToggleCart(activePhoto) },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    PrimaryCta(
+                                        text = if (photoInCart) "Checkout now →" else "Buy now →",
+                                        onClick = { onBuyNow(activePhoto) },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+                            PhotoPreviewMode.OwnerReview -> {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.Bottom,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Kicker("Sold", color = SlateSoft)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = (activePhoto.salesCount ?: 0).toString(),
+                                            style = NumeralStyle.copy(fontSize = 22.sp),
+                                            color = Ink,
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                GhostCta(
+                                    text = "Close",
+                                    onClick = onClose,
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
                             }
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            GhostCta(
-                                text = if (photoInCart) "− Remove" else "+ Add to cart",
-                                onClick = { onToggleCart(activePhoto) },
-                                modifier = Modifier.weight(1f),
-                            )
-                            PrimaryCta(
-                                text = if (photoInCart) "Checkout now →" else "Buy now →",
-                                onClick = { onBuyNow(activePhoto) },
-                                modifier = Modifier.weight(1f),
-                            )
                         }
                     }
 

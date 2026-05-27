@@ -15,3 +15,6 @@ val TileShape = RoundedCornerShape(8.dp)
 
 /** Input field / filter chip radius (website `rounded-xl` ≈ 12px). */
 val FieldShape = RoundedCornerShape(12.dp)
+
+/** Sparkline bar cap — rounded top only, square base. */
+val SparklineBarShape = RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)
