@@ -29,8 +29,6 @@ import { uploadAvatar } from "@/lib/api-avatar";
 import {
   deletePayoutAccount,
   deleteSocial,
-  fetchPayoutAccounts,
-  fetchSocials,
   patchPayoutAccount,
   patchPrimaryPayout,
   patchSocial,
@@ -228,59 +226,12 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     cover: null,
     watermark: null,
   });
-  // Mirror `editing` into a ref so async closures (hydration) can read the
-  // current value without re-running on every state flip.
-  const editingRef = useRef(editing);
-  editingRef.current = editing;
   const { showToast } = useToast();
 
-  // One-shot hydration of socials + payouts from the BE on mount.
-  //
-  // History: an earlier version of this effect ALSO auto-POSTed local-only
-  // rows to the BE as a migration shim for legacy pre-Phase-F.2 localStorage.
-  // That shim was the root cause of the 2026-05-18 "all users share same
-  // photographer settings" bug — it pushed User A's stale localStorage
-  // socials/payouts to the BE under User B's auth token whenever B's settings
-  // page mounted. Combined with `resetUserScopedStores` clearing the local
-  // store on every auth transition (see lib/auth-reset.ts), the shim is no
-  // longer needed — local store starts empty on a fresh session, so there's
-  // nothing to "migrate" anyway.
-  //
-  // Current behavior: fetch from BE, overwrite local store. BE is the source
-  // of truth. Edits go through the explicit Edit→Save state machine which
-  // posts via the same `postSocial` / `postPayoutAccount` helpers — not
-  // through this effect.
-  const hydratedRef = useRef(false);
-  useEffect(() => {
-    if (hydratedRef.current) return;
-    hydratedRef.current = true;
-    (async () => {
-      let beSocials: SocialLink[] | null = null;
-      let bePayouts: PayoutAccount[] | null = null;
-      try {
-        [beSocials, bePayouts] = await Promise.all([
-          fetchSocials(),
-          fetchPayoutAccounts(),
-        ]);
-      } catch (err) {
-        console.warn(
-          "[photographer/settings] hydration fetch failed; keeping local state",
-          err,
-        );
-        return;
-      }
-      if (!beSocials || !bePayouts) return;
-      if (editingRef.current) {
-        // User entered edit mode mid-fetch. Don't clobber their snapshot;
-        // the next page load will re-hydrate.
-        return;
-      }
-      usePhotographerSettingsStore.setState({
-        socials: beSocials,
-        payouts: bePayouts,
-      });
-    })();
-  }, []);
+  // BE-sourced hydration of the photographer-settings + user-media stores
+  // now lives on DashboardShell via `usePhotographerSettingsHydration` so
+  // every /dashboard/* page sees populated state on mount (not just here).
+  // See `hooks/use-photographer-settings-hydration.ts`.
 
   const beginEdit = useCallback(() => {
     snapshotRef.current = takeSnapshot();

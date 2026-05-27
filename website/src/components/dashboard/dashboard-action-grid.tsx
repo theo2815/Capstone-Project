@@ -6,13 +6,15 @@ import { AvatarDisc } from "@/components/account/avatar-disc";
 import { Sparkline } from "@/components/dashboard/sparkline";
 import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
-import { usePhotographerEvents } from "@/hooks/use-photographer-data";
+import {
+  usePhotographerEarnings,
+  usePhotographerEvents,
+} from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
 import {
   BRAND_COLOR_HEX,
   usePhotographerSettingsStore,
 } from "@/store/photographer-settings-store";
-import { PHOTOGRAPHER_EARNINGS } from "@/lib/photographer-mock";
 
 // 2×2 quick-action grid that anchors the dashboard overview. Each card
 // carries a visual signature drawn from real photographer data — photo-tone
@@ -158,14 +160,13 @@ function ProfileCard() {
 }
 
 // ─── Earnings — 12-week sparkline ─────────────────────────────────────────
-// Gated through useMockLatency so the sparkline + caption show a skeleton
-// during the (currently zero-ms) fetch window. With MOCK_LATENCY_MS = 0 the
-// hook resolves on first render — no flash, no overhead. Bumping the
-// constant in lib/mock-latency.ts is what reveals this state.
+// Reads GET /me/photographer/earnings directly — null while in flight, then
+// the live numbers. No mock fallback: the previous `PHOTOGRAPHER_EARNINGS`
+// seed made a BE 404 / slow start render fake ₱90k stats as the photographer's
+// real earnings on the dashboard hero.
 function EarningsCard() {
-  const e = PHOTOGRAPHER_EARNINGS;
-  const isLoading = false;
-  if (isLoading || !e) {
+  const e = usePhotographerEarnings();
+  if (!e) {
     return (
       <CardShell href={ROUTES.DASHBOARD_EARNINGS}>
         <TileSkeleton aspectRatio="h-16 md:h-20" className="rounded-md" />
