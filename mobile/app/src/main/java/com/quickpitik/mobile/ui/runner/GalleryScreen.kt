@@ -46,7 +46,6 @@ import com.quickpitik.mobile.ui.theme.*
 fun RunnerGalleryScreen(
     viewModel: RunnerGalleryViewModel,
     cartViewModel: CartViewModel,
-    onNavigateToCart: () -> Unit,
     onNavigateToOrders: () -> Unit,
     onNavigateToProfile: () -> Unit,
     onNavigateToSettings: () -> Unit,
@@ -60,6 +59,9 @@ fun RunnerGalleryScreen(
     val activeEvent by viewModel.activeEvent.collectAsState()
     val searchState by viewModel.searchState.collectAsState()
     val isFiltered by viewModel.isFiltered.collectAsState()
+    // Hoisted so the grid tile's inline +cart / buy buttons can read in-cart
+    // state for the ✓-cart label flip without each tile collecting its own copy.
+    val cartItems by cartViewModel.cartItems.collectAsState()
 
     // Live selfie capture (camera) + gallery pick — reuse the proven ProfileScreen
     // pattern: a MediaStore URI handed to TakePicture(), then face-search the bytes.
@@ -109,24 +111,8 @@ fun RunnerGalleryScreen(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val cartItems by cartViewModel.cartItems.collectAsState()
-                    BadgedBox(
-                        badge = {
-                            if (cartItems.isNotEmpty()) {
-                                Badge(containerColor = Fresh, contentColor = Bone) {
-                                    Text("${cartItems.size}")
-                                }
-                            }
-                        }
-                    ) {
-                        IconButton(
-                            onClick = onNavigateToCart,
-                            colors = IconButtonDefaults.iconButtonColors(containerColor = BoneDeep)
-                        ) {
-                            Icon(Icons.Default.ShoppingCart, contentDescription = "Cart", tint = Ink)
-                        }
-                    }
-
+                    // Cart access lives in the global FloatingCart pill — header icon dropped
+                    // to avoid two affordances pointing at the same overlay.
                     var menuExpanded by remember { mutableStateOf(false) }
                     val sessionManager = remember { SessionManager.getInstance(context) }
                     val userName = sessionManager.getUserName() ?: "Runner"
@@ -136,13 +122,13 @@ fun RunnerGalleryScreen(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .background(Fresh)
+                                .background(BoneDeep)
                                 .clickable { menuExpanded = true },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = userName.take(1).uppercase(),
-                                color = Bone,
+                                color = Ink,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp
                             )
@@ -189,18 +175,16 @@ fun RunnerGalleryScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             if (activeEvent == null) {
-                Box(
+                LoadingSkeleton(
+                    shape = QpCardShape,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 64.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = Fresh)
-                }
+                        .height(220.dp),
+                )
             } else {
                 // SELECTED EVENT GALLERY VIEW
                 Card(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = QpCardShape,
                     colors = CardDefaults.cardColors(containerColor = BoneDeep),
                     border = BorderStroke(1.dp, Line),
                     modifier = Modifier.fillMaxWidth()
@@ -276,7 +260,7 @@ fun RunnerGalleryScreen(
                         colors = CardDefaults.cardColors(
                             containerColor = if (activeSearchTab == 0) BoneDeep else Bone
                         ),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = QpCardShape,
                         modifier = Modifier.weight(1f)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -297,7 +281,7 @@ fun RunnerGalleryScreen(
                         colors = CardDefaults.cardColors(
                             containerColor = if (activeSearchTab == 1) BoneDeep else Bone
                         ),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = QpCardShape,
                         modifier = Modifier.weight(1f)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -316,7 +300,7 @@ fun RunnerGalleryScreen(
                     Card(
                         border = BorderStroke(1.dp, Line),
                         colors = CardDefaults.cardColors(containerColor = BoneDeep),
-                        shape = RoundedCornerShape(20.dp),
+                        shape = QpCardShape,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
@@ -324,28 +308,26 @@ fun RunnerGalleryScreen(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = "Find photos of yourself instantly using our high-speed face recognition model.",
+                                text = "Find photos of yourself instantly with face recognition.",
                                 textAlign = TextAlign.Center,
                                 style = Typography.bodyMedium,
                                 color = InkSoft
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             // Primary: search with a saved library selfie
-                            Button(
+                            PrimaryCta(
+                                text = "Search with stored selfie",
                                 onClick = { viewModel.searchByStoredSelfie() },
-                                shape = RoundedCornerShape(percent = 100),
-                                colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("USE STORED SELFIE", style = Typography.labelMedium)
-                            }
+                                modifier = Modifier.fillMaxWidth(),
+                            )
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 // Take a selfie now — opens the camera via a MediaStore URI
-                                Button(
+                                GhostCta(
+                                    text = "Take a selfie",
                                     onClick = {
                                         try {
                                             val values = ContentValues().apply {
@@ -362,21 +344,14 @@ fun RunnerGalleryScreen(
                                             // Swallow — camera unavailable; user can still use Upload/Stored.
                                         }
                                     },
-                                    shape = RoundedCornerShape(percent = 100),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Bone),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text("TAKE SELFIE", style = Typography.labelMedium)
-                                }
+                                    modifier = Modifier.weight(1f),
+                                )
                                 // Upload an existing photo from the device
-                                Button(
+                                GhostCta(
+                                    text = "Upload",
                                     onClick = { selfieGalleryLauncher.launch("image/*") },
-                                    shape = RoundedCornerShape(percent = 100),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Line, contentColor = Ink),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text("UPLOAD", style = Typography.labelMedium)
-                                }
+                                    modifier = Modifier.weight(1f),
+                                )
                             }
                         }
                     }
@@ -398,7 +373,7 @@ fun RunnerGalleryScreen(
                             focusedTextColor = Ink,
                             unfocusedTextColor = InkSoft
                         ),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = FieldShape,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -408,23 +383,29 @@ fun RunnerGalleryScreen(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
-                    Text(
-                        text = "MATCHED PHOTOS (WATERMARKED PREVIEW)",
-                        style = Typography.labelMedium,
-                        color = Slate
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Kicker("Matched photos")
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Watermarked previews — buy to unlock the full-resolution shot.",
+                            style = Typography.bodySmall,
+                            color = SlateSoft,
+                        )
+                    }
                     if (isFiltered || searchState is PhotosSearchState.Error) {
                         Text(
-                            text = "Reset Search",
+                            text = "Reset",
                             style = Typography.labelMedium,
                             color = Fresh,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable {
-                                bibSearchQuery = ""
-                                viewModel.clearFilter()
-                            }
+                            modifier = Modifier
+                                .padding(start = 12.dp, top = 2.dp)
+                                .clickable {
+                                    bibSearchQuery = ""
+                                    viewModel.clearFilter()
+                                }
                         )
                     }
                 }
@@ -433,29 +414,13 @@ fun RunnerGalleryScreen(
                 // Beautiful Watermarked Photo Grid
                 when (val state = searchState) {
                     is PhotosSearchState.Loading -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(color = Fresh)
-                        }
+                        PhotoGridSkeleton()
                     }
                     is PhotosSearchState.Error -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = state.message,
-                                color = Color.Red,
-                                textAlign = TextAlign.Center,
-                                style = Typography.bodyMedium
-                            )
-                        }
+                        ErrorView(
+                            message = state.message,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                     is PhotosSearchState.Success -> {
                         if (state.photos.isEmpty()) {
@@ -479,80 +444,88 @@ fun RunnerGalleryScreen(
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     rowPhotos.forEach { photo ->
-                                        Box(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .aspectRatio(0.85f)
-                                                .clip(RoundedCornerShape(16.dp))
-                                                .background(BoneDeep)
-                                                .clickable { selectedPhotoForDetail = photo },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            if (photo.imageUrl != null) {
-                                                AsyncImage(
-                                                    model = photo.imageUrl,
-                                                    contentDescription = "Photo preview",
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentScale = ContentScale.Crop
-                                                )
+                                        key(photo.id) {
+                                            val photoInCart = cartItems.any { it.photoId == photo.id }
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .aspectRatio(0.85f)
+                                                    .clip(QpCardShape)
+                                                    .background(BoneDeep)
+                                                    .clickable { selectedPhotoForDetail = photo },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                if (photo.imageUrl != null) {
+                                                    AsyncImage(
+                                                        model = photo.imageUrl,
+                                                        contentDescription = "Photo preview",
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        contentScale = ContentScale.Crop
+                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .background(Color.Black.copy(alpha = 0.3f))
+                                                    )
+                                                }
+
+                                                // Premium transparent watermark overlay (Fulfills NFR-P-2 security preview)
                                                 Box(
                                                     modifier = Modifier
                                                         .fillMaxSize()
-                                                        .background(Color.Black.copy(alpha = 0.3f))
-                                                )
-                                            }
-
-                                            // Background mock runner photo texture details
-                                            Column(
-                                                modifier = Modifier.fillMaxSize().padding(12.dp),
-                                                verticalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                // Header Tag (KM check)
-                                                Surface(
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    color = Fresh.copy(alpha = 0.15f),
-                                                    modifier = Modifier.padding(4.dp)
+                                                        .background(Color.Black.copy(alpha = 0.04f)),
+                                                    contentAlignment = Alignment.Center
                                                 ) {
                                                     Text(
-                                                        text = "KM ${photo.km ?: 0}",
-                                                        color = Fresh,
-                                                        fontSize = 10.sp,
+                                                        text = "QUICKPITIK\nPREVIEW",
+                                                        color = Color.White.copy(alpha = 0.35f),
+                                                        fontSize = 12.sp,
                                                         fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                        textAlign = TextAlign.Center,
+                                                        letterSpacing = 1.5.sp
                                                     )
                                                 }
 
-                                                // Footer metadata
-                                                Column {
-                                                    Text(
-                                                        text = "Bib: ${photo.bib ?: "N/A"}",
-                                                        style = Typography.bodyMedium,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = if (photo.imageUrl != null) Color.White else Ink
+                                                // Inline cart / buy actions — bottom-right of tile.
+                                                // Website parity (photo-mosaic-tile.tsx):
+                                                //   • + cart  → addItem; flips to ✓ cart (Fresh fill) when in cart
+                                                //   • buy →   → express checkout (add + skip to checkout sheet)
+                                                Row(
+                                                    modifier = Modifier
+                                                        .align(Alignment.BottomEnd)
+                                                        .padding(8.dp),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                ) {
+                                                    TileActionPill(
+                                                        label = if (photoInCart) "✓ cart" else "+ cart",
+                                                        filled = photoInCart,
+                                                        onClick = {
+                                                            val event = activeEvent ?: return@TileActionPill
+                                                            if (photoInCart) {
+                                                                cartViewModel.removeFromCart(photo.id)
+                                                            } else {
+                                                                cartViewModel.addToCart(
+                                                                    photo, event.id, event.slug, event.name,
+                                                                )
+                                                            }
+                                                        },
                                                     )
-                                                    Text(
-                                                        text = "Time: ${photo.time}",
-                                                        style = Typography.bodySmall,
-                                                        color = if (photo.imageUrl != null) Color.White.copy(alpha = 0.8f) else SlateSoft
+                                                    TileActionPill(
+                                                        label = "buy →",
+                                                        filled = false,
+                                                        onClick = {
+                                                            val event = activeEvent ?: return@TileActionPill
+                                                            if (photoInCart) {
+                                                                cartViewModel.openCheckoutSheet()
+                                                            } else {
+                                                                cartViewModel.triggerExpressCheckout()
+                                                                cartViewModel.addToCart(
+                                                                    photo, event.id, event.slug, event.name,
+                                                                )
+                                                            }
+                                                        },
                                                     )
                                                 }
-                                            }
-
-                                            // Premium transparent watermark overlay (Fulfills NFR-P-2 security preview)
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .background(Color.Black.copy(alpha = 0.04f)),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    text = "QUICKPITIK\nPREVIEW",
-                                                    color = Color.White.copy(alpha = 0.35f),
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    textAlign = TextAlign.Center,
-                                                    letterSpacing = 1.5.sp
-                                                )
                                             }
                                         }
                                     }
@@ -586,94 +559,102 @@ fun RunnerGalleryScreen(
 
     if (selectedPhotoForDetail != null) {
         val photo = selectedPhotoForDetail!!
-        val cartItems by cartViewModel.cartItems.collectAsState()
-        val isInCart = cartItems.any { it.photoId == photo.id }
-        
-        AlertDialog(
-            onDismissRequest = { selectedPhotoForDetail = null },
-            title = { Text("Photo Details", fontWeight = FontWeight.Bold, color = Ink) },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(180.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(BoneDeep),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (photo.imageUrl != null) {
-                            AsyncImage(
-                                model = photo.imageUrl,
-                                contentDescription = "Photo preview",
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Text("QUICKPITIK PREVIEW", fontWeight = FontWeight.Bold, color = SlateSoft)
-                        }
-                        
-                        // Watermark overlay
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.04f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "QUICKPITIK\nPREVIEW",
-                                color = Color.White.copy(alpha = 0.35f),
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = TextAlign.Center
-                            )
-                        }
+        // Pull the whole matched-photos list so the lightbox pager can swipe
+        // through every photo, not just the tapped one.
+        val allPhotos = (searchState as? PhotosSearchState.Success)?.photos.orEmpty()
+        val previewPhotos = allPhotos.map { it.toPreviewData(activeEvent?.name) }
+        val currentIndex = previewPhotos.indexOfFirst { it.id == photo.id }
+
+        if (currentIndex >= 0) {
+            PhotoPreview(
+                photos = previewPhotos,
+                currentIndex = currentIndex,
+                isInCart = { previewData ->
+                    cartItems.any { it.photoId == previewData.id }
+                },
+                onClose = { selectedPhotoForDetail = null },
+                onIndexChange = { newIndex ->
+                    selectedPhotoForDetail = allPhotos.getOrNull(newIndex)
+                },
+                onToggleCart = { previewData ->
+                    val targetPhoto = allPhotos.firstOrNull { it.id == previewData.id }
+                        ?: return@PhotoPreview
+                    val event = activeEvent
+                    if (cartItems.any { it.photoId == previewData.id }) {
+                        cartViewModel.removeFromCart(previewData.id)
+                    } else if (event != null) {
+                        cartViewModel.addToCart(targetPhoto, event.id, event.slug, event.name)
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Bib Number: ${photo.bib ?: "N/A"}", style = Typography.bodyMedium, color = Ink)
-                    Text("Timestamp: ${photo.time}", style = Typography.bodyMedium, color = Ink)
-                    Text("Distance Mark: KM ${photo.km ?: 0}", style = Typography.bodyMedium, color = Ink)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Price:", style = Typography.titleMedium, color = Slate)
-                        Text(
-                            text = String.format("₱%,.2f", photo.price),
-                            style = Typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = Fresh
-                        )
+                    // Stay open so the runner sees the IN CART pill flip — they
+                    // can dismiss the lightbox when they're done browsing.
+                },
+                onBuyNow = { previewData ->
+                    val targetPhoto = allPhotos.firstOrNull { it.id == previewData.id }
+                        ?: return@PhotoPreview
+                    val event = activeEvent
+                    if (cartItems.any { it.photoId == previewData.id }) {
+                        cartViewModel.openCheckoutSheet()
+                    } else if (event != null) {
+                        cartViewModel.triggerExpressCheckout()
+                        cartViewModel.addToCart(targetPhoto, event.id, event.slug, event.name)
                     }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val event = activeEvent
-                        if (event != null) {
-                            if (isInCart) {
-                                cartViewModel.removeFromCart(photo.id)
-                            } else {
-                                cartViewModel.addToCart(photo, event.id, event.slug, event.name)
-                            }
-                        }
-                        selectedPhotoForDetail = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = if (isInCart) ErrorRed else Fresh, contentColor = Bone),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(if (isInCart) "REMOVE FROM CART" else "ADD TO CART")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { selectedPhotoForDetail = null }) {
-                    Text("CLOSE", color = Ink)
-                }
-            },
-            containerColor = Bone,
-            shape = RoundedCornerShape(16.dp)
+                    selectedPhotoForDetail = null
+                },
+            )
+        } else {
+            // Photo no longer in the loaded set (e.g. search ran again under us).
+            selectedPhotoForDetail = null
+        }
+    }
+}
+
+// Compact pill rendered on each photo tile (bottom-right) for inline cart
+// actions. Mirrors website photo-mosaic-tile.tsx: Bone backdrop with Ink text
+// in default state, Fresh fill with white text when `filled = true` (used for
+// the ✓-cart confirmation state). Tile-relative — kept narrow so two pills
+// fit comfortably even at 2-column mobile widths.
+@Composable
+private fun TileActionPill(
+    label: String,
+    filled: Boolean,
+    onClick: () -> Unit,
+) {
+    val bg = if (filled) Fresh else Bone.copy(alpha = 0.92f)
+    val fg = if (filled) Color.White else Ink
+    Box(
+        modifier = Modifier
+            .clip(PillShape)
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = label.uppercase(),
+            style = Typography.labelSmall,
+            color = fg,
+            fontSize = 9.sp,
         )
+    }
+}
+
+@Composable
+private fun PhotoGridSkeleton() {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        repeat(2) { rowIndex ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                repeat(2) {
+                    LoadingSkeleton(
+                        shape = QpCardShape,
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(0.85f),
+                    )
+                }
+            }
+            if (rowIndex < 1) Spacer(Modifier.height(12.dp))
+        }
     }
 }

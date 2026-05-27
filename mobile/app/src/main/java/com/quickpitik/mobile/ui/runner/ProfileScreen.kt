@@ -89,10 +89,17 @@ fun ProfileScreen(
         }
     }
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = Bone
-    ) {
+    val hapticFire = rememberQpHaptic()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var snackbarMessage by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(snackbarMessage) {
+        snackbarMessage?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            snackbarMessage = null
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(Bone)) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -113,12 +120,7 @@ fun ProfileScreen(
                     Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Ink)
                 }
                 Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = "RUNNER PROFILE",
-                    style = Typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Ink
-                )
+                Kicker("Runner profile")
             }
 
             LazyColumn(
@@ -132,45 +134,23 @@ fun ProfileScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(BoneDeep, RoundedCornerShape(16.dp))
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                            .background(BoneDeep, QpCardShape)
+                            .border(1.dp, Line, QpCardShape)
+                            .padding(horizontal = 24.dp, vertical = 28.dp),
                     ) {
-                        // Avatar disc
-                        Box(
-                            modifier = Modifier
-                                .size(72.dp)
-                                .clip(CircleShape)
-                                .background(Fresh),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = name.take(1).uppercase(),
-                                color = Bone,
-                                fontSize = 28.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Kicker("Runner")
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = name,
                             style = Typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = Ink,
-                            textAlign = TextAlign.Center
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = email,
                             style = Typography.bodyMedium,
                             color = Slate,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        SuggestionChip(
-                            onClick = {},
-                            label = { Text("RUNNER", color = Bone) },
-                            colors = SuggestionChipDefaults.suggestionChipColors(containerColor = Ink),
-                            border = null
                         )
                     }
                 }
@@ -184,14 +164,10 @@ fun ProfileScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
+                                Kicker("01 · Selfie library")
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "01. Selfie Library",
-                                    style = Typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Ink
-                                )
-                                Text(
-                                    text = "Used for AI marathon face recognition",
+                                    text = "Used for AI face recognition.",
                                     style = Typography.bodySmall,
                                     color = Slate
                                 )
@@ -200,7 +176,7 @@ fun ProfileScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Button(
+                                OutlinedButton(
                                     onClick = {
                                         try {
                                             val values = ContentValues().apply {
@@ -219,20 +195,20 @@ fun ProfileScreen(
                                             // Handle exception
                                         }
                                     },
-                                    colors = ButtonDefaults.buttonColors(containerColor = BoneDeep, contentColor = Ink),
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                    border = BorderStroke(1.dp, Line)
+                                    shape = PillShape,
+                                    border = BorderStroke(1.dp, Ink),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                                 ) {
-                                    Text("📷 CAMERA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("Camera", style = Typography.labelMedium, fontWeight = FontWeight.SemiBold)
                                 }
                                 Button(
                                     onClick = { galleryLauncher.launch("image/*") },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Color.White),
+                                    shape = PillShape,
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                                 ) {
-                                    Text("🖼️ GALLERY", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("Gallery", style = Typography.labelMedium, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
@@ -249,20 +225,13 @@ fun ProfileScreen(
 
                         if (isLoading) {
                             Spacer(modifier = Modifier.height(16.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(120.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(color = Fresh)
-                            }
+                            SelfieRowSkeleton()
                         } else if (selfies.isEmpty()) {
                             Spacer(modifier = Modifier.height(16.dp))
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .border(1.dp, SlateSoft, RoundedCornerShape(12.dp))
+                                    .border(1.dp, Line, FieldShape)
                                     .padding(24.dp),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -280,12 +249,18 @@ fun ProfileScreen(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 selfies.forEach { selfie ->
-                                    SelfieCard(
-                                        selfie = selfie,
-                                        onDelete = { viewModel.deleteSelfie(selfie.id) },
-                                        onSetPrimary = { viewModel.setPrimarySelfie(selfie.id) },
-                                        modifier = Modifier.weight(1f)
-                                    )
+                                    key(selfie.id) {
+                                        SelfieCard(
+                                            selfie = selfie,
+                                            onDelete = { viewModel.deleteSelfie(selfie.id) },
+                                            onSetPrimary = {
+                                                hapticFire(QpHaptic.CONFIRM)
+                                                viewModel.setPrimarySelfie(selfie.id)
+                                                snackbarMessage = "Primary selfie updated."
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
                                 }
                                 // Fill empty weight slots to avoid visual bugs when 1 item exists
                                 if (selfies.size < 3) {
@@ -301,36 +276,27 @@ fun ProfileScreen(
 
                 // Race Log Section — saved ∪ purchased, deduped by event (web /profile)
                 item {
-                    Text(
-                        text = "02. Race Log",
-                        style = Typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Ink
-                    )
-                    Text(
-                        text = "Events you saved or bought photos from",
-                        style = Typography.bodySmall,
-                        color = Slate
-                    )
+                    Column {
+                        Kicker("02 · Race log")
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Events you saved or bought photos from.",
+                            style = Typography.bodySmall,
+                            color = Slate
+                        )
+                    }
                 }
 
                 if (ordersLoading && raceLog.isEmpty()) {
                     item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(100.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(color = Fresh)
-                        }
+                        RaceLogSkeleton()
                     }
                 } else if (raceLog.isEmpty()) {
                     item {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .border(1.dp, SlateSoft, RoundedCornerShape(12.dp))
+                                .border(1.dp, Line, FieldShape)
                                 .padding(24.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
@@ -358,7 +324,7 @@ fun ProfileScreen(
                         }
                     }
                 } else {
-                    items(raceLog) { entry ->
+                    items(raceLog, key = { it.eventId }) { entry ->
                         RaceLogRow(
                             entry = entry,
                             onOpen = { entry.eventSlug?.let { onOpenEvent(it) } },
@@ -371,6 +337,43 @@ fun ProfileScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                 }
             }
+        }
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp),
+        )
+    }
+}
+
+@Composable
+private fun SelfieRowSkeleton() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        repeat(3) {
+            LoadingSkeleton(
+                shape = QpCardShape,
+                modifier = Modifier
+                    .weight(1f)
+                    .aspectRatio(0.75f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RaceLogSkeleton() {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        repeat(3) {
+            LoadingSkeleton(
+                shape = QpCardShape,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(88.dp),
+            )
         }
     }
 }
@@ -385,7 +388,7 @@ fun SelfieCard(
     Box(
         modifier = modifier
             .aspectRatio(0.75f)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(QpCardShape)
             .background(BoneDeep)
             .clickable { if (!selfie.isPrimary) onSetPrimary() }
     ) {
@@ -408,17 +411,16 @@ fun SelfieCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Quality Score Badge
+                // Quality Score Badge — slate scrim, not pure black
                 Box(
                     modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .background(Ink.copy(alpha = 0.7f), BadgeShape)
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = "Q: ${(selfie.qualityScore * 100).toInt()}%",
+                        text = "Q ${(selfie.qualityScore * 100).toInt()}%",
+                        style = Typography.labelSmall,
                         color = Color.White,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
                     )
                 }
 
@@ -434,32 +436,43 @@ fun SelfieCard(
                     Icon(
                         Icons.Default.Delete,
                         contentDescription = "Delete",
-                        tint = Bone,
+                        tint = Color.White,
                         modifier = Modifier.size(14.dp)
                     )
                 }
             }
 
-            // Primary Badge
+            // Primary affordance — Fresh badge when primary, Slate "Set primary" hint otherwise
             if (selfie.isPrimary) {
                 Row(
                     modifier = Modifier
-                        .background(Fresh, RoundedCornerShape(4.dp))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                        .background(Fresh, BadgeShape)
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Icon(
                         Icons.Default.Star,
                         contentDescription = null,
-                        tint = Bone,
-                        modifier = Modifier.size(10.dp)
+                        tint = Color.White,
+                        modifier = Modifier.size(12.dp)
                     )
                     Text(
                         text = "PRIMARY",
-                        color = Bone,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
+                        style = Typography.labelSmall,
+                        color = Color.White,
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .background(Slate.copy(alpha = 0.85f), BadgeShape)
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                ) {
+                    Text(
+                        text = "TAP TO SET",
+                        style = Typography.labelSmall,
+                        color = Color.White,
                     )
                 }
             }
@@ -529,63 +542,78 @@ private fun RaceLogRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(BoneDeep, RoundedCornerShape(12.dp))
+            .background(BoneDeep, QpCardShape)
+            .border(1.dp, Line, QpCardShape)
             .then(if (openable) Modifier.clickable { onOpen() } else Modifier)
-            .padding(16.dp),
+            .padding(horizontal = 16.dp, vertical = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
+            // Date first — kicker style, mono tnum (website parity)
+            Kicker(entry.eventDate?.let { eventDateLabel(it) } ?: "Date TBA")
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = entry.eventName,
-                style = Typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = Ink
+                style = Typography.titleMedium,
+                color = Ink,
+                maxLines = 2,
             )
-            Text(
-                text = entry.eventDate?.let { eventDateLabel(it) } ?: "Date TBA",
-                style = Typography.bodySmall,
-                color = Slate
-            )
-            if (entry.purchased) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "${entry.photosBought} photo${if (entry.photosBought == 1) "" else "s"} kept",
+                    text = when {
+                        entry.purchased -> "Photos kept"
+                        upcoming && entry.saved -> "Saved · photos on race day"
+                        entry.saved -> "Saved"
+                        else -> "Archived"
+                    },
                     style = Typography.bodySmall,
-                    color = Fresh,
-                    fontWeight = FontWeight.Bold
+                    color = Slate,
                 )
-            } else if (entry.saved) {
-                Text(
-                    text = if (upcoming) "Saved · photos coming on race day" else "Saved",
-                    style = Typography.bodySmall,
-                    color = SlateSoft
-                )
+                if (entry.purchased && entry.photosBought > 0) {
+                    Text(
+                        text = "  ·  ",
+                        style = Typography.bodySmall,
+                        color = SlateSoft,
+                    )
+                    Text(
+                        text = "${entry.photosBought}",
+                        style = NumeralStyle.copy(fontSize = 14.sp),
+                        color = Fresh,
+                    )
+                    Text(
+                        text = " kept",
+                        style = Typography.bodySmall,
+                        color = Fresh,
+                    )
+                }
             }
         }
+        Spacer(modifier = Modifier.width(12.dp))
         Column(horizontalAlignment = Alignment.End) {
             if (entry.purchased) {
                 Text(
                     text = "₱%,.2f".format(entry.totalSpent),
-                    style = Typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Ink
+                    style = NumeralStyle.copy(fontSize = 16.sp),
+                    color = Ink,
                 )
+                Spacer(modifier = Modifier.height(4.dp))
             }
-            Spacer(modifier = Modifier.height(4.dp))
             if (upcoming && entry.saved && !entry.purchased) {
                 Text(
-                    text = "UNSAVE",
+                    text = "Unsave",
                     style = Typography.labelMedium,
                     color = ErrorRed,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.clickable { onUnsave() }
                 )
             } else if (openable) {
                 Text(
                     text = "Open →",
                     style = Typography.labelMedium,
-                    color = Fresh,
-                    fontWeight = FontWeight.Bold
+                    color = Ink,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }

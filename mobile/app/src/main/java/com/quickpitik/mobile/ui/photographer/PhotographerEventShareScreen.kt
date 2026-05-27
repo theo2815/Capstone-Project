@@ -275,7 +275,6 @@ fun PhotographerEventShareScreen(
                         }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("Bib: ${preview.bib ?: "N/A"}", style = Typography.bodyMedium, color = Ink)
                     Text("Sold: ${preview.salesCount}", style = Typography.bodyMedium, color = Ink)
                 }
             },

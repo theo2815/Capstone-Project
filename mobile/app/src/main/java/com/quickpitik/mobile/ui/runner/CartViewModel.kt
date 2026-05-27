@@ -7,6 +7,7 @@ import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.*
 import com.quickpitik.mobile.data.repository.CartRepository
 import com.quickpitik.mobile.data.repository.CartRepositoryImpl
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -41,6 +42,16 @@ sealed class RefundActionState {
     data class Error(val message: String) : RefundActionState()
 }
 
+// Drives /orders/return — the screen PayMongo bounces back to after checkout.
+// Mirrors website OrdersReturnPage state machine (polling → paid/timeout/failed).
+sealed class OrderReturnState {
+    object Idle : OrderReturnState()
+    data class Polling(val attempt: Int) : OrderReturnState()
+    data class Paid(val order: OrderDetailDto) : OrderReturnState()
+    object Timeout : OrderReturnState()
+    data class Failed(val message: String) : OrderReturnState()
+}
+
 class CartViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionManager = SessionManager.getInstance(application)
     private val repository: CartRepository = CartRepositoryImpl()
@@ -54,6 +65,20 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     private val _checkoutState = MutableStateFlow<CheckoutState>(CheckoutState.Idle)
     val checkoutState: StateFlow<CheckoutState> = _checkoutState
 
+    // Floating-cart overlay state — mirrors the website's useUiStore cart/checkout
+    // flags. Cart + checkout are sheets, not nav routes, so they're driven from
+    // the VM and read by FloatingCart at the root of MainActivity.
+    private val _cartSheetOpen = MutableStateFlow(false)
+    val cartSheetOpen: StateFlow<Boolean> = _cartSheetOpen
+
+    private val _checkoutSheetOpen = MutableStateFlow(false)
+    val checkoutSheetOpen: StateFlow<Boolean> = _checkoutSheetOpen
+
+    // Set by "Buy now" CTAs so the next add-to-cart skips the cart sheet and
+    // jumps straight to checkout — mirrors website's expressCheckoutPending.
+    private val _expressCheckoutPending = MutableStateFlow(false)
+    val expressCheckoutPending: StateFlow<Boolean> = _expressCheckoutPending
+
     private val _ordersState = MutableStateFlow<OrdersState>(OrdersState.Loading)
     val ordersState: StateFlow<OrdersState> = _ordersState
 
@@ -62,6 +87,24 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _refundActionState = MutableStateFlow<RefundActionState>(RefundActionState.Idle)
     val refundActionState: StateFlow<RefundActionState> = _refundActionState
+
+    private val _orderReturnState = MutableStateFlow<OrderReturnState>(OrderReturnState.Idle)
+    val orderReturnState: StateFlow<OrderReturnState> = _orderReturnState
+
+    // Flips true the moment the CheckoutSheet hands the PayMongo URL off to
+    // the OS browser. Used to detect "user came back without finishing
+    // checkout" (Activity ON_RESUME while still true ⇒ no deep link arrived
+    // ⇒ they bailed) and route them to /orders so the pending order is
+    // visible instead of stranding them on the redirecting overlay.
+    private val _paymongoLaunched = MutableStateFlow(false)
+    val paymongoLaunched: StateFlow<Boolean> = _paymongoLaunched
+
+    fun markPaymongoLaunched() { _paymongoLaunched.value = true }
+    fun clearPaymongoLaunched() { _paymongoLaunched.value = false }
+
+    fun setCheckoutError(message: String) {
+        _checkoutState.value = CheckoutState.Error(message)
+    }
 
     init {
         // Initial sync if logged in
@@ -119,6 +162,16 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     fun resetCheckoutState() {
         _checkoutState.value = CheckoutState.Idle
     }
+
+    fun openCartSheet() { _cartSheetOpen.value = true }
+    fun closeCartSheet() { _cartSheetOpen.value = false }
+    fun openCheckoutSheet() {
+        _cartSheetOpen.value = false
+        _checkoutSheetOpen.value = true
+    }
+    fun closeCheckoutSheet() { _checkoutSheetOpen.value = false }
+    fun triggerExpressCheckout() { _expressCheckoutPending.value = true }
+    fun clearExpressCheckout() { _expressCheckoutPending.value = false }
 
     fun fetchOrders() {
         val token = sessionManager.getAccessToken()
@@ -226,5 +279,54 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getLoggedInUserEmail(): String {
         return sessionManager.getUserEmail() ?: ""
+    }
+
+    // Poll /me/orders/{id} every 2s for up to 60s, mirroring the website's
+    // OrdersReturnPage. Stops on PAID / FULFILLED (success) or REFUNDED
+    // (terminal failure). On success the local cart is cleared so the floating
+    // pill empties before the user comes back to /events.
+    fun pollOrderReturn(orderId: String) {
+        val token = sessionManager.getAccessToken()
+        if (token == null) {
+            _orderReturnState.value = OrderReturnState.Failed("Please log in to view this order.")
+            return
+        }
+        viewModelScope.launch {
+            var attempts = 0
+            while (attempts < POLL_MAX_ATTEMPTS) {
+                attempts++
+                _orderReturnState.value = OrderReturnState.Polling(attempts)
+                val result = repository.getOrderDetail(token, orderId)
+                result.onSuccess { order ->
+                    when (order.status?.uppercase()) {
+                        "PAID", "FULFILLED" -> {
+                            repository.clearCart(token)
+                            _orderReturnState.value = OrderReturnState.Paid(order)
+                            return@launch
+                        }
+                        "REFUNDED" -> {
+                            _orderReturnState.value = OrderReturnState.Failed(
+                                "This order was refunded. Check your email or open it from /orders."
+                            )
+                            return@launch
+                        }
+                        else -> { /* still pending — keep polling */ }
+                    }
+                }
+                // Transient errors (token visibility lag, BE hiccup) are expected
+                // during the first few polls — swallow and keep going.
+                delay(POLL_INTERVAL_MS)
+            }
+            _orderReturnState.value = OrderReturnState.Timeout
+        }
+    }
+
+    fun resetOrderReturnState() {
+        _orderReturnState.value = OrderReturnState.Idle
+    }
+
+    private companion object {
+        const val POLL_INTERVAL_MS = 2_000L
+        const val POLL_MAX_ATTEMPTS = 30 // 60s
     }
 }

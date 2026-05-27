@@ -105,6 +105,83 @@ These apply across every module. Module-specific rules (Python layering, Spring 
 
 ---
 
+## Engineering Discipline — Apply Before Coding (MANDATORY)
+
+These rules govern **how** any agent writes code in this monorepo. They are not optional, and they apply **before the first line of code is written** — not as an after-the-fact review. Before implementing anything non-trivial, an agent MUST have satisfied points 1–5 below.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For genuinely trivial tasks (typo, single-line edit, lookup), use judgment. If these conflict with a module-specific `CLAUDE.md`, follow the stricter rule.
+
+### 1. Confirm Alignment Before Acting
+
+**If a prompt is unclear or you are not fully confident you understood it, ask a clarifying question first — every time. Never guess and proceed.**
+
+- Before starting work, restate your understanding of the request in one or two sentences and confirm it matches the user's intent.
+- If anything is ambiguous, underspecified, or open to more than one interpretation, stop and ask before writing code or making changes — do not assume the most likely meaning.
+- Ask focused, specific questions (not "what do you want?"). Surface the exact point of confusion and, where helpful, offer the interpretations you're choosing between.
+- Only skip this check for genuinely trivial, unambiguous requests (typo fix, single-line edit, direct lookup).
+- Better to ask one extra question than to build the wrong thing.
+
+### 2. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them — don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+### 3. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+### 4. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it — don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: every changed line should trace directly to the user's request.
+
+### 5. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+
 ## Architectural Principles
 
 1. **`ai-api` is an internal service.** Never expose it to end-user apps directly.
@@ -123,7 +200,8 @@ Project-specific skills live in the Obsidian vault under `Claude Skills/`. Agent
 
 | Skill | Path | When to apply |
 |-------|------|---------------|
-| **Frontend Design** | `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Claude Skills\Frontend Design.md` | Any task that creates, redesigns, or polishes a UI/UX — components, pages, layouts, styling, animations, design systems. Applies across `website/`, `mobile/`, and `desktop/` modules. |
+| **Frontend Design** | `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Claude Skills\Frontend Design.md` | Any task that creates, redesigns, or polishes a **web or desktop** UI/UX — components, pages, layouts, styling, animations, design systems. Applies to `website/` and `desktop/`. **Does NOT apply to `mobile/`** — use Mobile Design instead. |
+| **Mobile Design** | `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Claude Skills\Mobile Design.md` | Any task that designs, redesigns, or polishes a screen, component, or interaction inside `mobile/`. Android-only (Kotlin/Jetpack Compose); defers to the existing "Quiet Studio" design tokens (`com.quickpitik.mobile.ui.theme.*`) and extends them intentionally. Covers small-screen hierarchy, thumb ergonomics, safe-area/insets, native motion, gestures, and Compose-specific polish rules. |
 | **Document Skill** | **Skill (rulebook):** `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Claude Skills\Document Skill.md`<br>**Workspace (drafts, facts, logs):** `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Documentation for capstone paper\` | Any task that writes, drafts, reviews, or asks about the **capstone paper** — currently **SRS** (active this semester), **SDD** (next semester). Triggers on phrases like "the SRS", "the SDD", "draft §X.Y", "my paper", "review my section", "promote to Papers-For-Capstone", "what's left on the SRS". **Mandatory protocol:** read the skill file in full, then run the pre-draft ritual it specifies (workspace `README.md` → relevant `facts/*.md` → `open-questions.md` → `adviser-log.md` → draft file). The skill enforces IEEE-830 spec voice, hard rules against fact invention (`[NEEDS USER INPUT — Q-NNN]` placeholder + pause), template fidelity (cover → §3.4 only, numbering gaps preserved), the FORBIDDEN PATTERNS list, and a 10-point self-audit checklist before any section is declared "Draft done." Final assembled SRS is promoted to `Papers-For-Capstone\SRS-QuickPitik.md` for external markdown → Word → PDF conversion. |
 
 ### How to use a skill

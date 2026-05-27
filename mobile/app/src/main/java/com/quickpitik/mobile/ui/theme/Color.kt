@@ -18,3 +18,7 @@ val SurfaceWhite = Color(0xFFFFFFFF)  // Light card surface
 val ErrorRed = Color(0xFFDC2626)
 val WarningOrange = Color(0xFFD97706)
 val SuccessGreen = Color(0xFF2D9E5E)
+
+// Alpha overlays — use these instead of inline Color.Black.copy(alpha = …).
+val Scrim = Color(0x66000000)          // 40% ink — fullscreen loading / success scrims
+val WatermarkInk = Color(0x59000000)   // ~35% ink — photo-preview watermark backdrop

@@ -187,14 +187,23 @@ class OrderService(
         val primary = pickPrimary(created)
         val lineItems = buildLineItems(request.items, photos, eventLookup)
         val description = buildSessionDescription(request.items.size, eventLookup.values.map { it.name })
-        val successUrl = buildSuccessUrl(primary)
+        // clientPlatform=="android" routes PayMongo's success/cancel to the
+        // mobile bridge so the user lands back in the app via the
+        // quickpitik:// deep link instead of the website.
+        val isAndroid = request.clientPlatform.equals("android", ignoreCase = true)
+        val successUrl = buildSuccessUrl(primary, isAndroid)
+        val cancelUrlForSession = if (isAndroid) {
+            buildMobileCancelUrl(primary)
+        } else {
+            paymongoProperties.cancelUrl
+        }
 
         val checkout = try {
             paymongoClient.createCheckoutSession(
                 PaymongoCheckoutSessionRequest(
                     data = PaymongoCheckoutSessionRequestEnvelope(
                         attributes = PaymongoCheckoutSessionAttributes(
-                            cancelUrl = paymongoProperties.cancelUrl,
+                            cancelUrl = cancelUrlForSession,
                             successUrl = successUrl,
                             lineItems = lineItems,
                             paymentMethodTypes = paymongoMethodsFor(paymentMethod),
@@ -411,8 +420,8 @@ class OrderService(
         return "QuickPitik · $itemCount $photoWord · $sample$more".take(160)
     }
 
-    private fun buildSuccessUrl(order: Order): String {
-        val base = paymongoProperties.successUrl
+    private fun buildSuccessUrl(order: Order, isAndroid: Boolean = false): String {
+        val base = if (isAndroid) paymongoProperties.mobileSuccessUrl else paymongoProperties.successUrl
         val sep = if (base.contains("?")) "&" else "?"
         // Token in the success URL is guest-only so authed runners reach
         // /orders/return via the JWT-gated /me/orders/{id} detail endpoint
@@ -424,6 +433,12 @@ class OrderService(
             ""
         }
         return "$base${sep}orderId=${order.id}$tokenParam"
+    }
+
+    private fun buildMobileCancelUrl(order: Order): String {
+        val base = paymongoProperties.mobileCancelUrl
+        val sep = if (base.contains("?")) "&" else "?"
+        return "$base${sep}orderId=${order.id}"
     }
 
     private fun paymongoMethodsFor(method: PaymentMethod): List<String> = when (method) {

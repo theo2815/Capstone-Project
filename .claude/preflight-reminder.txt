@@ -1,0 +1,6 @@
+Pre-flight before responding (full rules are in CLAUDE.md, already loaded - consult them):
+1. Alignment: if the request is unclear, ask to confirm before acting (rule 1).
+2. Discipline: simplicity / surgical changes / goal-driven (rules 2-5).
+3. Skills: if this is web-or-desktop UI, mobile UI, or capstone-paper work, READ the matching Custom Skill in full before producing anything.
+4. Vault: for non-trivial module work, follow the session ritual + module boundaries.
+Re-read CLAUDE.md if its rules may have changed this session.
