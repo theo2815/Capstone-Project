@@ -623,7 +623,7 @@ function BrowseMode({
               </div>
               <LoadMoreButton
                 shown={visibleSlice.length}
-                total={visible.length}
+                total={Math.min(visible.length, total || visible.length)}
                 increment={PAGE_SIZE.PHOTO_INCREMENT}
                 onLoadMore={() =>
                   setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT)
@@ -636,6 +636,11 @@ function BrowseMode({
                       : undefined
                 }
               />
+              {!isBibFilter && !isFaceMode && total > visible.length && (
+                <p className="mt-4 text-center font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+                  Showing first <span className="tnum text-ink">{visible.length}</span> of <span className="tnum text-ink">{total}</span> · search by bib or selfie to find yours
+                </p>
+              )}
             </div>
           </div>
         )}

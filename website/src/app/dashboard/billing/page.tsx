@@ -150,10 +150,10 @@ function PayoutsSlab() {
         <div className="mt-12 md:mt-16">
           <div className="flex items-baseline justify-between gap-6 mb-5">
             <Kicker as="p" tone="soft">
-              Recent cycles
+              Recent payouts
             </Kicker>
             <Kicker as="p" tone="soft" tnum>
-              {payouts.length} cycles
+              {payouts.length} payouts
             </Kicker>
           </div>
           <ul className="border-y border-line divide-y divide-line">
@@ -301,7 +301,7 @@ function RequestPayoutHero({
           </Kicker>
         ) : (
           <Link
-            href={`${ROUTES.DASHBOARD_SETTINGS}#payouts`}
+            href={`${ROUTES.DASHBOARD_SETTINGS}#payout`}
             className="inline-flex items-center gap-1.5 font-sans text-sm text-fresh hover:text-fresh/80 transition-colors group"
           >
             <span className="underline decoration-fresh/40 underline-offset-4 decoration-1 group-hover:decoration-fresh">
@@ -496,7 +496,7 @@ function PayoutRow({
     <div className="py-5 md:py-6 flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
       <div className="flex-1 min-w-0">
         <Kicker as="p" tnum className="flex items-center gap-2 flex-wrap">
-          <span>Cycle of {formatLongDate(payout.weekOf, true)}</span>
+          <span>Payout of {formatLongDate(payout.weekOf, true)}</span>
           <span className="text-slate-soft">·</span>
           <span className={STATUS_TONE[payout.status]}>
             {STATUS_LABEL[payout.status]}

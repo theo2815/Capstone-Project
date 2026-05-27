@@ -9,6 +9,10 @@ class SessionManager private constructor(context: Context) {
     companion object {
         private const val PREF_NAME = "quickpitik_session"
         private const val KEY_ACCESS_TOKEN = "access_token"
+        // F7 (2026-05-27): persist the refresh token so a 401 from the
+        // 15-min access-token TTL can recover via POST /auth/refresh
+        // instead of force-logging the user out.
+        private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_USER_ROLE = "user_role"
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_USER_EMAIL = "user_email"
@@ -26,9 +30,17 @@ class SessionManager private constructor(context: Context) {
         }
     }
 
-    fun saveSession(token: String, role: String, name: String, email: String, avatarUrl: String? = null) {
+    fun saveSession(
+        token: String,
+        role: String,
+        name: String,
+        email: String,
+        avatarUrl: String? = null,
+        refreshToken: String? = null,
+    ) {
         prefs.edit().apply {
             putString(KEY_ACCESS_TOKEN, token)
+            putString(KEY_REFRESH_TOKEN, refreshToken)
             putString(KEY_USER_ROLE, role)
             putString(KEY_USER_NAME, name)
             putString(KEY_USER_EMAIL, email)
@@ -47,6 +59,10 @@ class SessionManager private constructor(context: Context) {
 
     fun getAccessToken(): String? {
         return prefs.getString(KEY_ACCESS_TOKEN, null)
+    }
+
+    fun getRefreshToken(): String? {
+        return prefs.getString(KEY_REFRESH_TOKEN, null)
     }
 
     fun getUserRole(): String? {

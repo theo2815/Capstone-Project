@@ -34,8 +34,11 @@ export default function DashboardOverviewPage() {
   // Setup mode is true until the photographer is verified AND has at least
   // one photo uploaded across all their events. Photo count comes from the
   // event_photographer.photo_count column (BE upserts it on every upload).
+  // PF-8 (2026-05-27): treat `events === null` as "still loading" so verified
+  // photographers don't flash the 3-step SetupJourney before data arrives.
+  const eventsLoaded = events !== null;
   const hasAnyUploads = (events ?? []).some((e) => e.photoCount > 0);
-  const isSetupMode = gate.kind !== "ok" || !hasAnyUploads;
+  const isSetupMode = eventsLoaded && (gate.kind !== "ok" || !hasAnyUploads);
 
   if (isSetupMode) {
     return <SetupJourney />;

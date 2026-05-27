@@ -14,10 +14,7 @@ import {
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import {
-  PHOTOGRAPHER_EARNINGS,
-  type PhotographerEventSummary,
-} from "@/lib/photographer-mock";
+import type { PhotographerEventSummary } from "@/lib/photographer-mock";
 import { cn } from "@/lib/utils";
 
 export default function EarningsPage() {
@@ -31,14 +28,13 @@ export default function EarningsPage() {
 }
 
 function LifetimeSlab() {
-  // Live mode prefers GET /me/photographer/earnings (Q-017); mock-mode falls
-  // back to PHOTOGRAPHER_EARNINGS seed.
-  const liveEarnings = usePhotographerEarnings();
-  const e = liveEarnings ?? PHOTOGRAPHER_EARNINGS;
-  const isLoading = false;
+  // GET /me/photographer/earnings — null while in flight. No mock fallback:
+  // the previous `?? PHOTOGRAPHER_EARNINGS` made a BE 404 / slow start render
+  // seeded fake numbers as user data. Skeleton on null is the honest signal.
+  const e = usePhotographerEarnings();
   const [cutModalOpen, setCutModalOpen] = useState(false);
 
-  if (isLoading || !e) {
+  if (!e) {
     return (
       <Slab
         id="lifetime"
@@ -116,12 +112,10 @@ function LifetimeSlab() {
 }
 
 function BreakdownSlab() {
-  const liveEarnings = usePhotographerEarnings();
-  const e = liveEarnings ?? PHOTOGRAPHER_EARNINGS;
-  const isLoading = false;
-  if (isLoading || !e) {
+  const e = usePhotographerEarnings();
+  if (!e) {
     return (
-      <Slab id="breakdown" number="02" title="Breakdown" caption="Current cycle">
+      <Slab id="breakdown" number="02" title="Breakdown" caption="Current period">
         <div className="grid grid-cols-3 gap-4 md:gap-8">
           {[0, 1, 2].map((i) => (
             <div
@@ -138,7 +132,7 @@ function BreakdownSlab() {
     );
   }
   return (
-    <Slab id="breakdown" number="02" title="Breakdown" caption="Current cycle">
+    <Slab id="breakdown" number="02" title="Breakdown" caption="Current period">
       <div className="grid grid-cols-3 gap-4 md:gap-8">
         <BreakdownStat
           kicker="This week"

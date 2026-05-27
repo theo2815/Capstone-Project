@@ -118,7 +118,12 @@ class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(
             ApiResponse.failure(
                 ApiError(
-                    code = ErrorCodes.AI_API_UNAVAILABLE,
+                    // F5 (2026-05-27): pass through ai-api's specific code
+                    // (LOW_QUALITY, NO_FACES, etc.) when present so the FE can
+                    // map it to targeted copy instead of always showing the
+                    // generic "AI service down" message. Null aiCode = real
+                    // outage → falls back to AI_API_UNAVAILABLE.
+                    code = ex.aiCode ?: ErrorCodes.AI_API_UNAVAILABLE,
                     message = "AI service is temporarily unavailable. Please try again.",
                 ),
             ),

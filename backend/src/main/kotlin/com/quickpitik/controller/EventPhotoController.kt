@@ -119,7 +119,16 @@ class EventPhotoController(
                 code = ErrorCodes.SELFIE_NOT_FOUND,
                 message = "Selfie not found",
             )
-        val bytes = storageService.getBytes(selfie.s3Key)
+        // F6 (2026-05-27): StorageService.getBytes throws if the object is
+        // missing from S3 (deleted out-of-band, key never written, etc.).
+        // Without this wrap the runner gets a generic 500 INTERNAL_ERROR
+        // instead of a meaningful 404 they can react to.
+        val bytes = runCatching { storageService.getBytes(selfie.s3Key) }.getOrElse {
+            throw NotFoundException(
+                code = ErrorCodes.SELFIE_NOT_FOUND,
+                message = "Selfie file is no longer available",
+            )
+        }
         return photoSearchService.searchByFace(
             eventId = event.id,
             selfieBytes = bytes,

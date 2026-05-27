@@ -3,8 +3,7 @@
 import { useEffect, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
-import { ROUTES } from "@/lib/constants";
-import { buildLoginRedirect } from "@/lib/redirect";
+import { buildLoginRedirect, roleHome } from "@/lib/redirect";
 import { Spinner } from "@/components/ui/spinner";
 import type { Role } from "@/types/user";
 
@@ -33,7 +32,7 @@ export function ProtectedRoute({
     }
 
     if (allowedRoles && user && !allowedRoles.includes(user.role)) {
-      router.replace(ROUTES.HOME);
+      router.replace(roleHome(user.role));
     }
   }, [isLoading, isAuthenticated, user, allowedRoles, router]);
 

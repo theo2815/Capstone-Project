@@ -36,6 +36,7 @@ class ApiClient {
     if (!data.success) {
       throw new ApiError(
         data.errors ?? [{ code: "UNKNOWN", message: "Request failed" }],
+        res.status,
       );
     }
     return data.data;
@@ -121,10 +122,15 @@ function isPublicAuthEndpoint(path: string): boolean {
 
 export class ApiError extends Error {
   errors: { code: string; message: string; field?: string }[];
+  status?: number;
 
-  constructor(errors: { code: string; message: string; field?: string }[]) {
+  constructor(
+    errors: { code: string; message: string; field?: string }[],
+    status?: number,
+  ) {
     super(errors[0]?.message ?? "Unknown error");
     this.errors = errors;
+    this.status = status;
   }
 }
 

@@ -67,6 +67,28 @@ export interface BrandPatch {
   bio: string;
 }
 
+// Despite the URL, `GET /me/photographer/brand` returns the full profile-shaped
+// settings state — brand + handle + region + presigned cover/watermark/avatar
+// URLs. It's the only aggregated read on the photographer-settings surface; the
+// settings page hydrates from this on mount so persisted-Zustand state cleared
+// by resetUserScopedStores (lib/auth-reset.ts) is repopulated from the BE
+// instead of rendering blank slabs for a verified photographer.
+export interface PhotographerBrandResponse {
+  brandName: string;
+  brandColor: string;
+  bio: string;
+  handle: string;
+  regionCode: string;
+  provinceCode: string;
+  coverUrl: string;
+  watermarkUrl: string;
+  avatarUrl: string;
+}
+
+export async function fetchBrand(): Promise<PhotographerBrandResponse | null> {
+  return api.get<PhotographerBrandResponse>("/me/photographer/brand");
+}
+
 export async function putBrand(patch: BrandPatch): Promise<void> {
   await api.put<unknown>("/me/photographer/brand", patch);
 }

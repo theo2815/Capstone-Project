@@ -28,6 +28,7 @@ import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.CoverSourceDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotographerEventCoverageDto
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 
 // Mobile mirror of website /{handle} (public photographer profile) and
@@ -381,6 +382,8 @@ private fun parseHex(hex: String?): Color? {
 
 private fun resolveProfileImageUrl(url: String?): String? {
     if (url.isNullOrBlank()) return null
-    if (url.startsWith("/")) return "http://10.0.2.2:8080$url"
-    return url.replace("localhost", "10.0.2.2").replace("127.0.0.1", "10.0.2.2")
+    // M-2 (2026-05-27 PM): host derived from RetrofitClient.BASE_URL.
+    if (url.startsWith("/")) return "${RetrofitClient.backendOrigin}$url"
+    return url.replace("localhost", RetrofitClient.backendHost)
+        .replace("127.0.0.1", RetrofitClient.backendHost)
 }
