@@ -10,26 +10,31 @@ import {
   bulkApprovePayouts as apiBulkApprovePayouts,
   bulkHoldPayouts as apiBulkHoldPayouts,
 } from "@/lib/api-admin";
+import { useToastStore } from "@/store/toast-store";
 
-// Mock-mode store of admin actions on the payouts queue. Phase G wiring
-// fires the matching `api-admin` call in the background after the local
-// override is applied — Q-A1 + Q-A2 + Q-A4 RESOLVED 2026-05-09 means cycle
-// IDs follow `PAY-{YYYY}W{NN}-{HANDLE}` format, photographer-side
-// `payout_held` inbox row is written by the backend in the same TX, and
-// bulk operations carry a server-assigned `group_id` for KPI collapse.
+// Mirror of admin-user-store: each mutation awaits the BE, appends to the
+// decision log only on success, and rolls back the optimistic override on
+// failure with a toast. Photographer notifications fire BE-side
+// (AdminPayoutService → AdminDecisionLogService.pushMessage in the same
+// TX; kinds payout_held / payout_approved / payout_paid). Photographer
+// reads them via GET /me/photographer/messages.
 //
-// The local groupId helper below stays as the mock-mode fallback; in live
-// mode the FE still uses it for visual collapse until the backend response
-// supplies a canonical UUID.
-//
-// Photographer notifications fire BE-side: AdminPayoutService.hold +
-// resume + markPaid each call AdminDecisionLogService.pushMessage in the
-// same TX (kinds payout_held / payout_approved / payout_paid). The
-// photographer reads them via GET /me/photographer/messages.
+// Bulk actions parse BulkPayoutResult.results so per-id BE failures
+// (200 OK + ok:false) roll back individually — full rejection rolls back
+// the whole batch.
 
-function fireBackendPayoutAction(label: string, p: Promise<unknown>): void {
-  void p.catch((err) => {
-    console.error(`[admin/payouts] ${label} backend call failed`, err);
+function toastBackendFailure(label: string, err: unknown): void {
+  console.error(`[admin/payouts] ${label} failed`, err);
+  useToastStore.getState().showToast({
+    kind: "error",
+    message: `Couldn't ${label} — please try again.`,
+  });
+}
+
+function toastBulkPartial(label: string, ok: number, failed: number): void {
+  useToastStore.getState().showToast({
+    kind: "error",
+    message: `${label}: ${ok} succeeded, ${failed} failed.`,
   });
 }
 
@@ -52,11 +57,11 @@ export interface PayoutLogEntry {
 interface AdminPayoutStoreState {
   overrides: Record<string, Partial<AdminPayoutCycle>>;
   log: PayoutLogEntry[];
-  approve: (payoutId: string) => void;
-  hold: (payoutId: string, reason: string) => void;
-  markPaid: (payoutId: string, reference: string) => void;
-  bulkApprove: (payoutIds: string[]) => void;
-  bulkHold: (payoutIds: string[], reason: string) => void;
+  approve: (payoutId: string) => Promise<boolean>;
+  hold: (payoutId: string, reason: string) => Promise<boolean>;
+  markPaid: (payoutId: string, reference: string) => Promise<boolean>;
+  bulkApprove: (payoutIds: string[]) => Promise<boolean>;
+  bulkHold: (payoutIds: string[], reason: string) => Promise<boolean>;
   clear: () => void;
 }
 
@@ -78,10 +83,24 @@ function groupId() {
     .slice(2, 6)}`;
 }
 
-export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
+// Restore a single override slot to its prior value (or delete the slot
+// when there was no prior entry). Used by the rollback paths below.
+function rollbackOverride(
+  overrides: Record<string, Partial<AdminPayoutCycle>>,
+  payoutId: string,
+  prior: Partial<AdminPayoutCycle> | undefined,
+): Record<string, Partial<AdminPayoutCycle>> {
+  const next = { ...overrides };
+  if (prior === undefined) delete next[payoutId];
+  else next[payoutId] = prior;
+  return next;
+}
+
+export const useAdminPayoutStore = create<AdminPayoutStoreState>((set, get) => ({
   overrides: {},
   log: [],
-  approve: (payoutId) => {
+  approve: async (payoutId) => {
+    const prior = get().overrides[payoutId];
     const at = nowIso();
     set((s) => ({
       overrides: {
@@ -93,17 +112,27 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
           holdReason: null,
         },
       },
-      log: appendLog(s.log, {
-        payoutId,
-        decision: "approved",
-        paymentReference: null,
-        reason: null,
-        decidedAt: at,
-      }),
     }));
-    fireBackendPayoutAction("approve", apiApprovePayout(payoutId));
+    try {
+      await apiApprovePayout(payoutId);
+      set((s) => ({
+        log: appendLog(s.log, {
+          payoutId,
+          decision: "approved",
+          paymentReference: null,
+          reason: null,
+          decidedAt: at,
+        }),
+      }));
+      return true;
+    } catch (err) {
+      set((s) => ({ overrides: rollbackOverride(s.overrides, payoutId, prior) }));
+      toastBackendFailure("approve payout", err);
+      return false;
+    }
   },
-  hold: (payoutId, reason) => {
+  hold: async (payoutId, reason) => {
+    const prior = get().overrides[payoutId];
     const at = nowIso();
     set((s) => ({
       overrides: {
@@ -115,19 +144,27 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
           holdReason: reason,
         },
       },
-      log: appendLog(s.log, {
-        payoutId,
-        decision: "held",
-        paymentReference: null,
-        reason,
-        decidedAt: at,
-      }),
     }));
-    // The photographer-message insert happens server-side in the same TX
-    // as the hold action (Q-A2 RESOLVED). Photographer sees it on next poll.
-    fireBackendPayoutAction("hold", apiHoldPayout(payoutId, reason));
+    try {
+      await apiHoldPayout(payoutId, reason);
+      set((s) => ({
+        log: appendLog(s.log, {
+          payoutId,
+          decision: "held",
+          paymentReference: null,
+          reason,
+          decidedAt: at,
+        }),
+      }));
+      return true;
+    } catch (err) {
+      set((s) => ({ overrides: rollbackOverride(s.overrides, payoutId, prior) }));
+      toastBackendFailure("hold payout", err);
+      return false;
+    }
   },
-  markPaid: (payoutId, reference) => {
+  markPaid: async (payoutId, reference) => {
+    const prior = get().overrides[payoutId];
     const at = nowIso();
     set((s) => ({
       overrides: {
@@ -139,26 +176,33 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
           paymentReference: reference,
         },
       },
-      log: appendLog(s.log, {
-        payoutId,
-        decision: "paid",
-        paymentReference: reference,
-        reason: null,
-        decidedAt: at,
-      }),
     }));
-    fireBackendPayoutAction(
-      "markPaid",
-      apiMarkPayoutPaid(payoutId, reference),
-    );
+    try {
+      await apiMarkPayoutPaid(payoutId, reference);
+      set((s) => ({
+        log: appendLog(s.log, {
+          payoutId,
+          decision: "paid",
+          paymentReference: reference,
+          reason: null,
+          decidedAt: at,
+        }),
+      }));
+      return true;
+    } catch (err) {
+      set((s) => ({ overrides: rollbackOverride(s.overrides, payoutId, prior) }));
+      toastBackendFailure("mark payout paid", err);
+      return false;
+    }
   },
-  bulkApprove: (payoutIds) => {
-    if (payoutIds.length === 0) return;
+  bulkApprove: async (payoutIds) => {
+    if (payoutIds.length === 0) return true;
+    const priors = new Map<string, Partial<AdminPayoutCycle> | undefined>();
+    for (const id of payoutIds) priors.set(id, get().overrides[id]);
     const at = nowIso();
     const grp = groupId();
     set((s) => {
       const overrides = { ...s.overrides };
-      const entries: PayoutLogEntry[] = [];
       for (const id of payoutIds) {
         overrides[id] = {
           ...overrides[id],
@@ -166,29 +210,58 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
           reviewedAt: at,
           holdReason: null,
         };
-        entries.push({
-          payoutId: id,
-          decision: "bulk_approved",
-          paymentReference: null,
-          reason: null,
-          decidedAt: at,
-          groupId: grp,
-        });
       }
-      return { overrides, log: appendLog(s.log, entries) };
+      return { overrides };
     });
-    fireBackendPayoutAction(
-      "bulkApprove",
-      apiBulkApprovePayouts(payoutIds),
-    );
+    try {
+      const result = await apiBulkApprovePayouts(payoutIds);
+      const okIds = result.results.filter((r) => r.ok).map((r) => r.id);
+      const failedIds = result.results.filter((r) => !r.ok).map((r) => r.id);
+      const logEntries: PayoutLogEntry[] = okIds.map((id) => ({
+        payoutId: id,
+        decision: "bulk_approved",
+        paymentReference: null,
+        reason: null,
+        decidedAt: at,
+        groupId: result.groupId ?? grp,
+      }));
+      set((s) => {
+        let overrides = s.overrides;
+        for (const id of failedIds) {
+          overrides = rollbackOverride(overrides, id, priors.get(id));
+        }
+        return {
+          overrides,
+          log: logEntries.length > 0 ? appendLog(s.log, logEntries) : s.log,
+        };
+      });
+      if (failedIds.length === 0) return true;
+      if (okIds.length === 0) {
+        toastBackendFailure("approve payouts", new Error("All ids failed"));
+      } else {
+        toastBulkPartial("Approve payouts", okIds.length, failedIds.length);
+      }
+      return false;
+    } catch (err) {
+      set((s) => {
+        let overrides = s.overrides;
+        for (const id of payoutIds) {
+          overrides = rollbackOverride(overrides, id, priors.get(id));
+        }
+        return { overrides };
+      });
+      toastBackendFailure("approve payouts", err);
+      return false;
+    }
   },
-  bulkHold: (payoutIds, reason) => {
-    if (payoutIds.length === 0) return;
+  bulkHold: async (payoutIds, reason) => {
+    if (payoutIds.length === 0) return true;
+    const priors = new Map<string, Partial<AdminPayoutCycle> | undefined>();
+    for (const id of payoutIds) priors.set(id, get().overrides[id]);
     const at = nowIso();
     const grp = groupId();
     set((s) => {
       const overrides = { ...s.overrides };
-      const entries: PayoutLogEntry[] = [];
       for (const id of payoutIds) {
         overrides[id] = {
           ...overrides[id],
@@ -196,23 +269,49 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set) => ({
           reviewedAt: at,
           holdReason: reason,
         };
-        entries.push({
-          payoutId: id,
-          decision: "bulk_held",
-          paymentReference: null,
-          reason,
-          decidedAt: at,
-          groupId: grp,
-        });
       }
-      return { overrides, log: appendLog(s.log, entries) };
+      return { overrides };
     });
-    // Backend writes photographer-message rows in the same TX as the bulk
-    // hold (Q-A2 RESOLVED).
-    fireBackendPayoutAction(
-      "bulkHold",
-      apiBulkHoldPayouts(payoutIds, reason),
-    );
+    try {
+      const result = await apiBulkHoldPayouts(payoutIds, reason);
+      const okIds = result.results.filter((r) => r.ok).map((r) => r.id);
+      const failedIds = result.results.filter((r) => !r.ok).map((r) => r.id);
+      const logEntries: PayoutLogEntry[] = okIds.map((id) => ({
+        payoutId: id,
+        decision: "bulk_held",
+        paymentReference: null,
+        reason,
+        decidedAt: at,
+        groupId: result.groupId ?? grp,
+      }));
+      set((s) => {
+        let overrides = s.overrides;
+        for (const id of failedIds) {
+          overrides = rollbackOverride(overrides, id, priors.get(id));
+        }
+        return {
+          overrides,
+          log: logEntries.length > 0 ? appendLog(s.log, logEntries) : s.log,
+        };
+      });
+      if (failedIds.length === 0) return true;
+      if (okIds.length === 0) {
+        toastBackendFailure("hold payouts", new Error("All ids failed"));
+      } else {
+        toastBulkPartial("Hold payouts", okIds.length, failedIds.length);
+      }
+      return false;
+    } catch (err) {
+      set((s) => {
+        let overrides = s.overrides;
+        for (const id of payoutIds) {
+          overrides = rollbackOverride(overrides, id, priors.get(id));
+        }
+        return { overrides };
+      });
+      toastBackendFailure("hold payouts", err);
+      return false;
+    }
   },
   clear: () => set({ overrides: {}, log: [] }),
 }));

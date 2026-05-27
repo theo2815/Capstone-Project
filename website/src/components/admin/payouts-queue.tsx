@@ -270,9 +270,9 @@ export function PayoutsQueue() {
     setRowId(id);
   }
 
-  function handleSingleApprove(cycle: AdminPayoutCycle) {
-    approve(cycle.id);
-    showToast({ kind: "success", message: `Approved · ${cycle.id}` });
+  async function handleSingleApprove(cycle: AdminPayoutCycle) {
+    const ok = await approve(cycle.id);
+    if (ok) showToast({ kind: "success", message: `Approved · ${cycle.id}` });
   }
   function handleSingleHoldRequest(cycle: AdminPayoutCycle) {
     setHoldTarget({
@@ -285,11 +285,14 @@ export function PayoutsQueue() {
     setMarkPaidTarget(cycle);
   }
 
-  function handleDrawerApprove() {
+  async function handleDrawerApprove() {
     if (!openRow) return;
-    approve(openRow.id);
-    showToast({ kind: "success", message: `Approved · ${openRow.id}` });
-    setRowId("");
+    const id = openRow.id;
+    const ok = await approve(id);
+    if (ok) {
+      showToast({ kind: "success", message: `Approved · ${id}` });
+      setRowId("");
+    }
   }
   function handleDrawerHoldRequest() {
     if (!openRow) return;
@@ -304,15 +307,17 @@ export function PayoutsQueue() {
     setMarkPaidTarget(openRow);
   }
 
-  function handleBulkApproveConfirm() {
+  async function handleBulkApproveConfirm() {
     const ids = Array.from(selected);
-    bulkApprove(ids);
     setBulkApproveOpen(false);
     clearSelection();
-    showToast({
-      kind: "success",
-      message: `Approved · ${ids.length} cycles`,
-    });
+    const ok = await bulkApprove(ids);
+    if (ok) {
+      showToast({
+        kind: "success",
+        message: `Approved · ${ids.length} cycles`,
+      });
+    }
   }
 
   function handleBulkHoldRequest() {
@@ -323,37 +328,45 @@ export function PayoutsQueue() {
     });
   }
 
-  function handleHoldSubmit(reason: string) {
+  async function handleHoldSubmit(reason: string) {
     if (!holdTarget) return;
-    if (holdTarget.kind === "single") {
-      hold(holdTarget.payoutId, reason);
-      showToast({
-        kind: "info",
-        message: `Held · ${holdTarget.payoutId}`,
-      });
-      // If the held cycle was the drawer's open row, close the drawer so
-      // the queue state and the open detail don't drift apart.
-      if (openRow && openRow.id === holdTarget.payoutId) setRowId("");
-    } else {
-      bulkHold(holdTarget.payoutIds, reason);
-      showToast({
-        kind: "info",
-        message: `Held · ${holdTarget.payoutIds.length} cycles`,
-      });
-      clearSelection();
-    }
+    const target = holdTarget;
     setHoldTarget(null);
+    if (target.kind === "single") {
+      const ok = await hold(target.payoutId, reason);
+      if (ok) {
+        showToast({
+          kind: "info",
+          message: `Held · ${target.payoutId}`,
+        });
+        // If the held cycle was the drawer's open row, close the drawer so
+        // the queue state and the open detail don't drift apart.
+        if (openRow && openRow.id === target.payoutId) setRowId("");
+      }
+    } else {
+      clearSelection();
+      const ok = await bulkHold(target.payoutIds, reason);
+      if (ok) {
+        showToast({
+          kind: "info",
+          message: `Held · ${target.payoutIds.length} cycles`,
+        });
+      }
+    }
   }
 
-  function handleMarkPaidSubmit(reference: string) {
+  async function handleMarkPaidSubmit(reference: string) {
     if (!markPaidTarget) return;
-    markPaid(markPaidTarget.id, reference);
-    showToast({
-      kind: "success",
-      message: `Paid · ${markPaidTarget.id}`,
-    });
-    if (openRow && openRow.id === markPaidTarget.id) setRowId("");
+    const target = markPaidTarget;
     setMarkPaidTarget(null);
+    const ok = await markPaid(target.id, reference);
+    if (ok) {
+      showToast({
+        kind: "success",
+        message: `Paid · ${target.id}`,
+      });
+      if (openRow && openRow.id === target.id) setRowId("");
+    }
   }
 
   useDrawerVerbs({

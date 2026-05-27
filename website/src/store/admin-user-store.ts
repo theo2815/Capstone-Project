@@ -162,6 +162,18 @@ export const useAdminUserStore = create<AdminUserStoreState>()(
         }
       },
       suspend: async (userId, reason) => {
+        // Block self-suspend — admins who suspend themselves lose access
+        // immediately, with no in-session recovery (only another admin can
+        // unsuspend). Server also enforces this, but the FE guard skips
+        // the round-trip and surfaces a clearer message.
+        const sessionUser = useAuthStore.getState().user;
+        if (sessionUser && sessionUser.id === userId) {
+          useToastStore.getState().showToast({
+            kind: "error",
+            message: "You can't suspend your own admin account.",
+          });
+          return false;
+        }
         try {
           const updated = await apiSuspendUser(userId, reason);
           useAdminUsersServerStore.getState().upsertRow(updated);

@@ -30,6 +30,10 @@ interface AdminUsersServerState {
    *  in `useAdminUserStore` after the BE confirms the change — the BE
    *  response carries the canonical row, so we don't need a full refetch. */
   upsertRow: (row: AdminUserRow) => void;
+  /** Wipe the cache. Called from `resetUserScopedStores()` on auth
+   *  transitions so the next admin login refetches a fresh user list
+   *  instead of inheriting the previous admin's cached rows. */
+  clear: () => void;
 }
 
 export const useAdminUsersServerStore = create<AdminUsersServerState>(
@@ -76,6 +80,14 @@ export const useAdminUsersServerStore = create<AdminUsersServerState>(
         const next = s.rows.slice();
         next[idx] = row;
         return { rows: next };
+      }),
+    clear: () =>
+      set({
+        rows: [],
+        loading: false,
+        error: null,
+        fetchedAt: 0,
+        inFlight: null,
       }),
   }),
 );

@@ -1,9 +1,15 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import { ADMIN_FLAGS, type Flag } from "@/lib/admin-flags";
 
-// Mock-only store of admin actions on the moderation flag queue. NOT
-// persisted — real backend ships in Phase F. Same shape as
-// admin-dispute-store: overrides + capped log + per-action mutators.
+// Mock-only store of admin actions on the moderation flag queue. Real
+// backend ships in Phase F. Same shape as admin-dispute-store: overrides
+// + capped log + per-action mutators.
+//
+// Persisted to localStorage so flag actions survive a page refresh —
+// without this, hiding/dismissing/escalating a flag and then refreshing
+// brings the flag back. Cleared on logout by `resetUserScopedStores()`
+// (lib/auth-reset.ts) so cross-admin sessions don't leak decisions.
 
 export type FlagDecision = "hidden" | "dismissed" | "escalated";
 
@@ -27,65 +33,73 @@ function appendLog(prev: FlagLogEntry[], entry: FlagLogEntry): FlagLogEntry[] {
   return [entry, ...prev].slice(0, 50);
 }
 
-export const useAdminFlagStore = create<AdminFlagStoreState>((set) => ({
-  overrides: {},
-  log: [],
-  hide: (flagId, reason) =>
-    set((s) => ({
-      overrides: {
-        ...s.overrides,
-        [flagId]: {
-          ...s.overrides[flagId],
-          status: "hidden",
-          reviewedAt: new Date().toISOString(),
-          reviewedBy: "admin",
-          reviewerNote: reason,
-        },
-      },
-      log: appendLog(s.log, {
-        flagId,
-        decision: "hidden",
-        reason,
-        decidedAt: new Date().toISOString(),
-      }),
-    })),
-  dismiss: (flagId) =>
-    set((s) => ({
-      overrides: {
-        ...s.overrides,
-        [flagId]: {
-          ...s.overrides[flagId],
-          status: "dismissed",
-          reviewedAt: new Date().toISOString(),
-          reviewedBy: "admin",
-          reviewerNote: null,
-        },
-      },
-      log: appendLog(s.log, {
-        flagId,
-        decision: "dismissed",
-        reason: null,
-        decidedAt: new Date().toISOString(),
-      }),
-    })),
-  escalate: (flagId, reason) =>
-    set((s) => ({
-      overrides: {
-        ...s.overrides,
-        [flagId]: {
-          ...s.overrides[flagId],
-          status: "escalated",
-        },
-      },
-      log: appendLog(s.log, {
-        flagId,
-        decision: "escalated",
-        reason,
-        decidedAt: new Date().toISOString(),
-      }),
-    })),
-  clear: () => set({ overrides: {}, log: [] }),
-}));
+export const useAdminFlagStore = create<AdminFlagStoreState>()(
+  persist(
+    (set) => ({
+      overrides: {},
+      log: [],
+      hide: (flagId, reason) =>
+        set((s) => ({
+          overrides: {
+            ...s.overrides,
+            [flagId]: {
+              ...s.overrides[flagId],
+              status: "hidden",
+              reviewedAt: new Date().toISOString(),
+              reviewedBy: "admin",
+              reviewerNote: reason,
+            },
+          },
+          log: appendLog(s.log, {
+            flagId,
+            decision: "hidden",
+            reason,
+            decidedAt: new Date().toISOString(),
+          }),
+        })),
+      dismiss: (flagId) =>
+        set((s) => ({
+          overrides: {
+            ...s.overrides,
+            [flagId]: {
+              ...s.overrides[flagId],
+              status: "dismissed",
+              reviewedAt: new Date().toISOString(),
+              reviewedBy: "admin",
+              reviewerNote: null,
+            },
+          },
+          log: appendLog(s.log, {
+            flagId,
+            decision: "dismissed",
+            reason: null,
+            decidedAt: new Date().toISOString(),
+          }),
+        })),
+      escalate: (flagId, reason) =>
+        set((s) => ({
+          overrides: {
+            ...s.overrides,
+            [flagId]: {
+              ...s.overrides[flagId],
+              status: "escalated",
+            },
+          },
+          log: appendLog(s.log, {
+            flagId,
+            decision: "escalated",
+            reason,
+            decidedAt: new Date().toISOString(),
+          }),
+        })),
+      clear: () => set({ overrides: {}, log: [] }),
+    }),
+    {
+      name: "quickpitik-admin-flag",
+      partialize: (s) => ({ overrides: s.overrides, log: s.log }),
+    },
+  ),
+);
 
 export function mergeFlag(
   base: Flag,
