@@ -152,7 +152,13 @@ export function uploadPhotographerPhoto(
           !body.success && body.errors[0]?.message
             ? body.errors[0].message
             : `Upload failed (${xhr.status})`;
-        reject(new Error(message));
+        // Carry the backend error code so the caller can tell a terminal
+        // duplicate rejection (never retryable) from a transient network glitch.
+        const error = new Error(message) as Error & { code?: string };
+        if (!body.success && body.errors[0]?.code) {
+          error.code = body.errors[0].code;
+        }
+        reject(error);
       } catch {
         reject(new Error(`Upload failed (${xhr.status})`));
       }
@@ -165,4 +171,47 @@ export function uploadPhotographerPhoto(
     fd.append("file", file);
     xhr.send(fd);
   });
+}
+
+// Pre-flight duplicate check (dedup Phase 2). The upload page hashes each file
+// locally and asks the backend which are already stored in one of the
+// photographer's events, so it can skip re-sending bytes that are already there
+// (the "stop on mobile, continue on web" case). The hash is the SHA-256 of the
+// raw file bytes — the same identity the backend recomputes on upload (it hashes
+// BEFORE watermarking), so client and server always agree. The unique index on
+// (photographer_id, content_hash) is still the authoritative backstop; this
+// pre-flight is purely a bandwidth/UX optimization.
+//   POST /api/v1/me/photographer/events/{id}/photos/exists  { hashes: [...] }
+//        → { results: [{ hash, status, eventName? }] }
+export type PhotoExistsStatus = "new" | "same_event" | "different_event";
+
+export interface PhotoExistsResult {
+  hash: string;
+  status: PhotoExistsStatus;
+  eventName: string | null;
+}
+
+interface PhotoExistsResponse {
+  results: PhotoExistsResult[];
+}
+
+// SHA-256 of a file's bytes as lowercase hex, via the Web Crypto API. Mirrors
+// the backend's MessageDigest("SHA-256") + HexFormat output exactly.
+export async function sha256Hex(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export async function checkPhotosExist(
+  eventId: string,
+  hashes: string[],
+): Promise<PhotoExistsResult[]> {
+  const res = await api.post<PhotoExistsResponse>(
+    `/me/photographer/events/${encodeURIComponent(eventId)}/photos/exists`,
+    { hashes },
+  );
+  return res.results;
 }

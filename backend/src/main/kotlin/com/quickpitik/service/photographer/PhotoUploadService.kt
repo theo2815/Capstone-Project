@@ -3,6 +3,8 @@ package com.quickpitik.service.photographer
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.photographer.PhotoExistsResponse
+import com.quickpitik.dto.photographer.PhotoExistsResult
 import com.quickpitik.dto.photographer.UploadedPhotoDto
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.IndexingStatus
@@ -11,6 +13,7 @@ import com.quickpitik.entity.PhotoSpan
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
@@ -19,15 +22,19 @@ import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.PhotoPublishedEvent
+import org.hibernate.exception.ConstraintViolationException
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
+import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
+import java.util.HexFormat
 import java.util.UUID
 import kotlin.random.Random
 
@@ -104,6 +111,27 @@ class PhotoUploadService(
 
         val bytes = file.bytes
 
+        // Duplicate detection (enterprise dedup). A photo's identity is the
+        // SHA-256 of its ORIGINAL bytes, hashed HERE — before watermarking,
+        // which would change them — so a client- and server-side hash of the
+        // same file agree. Boundary is per-photographer across all events: the
+        // same shot can't be uploaded twice. A same-event re-upload (the
+        // stop-on-mobile / continue-on-web case) returns the existing photo
+        // idempotently; a different-event re-upload is rejected. The partial
+        // unique index (photographer_id, content_hash) from V24 is the
+        // race-safe backstop (see the saveAndFlush below).
+        val contentHash = sha256Hex(bytes)
+        photoRepository.findFirstByPhotographerIdAndContentHash(photographerId, contentHash)?.let { existing ->
+            if (existing.eventId == eventId) {
+                return existingPhotoDto(existing)
+            }
+            val otherEvent = eventRepository.findById(existing.eventId).orElse(null)
+            throw ConflictException(
+                code = ErrorCodes.PHOTO_DUPLICATE_DIFFERENT_EVENT,
+                message = "This photo already exists in your event '${otherEvent?.name ?: "another event"}'.",
+            )
+        }
+
         // Blur culling is desktop-only (BatchMyPhotos). Web upload assumes
         // photos have already been culled by the photographer's desktop
         // workflow — see backend/decisions 2026-05-18 "Blur removed from
@@ -164,6 +192,7 @@ class PhotoUploadService(
             s3Key = originalKey,
             thumbnailS3Key = watermarkKey,
             watermarkS3Key = watermarkKey,
+            contentHash = contentHash,
             spanWire = PhotoSpan.DEFAULT.wire,
             tone = Random.nextInt(0, 4),
             uploadedAt = OffsetDateTime.now(),
@@ -182,7 +211,43 @@ class PhotoUploadService(
         photo.indexingStatus =
             if (aiApiProperties.enabled) IndexingStatus.PENDING else IndexingStatus.SKIPPED
 
-        photoRepository.save(photo)
+        // saveAndFlush (not save) so a concurrent identical-bytes upload that
+        // slipped past the pre-check above trips the (photographer_id,
+        // content_hash) unique index HERE rather than at commit — the
+        // authoritative, race-safe dedup backstop. A duplicate is the only
+        // unique constraint a valid photo insert can violate (the id is a fresh
+        // random UUID), so translate it to a terminal duplicate conflict.
+        try {
+            photoRepository.saveAndFlush(photo)
+        } catch (ex: DataIntegrityViolationException) {
+            // Defense-in-depth: a fresh-UUID id and fully-populated columns mean
+            // the dedup index is the only unique constraint a valid insert can
+            // violate today, but a FUTURE constraint must not be silently
+            // mislabeled a duplicate. Walk the cause chain to the Hibernate
+            // ConstraintViolationException (Spring may wrap it a layer deep); if
+            // it positively names a DIFFERENT constraint, rethrow it as the
+            // genuine integrity fault it is. A null/unknown name keeps the old
+            // behavior (treat as the dedup race).
+            val violated = generateSequence(ex.cause) { it.cause }
+                .filterIsInstance<ConstraintViolationException>()
+                .firstOrNull()
+                ?.constraintName
+            if (violated != null && !violated.equals(CONTENT_HASH_CONSTRAINT, ignoreCase = true)) {
+                throw ex
+            }
+            // Same- vs different-event can't be re-resolved here: the unique
+            // violation has aborted this transaction (Postgres 25P02), so any
+            // follow-up read would fail. Emit the same-event conflict; if it was
+            // actually a different-event race the photographer's retry hits the
+            // pre-check above — which now sees the committed row — and gets the
+            // precise "already in event X" message. The different-event race
+            // (same bytes, two events, same instant) is pathological and
+            // self-heals on that retry.
+            throw ConflictException(
+                code = ErrorCodes.PHOTO_DUPLICATE_SAME_EVENT,
+                message = "This photo was just uploaded. Refresh to see it.",
+            )
+        }
 
         // Atomic counter writes — concurrent uploads during a live marathon are
         // the normal case, not an edge case. The prior read-modify-write pattern
@@ -236,10 +301,81 @@ class PhotoUploadService(
         )
     }
 
+    // Pre-flight duplicate check (dedup Phase 2). For each requested content
+    // hash, report whether this photographer already has that photo and, if so,
+    // whether it's in THIS event (a no-op re-upload the client should skip) or
+    // another event (an upload would be rejected — name the holder). Mirrors the
+    // upload() boundary exactly: per-photographer, across all events. Read-only,
+    // no AI / storage / window / verification gate — it only tells the client
+    // what an upload would do, so it can avoid sending the bytes.
+    @Transactional(readOnly = true)
+    fun checkExisting(photographerId: UUID, eventId: UUID, hashes: List<String>): PhotoExistsResponse {
+        // Hashes are matched verbatim against stored hex; normalize case so a
+        // client that upper-cases its digest still matches (server stores lower).
+        val normalized = hashes.map { it.lowercase() }
+        val existingByHash = photoRepository
+            .findByPhotographerIdAndContentHashIn(photographerId, normalized)
+            .associateBy { it.contentHash }
+
+        // Name the other events in one batch read rather than per-hit.
+        val otherEventIds = existingByHash.values
+            .map { it.eventId }
+            .filterTo(mutableSetOf()) { it != eventId }
+        val otherEventNames = if (otherEventIds.isEmpty()) {
+            emptyMap()
+        } else {
+            eventRepository.findAllById(otherEventIds).associate { it.id to it.name }
+        }
+
+        val results = normalized.map { hash ->
+            val photo = existingByHash[hash]
+            when {
+                photo == null -> PhotoExistsResult(hash = hash, status = "new")
+                photo.eventId == eventId -> PhotoExistsResult(hash = hash, status = "same_event")
+                else -> PhotoExistsResult(
+                    hash = hash,
+                    status = "different_event",
+                    eventName = otherEventNames[photo.eventId],
+                )
+            }
+        }
+        return PhotoExistsResponse(results = results)
+    }
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
+
+    // Rebuild the upload response from an already-stored photo, for the
+    // idempotent same-event duplicate return. Mirrors the live return at the
+    // end of upload(): same fields, a fresh presigned thumbnail, and the same
+    // eventually-consistent aiDetectionStatus convention.
+    private fun existingPhotoDto(photo: Photo): UploadedPhotoDto {
+        val thumbnailUrl = storageService.presignedGetUrl(
+            photo.thumbnailS3Key!!,
+            storageProperties.presignedTtl.thumbnail,
+        )
+        return UploadedPhotoDto(
+            id = photo.id,
+            status = when (photo.status) {
+                PhotoStatus.LIVE -> "live"
+                PhotoStatus.HIDDEN -> "hidden"
+                PhotoStatus.PROCESSING -> "live"
+            },
+            uploadedAt = photo.uploadedAt,
+            thumbnailUrl = thumbnailUrl,
+            span = photo.span.wire,
+            aiDetectionStatus = if (aiApiProperties.enabled) "pending" else "none",
+        )
+    }
+
     private companion object {
         val UPLOADABLE_STATUSES: Set<EventStatus> = setOf(EventStatus.ACTIVE, EventStatus.COMPLETED)
         val ALLOWED_CONTENT_TYPES: Set<String> = setOf("image/jpeg", "image/png", "image/webp")
         val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
         const val UPLOAD_GRACE_DAYS = 4
+
+        // The V24 partial unique index. The race backstop only treats THIS
+        // constraint as a duplicate; any other violation is rethrown.
+        const val CONTENT_HASH_CONSTRAINT = "uq_photos_photographer_content_hash"
     }
 }

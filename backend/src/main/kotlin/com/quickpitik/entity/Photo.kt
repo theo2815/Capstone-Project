@@ -38,6 +38,13 @@ class Photo(
     @Column(name = "watermark_s3_key", length = 512)
     var watermarkS3Key: String? = null,
 
+    // SHA-256 hexdigest of the ORIGINAL uploaded bytes (pre-watermark) — the
+    // identity key for per-photographer duplicate detection. Partial unique
+    // index (photographer_id, content_hash) lives in migration V24. Nullable:
+    // rows uploaded before V24 have no hash and are excluded from the index.
+    @Column(name = "content_hash", length = 64)
+    var contentHash: String? = null,
+
     @Column(name = "span", nullable = false, length = 20)
     @JdbcTypeCode(SqlTypes.VARCHAR)
     var spanWire: String = PhotoSpan.DEFAULT.wire,

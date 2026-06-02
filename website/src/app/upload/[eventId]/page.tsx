@@ -21,7 +21,12 @@ import { useCanUpload } from "@/hooks/use-can-upload";
 import { usePublicEvents } from "@/hooks/use-public-events";
 import { useToast } from "@/hooks/use-toast";
 import { usePhotographerVerificationSync } from "@/lib/photographer-verification-sync";
-import { uploadPhotographerPhoto } from "@/lib/api-photographer";
+import {
+  checkPhotosExist,
+  sha256Hex,
+  uploadPhotographerPhoto,
+  type PhotoExistsResult,
+} from "@/lib/api-photographer";
 import { ROUTES } from "@/lib/constants";
 import {
   UPLOAD_GRACE_DAYS,
@@ -56,13 +61,17 @@ const STATE_LABEL: Record<EventState, string> = {
 interface UploadEntry {
   id: string;
   file: File;
-  status: "queued" | "uploading" | "done" | "error";
+  /** "checking" = local hash + backend pre-flight duplicate check in flight.
+   *  "skipped"  = already live in THIS event (dedup Phase 2) — no upload sent.
+   *  A "different event" duplicate becomes a non-retryable "error". */
+  status: "checking" | "queued" | "uploading" | "done" | "error" | "skipped";
   /** 0..100 — mock progress, real backend will stream actual bytes. */
   progress: number;
   error?: string;
   /** True when the error happened during upload (network glitch — same file
    *  could succeed on a retry). False when the file was rejected by
-   *  validation — same file means same error, so retry would mislead. */
+   *  validation or a cross-event duplicate — same file means same error, so
+   *  retry would mislead. */
   retryable?: boolean;
 }
 
@@ -285,20 +294,37 @@ function UploadForm({ event }: { event: ListEvent }) {
     () => entries.filter((e) => e.status === "error"),
     [entries],
   );
+  const checking = useMemo(
+    () => entries.filter((e) => e.status === "checking"),
+    [entries],
+  );
+  const skipped = useMemo(
+    () => entries.filter((e) => e.status === "skipped"),
+    [entries],
+  );
   const inFlight = useMemo(
     () =>
       entries.filter((e) => e.status === "queued" || e.status === "uploading"),
     [entries],
   );
-  const validEntries = useMemo(
-    () => entries.filter((e) => e.status !== "error"),
+  // Only files that will actually upload count toward the progress bar — a
+  // "checking", "skipped" (already uploaded), or "error" file isn't sending
+  // bytes, so including it would skew the percentage.
+  const uploadBound = useMemo(
+    () =>
+      entries.filter(
+        (e) =>
+          e.status === "queued" ||
+          e.status === "uploading" ||
+          e.status === "done",
+      ),
     [entries],
   );
   const overallPct = useMemo(() => {
-    if (validEntries.length === 0) return 0;
-    const sum = validEntries.reduce((acc, e) => acc + e.progress, 0);
-    return Math.round(sum / validEntries.length);
-  }, [validEntries]);
+    if (uploadBound.length === 0) return 0;
+    const sum = uploadBound.reduce((acc, e) => acc + e.progress, 0);
+    return Math.round(sum / uploadBound.length);
+  }, [uploadBound]);
 
   const atLimit = entries.length >= BATCH_LIMIT;
   const newTabHref = `${ROUTES.UPLOAD}/${event.id}`;
@@ -326,7 +352,9 @@ function UploadForm({ event }: { event: ListEvent }) {
         return {
           id,
           file,
-          status: error ? "error" : "queued",
+          // Valid files go to "checking" first — the pre-flight effect hashes
+          // them and asks the backend which already exist before any upload.
+          status: error ? "error" : "checking",
           progress: 0,
           error,
           retryable: false,
@@ -353,9 +381,86 @@ function UploadForm({ event }: { event: ListEvent }) {
     [entries.length, showToast],
   );
 
-  // Bumped on retry so the upload effect re-fires even when entries.length
-  // hasn't changed (retried entries flip back to queued in place).
+  // Bumped on retry AND after the pre-flight check, so the upload effect
+  // re-fires even when entries.length hasn't changed (retried entries flip
+  // back to queued in place; checking entries flip forward to queued).
   const [retryNonce, setRetryNonce] = useState(0);
+
+  // Pre-flight duplicate check (dedup Phase 2). Newly-ingested valid files land
+  // as "checking"; here we hash them locally and ask the backend which already
+  // exist for this photographer, so we never re-upload bytes that are already
+  // stored. Each file is then routed:
+  //   new             → "queued" (upload it)
+  //   same_event      → "skipped" (already live in this event — no upload)
+  //   different_event → non-retryable "error" (a photo can't live in two events)
+  // The pre-flight is an optimization, not a gate: if it fails, every file
+  // falls back to "queued" and the backend's unique index still dedupes.
+  useEffect(() => {
+    const pending = entries.filter((e) => e.status === "checking");
+    if (pending.length === 0) return;
+    let cancelled = false;
+
+    void (async () => {
+      // Hash with bounded concurrency so a 500-file batch doesn't read every
+      // file into memory at once.
+      const files = pending.map((e) => e.file);
+      const hashes = new Array<string>(files.length);
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < files.length) {
+          const i = cursor++;
+          hashes[i] = await sha256Hex(files[i]);
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(8, files.length) }, worker),
+      );
+      if (cancelled) return;
+
+      let byHash = new Map<string, PhotoExistsResult>();
+      try {
+        const results = await checkPhotosExist(event.id, [...new Set(hashes)]);
+        byHash = new Map(results.map((r) => [r.hash, r]));
+      } catch {
+        // Leave byHash empty → every file falls through to "queued" and the
+        // server-side unique index remains the source of truth.
+      }
+      if (cancelled) return;
+
+      const hashById = new Map(pending.map((e, i) => [e.id, hashes[i]]));
+      setEntries((prev) =>
+        prev.map((p) => {
+          if (p.status !== "checking") return p;
+          const hash = hashById.get(p.id);
+          if (hash === undefined) return p;
+          const result = byHash.get(hash);
+          if (result?.status === "same_event") {
+            return { ...p, status: "skipped", progress: 0, error: undefined };
+          }
+          if (result?.status === "different_event") {
+            return {
+              ...p,
+              status: "error",
+              progress: 0,
+              retryable: false,
+              error: result.eventName
+                ? `Already uploaded to "${result.eventName}".`
+                : "Already uploaded to another event.",
+            };
+          }
+          return { ...p, status: "queued" };
+        }),
+      );
+      // checking → queued doesn't change entries.length, so nudge the upload
+      // effect to pick the freshly-queued files up.
+      setRetryNonce((n) => n + 1);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries.length, event.id]);
 
   // Auto-upload: every queued file flows queued → uploading → done. There's
   // no separate publish step — done == in the gallery (web uploads go straight
@@ -387,7 +492,14 @@ function UploadForm({ event }: { event: ListEvent }) {
             ),
           );
         })
-        .catch((err: Error) => {
+        .catch((err: Error & { code?: string }) => {
+          // Backend duplicate-rejection codes are terminal — the same bytes
+          // will always be rejected, so don't offer a retry (mirrors the mobile
+          // PhotoUploadWorker terminal-code guard). The pre-flight check catches
+          // these first; this is the fallback for when it was skipped or failed.
+          const terminal =
+            err.code === "PHOTO_DUPLICATE_DIFFERENT_EVENT" ||
+            err.code === "PHOTO_DUPLICATE_SAME_EVENT";
           setEntries((prev) =>
             prev.map((p) =>
               p.id === entry.id
@@ -396,7 +508,7 @@ function UploadForm({ event }: { event: ListEvent }) {
                     status: "error",
                     error: err.message || "Upload failed.",
                     progress: 0,
-                    retryable: true,
+                    retryable: !terminal,
                   }
                 : p,
             ),
@@ -548,6 +660,16 @@ function UploadForm({ event }: { event: ListEvent }) {
             </span>{" "}
             / {BATCH_LIMIT.toLocaleString()}
           </span>
+          {checking.length > 0 && (
+            <span className="text-slate-soft">
+              {checking.length.toLocaleString()} checking…
+            </span>
+          )}
+          {skipped.length > 0 && (
+            <span className="text-slate">
+              {skipped.length.toLocaleString()} already uploaded
+            </span>
+          )}
           {errored.length > 0 && (
             <span className="text-error">
               {errored.length} skipped
@@ -568,7 +690,7 @@ function UploadForm({ event }: { event: ListEvent }) {
           entries={entries}
           done={accepted.length}
           inFlight={inFlight.length}
-          validTotal={validEntries.length}
+          validTotal={uploadBound.length}
           overallPct={overallPct}
           retryableErroredCount={retryableErroredCount}
           onClearAll={() => setEntries([])}
@@ -640,12 +762,16 @@ function StagedSection({
         </div>
       </div>
 
-      <OverallProgress
-        done={done}
-        inFlight={inFlight}
-        validTotal={validTotal}
-        pct={overallPct}
-      />
+      {/* A batch can be entirely "already uploaded" (re-dragged folder) — then
+          nothing is upload-bound and a 0 / 0 bar would read as broken. */}
+      {validTotal > 0 && (
+        <OverallProgress
+          done={done}
+          inFlight={inFlight}
+          validTotal={validTotal}
+          pct={overallPct}
+        />
+      )}
 
       <ul className="divide-y divide-line">
         {visibleSlice.map((entry) => (
@@ -794,7 +920,9 @@ const QueueRow = memo(function QueueRow({
             draggable={false}
           />
         )}
-        {(status === "queued" || status === "uploading") && (
+        {(status === "queued" ||
+          status === "uploading" ||
+          status === "checking") && (
           <span
             aria-hidden="true"
             className="absolute inset-0 flex items-center justify-center bg-ink/30 font-mono text-[10px] tracking-[0.15em] uppercase text-bone tnum"
@@ -806,6 +934,16 @@ const QueueRow = memo(function QueueRow({
           <span
             aria-hidden="true"
             className="absolute bottom-0.5 right-0.5 size-3.5 rounded-full bg-fresh text-bone flex items-center justify-center font-mono text-[8px] leading-none"
+          >
+            ✓
+          </span>
+        )}
+        {/* Muted (slate, not fresh) check — already in the gallery, not a
+            this-batch upload. */}
+        {status === "skipped" && (
+          <span
+            aria-hidden="true"
+            className="absolute bottom-0.5 right-0.5 size-3.5 rounded-full bg-slate text-bone flex items-center justify-center font-mono text-[8px] leading-none"
           >
             ✓
           </span>
@@ -835,9 +973,17 @@ const QueueRow = memo(function QueueRow({
                 style={{ width: `${entry.progress}%` }}
               />
             </div>
+          ) : status === "checking" ? (
+            <p className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum uppercase">
+              Checking…
+            </p>
           ) : status === "done" ? (
             <p className="font-mono text-[10px] tracking-[0.15em] text-fresh tnum uppercase">
               Live
+            </p>
+          ) : status === "skipped" ? (
+            <p className="font-mono text-[10px] tracking-[0.15em] text-slate tnum uppercase">
+              Already uploaded
             </p>
           ) : (
             <p className="font-mono text-[10px] tracking-[0.15em] text-error tnum uppercase truncate">

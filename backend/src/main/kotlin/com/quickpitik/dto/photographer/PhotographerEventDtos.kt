@@ -5,6 +5,9 @@ import com.quickpitik.entity.EventPhotographer
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import jakarta.validation.constraints.NotEmpty
+import jakarta.validation.constraints.Pattern
+import jakarta.validation.constraints.Size
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -89,6 +92,38 @@ data class UploadedPhotoDto(
     val thumbnailUrl: String,
     val span: String,
     val aiDetectionStatus: String? = null,
+)
+
+// Pre-flight duplicate check (dedup Phase 2). The photographer's client hashes
+// files locally (SHA-256 of the original bytes — the same identity the upload
+// computes server-side) and asks which are already present before spending
+// bandwidth. The hash list is capped at the per-batch upload limit (500, mirrors
+// the website BATCH_LIMIT). See _journal/2026-06-02-duplicate-upload-detection-plan.
+data class PhotoExistsRequest(
+    @field:NotEmpty
+    @field:Size(max = 500)
+    val hashes: List<
+        @Pattern(
+            regexp = "^[0-9a-fA-F]{64}\$",
+            message = "Each hash must be a 64-character hex SHA-256.",
+        )
+        String,
+        >,
+)
+
+// One result per requested hash. status:
+//   "new"             — not present for this photographer; safe to upload
+//   "same_event"      — already in THIS event; an upload is a no-op, skip it
+//   "different_event" — already in another of the photographer's events; an
+//                       upload would be rejected (eventName names the holder)
+data class PhotoExistsResult(
+    val hash: String,
+    val status: String,
+    val eventName: String? = null,
+)
+
+data class PhotoExistsResponse(
+    val results: List<PhotoExistsResult>,
 )
 
 private val phZone: ZoneId = ZoneId.of("Asia/Manila")

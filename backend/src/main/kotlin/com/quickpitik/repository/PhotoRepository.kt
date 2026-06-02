@@ -130,6 +130,25 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     fun findFirstByIdAndPhotographerId(id: UUID, photographerId: UUID): Photo?
 
+    // Duplicate detection: the photographer's existing photo with this exact
+    // content hash, if any. Backed by the partial unique index
+    // uq_photos_photographer_content_hash (migration V24), so at most one row
+    // matches. PhotoUploadService uses it to make uploads idempotent on content
+    // — a same-event re-upload returns the existing photo, a different-event hit
+    // is rejected.
+    fun findFirstByPhotographerIdAndContentHash(photographerId: UUID, contentHash: String): Photo?
+
+    // Batch pre-flight (dedup Phase 2): every photo of this photographer whose
+    // content hash is in the given set, across ALL their events. The client
+    // hashes files locally and calls this before sending bytes — a hash already
+    // present is skipped (same event) or flagged (different event) without a
+    // wasted upload. NULL hashes never match an IN list, so legacy rows are
+    // naturally excluded. Backed by uq_photos_photographer_content_hash (V24).
+    fun findByPhotographerIdAndContentHashIn(
+        photographerId: UUID,
+        contentHashes: Collection<String>,
+    ): List<Photo>
+
     // Reconciliation backlog: photos whose async indexing hasn't settled. The
     // cutoff skips photos the AFTER_COMMIT hot path is probably still handling,
     // so the sweep only re-drives genuinely-stuck work. Backed by the partial
