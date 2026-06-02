@@ -213,6 +213,8 @@ class TestFaceBatch:
         data = _make_jpeg()
         resp = client.post(
             "/api/v1/faces/search/batch",
+            # operation defaults to "search", which is now event-scoped (fail-closed).
+            params={"event_id": str(uuid.uuid4())},
             files=[("files", ("face.jpg", data, "image/jpeg"))],
         )
         assert resp.status_code == 202

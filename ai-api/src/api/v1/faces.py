@@ -215,10 +215,15 @@ async def search_faces(
     file: UploadFile = File(...),
     threshold: float = Query(default=0.4, ge=0.0, le=1.0),
     top_k: int = Query(default=10, ge=1, le=100),
-    event_id: str | None = Query(default=None),
+    event_id: str = Query(..., min_length=1, max_length=255),
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
-    """Detect faces in an image and search the database for matches."""
+    """Detect faces in an image and search the database for matches.
+
+    event_id is required: search is fail-closed event isolation (root rule 5).
+    Omitting it would match faces across every event for this key, so FastAPI
+    rejects the request with 422 instead.
+    """
     check_scope("faces:read", key_meta)
     start = time.perf_counter()
     settings = request.app.state.settings
@@ -499,6 +504,29 @@ async def delete_persons_by_event(
         )
 
 
+def _require_event_for_search(
+    request: Request, operation: str, event_id: str | None
+) -> JSONResponse | None:
+    """Fail-closed event isolation for the batch/mega search endpoints. A search
+    MUST be event-scoped (root rule 5) or it would match across every event for
+    the key; ``detect`` does no DB lookup, so event_id is irrelevant there.
+    Returns a 422 JSONResponse when a search is missing its scope, else None.
+    """
+    if operation == "search" and not (event_id and event_id.strip()):
+        return JSONResponse(
+            status_code=422,
+            content=APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={
+                    "code": "EVENT_ID_REQUIRED",
+                    "message": "event_id is required when operation=search",
+                },
+            ).model_dump(mode="json"),
+        )
+    return None
+
+
 @router.post("/search/batch", status_code=202)
 async def search_faces_batch(
     request: Request,
@@ -518,6 +546,8 @@ async def search_faces_batch(
     Returns a job ID immediately. Poll GET /api/v1/jobs/{job_id} for results.
     """
     check_scope("faces:read", key_meta)
+    if (guard := _require_event_for_search(request, operation, event_id)) is not None:
+        return guard
     settings = request.app.state.settings
 
     result = await validate_batch_files(
@@ -612,6 +642,8 @@ async def search_faces_mega(
     them into sub-tasks and merges results into a single job.
     """
     check_scope("faces:read", key_meta)
+    if (guard := _require_event_for_search(request, operation, event_id)) is not None:
+        return guard
     settings = request.app.state.settings
 
     result = await validate_batch_files(

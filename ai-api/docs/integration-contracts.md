@@ -218,8 +218,8 @@ The Web/Mobile Backend uses all ai-api features and manages events, participants
 | `POST /api/v1/faces/enroll` | Register participant face for event |
 | `POST /api/v1/faces/enroll/batch` | Bulk-enroll multiple photos under **one** person (many selfies of one runner) |
 | `POST /api/v1/faces/enroll/mega` | Bulk **photo indexing** — one person **per image**, every face stored, `ref` echoed (up to 500) |
-| `POST /api/v1/faces/search` | Find participants in uploaded photo |
-| `POST /api/v1/faces/search/batch` · `/search/mega` | Async batch / mega-batch face search |
+| `POST /api/v1/faces/search` | Find participants in uploaded photo (`event_id` **required** — 422 if omitted) |
+| `POST /api/v1/faces/search/batch` · `/search/mega` | Async batch / mega-batch face search (`event_id` **required** when `operation=search`) |
 | `POST /api/v1/faces/detect` | Count faces / return bounding boxes |
 | `POST /api/v1/faces/compare` | 1:1 face verification |
 | `GET /api/v1/faces/persons` | Paginated list (scoped by api_key_id + optional event_id) |
@@ -349,6 +349,8 @@ Photographer (Mobile)    Web/Mobile Backend              ai-api
     │  "Tagged: John Doe (#1023)"│                          │
     │◄─────────────────────────│                           │
 ```
+
+**Event isolation (fail-closed):** `event_id` is **required** on every search — `/faces/search` rejects a missing scope with `422`, and `/search/batch`·`/search/mega` reject it when `operation=search`. Without the guard a search would silently match across every event for the API key. The backend already passes `event_id` on every call; making it required just moves enforcement of root rule 5 to the ai-api boundary instead of trusting the caller.
 
 **Web/Mobile Backend logic:**
 ```python

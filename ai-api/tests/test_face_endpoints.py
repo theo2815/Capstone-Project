@@ -102,6 +102,7 @@ class TestFaceSearch:
         data = _make_jpeg_bytes()
         resp = client.post(
             "/api/v1/faces/search",
+            params={"event_id": "11111111-1111-1111-1111-111111111111"},
             files={"file": ("noise.jpg", data, "image/jpeg")},
         )
         body = resp.json()
@@ -113,6 +114,7 @@ class TestFaceSearch:
         data = _make_jpeg_bytes()
         resp = client.post(
             "/api/v1/faces/search",
+            params={"event_id": "11111111-1111-1111-1111-111111111111"},
             files={"file": ("noise.jpg", data, "image/jpeg")},
         )
         body = resp.json()
@@ -120,6 +122,51 @@ class TestFaceSearch:
         assert "matches" in body["data"]
         assert "unmatched_faces" in body["data"]
         assert "processing_time_ms" in body["data"]
+
+
+class TestSearchEventIsolation:
+    """Fail-closed event isolation: a face search MUST be event-scoped or it
+    would match across every event for the key (root rule 5). Omitting event_id
+    is rejected with 422 before any DB lookup, instead of silently spanning
+    events. Guards the cross-event search regression on every search surface."""
+
+    def test_single_search_requires_event_id(self, client: TestClient):
+        data = _make_jpeg_bytes()
+        resp = client.post(
+            "/api/v1/faces/search",
+            files={"file": ("noise.jpg", data, "image/jpeg")},
+        )
+        assert resp.status_code == 422
+
+    def test_batch_search_requires_event_id(self, client: TestClient):
+        data = _make_jpeg_bytes()
+        resp = client.post(
+            "/api/v1/faces/search/batch",
+            params={"operation": "search"},
+            files=[("files", ("noise.jpg", data, "image/jpeg"))],
+        )
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "EVENT_ID_REQUIRED"
+
+    def test_mega_search_requires_event_id(self, client: TestClient):
+        data = _make_jpeg_bytes()
+        resp = client.post(
+            "/api/v1/faces/search/mega",
+            params={"operation": "search"},
+            files=[("files", ("noise.jpg", data, "image/jpeg"))],
+        )
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "EVENT_ID_REQUIRED"
+
+    def test_batch_detect_does_not_require_event_id(self, client: TestClient):
+        # detect does no DB lookup, so it stays usable without an event scope.
+        data = _make_jpeg_bytes()
+        resp = client.post(
+            "/api/v1/faces/search/batch",
+            params={"operation": "detect"},
+            files=[("files", ("noise.jpg", data, "image/jpeg"))],
+        )
+        assert resp.status_code != 422
 
 
 class TestFaceCompare:
