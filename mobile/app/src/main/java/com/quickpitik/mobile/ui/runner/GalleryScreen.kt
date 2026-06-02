@@ -628,11 +628,12 @@ private fun TileActionPill(
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
-        Text(
+        ArrowLabel(
             text = label.uppercase(),
-            style = Typography.labelSmall,
             color = fg,
+            style = Typography.labelSmall,
             fontSize = 9.sp,
+            iconSize = 11.dp,
         )
     }
 }

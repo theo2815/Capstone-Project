@@ -90,6 +90,12 @@ fun CheckoutSheet(
                 cartViewModel.clearPaymongoLaunched()
                 cartViewModel.closeCheckoutSheet()
                 cartViewModel.resetCheckoutState()
+                // Reconcile the local cart with the server. The BE empties the
+                // cart at order creation, so this returns an empty cart and the
+                // floating pill clears — covering the case where no deep link
+                // fired (manual return), which the OrderReturnScreen poll path
+                // would otherwise have been the only thing to clear.
+                cartViewModel.fetchCart()
                 onCheckoutSuccess()
             }
         }

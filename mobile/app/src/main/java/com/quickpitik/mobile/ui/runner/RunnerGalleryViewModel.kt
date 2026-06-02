@@ -50,7 +50,12 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
 
     fun fetchPublicEvents() {
         viewModelScope.launch {
-            _eventsState.value = RunnerEventsState.Loading
+            // Only show the skeleton on first load; re-fetches (screen re-entry,
+            // future pull-to-refresh) keep the existing list visible so the UI
+            // doesn't flash back to a loading state on every navigation.
+            if (_eventsState.value !is RunnerEventsState.Success) {
+                _eventsState.value = RunnerEventsState.Loading
+            }
             try {
                 // Browse-first, like the website's /events: pull every publicly
                 // visible lifecycle bucket so the discovery screen can segment

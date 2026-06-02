@@ -32,4 +32,19 @@ interface UploadQueueDao {
 
     @Query("UPDATE upload_queue SET retryCount = retryCount + 1 WHERE id = :id")
     suspend fun incrementRetryCount(id: Long)
+
+    @Query("DELETE FROM upload_queue WHERE uploadStatus = :status")
+    suspend fun deleteByStatus(status: String): Int
+
+    /**
+     * Records for [eventId] that should block a card photo from being re-imported:
+     * anything still in flight (QUEUED / UPLOADING) or already landed (COMPLETED).
+     * FAILED is intentionally excluded so the user can retry from the card after
+     * a transient backend hiccup.
+     */
+    @Query(
+        "SELECT * FROM upload_queue WHERE eventId = :eventId AND " +
+            "uploadStatus IN ('QUEUED', 'UPLOADING', 'COMPLETED')"
+    )
+    suspend fun getActiveOrCompletedForEvent(eventId: String): List<UploadRecord>
 }

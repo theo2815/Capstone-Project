@@ -1,6 +1,7 @@
 package com.quickpitik.mobile.data.remote
 
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -19,7 +20,7 @@ object RetrofitClient {
     //
     // When using the Android Studio Emulator, "http://10.0.2.2:8080/" routes to your PC's backend.
     // If you use a physical phone via USB instead of Wi-Fi, run "adb reverse tcp:8080 tcp:8080".
-    const val BASE_URL = "http://10.0.2.2:8080/"
+    const val BASE_URL = "http://192.168.1.232:8080/"
 
     // Single source of truth for image URL rewriting across the photographer
     // screens. Derived from BASE_URL so any host change (emulator → Wi-Fi IP →
@@ -33,8 +34,29 @@ object RetrofitClient {
     val backendOrigin: String
         get() = BASE_URL.trimEnd('/')
 
-    private val loggingInterceptor = HttpLoggingInterceptor().apply {
+    // Two interceptors, one per verbosity. `bodyLogger` is what we want for JSON
+    // traffic (auth, events, profile) — full request/response payloads in logcat
+    // make debugging trivial. `headersLogger` is what we MUST use for multipart
+    // photo uploads: at BODY level, OkHttp dumps every JPEG byte as a giant wall
+    // of mojibake (1 MB photo = hundreds of unreadable log lines, plus the
+    // logcat I/O itself measurably slows the upload). HEADERS keeps status code,
+    // URL, and content-length without the binary spam.
+    private val bodyLogger = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY
+    }
+    private val headersLogger = HttpLoggingInterceptor().apply {
+        level = HttpLoggingInterceptor.Level.HEADERS
+    }
+
+    // Per-request router: pick HEADERS when the outgoing body is multipart
+    // (i.e. the photo upload endpoint), BODY otherwise. Done at this layer so
+    // we don't have to remember to silence logging at every call site that
+    // streams binary — adding a new upload endpoint later "just works."
+    private val loggingInterceptor = Interceptor { chain ->
+        val request = chain.request()
+        val isMultipart = request.body?.contentType()?.type == "multipart"
+        val delegate = if (isMultipart) headersLogger else bodyLogger
+        delegate.intercept(chain)
     }
 
     // Default OkHttp read/write timeout is 10s — too tight for the PayMongo

@@ -181,6 +181,15 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
     /** Download a full object (the JPEG bytes) by handle, standard op. */
     fun getObject(handle: Long): ByteArray = dataInCommand(Ptp.OP_GET_OBJECT, handle.toInt())
 
+    /**
+     * Download the camera-rendered thumbnail JPEG for [handle]. Size is camera-
+     * defined (typically 160x120 / 240x160) so this comes back in a single
+     * data phase and is fast enough to fetch for every visible row during the
+     * browse scan. Not every body supports this op — caller should runCatching
+     * and fall back to a placeholder.
+     */
+    fun getThumb(handle: Long): ByteArray = dataInCommand(Ptp.OP_GET_THUMB, handle.toInt())
+
     /** Parse a PTP AUINT32 array payload: `[UINT32 count][count × UINT32]`. */
     private fun parseUint32Array(data: ByteArray): List<Long> {
         if (data.size < 4) return emptyList()

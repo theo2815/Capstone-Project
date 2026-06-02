@@ -85,6 +85,11 @@ fun EventsDiscoveryScreen(
     // race log in sync. Toggle feedback surfaces as a snackbar.
     val snackbarHostState = remember { SnackbarHostState() }
     val savedMessage by savedEventsViewModel.message.collectAsState()
+    // Refetch on every screen entry — the VM's `init` only runs once at process
+    // start, so an event the admin published mid-session would never appear
+    // otherwise. The VM keeps the existing list visible during the refetch
+    // (Loading state is only assigned when no prior Success exists).
+    LaunchedEffect(Unit) { viewModel.fetchPublicEvents() }
     LaunchedEffect(Unit) { savedEventsViewModel.refresh() }
     LaunchedEffect(savedMessage) {
         savedMessage?.let {
@@ -539,11 +544,11 @@ private fun EventTile(
                 )
                 Text(event.location, style = Typography.bodySmall, color = SlateSoft, maxLines = 1)
                 Spacer(Modifier.height(10.dp))
-                Text(
+                ArrowLabel(
                     if (interactive) "Open →" else "Opens on race day",
+                    color = if (interactive) Fresh else SlateSoft,
                     style = Typography.labelMedium,
                     fontWeight = FontWeight.Bold,
-                    color = if (interactive) Fresh else SlateSoft
                 )
             }
         }
