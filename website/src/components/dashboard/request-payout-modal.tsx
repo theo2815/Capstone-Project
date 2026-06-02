@@ -5,12 +5,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
 import { useToast } from "@/hooks/use-toast";
+import { ApiError } from "@/lib/api";
 import {
   requestPhotographerPayout,
   type PayoutBalanceResponse,
 } from "@/lib/api-photographer-earnings";
 import { formatPayoutNumber } from "@/lib/payout-format";
-import { PAYOUT_METHOD_LABEL, usePhotographerSettingsStore } from "@/store/photographer-settings-store";
+import { PAYOUT_METHOD_LABEL } from "@/store/photographer-settings-store";
 
 // Confirmation modal before submitting a payout request. Shows: amount,
 // primary payout account snapshot, and the one-open-at-a-time rule. POSTs
@@ -30,9 +31,10 @@ export function RequestPayoutModal({
 }) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const primary = usePhotographerSettingsStore((s) =>
-    s.payouts.find((p) => p.isPrimary),
-  );
+  // Primary account comes from the BE balance response (authoritative), not
+  // the client settings store — a stale store primary the DB lacks is what
+  // produced the demo's PAYOUT_NO_ACCOUNT on submit.
+  const primary = balance?.primaryAccount ?? null;
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit() {
@@ -55,9 +57,16 @@ export function RequestPayoutModal({
       onClose();
     } catch (err) {
       console.error("[payouts] request failed", err);
+      // Surface the backend's specific reason (PAYOUT_NO_ACCOUNT /
+      // PAYOUT_BELOW_MINIMUM / PAYOUT_REQUEST_OPEN — already user-friendly)
+      // instead of a generic line that hides why the request failed.
       showToast({
         kind: "error",
-        message: "Could not submit request. Please try again.",
+        message:
+          err instanceof ApiError
+            ? (err.errors[0]?.message ??
+              "Could not submit request. Please try again.")
+            : "Could not submit request. Please try again.",
       });
     } finally {
       setSubmitting(false);

@@ -35,10 +35,7 @@ import { useAdminPayoutReportStore } from "@/store/admin-payout-report-store";
 import { resolveCurrentPhotographer } from "@/lib/current-photographer";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import {
-  PAYOUT_METHOD_LABEL,
-  usePhotographerSettingsStore,
-} from "@/store/photographer-settings-store";
+import { PAYOUT_METHOD_LABEL } from "@/store/photographer-settings-store";
 
 const STATUS_LABEL: Record<PayoutStatus, string> = {
   paid: "PAID",
@@ -218,6 +215,9 @@ function PayoutsSlab() {
 //      helper "Reach ₱500 to request a payout."
 // A missing primary payout account shows a Set-up CTA instead of the
 // Request button — the BE rejects the request anyway, so block early.
+// `primary` comes from the BE balance response (authoritative), not the
+// client settings store — the store can show a stale primary the DB lacks,
+// which is what produced the demo's PAYOUT_NO_ACCOUNT on submit.
 function RequestPayoutHero({
   balance,
   onOpenHow,
@@ -229,10 +229,6 @@ function RequestPayoutHero({
   onRequest: () => void;
   onWithdraw: () => void;
 }) {
-  const primary = usePhotographerSettingsStore((s) =>
-    s.payouts.find((p) => p.isPrimary),
-  );
-
   if (!balance) {
     return (
       <div>
@@ -242,6 +238,8 @@ function RequestPayoutHero({
       </div>
     );
   }
+
+  const primary = balance.primaryAccount;
 
   if (balance.hasOpenRequest && balance.openRequest) {
     return (
@@ -340,12 +338,13 @@ interface PayoutBalanceResponseLike {
   minimum: number;
   hasOpenRequest: boolean;
   openRequest: PhotographerPayout | null;
+  primaryAccount: PrimaryPayoutAccount | null;
 }
 
 interface PrimaryPayoutAccount {
   method: "gcash" | "maya" | "gotyme";
   accountNumber: string;
-  isPrimary: boolean;
+  accountName: string;
 }
 
 function OpenRequestHero({

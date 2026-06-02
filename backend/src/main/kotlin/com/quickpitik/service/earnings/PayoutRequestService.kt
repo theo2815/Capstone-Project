@@ -1,6 +1,7 @@
 package com.quickpitik.service.earnings
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.dto.earnings.PayoutBalanceAccountDto
 import com.quickpitik.dto.earnings.PayoutBalanceDto
 import com.quickpitik.dto.earnings.PhotographerPayoutDto
 import com.quickpitik.dto.earnings.buildSequencedCycleId
@@ -58,11 +59,21 @@ class PayoutRequestService(
             photographerId,
             OPEN_STATUS_WIRES,
         )
+        // Same lookup request() uses to enforce PAYOUT_NO_ACCOUNT — surfacing it
+        // here lets the FE gate on the authoritative DB state, not its store.
+        val primary = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(photographerId)
         return PayoutBalanceDto(
             unpaidBalance = balance,
             minimum = MINIMUM,
             hasOpenRequest = open != null,
             openRequest = open?.toDto(),
+            primaryAccount = primary?.let {
+                PayoutBalanceAccountDto(
+                    method = it.method.wire,
+                    accountNumber = it.accountNumber,
+                    accountName = it.accountName,
+                )
+            },
         )
     }
 
