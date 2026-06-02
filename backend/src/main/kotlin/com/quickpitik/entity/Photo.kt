@@ -64,6 +64,22 @@ class Photo(
     @Column(name = "alt_text", columnDefinition = "TEXT")
     var altText: String? = null,
 
+    // Async indexing state (face enroll + bib OCR via ai-api). Written by
+    // PhotoIndexingService off the upload request; a @Scheduled sweep re-drives
+    // PENDING/FAILED rows. See migration V21.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "indexing_status", nullable = false, length = 16)
+    var indexingStatus: IndexingStatus = IndexingStatus.PENDING,
+
+    @Column(name = "indexed_at")
+    var indexedAt: OffsetDateTime? = null,
+
+    @Column(name = "indexing_attempts", nullable = false)
+    var indexingAttempts: Int = 0,
+
+    @Column(name = "indexing_error", columnDefinition = "TEXT")
+    var indexingError: String? = null,
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(
         name = "photo_bibs",

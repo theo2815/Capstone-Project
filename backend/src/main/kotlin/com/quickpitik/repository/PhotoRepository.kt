@@ -1,5 +1,6 @@
 package com.quickpitik.repository
 
+import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import org.springframework.data.domain.Page
@@ -9,6 +10,7 @@ import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import java.math.BigDecimal
+import java.time.OffsetDateTime
 import java.util.UUID
 
 interface PhotoRepository : JpaRepository<Photo, UUID> {
@@ -127,4 +129,63 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     ): Page<Photo>
 
     fun findFirstByIdAndPhotographerId(id: UUID, photographerId: UUID): Photo?
+
+    // Reconciliation backlog: photos whose async indexing hasn't settled. The
+    // cutoff skips photos the AFTER_COMMIT hot path is probably still handling,
+    // so the sweep only re-drives genuinely-stuck work. Backed by the partial
+    // index idx_photos_indexing_pending (migration V21).
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.indexingStatus IN :statuses
+          AND p.indexingAttempts < :maxAttempts
+          AND p.uploadedAt < :cutoff
+        ORDER BY p.uploadedAt ASC
+        """,
+    )
+    fun findIndexingBacklog(
+        @Param("statuses") statuses: Collection<IndexingStatus>,
+        @Param("maxAttempts") maxAttempts: Int,
+        @Param("cutoff") cutoff: OffsetDateTime,
+        pageable: Pageable,
+    ): List<Photo>
+
+    // Phase C batch drain: distinct events that have indexable backlog. The
+    // drain groups per event because each mega job is single-event (event
+    // isolation — a person enrolled in a mega is stamped with that one event_id).
+    @Query(
+        """
+        SELECT DISTINCT p.eventId FROM Photo p
+        WHERE p.indexingStatus IN :statuses
+          AND p.indexingAttempts < :maxAttempts
+          AND p.uploadedAt < :cutoff
+        """,
+    )
+    fun findEventsWithIndexingBacklog(
+        @Param("statuses") statuses: Collection<IndexingStatus>,
+        @Param("maxAttempts") maxAttempts: Int,
+        @Param("cutoff") cutoff: OffsetDateTime,
+        pageable: Pageable,
+    ): List<UUID>
+
+    // The PENDING/FAILED photos of ONE event, oldest first, capped by the
+    // Pageable to the batch max-size. These get flipped to BATCHING and shipped
+    // as a single mega job per kind.
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.eventId = :eventId
+          AND p.indexingStatus IN :statuses
+          AND p.indexingAttempts < :maxAttempts
+          AND p.uploadedAt < :cutoff
+        ORDER BY p.uploadedAt ASC
+        """,
+    )
+    fun findIndexingBacklogForEvent(
+        @Param("eventId") eventId: UUID,
+        @Param("statuses") statuses: Collection<IndexingStatus>,
+        @Param("maxAttempts") maxAttempts: Int,
+        @Param("cutoff") cutoff: OffsetDateTime,
+        pageable: Pageable,
+    ): List<Photo>
 }

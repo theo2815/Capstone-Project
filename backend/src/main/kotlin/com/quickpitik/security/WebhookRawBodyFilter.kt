@@ -8,11 +8,11 @@ import org.springframework.stereotype.Component
 import org.springframework.web.filter.OncePerRequestFilter
 import org.springframework.web.util.ContentCachingRequestWrapper
 
-// Wraps payment-webhook requests so the raw JSON body remains accessible AFTER
-// Jackson deserialization. HMAC must be computed over the provider-signed wire
-// bytes — re-serializing the parsed DTO would diverge on whitespace and key
-// ordering. Scoped to /api/v1/payments/webhook/** so the rest of the API does
-// not pay the per-request wrapping cost.
+// Wraps webhook requests so the raw JSON body remains accessible AFTER Jackson
+// deserialization. HMAC must be computed over the sender-signed wire bytes —
+// re-serializing the parsed DTO would diverge on whitespace and key ordering.
+// Scoped to the payment webhooks and the internal ai-api job webhooks so the
+// rest of the API does not pay the per-request wrapping cost.
 //
 // Cache cap (CONTENT_CACHE_LIMIT_BYTES) bounds in-memory buffering against
 // hostile oversized bodies. Real provider payloads are <2 KB; 64 KB is more
@@ -29,8 +29,11 @@ class WebhookRawBodyFilter : OncePerRequestFilter() {
 
     private val log = LoggerFactory.getLogger(javaClass)
 
-    override fun shouldNotFilter(request: HttpServletRequest): Boolean =
-        !request.requestURI.startsWith("/api/v1/payments/webhook/")
+    override fun shouldNotFilter(request: HttpServletRequest): Boolean {
+        val uri = request.requestURI
+        return !uri.startsWith("/api/v1/payments/webhook/") &&
+            !uri.startsWith("/api/v1/internal/ai-webhooks")
+    }
 
     override fun doFilterInternal(
         request: HttpServletRequest,

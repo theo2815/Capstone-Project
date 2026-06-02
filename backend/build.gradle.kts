@@ -37,6 +37,12 @@ dependencies {
 
 	implementation("software.amazon.awssdk:s3:2.30.21")
 
+	// Pooled HTTP client for the ai-api RestClient (RestClientConfig). Async
+	// photo indexing fans out concurrent face + bib calls; the default
+	// SimpleClientHttpRequestFactory opens one connection per request. Version
+	// managed by the Spring Boot BOM.
+	implementation("org.apache.httpcomponents.client5:httpclient5")
+
 	// EXIF orientation reader. Phone cameras (iPhone especially) tag portrait
 	// photos with an orientation flag instead of rotating the pixel buffer.
 	// Java's ImageIO doesn't honor the tag — without this, every portrait

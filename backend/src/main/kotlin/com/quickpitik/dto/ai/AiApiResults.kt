@@ -66,6 +66,14 @@ data class JobStatusResult(
     val error: String? = null,
 )
 
+// 202 response of the mega/batch endpoints — the async job to poll.
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class JobCreateResult(
+    val job_id: String,
+    val status: String = "pending",
+    val total_items: Int = 0,
+)
+
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class HealthReady(
     val models_loaded: Boolean = false,

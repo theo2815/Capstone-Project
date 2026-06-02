@@ -5,9 +5,8 @@ import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photographer.UploadedPhotoDto
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
-import com.quickpitik.entity.PhotoBibEmbed
-import com.quickpitik.entity.PhotoFacePersonEmbed
 import com.quickpitik.entity.PhotoSpan
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.VerificationStatus
@@ -18,7 +17,6 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.PhotoPublishedEvent
 import org.slf4j.LoggerFactory
@@ -27,7 +25,6 @@ import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
-import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -43,7 +40,6 @@ class PhotoUploadService(
     private val eventRepository: EventRepository,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val userRepository: UserRepository,
-    private val aiApiClient: AiApiClient,
     private val aiApiProperties: AiApiProperties,
     private val watermarkService: WatermarkService,
     private val eventPublisher: ApplicationEventPublisher,
@@ -107,7 +103,6 @@ class PhotoUploadService(
         }
 
         val bytes = file.bytes
-        val filename = file.originalFilename ?: "upload.jpg"
 
         // Blur culling is desktop-only (BatchMyPhotos). Web upload assumes
         // photos have already been culled by the photographer's desktop
@@ -176,76 +171,16 @@ class PhotoUploadService(
             pricePhp = event.pricePerPhoto,
         )
 
-        // Faces + bibs — best-effort. Both are gated by `app.ai-api.enabled`
-        // so feature development can run without ai-api on. When disabled,
-        // facesOk + bibsOk stay false → aiDetectionStatus = "none" in the
-        // response, photo still uploads, just without face embeddings or bib
-        // OCR. When ai-api comes online (AI_API_ENABLED=true), the existing
-        // try/catch graceful degradation kicks in for transient failures.
-        // Inner enroll failures are logged via runCatching's onFailure.
-        var facesOk = false
-        var bibsOk = false
-        if (aiApiProperties.enabled) {
-            facesOk = true
-            try {
-                val facesResult = aiApiClient.facesDetect(bytes, contentType, filename)
-                // ai-api requires person_id be a valid UUID (or omitted, in which
-                // case it auto-generates one). The previous "$photoId:$index" form
-                // failed UUID parsing → "Invalid person_id format". Let ai-api mint
-                // the UUID and store whichever id it returns. Note: ai-api's enroll
-                // picks the best face from the image regardless of how many faces
-                // detect() returned, so the per-face loop is functionally a no-op
-                // for index > 0 on multi-face shots — same "best face" gets enrolled
-                // under N different UUIDs. Acceptable for v1; refine when we crop
-                // per-face before enroll.
-                facesResult.faces.forEachIndexed { index, _ ->
-                    runCatching {
-                        val enrollResult = aiApiClient.facesEnroll(
-                            file = bytes,
-                            contentType = contentType,
-                            filename = filename,
-                            personName = photoId.toString(),
-                            personId = null,
-                            eventId = eventId,
-                        )
-                        photo.facePersons.add(
-                            PhotoFacePersonEmbed(
-                                faceIndex = index,
-                                aiPersonId = enrollResult.person_id,
-                            )
-                        )
-                    }.onFailure { log.warn("Face enroll failed for photo {} face {}: {}", photoId, index, it.message) }
-                }
-            } catch (ex: Exception) {
-                facesOk = false
-                log.warn("Faces detect failed for upload {}: {}", photoId, ex.message)
-            }
-
-            bibsOk = true
-            try {
-                val bibsResult = aiApiClient.bibsRecognize(bytes, contentType, filename)
-                bibsResult.detections
-                    .filter { it.confidence >= aiApiProperties.bibConfidenceThresholdDefault }
-                    .map { it.bib_number.trim().uppercase() }
-                    .filter { it.isNotEmpty() }
-                    .distinct()
-                    .forEach { bibNumber ->
-                        photo.bibs.add(
-                            PhotoBibEmbed(
-                                bibNumber = bibNumber,
-                                ocrConfidence = BigDecimal.valueOf(
-                                    bibsResult.detections.first { it.bib_number.trim().uppercase() == bibNumber }.confidence,
-                                ),
-                            ),
-                        )
-                    }
-            } catch (ex: Exception) {
-                bibsOk = false
-                log.warn("Bibs recognize failed for upload {}: {}", photoId, ex.message)
-            }
-        } else {
-            log.debug("ai-api disabled; skipping faces + bibs for photo {}", photoId)
-        }
+        // Faces + bibs are indexed asynchronously off this request by
+        // PhotoIndexingService (face enroll + bib OCR via ai-api). The photo is
+        // saved + LIVE immediately; indexing fills in tags within seconds and
+        // fires a photo.indexed event, with a @Scheduled reconciliation sweep
+        // re-driving anything that fails. This replaces the old per-photo
+        // blocking ai-api calls that held the request thread + DB transaction
+        // for the full inference duration. When ai-api is disabled the photo is
+        // marked SKIPPED and never queued.
+        photo.indexingStatus =
+            if (aiApiProperties.enabled) IndexingStatus.PENDING else IndexingStatus.SKIPPED
 
         photoRepository.save(photo)
 
@@ -279,12 +214,17 @@ class PhotoUploadService(
             ),
         )
 
-        val aiDetectionStatus = when {
-            facesOk && bibsOk -> "ok"
-            !facesOk && bibsOk -> "faces_unavailable"
-            facesOk && !bibsOk -> "bibs_unavailable"
-            else -> "none"
+        // Index faces + bibs asynchronously once this upload transaction commits
+        // (AFTER_COMMIT via PhotoIndexingTrigger), so the request returns without
+        // waiting on ai-api inference.
+        if (aiApiProperties.enabled) {
+            eventPublisher.publishEvent(PhotoUploadedForIndexing(photoId = photoId, eventId = eventId))
         }
+
+        // Indexing now runs async, so detection isn't known at upload time. The
+        // field is eventually-consistent ("pending" until indexing completes);
+        // clients treat it as informational. "none" when ai-api is disabled.
+        val aiDetectionStatus = if (aiApiProperties.enabled) "pending" else "none"
 
         return UploadedPhotoDto(
             id = photoId,
