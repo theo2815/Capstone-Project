@@ -197,7 +197,7 @@ private fun EventCoverageCard(coverage: PhotographerEventCoverageDto, onClick: (
             color = SlateSoft
         )
         Spacer(modifier = Modifier.height(8.dp))
-        Text("VIEW GALLERY →", style = Typography.labelSmall, color = Fresh, fontWeight = FontWeight.Bold)
+        ArrowLabel("VIEW GALLERY →", color = Fresh, style = Typography.labelSmall, fontWeight = FontWeight.Bold, iconSize = 12.dp)
     }
 }
 

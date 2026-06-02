@@ -2,6 +2,11 @@ package com.quickpitik.mobile.ui.photographer
 
 import android.app.Application
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -16,6 +21,9 @@ import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.usb.CameraConnectionManager
 import com.quickpitik.mobile.data.usb.CameraConnectionState
+import com.quickpitik.mobile.data.usb.ptp.CardPhoto
+import com.quickpitik.mobile.data.usb.ptp.UsbCardBrowseController
+import com.quickpitik.mobile.data.usb.ptp.UsbCardImportController
 import com.quickpitik.mobile.data.remote.EarningsOverviewDto
 import com.quickpitik.mobile.data.remote.PayoutBalanceDto
 import com.quickpitik.mobile.data.remote.PhotographerPayoutDto
@@ -26,7 +34,11 @@ import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -81,8 +93,60 @@ data class QueueStats(
     val uploadingCount: Int = 0,
     val failedCount: Int = 0,
     val totalCount: Int = 0,
-    val progress: Float = 0f
+    val progress: Float = 0f,
+    /**
+     * Most recent error message attached to a FAILED row, or null when nothing
+     * has failed. PhotoUploadWorker already writes a per-row string into
+     * UploadRecord.errorMessage; without surfacing it here the UI was stuck
+     * showing "Failed · N" with no detail, which made the 46-failure batch on
+     * 2026-05-28 impossible to diagnose from the screen alone.
+     */
+    val lastError: String? = null
 )
+
+/**
+ * UI-side state for the manual "Import from camera card" flow (Increment 1 of
+ * the camera-import series). `Idle` keeps the sheet hidden; any non-Idle value
+ * mounts [com.quickpitik.mobile.ui.photographer.CameraCardImportSheet].
+ */
+sealed class CardBrowseState {
+    object Idle : CardBrowseState()
+    object Opening : CardBrowseState()
+    data class Scanning(val seen: Int, val total: Int) : CardBrowseState()
+    /**
+     * Card walked — `photos` is what the photographer can import; `selectedHandles`
+     * is which of them they've ticked (Increment 2). `importedHandles` is the
+     * subset of `photos` that succeeded in any earlier import this VM lifetime
+     * (Increment 4 D dedupe) — rows render as "Imported" and are excluded from
+     * selection.
+     */
+    data class Loaded(
+        val photos: List<CardPhoto>,
+        val selectedHandles: Set<Long> = emptySet(),
+        val importedHandles: Set<Long> = emptySet(),
+    ) : CardBrowseState()
+    /**
+     * Bytes flowing off the card. Counts come from the underlying handle sets
+     * (the controller emits Sets so the VM can drive dedupe + retry-failed).
+     */
+    data class Importing(
+        val seen: Int,
+        val total: Int,
+        val succeeded: Int,
+        val failed: Int,
+    ) : CardBrowseState()
+    /**
+     * All selected handles attempted — sheet shows a summary + Done. Carries
+     * `photos` + `failedHandles` so the sheet can offer a "Retry N failed"
+     * (Increment 4 B) without re-browsing the card.
+     */
+    data class ImportDone(
+        val photos: List<CardPhoto>,
+        val succeededHandles: Set<Long>,
+        val failedHandles: Set<Long>,
+    ) : CardBrowseState()
+    data class Error(val message: String) : CardBrowseState()
+}
 
 class PhotographerDashboardViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application)
@@ -133,6 +197,32 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     private val _profileEventPhotosState = MutableStateFlow<ProfileEventPhotosState>(ProfileEventPhotosState.Loading)
     val profileEventPhotosState: StateFlow<ProfileEventPhotosState> = _profileEventPhotosState
 
+    // Manual camera-card import. Browse + import are two short sessions, not
+    // one long one — holding a session open locks the R6's physical shutter
+    // (2026-05-26 Zno-pivot ADR). Both controllers close in finally.
+    private val cardBrowseController = UsbCardBrowseController(
+        manager = cameraManager.manager,
+        deviceProvider = { cameraManager.connectedCameraDevice() },
+    )
+    private val cardImportController = UsbCardImportController(
+        manager = cameraManager.manager,
+        deviceProvider = { cameraManager.connectedCameraDevice() },
+    )
+    private val _cardBrowseState = MutableStateFlow<CardBrowseState>(CardBrowseState.Idle)
+    val cardBrowseState: StateFlow<CardBrowseState> = _cardBrowseState
+    private var browseJob: Job? = null
+
+    // Increment 4 D — handles that succeeded in any import during this VM
+    // lifetime. Re-browsing the same card shows them as "Imported" so the
+    // photographer can't accidentally re-pull. Reset when the camera detaches
+    // (handle space is per-storage; a different body has its own counter).
+    private var sessionImportedHandles: Set<Long> = emptySet()
+
+    // Increment 4 F — runs alongside an import; if the camera goes Disconnected
+    // while we're Importing, cancels the import job and surfaces a friendly
+    // Error before the next getObject() would have thrown a cryptic IO error.
+    private var disconnectWatcherJob: Job? = null
+
     init {
         fetchEvents()
         fetchPublicEvents()
@@ -142,6 +232,22 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         fetchSettings()
         fetchMessages()
         cameraManager.start()
+        observeCameraDetach()
+    }
+
+    /**
+     * Reset the dedupe set whenever the camera detaches — handles are per-
+     * storage so a fresh body gets its own counter starting at 1. Carries
+     * Increment 4 D (dedupe) correctness when the photographer swaps bodies.
+     */
+    private fun observeCameraDetach() {
+        viewModelScope.launch {
+            cameraManager.state.collect { state ->
+                if (state is CameraConnectionState.Disconnected) {
+                    sessionImportedHandles = emptySet()
+                }
+            }
+        }
     }
 
     override fun onCleared() {
@@ -325,13 +431,24 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
                 val progress = if (total > 0) synced.toFloat() / total.toFloat() else 0f
 
+                // Pick the highest-id FAILED row so the displayed message tracks
+                // the most recent attempt (records is unordered from the DAO).
+                // Null when nothing failed yet — the card then hides the line.
+                val latestError = records
+                    .asSequence()
+                    .filter { it.uploadStatus == "FAILED" }
+                    .maxByOrNull { it.id }
+                    ?.errorMessage
+                    ?.takeIf { it.isNotBlank() }
+
                 _queueStats.value = QueueStats(
                     syncedCount = synced,
                     queuedCount = queued,
                     uploadingCount = uploading,
                     failedCount = failed,
                     totalCount = total,
-                    progress = progress
+                    progress = progress,
+                    lastError = latestError
                 )
             }
         }
@@ -347,6 +464,19 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             .build()
 
         workManager.enqueue(syncRequest)
+    }
+
+    /**
+     * Wipes every FAILED row from the sync queue. A HTTP 500 batch on
+     * 2026-05-28 left 46 stale rows that the user just wanted gone — root
+     * cause (which server-side exception fired) was deferred to a future
+     * backend session. Files on disk are intentionally left to the OS cache
+     * reaper; we don't own arbitrary filePaths and touching them is risky.
+     */
+    fun clearFailedUploads() {
+        viewModelScope.launch {
+            database.uploadQueueDao().deleteByStatus("FAILED")
+        }
     }
 
     fun fetchSharePhotos(eventId: String) {
@@ -505,20 +635,311 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
+    /**
+     * Start a one-shot enumeration of the JPEGs on the tethered camera's card.
+     * Sheet opens immediately (Opening), the controller streams Scanning ticks,
+     * then settles into Loaded or Error. Re-entrancy is a no-op while a run is
+     * already going so the photographer can't double-tap into two sessions.
+     */
+    fun browseCameraCard() {
+        if (_cardBrowseState.value !is CardBrowseState.Idle &&
+            _cardBrowseState.value !is CardBrowseState.Error
+        ) return
+        _cardBrowseState.value = CardBrowseState.Opening
+        // Capture eventId for the IO leg so the Room lookup is bounded — cards
+        // reused across races mustn't bleed dedupe across events.
+        val activeEventId = _activeEvent.value?.id
+        browseJob?.cancel()
+        browseJob = viewModelScope.launch(Dispatchers.IO) {
+            // Persistent-dedupe set: original filenames of records already in
+            // the local upload queue for THIS event (QUEUED/UPLOADING/COMPLETED).
+            // Survives app restarts so re-plugging a card after the worker drained
+            // doesn't re-show the same photos as importable. Backend is FROZEN
+            // per Build Mandate — no cross-device round-trip here.
+            val persistentlyImportedFilenames: Set<String> =
+                if (activeEventId.isNullOrBlank()) emptySet()
+                else database.uploadQueueDao()
+                    .getActiveOrCompletedForEvent(activeEventId)
+                    .mapNotNullTo(HashSet()) { extractOriginalCardFilename(it.filePath) }
+
+            cardBrowseController.browse { progress ->
+                _cardBrowseState.value = when (progress) {
+                    is UsbCardBrowseController.Progress.Opening ->
+                        CardBrowseState.Opening
+                    is UsbCardBrowseController.Progress.Scanning ->
+                        CardBrowseState.Scanning(progress.seen, progress.total)
+                    is UsbCardBrowseController.Progress.Done ->
+                        // Two paths to "Imported": (a) in-session handle dedupe
+                        // (camera handle space, resets on detach) and (b) Room-
+                        // persistent filename dedupe (this event, this device).
+                        CardBrowseState.Loaded(
+                            photos = progress.photos,
+                            importedHandles = progress.photos
+                                .filter { p ->
+                                    p.handle in sessionImportedHandles ||
+                                        p.filename in persistentlyImportedFilenames
+                                }
+                                .mapTo(HashSet()) { it.handle },
+                        )
+                    is UsbCardBrowseController.Progress.Failed ->
+                        CardBrowseState.Error(progress.message)
+                }
+            }
+        }
+    }
+
+    /**
+     * Recover the original camera filename (e.g. `R6T_1083.JPG`) from the cache
+     * file path the import flow writes: `<cacheDir>/dslr_import_<ts>_<original>`.
+     * Returns null for cache files written by other paths (`simulated_dslr_*`,
+     * `gallery_upload_*`) so they don't pollute card-dedupe.
+     */
+    private fun extractOriginalCardFilename(filePath: String): String? {
+        val name = File(filePath).name
+        if (!name.startsWith("dslr_import_")) return null
+        // Format: dslr_import_<timestamp>_<original> — original may itself
+        // contain underscores (Canon's R6T_1083.JPG), so split with limit=4
+        // and take the 4th piece intact.
+        val parts = name.split('_', limit = 4)
+        return if (parts.size == 4 && parts[3].isNotBlank()) parts[3] else null
+    }
+
+    /**
+     * Dismiss the import sheet and cancel any in-flight scan or transfer.
+     * If the user bailed mid-import, the photos already pulled are sitting in
+     * Room — kick the sync engine so they actually upload instead of stalling.
+     */
+    fun closeCardImport() {
+        val wasMidImport = _cardBrowseState.value is CardBrowseState.Importing
+        browseJob?.cancel()
+        browseJob = null
+        disconnectWatcherJob?.cancel()
+        disconnectWatcherJob = null
+        _cardBrowseState.value = CardBrowseState.Idle
+        if (wasMidImport) runSyncEngine()
+    }
+
+    /**
+     * Increment 2 — selection. Toggle / select-all / clear are no-ops unless the
+     * sheet is in [CardBrowseState.Loaded]; selection lives on the sealed Loaded
+     * state so it resets automatically whenever the photographer re-opens browse.
+     */
+    fun toggleCardPhotoSelection(handle: Long) {
+        val current = _cardBrowseState.value as? CardBrowseState.Loaded ?: return
+        val next = if (handle in current.selectedHandles)
+            current.selectedHandles - handle
+        else
+            current.selectedHandles + handle
+        _cardBrowseState.value = current.copy(selectedHandles = next)
+    }
+
+    fun selectAllCardPhotos() {
+        val current = _cardBrowseState.value as? CardBrowseState.Loaded ?: return
+        // Skip already-imported (Increment 4 D) — they can't be re-selected.
+        _cardBrowseState.value = current.copy(
+            selectedHandles = current.photos
+                .asSequence()
+                .map { it.handle }
+                .filter { it !in current.importedHandles }
+                .toHashSet()
+        )
+    }
+
+    fun clearCardPhotoSelection() {
+        val current = _cardBrowseState.value as? CardBrowseState.Loaded ?: return
+        _cardBrowseState.value = current.copy(selectedHandles = emptySet())
+    }
+
+    /**
+     * Increment 3 — pull the selected handles off the card, write each JPEG to
+     * the app cache, enqueue an `UploadRecord`, and kick the existing
+     * `PhotoUploadWorker` once everything is queued. Same persistence pattern
+     * as `simulatePhotoCapture`, so the existing sync-queue UI surfaces the
+     * uploads with no further changes.
+     *
+     * Per-photo failures don't abort the run; the summary reports the tally.
+     * `closeCardImport()` will flush partial imports if the user dismisses
+     * mid-flight.
+     */
+    fun importSelectedCardPhotos() {
+        val loaded = _cardBrowseState.value as? CardBrowseState.Loaded ?: return
+        val selected = loaded.photos.filter {
+            it.handle in loaded.selectedHandles && it.handle !in loaded.importedHandles
+        }
+        runImport(allPhotos = loaded.photos, toImport = selected)
+    }
+
+    /**
+     * Increment 4 B — re-run just the handles that failed last time. Triggered
+     * from the ImportDone sheet view; same code path as the initial import.
+     */
+    fun retryFailedCardImports() {
+        val done = _cardBrowseState.value as? CardBrowseState.ImportDone ?: return
+        val toRetry = done.photos.filter { it.handle in done.failedHandles }
+        if (toRetry.isEmpty()) return
+        runImport(allPhotos = done.photos, toImport = toRetry)
+    }
+
+    /**
+     * Shared import path used by both the initial import and the retry-failed
+     * action. [allPhotos] is the full card list — preserved on ImportDone so
+     * retry-failed can be re-triggered repeatedly without re-browsing.
+     *
+     * Side effects: starts the [UsbCardImportController] on `Dispatchers.IO`,
+     * runs the [disconnectWatcherJob] in parallel (Increment 4 F), and on Done
+     * kicks the [PhotoUploadWorker] when anything queued. Also folds the run's
+     * succeeded handles into [sessionImportedHandles] so future browse Loaded
+     * states mark them as Imported (Increment 4 D).
+     */
+    private fun runImport(allPhotos: List<CardPhoto>, toImport: List<CardPhoto>) {
+        val activeEvent = _activeEvent.value ?: return
+        if (toImport.isEmpty()) return
+
+        val cacheDir = getApplication<Application>().cacheDir
+        val photographerId = sessionManager.getUserEmail() ?: "unknown"
+        val dao = database.uploadQueueDao()
+
+        browseJob?.cancel()
+        disconnectWatcherJob?.cancel()
+
+        // Camera-disconnect watcher (Increment 4 F). Aborts the import the
+        // moment the cable comes loose so the user sees the cause instead of
+        // a cryptic IO error two getObject()s later.
+        disconnectWatcherJob = viewModelScope.launch {
+            cameraManager.state.collect { camState ->
+                if (camState is CameraConnectionState.Disconnected &&
+                    _cardBrowseState.value is CardBrowseState.Importing
+                ) {
+                    browseJob?.cancel()
+                    _cardBrowseState.value = CardBrowseState.Error(
+                        "Camera disconnected. Re-plug the cable and browse the card again."
+                    )
+                    runSyncEngine() // flush whatever already queued
+                }
+            }
+        }
+
+        browseJob = viewModelScope.launch(Dispatchers.IO) {
+            cardImportController.import(
+                photos = toImport,
+                emit = { progress ->
+                    _cardBrowseState.value = when (progress) {
+                        is UsbCardImportController.Progress.Started ->
+                            CardBrowseState.Importing(
+                                seen = 0,
+                                total = progress.total,
+                                succeeded = 0,
+                                failed = 0,
+                            )
+                        is UsbCardImportController.Progress.Each ->
+                            CardBrowseState.Importing(
+                                seen = progress.seen,
+                                total = progress.total,
+                                succeeded = progress.succeededHandles.size,
+                                failed = progress.failedHandles.size,
+                            )
+                        is UsbCardImportController.Progress.Done -> {
+                            sessionImportedHandles = sessionImportedHandles + progress.succeededHandles
+                            CardBrowseState.ImportDone(
+                                photos = allPhotos,
+                                succeededHandles = progress.succeededHandles,
+                                failedHandles = progress.failedHandles,
+                            )
+                        }
+                        is UsbCardImportController.Progress.Failed ->
+                            CardBrowseState.Error(progress.message)
+                    }
+                },
+                onPulled = { photo, bytes ->
+                    val persistStart = System.currentTimeMillis()
+                    try {
+                        // Match `simulatePhotoCapture`: unique cache filename so
+                        // we don't collide across imports or with sim frames.
+                        val unique = "dslr_import_${System.currentTimeMillis()}_${photo.filename}"
+                        val file = File(cacheDir, unique)
+                        file.outputStream().use { it.write(bytes) }
+                        dao.insertRecord(
+                            UploadRecord(
+                                filePath = file.absolutePath,
+                                eventId = activeEvent.id,
+                                photographerId = photographerId,
+                                captureTimestamp = System.currentTimeMillis(),
+                                uploadStatus = "QUEUED",
+                            )
+                        )
+                        val persistMs = System.currentTimeMillis() - persistStart
+                        android.util.Log.i(
+                            "QP/UPLOAD-PERF",
+                            "persist handle=${photo.handle} file=${photo.filename} bytes=${bytes.size} ms=$persistMs",
+                        )
+                        true
+                    } catch (e: Exception) {
+                        false
+                    }
+                },
+            )
+            // Tear down the watcher (whether we finished cleanly or the watcher
+            // already cancelled us) so it doesn't outlive the import.
+            disconnectWatcherJob?.cancel()
+            disconnectWatcherJob = null
+
+            // Kick the upload worker if anything actually queued.
+            val finalState = _cardBrowseState.value
+            if (finalState is CardBrowseState.ImportDone && finalState.succeededHandles.isNotEmpty()) {
+                withContext(Dispatchers.Main) { runSyncEngine() }
+            }
+        }
+    }
+
     fun simulatePhotoCapture() {
         val event = _activeEvent.value ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
-                // 1. Create a simulated physical JPEG image on phone cache storage
+                // 1. Render a real, decodable JPEG on phone cache storage. A bare
+                //    JPEG header is not a valid image — the backend rejects it with
+                //    a 500 when it tries to read dimensions / build a thumbnail.
                 val cacheDir = getApplication<Application>().cacheDir
                 val mockFile = File(cacheDir, "simulated_dslr_${System.currentTimeMillis()}.jpg")
-                
-                // Write valid JPEG signature byte headers so S3/Spring processes the multi-part payload cleanly
-                val jpegHeader = byteArrayOf(
-                    0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 
-                    0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00
-                )
-                mockFile.writeBytes(jpegHeader)
+
+                val width = 1280
+                val height = 854
+                val centerX = width / 2f
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                Canvas(bitmap).apply {
+                    // Light pastel background + centered text, so the gallery's
+                    // square crop never clips it (a 3:2 frame loses its left/right
+                    // edges when displayed in a square tile).
+                    drawColor(Color.rgb((205..245).random(), (205..245).random(), (205..245).random()))
+                    val title = Paint().apply {
+                        color = Color.rgb(60, 60, 60)
+                        textSize = 60f
+                        isAntiAlias = true
+                        textAlign = Paint.Align.CENTER
+                        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    }
+                    val subtitle = Paint().apply {
+                        color = Color.rgb(70, 70, 70)
+                        textSize = 50f
+                        isAntiAlias = true
+                        textAlign = Paint.Align.CENTER
+                        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    }
+                    val caption = Paint().apply {
+                        color = Color.rgb(120, 120, 120)
+                        textSize = 40f
+                        isAntiAlias = true
+                        textAlign = Paint.Align.CENTER
+                    }
+                    val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                        .format(Date())
+                    drawText("SIMULATED DSLR FRAME", centerX, 400f, title)
+                    drawText(event.name, centerX, 470f, subtitle)
+                    drawText(timestamp, centerX, 530f, caption)
+                }
+                mockFile.outputStream().use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                }
+                bitmap.recycle()
 
                 // 2. Insert as a "QUEUED" record in local SQLite database
                 database.uploadQueueDao().insertRecord(

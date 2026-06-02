@@ -45,6 +45,7 @@ import com.quickpitik.mobile.data.remote.PayoutBalanceDto
 import com.quickpitik.mobile.data.remote.PhotographerPayoutDto
 import com.quickpitik.mobile.data.remote.PhotographerTransactionDto
 import com.quickpitik.mobile.data.remote.WeeklyRevenuePointDto
+import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.BadgeShape
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -491,10 +492,10 @@ private fun TransactionsLink(count: Int, onClick: () -> Unit) {
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Text(
+        ArrowLabel(
             text = if (count == 0) "No transactions yet" else "View transactions ($count) →",
-            style = Typography.bodyMedium,
             color = if (count == 0) SlateSoft else Ink,
+            style = Typography.bodyMedium,
             fontWeight = FontWeight.Medium,
         )
     }

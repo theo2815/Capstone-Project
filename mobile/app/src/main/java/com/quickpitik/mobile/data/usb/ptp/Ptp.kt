@@ -25,6 +25,7 @@ object Ptp {
     const val OP_GET_OBJECT_HANDLES = 0x1007
     const val OP_GET_OBJECT_INFO = 0x1008
     const val OP_GET_OBJECT = 0x1009
+    const val OP_GET_THUMB = 0x100A      // small camera-rendered preview JPEG
     const val OP_INITIATE_CAPTURE = 0x100E
 
     // Standard event: a new object (photo) appeared on the device. Many cameras

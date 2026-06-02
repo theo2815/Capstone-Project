@@ -314,7 +314,7 @@ fun ProfileScreen(
                                 style = Typography.bodySmall
                             )
                             Spacer(modifier = Modifier.height(12.dp))
-                            Text(
+                            ArrowLabel(
                                 text = "Browse races →",
                                 color = Fresh,
                                 fontWeight = FontWeight.Bold,
@@ -609,10 +609,10 @@ private fun RaceLogRow(
                     modifier = Modifier.clickable { onUnsave() }
                 )
             } else if (openable) {
-                Text(
+                ArrowLabel(
                     text = "Open →",
-                    style = Typography.labelMedium,
                     color = Ink,
+                    style = Typography.labelMedium,
                     fontWeight = FontWeight.SemiBold
                 )
             }

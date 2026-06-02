@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -69,6 +71,32 @@ fun Kicker(
 }
 
 /**
+ * CTA label content. Funnel Sans (our downloadable body font) carries no U+2192
+ * glyph, so a literal "→" in a label renders as a broken fallback ("ʼn") on some
+ * devices. Labels ending in "→" render the arrow as a vector icon instead —
+ * crisp on every device, RTL-aware — and the character is stripped from the
+ * visible text. The icon takes no explicit tint so it inherits the button's
+ * content color (tracking enabled/disabled and primary/ghost automatically).
+ */
+@Composable
+private fun CtaContent(text: String, style: TextStyle) {
+    val trimmed = text.trimEnd()
+    val hasArrow = trimmed.endsWith("→")
+    val label = if (hasArrow) trimmed.removeSuffix("→").trimEnd() else text
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = style, fontWeight = FontWeight.SemiBold)
+        if (hasArrow) {
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                imageVector = Icons.Default.ArrowForward,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+/**
  * Primary call-to-action. The single `fresh` accent — use at most one per
  * viewport. Funnel-semibold label on a fresh pill.
  */
@@ -99,7 +127,7 @@ fun PrimaryCta(
                 modifier = Modifier.size(20.dp),
             )
         } else {
-            Text(text, style = Typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            CtaContent(text, Typography.bodyMedium)
         }
     }
 }
@@ -120,7 +148,41 @@ fun GhostCta(
         colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
         modifier = modifier.height(48.dp),
     ) {
-        Text(text, style = Typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        CtaContent(text, Typography.bodyMedium)
+    }
+}
+
+/**
+ * Inline directional label — the non-button counterpart to the CTA arrow
+ * handling. Renders [text] (minus any trailing "→") followed by a vector
+ * ArrowForward tinted to [color], so links like "Open →" / "VIEW GALLERY →"
+ * read the same on every device without relying on the body font's missing
+ * U+2192 glyph. Text without a trailing arrow renders unchanged (no icon).
+ */
+@Composable
+fun ArrowLabel(
+    text: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+    style: TextStyle = Typography.labelMedium,
+    fontWeight: FontWeight? = null,
+    fontSize: TextUnit = TextUnit.Unspecified,
+    iconSize: Dp = 14.dp,
+) {
+    val trimmed = text.trimEnd()
+    val hasArrow = trimmed.endsWith("→")
+    val label = if (hasArrow) trimmed.removeSuffix("→").trimEnd() else text
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = style, color = color, fontWeight = fontWeight, fontSize = fontSize)
+        if (hasArrow) {
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                imageVector = Icons.Default.ArrowForward,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(iconSize),
+            )
+        }
     }
 }
 

@@ -1,7 +1,12 @@
 package com.quickpitik.mobile.ui.photographer
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -59,6 +64,11 @@ fun PhotographerDashboardScreen(
     val verificationState by viewModel.verificationState.collectAsState()
     val messages by viewModel.messages.collectAsState()
     val brandSettings by viewModel.brandSettings.collectAsState()
+    // Drives the cross-tab GlobalUploadBanner — surfaces sync progress so the
+    // photographer doesn't lose track of in-flight uploads after dismissing the
+    // import sheet. The Sync queue card on the Capture tab remains the
+    // detailed view; this is the persistent ambient status.
+    val queueStats by viewModel.queueStats.collectAsState()
     val showSettingsBadge = when (val state = verificationState) {
         is VerificationUiState.Success -> state.verification.status.lowercase() != "approved"
         else -> true
@@ -143,60 +153,145 @@ fun PhotographerDashboardScreen(
                 )
             }
         ) { paddingValues ->
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Bone)
                     .padding(paddingValues)
             ) {
-                when (currentTab) {
-                    0 -> PhotographerOverviewScreen(
-                        viewModel = viewModel,
-                        onNavigateToSettings = {
-                            currentTab = 4
-                            viewModel.fetchVerificationStatus()
-                        },
-                        onNavigateToTab = { tab ->
-                            currentTab = tab
-                            when (tab) {
-                                0 -> {
-                                    viewModel.fetchVerificationStatus()
-                                    viewModel.fetchEvents()
-                                    viewModel.fetchEarningsAndTransactions()
-                                    viewModel.fetchMessages()
-                                    viewModel.fetchSettings()
+                GlobalUploadBanner(queueStats = queueStats)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    when (currentTab) {
+                        0 -> PhotographerOverviewScreen(
+                            viewModel = viewModel,
+                            onNavigateToSettings = {
+                                currentTab = 4
+                                viewModel.fetchVerificationStatus()
+                            },
+                            onNavigateToTab = { tab ->
+                                currentTab = tab
+                                when (tab) {
+                                    0 -> {
+                                        viewModel.fetchVerificationStatus()
+                                        viewModel.fetchEvents()
+                                        viewModel.fetchEarningsAndTransactions()
+                                        viewModel.fetchMessages()
+                                        viewModel.fetchSettings()
+                                    }
+                                    2 -> viewModel.fetchEvents()
+                                    3 -> viewModel.fetchEarningsAndTransactions()
+                                    4 -> viewModel.fetchVerificationStatus()
                                 }
-                                2 -> viewModel.fetchEvents()
-                                3 -> viewModel.fetchEarningsAndTransactions()
-                                4 -> viewModel.fetchVerificationStatus()
+                            },
+                        )
+                        1 -> {
+                            val activeEvent by viewModel.activeEvent.collectAsState()
+                            if (activeEvent == null) {
+                                PublicEventPickerList(
+                                    viewModel = viewModel,
+                                    onSelectEvent = { event ->
+                                        viewModel.selectEvent(event)
+                                    }
+                                )
+                            } else {
+                                TetherConsoleView(viewModel = viewModel)
                             }
-                        },
-                    )
-                    1 -> {
-                        val activeEvent by viewModel.activeEvent.collectAsState()
-                        if (activeEvent == null) {
-                            PublicEventPickerList(
-                                viewModel = viewModel,
-                                onSelectEvent = { event ->
-                                    viewModel.selectEvent(event)
-                                }
-                            )
-                        } else {
-                            TetherConsoleView(viewModel = viewModel)
                         }
+                        2 -> PhotographerEventsScreen(
+                            viewModel = viewModel,
+                            onOpenShare = { shareEvent = it },
+                            onSyncEvent = { ev ->
+                                viewModel.selectEvent(ev)
+                                currentTab = 1
+                            },
+                        )
+                        3 -> PhotographerEarningsScreen(viewModel = viewModel)
+                        4 -> PhotographerSettingsScreen(viewModel = viewModel, onLogout = onLogout)
                     }
-                    2 -> PhotographerEventsScreen(
-                        viewModel = viewModel,
-                        onOpenShare = { shareEvent = it },
-                        onSyncEvent = { ev ->
-                            viewModel.selectEvent(ev)
-                            currentTab = 1
-                        },
-                    )
-                    3 -> PhotographerEarningsScreen(viewModel = viewModel)
-                    4 -> PhotographerSettingsScreen(viewModel = viewModel, onLogout = onLogout)
                 }
             }
+        }
+    }
+}
+
+/**
+ * Cross-tab ambient progress strip for the photo-upload queue.
+ *
+ * Sits between the TopAppBar and the tab content. Visible whenever the queue
+ * has anything UPLOADING or QUEUED — auto-hides as soon as both counts drain.
+ * Pairs with the detailed Sync queue card on the Capture tab; the banner is
+ * the "don't close the app" signal, the card is the breakdown.
+ *
+ * Quiet Studio: BoneDeep fill, Slate progress, no Fresh accent (the active
+ * tab's PrimaryCta keeps the single Fresh allowance). Slide + fade enter/exit
+ * — never fade alone per the Mobile Design motion rule.
+ */
+@Composable
+private fun GlobalUploadBanner(queueStats: QueueStats) {
+    val inFlight = queueStats.uploadingCount + queueStats.queuedCount
+    AnimatedVisibility(
+        visible = inFlight > 0,
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(BoneDeep)
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(
+                    color = Slate,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (queueStats.uploadingCount > 0) "Uploading photos" else "Photos queued",
+                        color = Ink,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    val detail = buildString {
+                        if (queueStats.uploadingCount > 0) append("${queueStats.uploadingCount} in progress")
+                        if (queueStats.queuedCount > 0) {
+                            if (isNotEmpty()) append(" · ")
+                            append("${queueStats.queuedCount} queued")
+                        }
+                    }
+                    if (detail.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = detail,
+                            color = SlateSoft,
+                            style = NumeralStyle.copy(fontSize = 11.sp),
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = inFlight.toString(),
+                    color = Ink,
+                    style = NumeralStyle.copy(fontSize = 16.sp),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            LinearProgressIndicator(
+                progress = queueStats.progress,
+                color = Slate,
+                trackColor = Line,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(2.dp),
+            )
+            Divider(color = Line)
         }
     }
 }
@@ -276,12 +371,33 @@ private fun TetherConsoleView(
                 deviceName = cam.deviceName,
                 vendorId = cam.vendorId,
                 productId = cam.productId,
-                onSimulate = { viewModel.simulatePhotoCapture() }
+                onSimulate = { viewModel.simulatePhotoCapture() },
+                onBrowseCard = { viewModel.browseCameraCard() }
             )
             CameraConnectionState.Searching,
             CameraConnectionState.Disconnected -> CameraConnectPrompt(
                 isSearching = cam is CameraConnectionState.Searching,
                 onRescan = { viewModel.refreshCameraConnection() }
+            )
+        }
+
+        // 2b. Manual card-import sheet — mounted whenever a browse is live.
+        // Increment 1 reads; Increment 2 wires selection; Increment 3 pulls
+        // bytes off the card; Increment 4 adds dedupe + retry-failed + cancel +
+        // live camera-disconnect detection. Existing PhotoUploadWorker handles
+        // the S3 leg unchanged.
+        val cardBrowse by viewModel.cardBrowseState.collectAsState()
+        if (cardBrowse !is CardBrowseState.Idle) {
+            CameraCardImportSheet(
+                state = cardBrowse,
+                onDismiss = { viewModel.closeCardImport() },
+                onRetry = { viewModel.browseCameraCard() },
+                onToggleSelect = { handle -> viewModel.toggleCardPhotoSelection(handle) },
+                onSelectAll = { viewModel.selectAllCardPhotos() },
+                onClearSelection = { viewModel.clearCardPhotoSelection() },
+                onImport = { viewModel.importSelectedCardPhotos() },
+                onCancelImport = { viewModel.closeCardImport() },
+                onRetryFailed = { viewModel.retryFailedCardImports() },
             )
         }
 
@@ -326,6 +442,21 @@ private fun TetherConsoleView(
                 }
                 StatusChip(text = statusText, tone = statusTone)
             }
+            // Surface the most recent failure string so a "Failed · N" chip
+            // isn't a dead end. PhotoUploadWorker already stores the per-row
+            // error (auth, timeout, server reject) — we just hadn't exposed
+            // it. Small subdued line, capped to 2 lines, no banner — keeps
+            // the Quiet Studio quietness of the card.
+            queueStats.lastError?.let { errorMessage ->
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Last error: $errorMessage",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SlateSoft,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
             Spacer(modifier = Modifier.height(16.dp))
             GhostCta(
                 text = if (queueStats.uploadingCount > 0) "Syncing…" else "Run sync engine",
@@ -333,6 +464,18 @@ private fun TetherConsoleView(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = queueStats.uploadingCount == 0
             )
+            // "Clear failed" only appears when there's actually something to
+            // clear — keeps the card quiet on the happy path. Disabled mid-
+            // upload so the action can't race with a running worker.
+            if (queueStats.failedCount > 0) {
+                Spacer(modifier = Modifier.height(10.dp))
+                GhostCta(
+                    text = "Clear ${queueStats.failedCount} failed",
+                    onClick = { viewModel.clearFailedUploads() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = queueStats.uploadingCount == 0
+                )
+            }
         }
         }
     }
@@ -429,6 +572,7 @@ private fun CameraConnectedCard(
     vendorId: Int,
     productId: Int,
     onSimulate: () -> Unit,
+    onBrowseCard: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -458,6 +602,13 @@ private fun CameraConnectedCard(
         PrimaryCta(
             text = "Simulate DSLR shoot",
             onClick = onSimulate,
+            modifier = Modifier.fillMaxWidth()
+        )
+        // Manual card-import — Increment 1 lists the JPEGs on the card; later
+        // increments add selection + transfer through the existing upload queue.
+        GhostCta(
+            text = "Import from camera card",
+            onClick = onBrowseCard,
             modifier = Modifier.fillMaxWidth()
         )
     }
