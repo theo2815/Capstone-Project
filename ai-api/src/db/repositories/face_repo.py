@@ -51,6 +51,25 @@ class FaceRepository:
         await self.session.flush()
         return True
 
+    async def delete_persons_by_event(
+        self, event_id: str, api_key_id: str | None = None
+    ) -> int:
+        """Delete every person (and cascaded embeddings) enrolled under one event.
+
+        Event-isolated: scoped by api_key_id + event_id so a backend can only
+        erase its own tenant's data for the event it owns. Embeddings are removed
+        by the ON DELETE CASCADE on face_embeddings.person_id. Returns the number
+        of persons removed. Used for GDPR erasure when an event is deleted.
+        """
+        from sqlalchemy import delete as sa_delete
+
+        stmt = sa_delete(Person).where(Person.event_id == event_id)
+        if api_key_id is not None:
+            stmt = stmt.where(Person.api_key_id == api_key_id)
+        result = await self.session.execute(stmt)
+        await self.session.flush()
+        return result.rowcount or 0
+
     async def store_embedding(
         self,
         person_id: uuid.UUID,

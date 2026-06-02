@@ -16,6 +16,7 @@ def dispatch_mega_batch(
     raw_bytes_list: list[bytes],
     task_func,
     extra_kwargs: dict | None = None,
+    refs: list[str] | None = None,
 ) -> None:
     """Store blobs, chunk paths, and dispatch as a Celery chord.
 
@@ -25,6 +26,11 @@ def dispatch_mega_batch(
         task_func: The Celery task to call for each chunk (e.g. blur_detect_batch).
         extra_kwargs: Additional keyword arguments passed to each sub-task
             (e.g. blur_type, operation, person_name).
+        refs: Optional per-image caller references (e.g. the source filename),
+            aligned with *raw_bytes_list*. When provided, each sub-task is given
+            its chunk slice as a ``refs`` kwarg so per-image results can echo a
+            stable caller ref instead of relying solely on positional index.
+            Only pass for tasks whose signature accepts ``refs``.
     """
     from src.workers.tasks.maintenance_tasks import finalize_mega_batch
 
@@ -47,7 +53,10 @@ def dispatch_mega_batch(
         # Sub-tasks use a throwaway job_id (empty string) since the parent
         # job is the real tracking record.  Progress updates are skipped for
         # sub-tasks and the parent is updated once by finalize_mega_batch.
-        sig = task_func.s("", chunk_paths, **extra)
+        chunk_kwargs = dict(extra)
+        if refs is not None:
+            chunk_kwargs["refs"] = refs[chunk_start:chunk_start + chunk_size]
+        sig = task_func.s("", chunk_paths, **chunk_kwargs)
         tasks.append(sig)
 
     # Chord: run all sub-tasks in parallel → finalize merges results

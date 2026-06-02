@@ -7,7 +7,7 @@ logger = get_logger(__name__)
 
 
 @celery_app.task(bind=True, name="bibs.recognize_batch")
-def bib_recognize_batch(self, job_id: str, image_paths: list[str]):
+def bib_recognize_batch(self, job_id: str, image_paths: list[str], refs: list[str] | None = None):
     """Process a batch of images for bib number recognition.
 
     Uses sub-batching for the decode+detect phase to bound memory, while
@@ -16,6 +16,9 @@ def bib_recognize_batch(self, job_id: str, image_paths: list[str]):
     Args:
         job_id: UUID of the job record.
         image_paths: List of blob-store file paths for each image.
+        refs: Optional per-image caller references (e.g. source filename),
+            aligned with image_paths. When provided, each result echoes its
+            ``ref`` so callers can map results without relying on order.
     """
     from src.config import get_settings
     from src.workers.helpers import (
@@ -154,6 +157,14 @@ def bib_recognize_batch(self, job_id: str, image_paths: list[str]):
         except Exception as e:
             logger.error("Bib result assembly failed for image", index=i, error=str(e))
             results[i] = {"index": i, "bibs": [], "error": str(e)}
+
+    # Echo the caller ref on each result (single pass — keeps the per-result
+    # assembly above untouched). finalize_mega_batch preserves these keys and
+    # only rewrites "index" to the global position.
+    if refs is not None:
+        for i in range(total):
+            if isinstance(results[i], dict):
+                results[i]["ref"] = refs[i] if i < len(refs) else None
 
     if not job_id:
         return results

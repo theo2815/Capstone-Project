@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     STREAM_CLASSIFY_MAX_SIZE: int = 500  # Max images per streaming classify request
     STREAM_CLASSIFY_CONCURRENCY: int = 8  # Thread pool for classify/stream (ONNX is heavier)
     MAX_ACTIVE_JOBS_PER_KEY: int = 10  # Backpressure: max pending+processing jobs per API key
+    # Internal-tier callers (e.g. the Spring backend's bulk photo-indexing
+    # drain) submit a FACE + BIB job per event-batch and may drain several
+    # events at once, so they get a higher ceiling than the public default.
+    MAX_ACTIVE_JOBS_PER_KEY_INTERNAL: int = 50
     JOB_RETENTION_DAYS: int = 7  # Auto-delete completed/failed jobs older than this
 
     # Blob store — images written to shared volume instead of base64-in-Redis

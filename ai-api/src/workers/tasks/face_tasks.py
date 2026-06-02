@@ -234,8 +234,11 @@ def face_enroll_batch(
                 continue
             faces, image_hash = inf
             try:
-                for face in faces:
-                    face["source_image_hash"] = image_hash
+                for face_index, face in enumerate(faces):
+                    # Per-face-distinct hash — see the enroll handler note:
+                    # keeps every face in a multi-runner image instead of
+                    # colliding on the (person_id, source_image_hash) index.
+                    face["source_image_hash"] = f"{image_hash}:{face_index}"
                 savepoint = session.begin_nested()
                 stored, skipped = repo.bulk_store_embeddings(
                     person_id=pid,
@@ -261,3 +264,129 @@ def face_enroll_batch(
         total=total,
         person_id=str(pid),
     )
+
+
+@celery_app.task(bind=True, name="faces.enroll_mega_batch")
+def face_enroll_mega_batch(
+    self,
+    job_id: str,
+    image_paths: list[str],
+    api_key_id: str | None = None,
+    event_id: str | None = None,
+    refs: list[str] | None = None,
+):
+    """Bulk photo-indexing enroll — ONE person per image, all faces stored.
+
+    Distinct from ``face_enroll_batch`` (all images → one shared person, for
+    many selfies of a single runner). Here each image is enrolled as its own
+    person and every detected face is stored under it (per-face source hash),
+    so a crowd photo makes every runner in it findable. This is the primitive
+    behind the backend's batch indexing drain.
+
+    Per-image result:
+        {index, ref, person_id, faces_detected, faces_enrolled, skipped}
+    or {index, ref, error}. An image with no enrollable face yields
+    person_id=None / faces_enrolled=0 (benign — no runner in the shot); no
+    person row is created so empty photos don't litter the persons table.
+    """
+    import hashlib
+
+    from src.config import get_settings
+    from src.db.repositories.sync_face_repo import SyncFaceRepository
+    from src.db.sync_session import get_sync_session
+    from src.utils.blob_store import load_blob
+    from src.workers.helpers import (
+        _decode_raw_bytes,
+        complete_job,
+        fail_job,
+        update_job_progress,
+    )
+    from src.workers.model_loader import get_face_embedder
+
+    embedder = get_face_embedder()
+    if embedder is None:
+        fail_job(job_id, "Face embedder model not loaded in worker")
+        return
+
+    settings = get_settings()
+    min_conf = settings.FACE_MIN_ENROLLMENT_CONFIDENCE
+    total = len(image_paths)
+    results: list[dict] = [{} for _ in range(total)]
+
+    def _ref(i: int) -> str | None:
+        return refs[i] if refs is not None and i < len(refs) else None
+
+    # --- Phase 1: decode + ML inference (no DB session held) ---
+    inference_results: list[tuple[list[dict], str] | None] = [None] * total
+    for i, path in enumerate(image_paths):
+        try:
+            raw_bytes = load_blob(path)
+            image = _decode_raw_bytes(raw_bytes, max_dim=768)
+            if image is None:
+                results[i] = {"index": i, "ref": _ref(i), "error": "Failed to decode image"}
+                continue
+            faces = embedder.get_embeddings(image)
+            image_hash = hashlib.sha256(raw_bytes).hexdigest()
+            inference_results[i] = (faces, image_hash)
+        except Exception as e:
+            logger.error("Face inference failed for image", index=i, error=str(e))
+            results[i] = {"index": i, "ref": _ref(i), "error": str(e)}
+        update_job_progress(job_id, i + 1, total)
+
+    # --- Phase 2: DB — one person per image, per-image savepoint isolation ---
+    with get_sync_session() as session:
+        repo = SyncFaceRepository(session)
+        for i, inf in enumerate(inference_results):
+            if inf is None:
+                continue
+            faces, image_hash = inf
+            ref = _ref(i)
+            qualifying = [
+                f for f in faces
+                if f.get("bbox", {}).get("confidence", 0.0) >= min_conf
+            ]
+            if not qualifying:
+                # No enrollable face — benign for indexing; skip person creation
+                results[i] = {
+                    "index": i,
+                    "ref": ref,
+                    "person_id": None,
+                    "faces_detected": len(faces),
+                    "faces_enrolled": 0,
+                    "skipped": len(faces),
+                }
+                continue
+            savepoint = session.begin_nested()
+            try:
+                person = repo.create_person(
+                    name=(ref or f"photo-{i}")[:255],
+                    api_key_id=api_key_id,
+                    event_id=event_id,
+                )
+                for face_index, face in enumerate(qualifying):
+                    # Per-face-distinct hash — keeps every face in a multi-runner
+                    # image instead of colliding on (person_id, source_image_hash).
+                    face["source_image_hash"] = f"{image_hash}:{face_index}"
+                stored, skipped = repo.bulk_store_embeddings(
+                    person_id=person.id,
+                    faces=qualifying,
+                    min_conf=min_conf,
+                )
+                savepoint.commit()
+                results[i] = {
+                    "index": i,
+                    "ref": ref,
+                    "person_id": str(person.id),
+                    "faces_detected": len(faces),
+                    "faces_enrolled": stored,
+                    "skipped": (len(faces) - len(qualifying)) + skipped,
+                }
+            except Exception as e:
+                savepoint.rollback()
+                logger.error("Face enroll (mega) failed for image", index=i, error=str(e))
+                results[i] = {"index": i, "ref": ref, "error": str(e)}
+
+    if not job_id:
+        return results
+    complete_job(job_id, results)
+    logger.info("Face enroll mega batch completed", job_id=job_id, total=total)

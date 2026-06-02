@@ -180,6 +180,8 @@ def complete_job(job_id: str, results: list[dict]) -> None:
     with get_sync_session() as session:
         repo = SyncJobRepository(session)
         repo.complete(uuid.UUID(job_id), results)
+        job = repo.get(uuid.UUID(job_id))
+        api_key_id = job.api_key_id if job else None
 
     # Clean up staged image blobs (no-op if blobs don't exist)
     from src.utils.blob_store import cleanup_batch
@@ -189,6 +191,7 @@ def complete_job(job_id: str, results: list[dict]) -> None:
     dispatch_webhook_sync(
         event="job.completed",
         payload={"job_id": job_id, "result_count": len(results)},
+        api_key_id=api_key_id,
     )
 
 
@@ -197,6 +200,8 @@ def fail_job(job_id: str, error: str) -> None:
     with get_sync_session() as session:
         repo = SyncJobRepository(session)
         repo.fail(uuid.UUID(job_id), error)
+        job = repo.get(uuid.UUID(job_id))
+        api_key_id = job.api_key_id if job else None
 
     # Clean up staged image blobs (no-op if blobs don't exist)
     from src.utils.blob_store import cleanup_batch
@@ -206,15 +211,20 @@ def fail_job(job_id: str, error: str) -> None:
     dispatch_webhook_sync(
         event="job.failed",
         payload={"job_id": job_id, "error": error},
+        api_key_id=api_key_id,
     )
 
 
-def dispatch_webhook_sync(event: str, payload: dict) -> int:
-    """Query matching webhook subscriptions and queue delivery tasks."""
+def dispatch_webhook_sync(event: str, payload: dict, api_key_id: str | None = None) -> int:
+    """Query matching webhook subscriptions and queue delivery tasks.
+
+    Scoped by *api_key_id* (the owner of the job that fired the event) so a
+    tenant's job completion only fans out to that tenant's subscriptions.
+    """
     count = 0
     with get_sync_session() as session:
         repo = SyncWebhookRepository(session)
-        webhooks = repo.list_by_event(event)
+        webhooks = repo.list_by_event(event, api_key_id)
 
     from src.utils.crypto import decrypt_secret
 
