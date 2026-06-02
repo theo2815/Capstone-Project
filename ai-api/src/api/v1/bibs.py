@@ -211,14 +211,17 @@ async def recognize_bibs_mega(
         return result
     raw_bytes_list = result
 
+    refs = [f.filename or str(i) for i, f in enumerate(files)]
+
     job_id = await create_batch_job(
-        request, "bib_recognize_mega", len(files), key_meta.get("key_id")
+        request, "bib_recognize_mega", len(files),
+        key_meta.get("key_id"), rate_tier=key_meta.get("rate_tier"),
     )
     if isinstance(job_id, JSONResponse):
         return job_id
 
     from src.workers.tasks.bib_tasks import bib_recognize_batch
 
-    dispatch_mega_batch(job_id, raw_bytes_list, bib_recognize_batch)
+    dispatch_mega_batch(job_id, raw_bytes_list, bib_recognize_batch, refs=refs)
 
     return batch_accepted_response(request, job_id, len(files))

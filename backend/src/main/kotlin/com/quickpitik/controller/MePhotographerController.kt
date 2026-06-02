@@ -5,6 +5,8 @@ import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.photographer.PhotographerDownloadDto
 import com.quickpitik.dto.photographer.PhotographerEventDetailDto
 import com.quickpitik.dto.photographer.PhotographerEventSummaryDto
+import com.quickpitik.dto.photographer.PhotoExistsRequest
+import com.quickpitik.dto.photographer.PhotoExistsResponse
 import com.quickpitik.dto.photographer.PhotographerLibraryPhotoDto
 import com.quickpitik.dto.photographer.UploadedPhotoDto
 import com.quickpitik.security.AuthPrincipal
@@ -13,12 +15,14 @@ import com.quickpitik.service.photographer.PhotographerEventService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
+import jakarta.validation.Valid
 import org.springframework.http.MediaType
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
@@ -101,4 +105,22 @@ class MePhotographerController(
             file = file,
         )
     }
+
+    // Pre-flight duplicate check (dedup Phase 2). The client hashes its files
+    // locally and asks which are already present before uploading, so it can
+    // skip re-sending bytes the photographer already has. POST (not GET) because
+    // the hash list is a body, not a query string. Read-only and authenticated;
+    // like the other photographer read endpoints it carries no rate-limit
+    // policy — the actual upload is where the cost (and the limit) lives.
+    @PostMapping("/events/{eventId}/photos/exists")
+    fun checkPhotosExist(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody body: PhotoExistsRequest,
+    ): PhotoExistsResponse =
+        photoUploadService.checkExisting(
+            photographerId = principal.userId,
+            eventId = eventId,
+            hashes = body.hashes,
+        )
 }

@@ -216,9 +216,10 @@ The Web/Mobile Backend uses all ai-api features and manages events, participants
 | `POST /api/v1/blur/detect/batch` · `/detect/mega` | Async batch / mega-batch quality check |
 | `POST /api/v1/blur/classify/batch` · `/classify/mega` | Async batch / mega-batch classification |
 | `POST /api/v1/faces/enroll` | Register participant face for event |
-| `POST /api/v1/faces/enroll/batch` | Bulk-enroll multiple photos under one person |
-| `POST /api/v1/faces/search` | Find participants in uploaded photo |
-| `POST /api/v1/faces/search/batch` · `/search/mega` | Async batch / mega-batch face search |
+| `POST /api/v1/faces/enroll/batch` | Bulk-enroll multiple photos under **one** person (many selfies of one runner) |
+| `POST /api/v1/faces/enroll/mega` | Bulk **photo indexing** — one person **per image**, every face stored, `ref` echoed (up to 500) |
+| `POST /api/v1/faces/search` | Find participants in uploaded photo (`event_id` **required** — 422 if omitted) |
+| `POST /api/v1/faces/search/batch` · `/search/mega` | Async batch / mega-batch face search (`event_id` **required** when `operation=search`) |
 | `POST /api/v1/faces/detect` | Count faces / return bounding boxes |
 | `POST /api/v1/faces/compare` | 1:1 face verification |
 | `GET /api/v1/faces/persons` | Paginated list (scoped by api_key_id + optional event_id) |
@@ -241,6 +242,8 @@ Required scopes (actual names used in code): `blur:read`, `faces:read`, `faces:w
 ### Flow 1: Event Setup — Enroll Participant Faces
 
 Before an event starts, the admin creates a public event gallery and uploads participant photos. Backend enrolls each face with `event_id`.
+
+> **Multi-face enrollment (photo indexing).** `enroll` stores **one embedding per detected face**, each keyed by a per-face-distinct `source_image_hash`. A single image containing N runners returns `faces_enrolled: N` and makes **all** of them findable — essential when a *photo* (not one participant) is enrolled as a single person. Faces below `FACE_MIN_ENROLLMENT_CONFIDENCE` are skipped; re-enrolling the same image is idempotent via the `(person_id, source_image_hash)` unique index. (Before 2026-06-02 the hash was computed over the whole image, so all but one face in a crowd shot collided and were dropped.)
 
 ```
 Admin (Web)              Web/Mobile Backend              ai-api
@@ -346,6 +349,8 @@ Photographer (Mobile)    Web/Mobile Backend              ai-api
     │  "Tagged: John Doe (#1023)"│                          │
     │◄─────────────────────────│                           │
 ```
+
+**Event isolation (fail-closed):** `event_id` is **required** on every search — `/faces/search` rejects a missing scope with `422`, and `/search/batch`·`/search/mega` reject it when `operation=search`. Without the guard a search would silently match across every event for the API key. The backend already passes `event_id` on every call; making it required just moves enforcement of root rule 5 to the ai-api boundary instead of trusting the caller.
 
 **Web/Mobile Backend logic:**
 ```python
@@ -472,6 +477,38 @@ Photographer (Web)       Web/Mobile Backend              ai-api
     │  "Done! 180 tagged"       │                           │
     │◄─────────────────────────│                           │
 ```
+
+### Flow 3b: Bulk Photo Indexing — `person = photo` (mega + webhook-or-poll)
+
+The Spring backend's async indexing drain (Phase C) does not call the
+single-photo endpoints per file. It accumulates `PENDING` photos **per event**
+and submits each event-batch as **one** face-mega job and **one** bib-mega job,
+then ingests results via webhook (prod) or poll (dev/backstop).
+
+**`POST /api/v1/faces/enroll/mega`** — the photo-indexing primitive.
+
+| | |
+|---|---|
+| Request | multipart `files` (≤500); Form `event_id` (**required**); scope `faces:write` |
+| Semantics | each image enrolled as its **own** person; **every** detected face stored (per-face hash). Contrast `/faces/enroll/batch`, which lumps all images under one shared person. |
+| Filename = `ref` | set each file's filename to your own photo ID; it is echoed back per result so you can map without relying on order. |
+| Response | `202 { job_id }` — poll `GET /jobs/{job_id}`. |
+
+Per-image result (in `job.result`):
+```jsonc
+{ "index": 0, "ref": "<your photo id>", "person_id": "uuid-or-null",
+  "faces_detected": 3, "faces_enrolled": 3, "skipped": 0 }
+// person_id is null + faces_enrolled 0 when no enrollable face was found —
+// a benign "no runner in this shot" outcome (mark the photo indexed anyway).
+```
+
+**`POST /api/v1/bibs/recognize/mega`** also echoes `ref` per result when filenames are supplied. Map `result.ref` → your photo ID (fall back to `index` if absent).
+
+**Event isolation:** a mega job is always single-event — every person it creates is stamped with that one `event_id`. The same runner appearing in two events becomes two separate event-scoped persons; search stays scoped by `event_id`.
+
+**Webhook tenant scoping:** `job.completed` / `job.failed` now fan out **only** to subscriptions owned by the API key whose job fired (previously matched by event name alone, which leaked job IDs across tenants). The webhook body carries only `{ event, job_id, result_count|error }` — map `job_id` to your own job record (which holds the ordered photo IDs + `event_id`), then `GET /jobs/{job_id}` for the results. Best-effort delivery → make the receiver idempotent and keep a poll backstop.
+
+**Backpressure:** `internal`-tier keys get a higher active-job ceiling (`MAX_ACTIVE_JOBS_PER_KEY_INTERNAL`, default 50) than the public default (10), since one drain submits two jobs per event-batch.
 
 ### Flow 4: Participant Removal (GDPR)
 

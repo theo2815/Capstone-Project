@@ -70,6 +70,9 @@ class SecurityConfig(
                 // Guest order detail (token-gated, anti-IDOR via service layer).
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*").permitAll()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/payments/webhook/**").permitAll()
+                // Internal ai-api job webhook (Phase C). Authorization is the
+                // HMAC verifier, same pattern as the payment webhook above.
+                auth.requestMatchers(HttpMethod.POST, "/api/v1/internal/ai-webhooks").permitAll()
                 auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 auth.anyRequest().authenticated()
             }

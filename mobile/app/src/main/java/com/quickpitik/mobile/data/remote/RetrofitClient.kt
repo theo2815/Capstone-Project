@@ -79,6 +79,25 @@ object RetrofitClient {
             .create(QuickPitikApi::class.java)
     }
 
+    // Structured backend error (code + message) recovered from a failed call.
+    // Retrofit throws HttpException for any non-2xx status (e.g. the backend's
+    // 409 duplicate rejection) BEFORE the body is deserialized, so a caller that
+    // needs the machine-readable error CODE (not just the message parseError
+    // returns) must pull it off the thrown HttpException here. Returns null for
+    // non-HTTP failures (timeouts, dropped connections) and unparseable bodies.
+    // Reads the buffered errorBody ONCE — a caller must not also invoke
+    // parseError on the same exception, or the second errorBody().string() hits
+    // an already-drained buffer.
+    fun parseHttpError(e: Throwable): ApiError? {
+        if (e !is HttpException) return null
+        return try {
+            val errorBody = e.response()?.errorBody()?.string()
+            Gson().fromJson(errorBody, ApiErrorEnvelope::class.java)?.errors?.firstOrNull()
+        } catch (ex: Exception) {
+            null
+        }
+    }
+
     fun parseError(e: Throwable): String {
         if (e is HttpException) {
             return try {

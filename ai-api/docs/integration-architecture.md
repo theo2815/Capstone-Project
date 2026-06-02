@@ -81,8 +81,8 @@ This is the single source of truth for what each layer owns. If a concern is not
 | Face search | Cosine similarity search against stored embeddings |
 | Bib OCR | PaddleOCR — extract text from bib regions |
 | Bib detection | YOLOv8 — locate bib regions in image (when model available) |
-| Batch processing | Celery workers for async multi-image jobs |
-| Webhooks | Notify caller when batch job completes |
+| Batch processing | Celery workers for async multi-image jobs (incl. `/faces/enroll/mega` — one person per photo, all faces; the backend's bulk-indexing primitive) |
+| Webhooks | Notify caller when batch job completes — fan-out scoped to the owning `api_key_id`; payload is `{job_id, result_count}`, results fetched via `GET /jobs/{id}` (webhook-or-poll). See `integration-contracts.md` Flow 3b. |
 
 **ai-api does NOT own:**
 - User accounts, sessions, or login

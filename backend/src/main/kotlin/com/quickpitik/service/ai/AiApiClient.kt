@@ -9,6 +9,7 @@ import com.quickpitik.dto.ai.FacesDetectResult
 import com.quickpitik.dto.ai.FacesEnrollResult
 import com.quickpitik.dto.ai.FacesSearchResult
 import com.quickpitik.dto.ai.HealthReady
+import com.quickpitik.dto.ai.JobCreateResult
 import com.quickpitik.dto.ai.JobStatusResult
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
@@ -22,7 +23,12 @@ import org.springframework.web.client.HttpClientErrorException
 import org.springframework.web.client.HttpServerErrorException
 import org.springframework.web.client.ResourceAccessException
 import org.springframework.web.client.RestClient
+import java.time.OffsetDateTime
 import java.util.UUID
+
+// One enrolled person as the reaper needs it: its id plus when ai-api created
+// it (used to spare just-enrolled persons from being mistaken for orphans).
+data class AiPersonRef(val id: String, val createdAt: OffsetDateTime)
 
 @Service
 class AiApiClient(
@@ -77,6 +83,39 @@ class AiApiClient(
         return postAndUnwrap(path, body, bibsRecognizeRef)
     }
 
+    // Phase C bulk indexing — submit a whole event-batch as ONE async job.
+    // Each file's filename is the photo id; ai-api echoes it back as `ref` so
+    // results map without relying on positional order. Returns the job to poll.
+    fun facesEnrollMega(files: List<NamedFile>, eventId: UUID): JobCreateResult {
+        val body = multiFileBody(files).apply { add("event_id", eventId.toString()) }
+        return postAndUnwrap("/api/v1/faces/enroll/mega", body, jobCreateRef)
+    }
+
+    fun bibsRecognizeMega(files: List<NamedFile>): JobCreateResult {
+        val body = multiFileBody(files)
+        return postAndUnwrap("/api/v1/bibs/recognize/mega", body, jobCreateRef)
+    }
+
+    // Webhook subscription management (prod webhook-receiver path). Best-effort,
+    // JSON not multipart, no retry wrapper — the startup runner that calls these
+    // swallows failures (the poll backstop ingests regardless).
+    fun listWebhookUrls(): List<String> {
+        val raw = client.get().uri("/api/v1/webhooks").retrieve().body(String::class.java) ?: return emptyList()
+        val webhooks = objectMapper.readTree(raw).path("data").path("webhooks")
+        if (!webhooks.isArray) return emptyList()
+        return webhooks.mapNotNull { wh -> wh.path("url").asText().takeIf { it.isNotBlank() } }
+    }
+
+    fun registerWebhook(url: String, events: List<String>, secret: String): Boolean {
+        val raw = client.post()
+            .uri("/api/v1/webhooks")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(mapOf("url" to url, "events" to events, "secret" to secret))
+            .retrieve()
+            .body(String::class.java) ?: return false
+        return objectMapper.readTree(raw).path("success").asBoolean(false)
+    }
+
     fun deleteFacesPerson(personId: String) {
         withRetry("DELETE /faces/persons/$personId") {
             client.delete()
@@ -84,6 +123,46 @@ class AiApiClient(
                 .retrieve()
                 .toBodilessEntity()
         }
+    }
+
+    // GDPR bulk erasure: remove every ai-api person (and their face embeddings)
+    // enrolled under one event in a single event-scoped call — used when a
+    // backend deletes an event, instead of a per-photo deleteFacesPerson loop.
+    fun deleteFacesByEvent(eventId: UUID) {
+        withRetry("DELETE /faces/persons?event_id=$eventId") {
+            client.delete()
+                .uri("/api/v1/faces/persons?event_id={eventId}", eventId.toString())
+                .retrieve()
+                .toBodilessEntity()
+        }
+    }
+
+    // Every person ai-api holds for one event (tenant-scoped by the API key),
+    // paged out fully. Best-effort, tree-parsed like the webhook helpers — the
+    // reaper that calls this catches failures and retries on its next sweep.
+    fun listPersonsForEvent(eventId: UUID): List<AiPersonRef> {
+        val persons = mutableListOf<AiPersonRef>()
+        var offset = 0
+        while (true) {
+            val raw = client.get()
+                .uri(
+                    "/api/v1/faces/persons?event_id={e}&offset={o}&limit={l}",
+                    eventId.toString(), offset, PERSON_PAGE_SIZE,
+                )
+                .retrieve()
+                .body(String::class.java) ?: break
+            val data = objectMapper.readTree(raw).path("data")
+            val page = data.path("persons")
+            if (!page.isArray || page.isEmpty) break
+            page.forEach { node ->
+                val id = node.path("person_id").asText("")
+                val createdAt = runCatching { OffsetDateTime.parse(node.path("created_at").asText("")) }.getOrNull()
+                if (id.isNotBlank() && createdAt != null) persons.add(AiPersonRef(id, createdAt))
+            }
+            offset += PERSON_PAGE_SIZE
+            if (offset >= data.path("total").asInt(persons.size)) break
+        }
+        return persons
     }
 
     fun jobStatus(jobId: String, offset: Int? = null, limit: Int? = null): JobStatusResult {
@@ -190,11 +269,30 @@ class AiApiClient(
         return body
     }
 
+    // Multi-file multipart for the mega endpoints: each file is a "files" part.
+    // All parts reference their own byte[] (no copy); peak memory ≈ sum of bytes.
+    private fun multiFileBody(files: List<NamedFile>): LinkedMultiValueMap<String, Any> {
+        val body = LinkedMultiValueMap<String, Any>()
+        files.forEach { nf ->
+            val resource = object : ByteArrayResource(nf.bytes) {
+                override fun getFilename(): String = nf.filename
+            }
+            val partHeaders = org.springframework.http.HttpHeaders().apply {
+                contentType = MediaType.parseMediaType(nf.contentType)
+            }
+            body.add("files", org.springframework.http.HttpEntity(resource, partHeaders))
+        }
+        return body
+    }
+
     private companion object {
+        // ai-api caps /faces/persons limit at 200.
+        const val PERSON_PAGE_SIZE = 200
         val facesDetectRef = object : TypeReference<AiApiEnvelope<FacesDetectResult>>() {}
         val facesEnrollRef = object : TypeReference<AiApiEnvelope<FacesEnrollResult>>() {}
         val facesSearchRef = object : TypeReference<AiApiEnvelope<FacesSearchResult>>() {}
         val bibsRecognizeRef = object : TypeReference<AiApiEnvelope<BibsRecognizeResult>>() {}
+        val jobCreateRef = object : TypeReference<AiApiEnvelope<JobCreateResult>>() {}
         val jobStatusRef = object : TypeReference<AiApiEnvelope<JobStatusResult>>() {}
         val healthReadyRef = object : TypeReference<AiApiEnvelope<HealthReady>>() {}
     }

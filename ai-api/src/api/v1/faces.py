@@ -152,7 +152,7 @@ async def enroll_face(
         min_conf = settings.FACE_MIN_ENROLLMENT_CONFIDENCE
         stored = 0
         skipped = 0
-        for face in faces:
+        for face_index, face in enumerate(faces):
             conf = face["bbox"]["confidence"]
             if conf < min_conf:
                 skipped += 1
@@ -166,7 +166,13 @@ async def enroll_face(
             result = await repo.store_embedding(
                 person_id=pid,
                 embedding=face["embedding"],
-                source_image_hash=image_hash,
+                # Per-face-distinct hash. A single source image can contain
+                # several runners; the (person_id, source_image_hash) unique
+                # index would otherwise collapse every face from one image to a
+                # single stored embedding, leaving only one runner findable in a
+                # crowd shot. The face-index suffix keeps every face while
+                # preserving re-enroll idempotency (stable detection order).
+                source_image_hash=f"{image_hash}:{face_index}",
                 quality_score=conf,
             )
             if result is None:
@@ -209,10 +215,15 @@ async def search_faces(
     file: UploadFile = File(...),
     threshold: float = Query(default=0.4, ge=0.0, le=1.0),
     top_k: int = Query(default=10, ge=1, le=100),
-    event_id: str | None = Query(default=None),
+    event_id: str = Query(..., min_length=1, max_length=255),
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
-    """Detect faces in an image and search the database for matches."""
+    """Detect faces in an image and search the database for matches.
+
+    event_id is required: search is fail-closed event isolation (root rule 5).
+    Omitting it would match faces across every event for this key, so FastAPI
+    rejects the request with 422 instead.
+    """
     check_scope("faces:read", key_meta)
     start = time.perf_counter()
     settings = request.app.state.settings
@@ -462,6 +473,60 @@ async def delete_person(
         )
 
 
+@router.delete("/persons", response_model=APIResponse)
+async def delete_persons_by_event(
+    request: Request,
+    event_id: str = Query(
+        ..., min_length=1, max_length=255,
+        description="Erase every person + embeddings enrolled under this event",
+    ),
+    key_meta: dict = Depends(verify_api_key),
+) -> APIResponse:
+    """Bulk GDPR erasure: remove every person + their embeddings for one event
+    (tenant-isolated). A backend calls this when it deletes an event so the
+    biometric data tied to that event's photos is erased in a single call,
+    instead of one delete per photo. event_id is required — there is no
+    delete-all-for-tenant path here.
+    """
+    check_scope("faces:delete", key_meta)
+    from src.db.repositories.face_repo import FaceRepository
+    from src.db.session import get_session_ctx
+
+    caller_key_id = key_meta.get("key_id")
+
+    async with get_session_ctx() as session:
+        repo = FaceRepository(session)
+        deleted = await repo.delete_persons_by_event(event_id, api_key_id=caller_key_id)
+        return APIResponse(
+            success=True,
+            request_id=getattr(request.state, "request_id", ""),
+            data={"deleted": deleted, "event_id": event_id},
+        )
+
+
+def _require_event_for_search(
+    request: Request, operation: str, event_id: str | None
+) -> JSONResponse | None:
+    """Fail-closed event isolation for the batch/mega search endpoints. A search
+    MUST be event-scoped (root rule 5) or it would match across every event for
+    the key; ``detect`` does no DB lookup, so event_id is irrelevant there.
+    Returns a 422 JSONResponse when a search is missing its scope, else None.
+    """
+    if operation == "search" and not (event_id and event_id.strip()):
+        return JSONResponse(
+            status_code=422,
+            content=APIResponse(
+                success=False,
+                request_id=getattr(request.state, "request_id", ""),
+                error={
+                    "code": "EVENT_ID_REQUIRED",
+                    "message": "event_id is required when operation=search",
+                },
+            ).model_dump(mode="json"),
+        )
+    return None
+
+
 @router.post("/search/batch", status_code=202)
 async def search_faces_batch(
     request: Request,
@@ -481,6 +546,8 @@ async def search_faces_batch(
     Returns a job ID immediately. Poll GET /api/v1/jobs/{job_id} for results.
     """
     check_scope("faces:read", key_meta)
+    if (guard := _require_event_for_search(request, operation, event_id)) is not None:
+        return guard
     settings = request.app.state.settings
 
     result = await validate_batch_files(
@@ -575,6 +642,8 @@ async def search_faces_mega(
     them into sub-tasks and merges results into a single job.
     """
     check_scope("faces:read", key_meta)
+    if (guard := _require_event_for_search(request, operation, event_id)) is not None:
+        return guard
     settings = request.app.state.settings
 
     result = await validate_batch_files(
@@ -601,6 +670,60 @@ async def search_faces_mega(
             "threshold": threshold,
             "top_k": top_k,
         },
+    )
+
+    return batch_accepted_response(request, job_id, len(files))
+
+
+@router.post("/enroll/mega", status_code=202)
+async def enroll_faces_mega(
+    request: Request,
+    files: list[UploadFile] = File(..., description="Image files (up to 500)"),
+    event_id: str = Form(..., min_length=1, max_length=255),
+    key_meta: dict = Depends(verify_api_key),
+):
+    """Submit a mega-batch of photos for async indexing — ONE person per image.
+
+    This is the bulk photo-indexing primitive. Unlike ``/enroll/batch`` (which
+    lumps every image under a single shared person, for many selfies of one
+    runner), each uploaded image is enrolled as its OWN person and EVERY
+    detected face in it is stored (per-face hash). A photo therefore becomes one
+    ai person; any runner appearing in it is findable at search time.
+
+    Each file's filename is echoed back as ``ref`` in the per-image result, so
+    the caller can map results to its own photo IDs without relying on order.
+    Per-image result: ``{index, ref, person_id, faces_detected, faces_enrolled,
+    skipped}`` (``person_id`` is null when no enrollable face was found — a
+    benign "no runner in this shot" outcome). Poll GET /api/v1/jobs/{job_id}.
+    """
+    check_scope("faces:write", key_meta)
+    settings = request.app.state.settings
+
+    result = await validate_batch_files(
+        request, files, settings.MEGA_BATCH_MAX_SIZE, settings.MAX_FILE_SIZE
+    )
+    if isinstance(result, JSONResponse):
+        return result
+    raw_bytes_list = result
+
+    refs = [f.filename or str(i) for i, f in enumerate(files)]
+
+    job_id = await create_batch_job(
+        request, "face_enroll_mega", len(files),
+        key_meta.get("key_id"), rate_tier=key_meta.get("rate_tier"),
+    )
+    if isinstance(job_id, JSONResponse):
+        return job_id
+
+    from src.workers.tasks.face_tasks import face_enroll_mega_batch
+
+    dispatch_mega_batch(
+        job_id, raw_bytes_list, face_enroll_mega_batch,
+        extra_kwargs={
+            "api_key_id": key_meta.get("key_id"),
+            "event_id": event_id,
+        },
+        refs=refs,
     )
 
     return batch_accepted_response(request, job_id, len(files))

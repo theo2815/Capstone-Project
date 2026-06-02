@@ -1,5 +1,6 @@
 package com.quickpitik.repository
 
+import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import org.springframework.data.domain.Page
@@ -9,6 +10,7 @@ import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import java.math.BigDecimal
+import java.time.OffsetDateTime
 import java.util.UUID
 
 interface PhotoRepository : JpaRepository<Photo, UUID> {
@@ -127,4 +129,107 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     ): Page<Photo>
 
     fun findFirstByIdAndPhotographerId(id: UUID, photographerId: UUID): Photo?
+
+    // Duplicate detection: the photographer's existing photo with this exact
+    // content hash, if any. Backed by the partial unique index
+    // uq_photos_photographer_content_hash (migration V24), so at most one row
+    // matches. PhotoUploadService uses it to make uploads idempotent on content
+    // — a same-event re-upload returns the existing photo, a different-event hit
+    // is rejected.
+    fun findFirstByPhotographerIdAndContentHash(photographerId: UUID, contentHash: String): Photo?
+
+    // Batch pre-flight (dedup Phase 2): every photo of this photographer whose
+    // content hash is in the given set, across ALL their events. The client
+    // hashes files locally and calls this before sending bytes — a hash already
+    // present is skipped (same event) or flagged (different event) without a
+    // wasted upload. NULL hashes never match an IN list, so legacy rows are
+    // naturally excluded. Backed by uq_photos_photographer_content_hash (V24).
+    fun findByPhotographerIdAndContentHashIn(
+        photographerId: UUID,
+        contentHashes: Collection<String>,
+    ): List<Photo>
+
+    // Reconciliation backlog: photos whose async indexing hasn't settled. The
+    // cutoff skips photos the AFTER_COMMIT hot path is probably still handling,
+    // so the sweep only re-drives genuinely-stuck work. Backed by the partial
+    // index idx_photos_indexing_pending (migration V21).
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.indexingStatus IN :statuses
+          AND p.indexingAttempts < :maxAttempts
+          AND p.uploadedAt < :cutoff
+        ORDER BY p.uploadedAt ASC
+        """,
+    )
+    fun findIndexingBacklog(
+        @Param("statuses") statuses: Collection<IndexingStatus>,
+        @Param("maxAttempts") maxAttempts: Int,
+        @Param("cutoff") cutoff: OffsetDateTime,
+        pageable: Pageable,
+    ): List<Photo>
+
+    // Phase C batch drain: distinct events that have indexable backlog. The
+    // drain groups per event because each mega job is single-event (event
+    // isolation — a person enrolled in a mega is stamped with that one event_id).
+    @Query(
+        """
+        SELECT DISTINCT p.eventId FROM Photo p
+        WHERE p.indexingStatus IN :statuses
+          AND p.indexingAttempts < :maxAttempts
+          AND p.uploadedAt < :cutoff
+        """,
+    )
+    fun findEventsWithIndexingBacklog(
+        @Param("statuses") statuses: Collection<IndexingStatus>,
+        @Param("maxAttempts") maxAttempts: Int,
+        @Param("cutoff") cutoff: OffsetDateTime,
+        pageable: Pageable,
+    ): List<UUID>
+
+    // Orphan reaper — every ai-api person id still referenced by a photo in the
+    // event, across ALL statuses (a HIDDEN photo still legitimately owns its
+    // person). The reaper deletes any ai-api person for the event NOT in this
+    // set. No status filter on purpose: filtering would make live persons look
+    // orphaned and get erased.
+    @Query(
+        """
+        SELECT DISTINCT fp.aiPersonId FROM Photo p
+        JOIN p.facePersons fp
+        WHERE p.eventId = :eventId
+        """,
+    )
+    fun findReferencedAiPersonIds(@Param("eventId") eventId: UUID): List<String>
+
+    // Orphan reaper — distinct events that have at least one indexed face, i.e.
+    // the events that could hold ai-api persons worth reconciling. Bounded by
+    // the Pageable so one sweep stays cheap.
+    @Query(
+        """
+        SELECT DISTINCT p.eventId FROM Photo p
+        JOIN p.facePersons fp
+        """,
+    )
+    fun findEventsWithFacePersons(pageable: Pageable): List<UUID>
+
+    // The PENDING/FAILED photos of ONE event, oldest first, capped by the
+    // Pageable to the batch max-size. These get flipped to BATCHING and shipped
+    // as a single mega job per kind.
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.eventId = :eventId
+          AND p.indexingStatus IN :statuses
+          AND p.indexingAttempts < :maxAttempts
+          AND p.uploadedAt < :cutoff
+        ORDER BY p.uploadedAt ASC
+        """,
+    )
+    fun findIndexingBacklogForEvent(
+        @Param("eventId") eventId: UUID,
+        @Param("statuses") statuses: Collection<IndexingStatus>,
+        @Param("maxAttempts") maxAttempts: Int,
+        @Param("cutoff") cutoff: OffsetDateTime,
+        pageable: Pageable,
+    ): List<Photo>
 }

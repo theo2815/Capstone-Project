@@ -86,6 +86,24 @@ app:
     face-match-threshold-default: 0.6
     face-top-k-default: 5
     bib-confidence-threshold-default: 0.7
+    # Phase C bulk indexing. PER_PHOTO (default) = Phase-B behaviour (one enroll
+    # + one bib HTTP call per photo, off the upload request). BATCH stands that
+    # down and drains PENDING photos per event into mega jobs + webhook/poll
+    # ingest. Inert until flipped via INDEXING_MODE=batch.
+    indexing-mode: ${INDEXING_MODE:per_photo}
+    batch:
+      max-size: 50              # photos per mega job (bounds drain memory; ai-api caps at 500)
+      drain-interval-ms: 30000
+      drain-grace-seconds: 60
+      max-events-per-tick: 5
+    webhook:
+      # Prod-only — ai-api's SSRF guard rejects localhost, so dev runs poll-only
+      # (the poll backstop is the durable ingest path either way).
+      enabled: ${AI_WEBHOOK_ENABLED:false}
+      public-url: ${AI_WEBHOOK_PUBLIC_URL:}
+      hmac-secret: ${AI_WEBHOOK_HMAC_SECRET:}
+      poll-interval-ms: 30000
+      poll-grace-seconds: 90
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:false}
     photographer-upload:

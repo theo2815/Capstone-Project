@@ -38,6 +38,13 @@ class Photo(
     @Column(name = "watermark_s3_key", length = 512)
     var watermarkS3Key: String? = null,
 
+    // SHA-256 hexdigest of the ORIGINAL uploaded bytes (pre-watermark) — the
+    // identity key for per-photographer duplicate detection. Partial unique
+    // index (photographer_id, content_hash) lives in migration V24. Nullable:
+    // rows uploaded before V24 have no hash and are excluded from the index.
+    @Column(name = "content_hash", length = 64)
+    var contentHash: String? = null,
+
     @Column(name = "span", nullable = false, length = 20)
     @JdbcTypeCode(SqlTypes.VARCHAR)
     var spanWire: String = PhotoSpan.DEFAULT.wire,
@@ -63,6 +70,22 @@ class Photo(
 
     @Column(name = "alt_text", columnDefinition = "TEXT")
     var altText: String? = null,
+
+    // Async indexing state (face enroll + bib OCR via ai-api). Written by
+    // PhotoIndexingService off the upload request; a @Scheduled sweep re-drives
+    // PENDING/FAILED rows. See migration V21.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "indexing_status", nullable = false, length = 16)
+    var indexingStatus: IndexingStatus = IndexingStatus.PENDING,
+
+    @Column(name = "indexed_at")
+    var indexedAt: OffsetDateTime? = null,
+
+    @Column(name = "indexing_attempts", nullable = false)
+    var indexingAttempts: Int = 0,
+
+    @Column(name = "indexing_error", columnDefinition = "TEXT")
+    var indexingError: String? = null,
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(

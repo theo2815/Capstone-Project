@@ -87,17 +87,23 @@ async def create_batch_job(
     job_type: str,
     total_items: int,
     api_key_id: str | None,
+    rate_tier: str | None = None,
 ) -> str | JSONResponse:
     """Create a job record and return the job ID string.
 
     Returns a 429 JSONResponse if the caller already has too many active jobs
-    (SCALE-2 backpressure).
+    (SCALE-2 backpressure). Internal-tier callers get a higher active-job
+    ceiling (bulk indexing submits several jobs per drain).
     """
     from src.db.repositories.job_repo import JobRepository
     from src.db.session import get_session_ctx
 
     settings = request.app.state.settings
-    max_active = settings.MAX_ACTIVE_JOBS_PER_KEY
+    max_active = (
+        settings.MAX_ACTIVE_JOBS_PER_KEY_INTERNAL
+        if rate_tier == "internal"
+        else settings.MAX_ACTIVE_JOBS_PER_KEY
+    )
 
     async with get_session_ctx() as session:
         repo = JobRepository(session)

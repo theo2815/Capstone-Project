@@ -45,7 +45,10 @@ class FaceEmbedding(Base):
         UUID(as_uuid=True), ForeignKey("persons.id", ondelete="CASCADE"), nullable=False, index=True
     )
     embedding = mapped_column(Vector(512), nullable=False)
-    source_image_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # Per-face key f"{image_hash}:{face_index}" — image_hash is a 64-char SHA-256
+    # hexdigest, so the suffixed value needs more than 64. See migration
+    # i9d0e1f2g3h4 (widen source_image_hash).
+    source_image_hash: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

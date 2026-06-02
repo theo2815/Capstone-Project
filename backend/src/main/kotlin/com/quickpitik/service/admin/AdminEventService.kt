@@ -12,10 +12,13 @@ import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.config.AiApiProperties
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
@@ -31,7 +34,10 @@ class AdminEventService(
     private val adminDecisionLogService: AdminDecisionLogService,
     private val eventDtoMapper: EventDtoMapper,
     private val eventCoverService: EventCoverService,
+    private val aiApiClient: AiApiClient,
+    private val aiApiProperties: AiApiProperties,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
 
     @Transactional(readOnly = true)
     fun list(
@@ -213,6 +219,15 @@ class AdminEventService(
         }
         event.deletedAt = OffsetDateTime.now()
         eventRepository.save(event)
+        // GDPR: erase the biometric face embeddings ai-api holds for this event's
+        // photos. One event-scoped bulk call — not a per-photo loop — so deleting
+        // an event with thousands of photos doesn't fan out into thousands of HTTP
+        // calls. Best-effort: a failure must not block the delete (the
+        // orphan-person reaper is the backstop). Skipped when ai-api is disabled.
+        if (aiApiProperties.enabled) {
+            runCatching { aiApiClient.deleteFacesByEvent(eventId) }
+                .onFailure { log.warn("ai-api face erasure failed for deleted event {}: {}", eventId, it.message) }
+        }
         adminDecisionLogService.logEventDecision(
             adminId = adminId,
             targetEventId = event.id,

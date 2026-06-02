@@ -3,34 +3,38 @@ package com.quickpitik.service.photographer
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.photographer.PhotoExistsResponse
+import com.quickpitik.dto.photographer.PhotoExistsResult
 import com.quickpitik.dto.photographer.UploadedPhotoDto
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
-import com.quickpitik.entity.PhotoBibEmbed
-import com.quickpitik.entity.PhotoFacePersonEmbed
 import com.quickpitik.entity.PhotoSpan
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.PhotoPublishedEvent
+import org.hibernate.exception.ConstraintViolationException
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
-import java.math.BigDecimal
+import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
+import java.util.HexFormat
 import java.util.UUID
 import kotlin.random.Random
 
@@ -43,7 +47,6 @@ class PhotoUploadService(
     private val eventRepository: EventRepository,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val userRepository: UserRepository,
-    private val aiApiClient: AiApiClient,
     private val aiApiProperties: AiApiProperties,
     private val watermarkService: WatermarkService,
     private val eventPublisher: ApplicationEventPublisher,
@@ -107,7 +110,27 @@ class PhotoUploadService(
         }
 
         val bytes = file.bytes
-        val filename = file.originalFilename ?: "upload.jpg"
+
+        // Duplicate detection (enterprise dedup). A photo's identity is the
+        // SHA-256 of its ORIGINAL bytes, hashed HERE — before watermarking,
+        // which would change them — so a client- and server-side hash of the
+        // same file agree. Boundary is per-photographer across all events: the
+        // same shot can't be uploaded twice. A same-event re-upload (the
+        // stop-on-mobile / continue-on-web case) returns the existing photo
+        // idempotently; a different-event re-upload is rejected. The partial
+        // unique index (photographer_id, content_hash) from V24 is the
+        // race-safe backstop (see the saveAndFlush below).
+        val contentHash = sha256Hex(bytes)
+        photoRepository.findFirstByPhotographerIdAndContentHash(photographerId, contentHash)?.let { existing ->
+            if (existing.eventId == eventId) {
+                return existingPhotoDto(existing)
+            }
+            val otherEvent = eventRepository.findById(existing.eventId).orElse(null)
+            throw ConflictException(
+                code = ErrorCodes.PHOTO_DUPLICATE_DIFFERENT_EVENT,
+                message = "This photo already exists in your event '${otherEvent?.name ?: "another event"}'.",
+            )
+        }
 
         // Blur culling is desktop-only (BatchMyPhotos). Web upload assumes
         // photos have already been culled by the photographer's desktop
@@ -169,6 +192,7 @@ class PhotoUploadService(
             s3Key = originalKey,
             thumbnailS3Key = watermarkKey,
             watermarkS3Key = watermarkKey,
+            contentHash = contentHash,
             spanWire = PhotoSpan.DEFAULT.wire,
             tone = Random.nextInt(0, 4),
             uploadedAt = OffsetDateTime.now(),
@@ -176,78 +200,54 @@ class PhotoUploadService(
             pricePhp = event.pricePerPhoto,
         )
 
-        // Faces + bibs — best-effort. Both are gated by `app.ai-api.enabled`
-        // so feature development can run without ai-api on. When disabled,
-        // facesOk + bibsOk stay false → aiDetectionStatus = "none" in the
-        // response, photo still uploads, just without face embeddings or bib
-        // OCR. When ai-api comes online (AI_API_ENABLED=true), the existing
-        // try/catch graceful degradation kicks in for transient failures.
-        // Inner enroll failures are logged via runCatching's onFailure.
-        var facesOk = false
-        var bibsOk = false
-        if (aiApiProperties.enabled) {
-            facesOk = true
-            try {
-                val facesResult = aiApiClient.facesDetect(bytes, contentType, filename)
-                // ai-api requires person_id be a valid UUID (or omitted, in which
-                // case it auto-generates one). The previous "$photoId:$index" form
-                // failed UUID parsing → "Invalid person_id format". Let ai-api mint
-                // the UUID and store whichever id it returns. Note: ai-api's enroll
-                // picks the best face from the image regardless of how many faces
-                // detect() returned, so the per-face loop is functionally a no-op
-                // for index > 0 on multi-face shots — same "best face" gets enrolled
-                // under N different UUIDs. Acceptable for v1; refine when we crop
-                // per-face before enroll.
-                facesResult.faces.forEachIndexed { index, _ ->
-                    runCatching {
-                        val enrollResult = aiApiClient.facesEnroll(
-                            file = bytes,
-                            contentType = contentType,
-                            filename = filename,
-                            personName = photoId.toString(),
-                            personId = null,
-                            eventId = eventId,
-                        )
-                        photo.facePersons.add(
-                            PhotoFacePersonEmbed(
-                                faceIndex = index,
-                                aiPersonId = enrollResult.person_id,
-                            )
-                        )
-                    }.onFailure { log.warn("Face enroll failed for photo {} face {}: {}", photoId, index, it.message) }
-                }
-            } catch (ex: Exception) {
-                facesOk = false
-                log.warn("Faces detect failed for upload {}: {}", photoId, ex.message)
-            }
+        // Faces + bibs are indexed asynchronously off this request by
+        // PhotoIndexingService (face enroll + bib OCR via ai-api). The photo is
+        // saved + LIVE immediately; indexing fills in tags within seconds and
+        // fires a photo.indexed event, with a @Scheduled reconciliation sweep
+        // re-driving anything that fails. This replaces the old per-photo
+        // blocking ai-api calls that held the request thread + DB transaction
+        // for the full inference duration. When ai-api is disabled the photo is
+        // marked SKIPPED and never queued.
+        photo.indexingStatus =
+            if (aiApiProperties.enabled) IndexingStatus.PENDING else IndexingStatus.SKIPPED
 
-            bibsOk = true
-            try {
-                val bibsResult = aiApiClient.bibsRecognize(bytes, contentType, filename)
-                bibsResult.detections
-                    .filter { it.confidence >= aiApiProperties.bibConfidenceThresholdDefault }
-                    .map { it.bib_number.trim().uppercase() }
-                    .filter { it.isNotEmpty() }
-                    .distinct()
-                    .forEach { bibNumber ->
-                        photo.bibs.add(
-                            PhotoBibEmbed(
-                                bibNumber = bibNumber,
-                                ocrConfidence = BigDecimal.valueOf(
-                                    bibsResult.detections.first { it.bib_number.trim().uppercase() == bibNumber }.confidence,
-                                ),
-                            ),
-                        )
-                    }
-            } catch (ex: Exception) {
-                bibsOk = false
-                log.warn("Bibs recognize failed for upload {}: {}", photoId, ex.message)
+        // saveAndFlush (not save) so a concurrent identical-bytes upload that
+        // slipped past the pre-check above trips the (photographer_id,
+        // content_hash) unique index HERE rather than at commit — the
+        // authoritative, race-safe dedup backstop. A duplicate is the only
+        // unique constraint a valid photo insert can violate (the id is a fresh
+        // random UUID), so translate it to a terminal duplicate conflict.
+        try {
+            photoRepository.saveAndFlush(photo)
+        } catch (ex: DataIntegrityViolationException) {
+            // Defense-in-depth: a fresh-UUID id and fully-populated columns mean
+            // the dedup index is the only unique constraint a valid insert can
+            // violate today, but a FUTURE constraint must not be silently
+            // mislabeled a duplicate. Walk the cause chain to the Hibernate
+            // ConstraintViolationException (Spring may wrap it a layer deep); if
+            // it positively names a DIFFERENT constraint, rethrow it as the
+            // genuine integrity fault it is. A null/unknown name keeps the old
+            // behavior (treat as the dedup race).
+            val violated = generateSequence(ex.cause) { it.cause }
+                .filterIsInstance<ConstraintViolationException>()
+                .firstOrNull()
+                ?.constraintName
+            if (violated != null && !violated.equals(CONTENT_HASH_CONSTRAINT, ignoreCase = true)) {
+                throw ex
             }
-        } else {
-            log.debug("ai-api disabled; skipping faces + bibs for photo {}", photoId)
+            // Same- vs different-event can't be re-resolved here: the unique
+            // violation has aborted this transaction (Postgres 25P02), so any
+            // follow-up read would fail. Emit the same-event conflict; if it was
+            // actually a different-event race the photographer's retry hits the
+            // pre-check above — which now sees the committed row — and gets the
+            // precise "already in event X" message. The different-event race
+            // (same bytes, two events, same instant) is pathological and
+            // self-heals on that retry.
+            throw ConflictException(
+                code = ErrorCodes.PHOTO_DUPLICATE_SAME_EVENT,
+                message = "This photo was just uploaded. Refresh to see it.",
+            )
         }
-
-        photoRepository.save(photo)
 
         // Atomic counter writes — concurrent uploads during a live marathon are
         // the normal case, not an edge case. The prior read-modify-write pattern
@@ -279,12 +279,17 @@ class PhotoUploadService(
             ),
         )
 
-        val aiDetectionStatus = when {
-            facesOk && bibsOk -> "ok"
-            !facesOk && bibsOk -> "faces_unavailable"
-            facesOk && !bibsOk -> "bibs_unavailable"
-            else -> "none"
+        // Index faces + bibs asynchronously once this upload transaction commits
+        // (AFTER_COMMIT via PhotoIndexingTrigger), so the request returns without
+        // waiting on ai-api inference.
+        if (aiApiProperties.enabled) {
+            eventPublisher.publishEvent(PhotoUploadedForIndexing(photoId = photoId, eventId = eventId))
         }
+
+        // Indexing now runs async, so detection isn't known at upload time. The
+        // field is eventually-consistent ("pending" until indexing completes);
+        // clients treat it as informational. "none" when ai-api is disabled.
+        val aiDetectionStatus = if (aiApiProperties.enabled) "pending" else "none"
 
         return UploadedPhotoDto(
             id = photoId,
@@ -296,10 +301,81 @@ class PhotoUploadService(
         )
     }
 
+    // Pre-flight duplicate check (dedup Phase 2). For each requested content
+    // hash, report whether this photographer already has that photo and, if so,
+    // whether it's in THIS event (a no-op re-upload the client should skip) or
+    // another event (an upload would be rejected — name the holder). Mirrors the
+    // upload() boundary exactly: per-photographer, across all events. Read-only,
+    // no AI / storage / window / verification gate — it only tells the client
+    // what an upload would do, so it can avoid sending the bytes.
+    @Transactional(readOnly = true)
+    fun checkExisting(photographerId: UUID, eventId: UUID, hashes: List<String>): PhotoExistsResponse {
+        // Hashes are matched verbatim against stored hex; normalize case so a
+        // client that upper-cases its digest still matches (server stores lower).
+        val normalized = hashes.map { it.lowercase() }
+        val existingByHash = photoRepository
+            .findByPhotographerIdAndContentHashIn(photographerId, normalized)
+            .associateBy { it.contentHash }
+
+        // Name the other events in one batch read rather than per-hit.
+        val otherEventIds = existingByHash.values
+            .map { it.eventId }
+            .filterTo(mutableSetOf()) { it != eventId }
+        val otherEventNames = if (otherEventIds.isEmpty()) {
+            emptyMap()
+        } else {
+            eventRepository.findAllById(otherEventIds).associate { it.id to it.name }
+        }
+
+        val results = normalized.map { hash ->
+            val photo = existingByHash[hash]
+            when {
+                photo == null -> PhotoExistsResult(hash = hash, status = "new")
+                photo.eventId == eventId -> PhotoExistsResult(hash = hash, status = "same_event")
+                else -> PhotoExistsResult(
+                    hash = hash,
+                    status = "different_event",
+                    eventName = otherEventNames[photo.eventId],
+                )
+            }
+        }
+        return PhotoExistsResponse(results = results)
+    }
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
+
+    // Rebuild the upload response from an already-stored photo, for the
+    // idempotent same-event duplicate return. Mirrors the live return at the
+    // end of upload(): same fields, a fresh presigned thumbnail, and the same
+    // eventually-consistent aiDetectionStatus convention.
+    private fun existingPhotoDto(photo: Photo): UploadedPhotoDto {
+        val thumbnailUrl = storageService.presignedGetUrl(
+            photo.thumbnailS3Key!!,
+            storageProperties.presignedTtl.thumbnail,
+        )
+        return UploadedPhotoDto(
+            id = photo.id,
+            status = when (photo.status) {
+                PhotoStatus.LIVE -> "live"
+                PhotoStatus.HIDDEN -> "hidden"
+                PhotoStatus.PROCESSING -> "live"
+            },
+            uploadedAt = photo.uploadedAt,
+            thumbnailUrl = thumbnailUrl,
+            span = photo.span.wire,
+            aiDetectionStatus = if (aiApiProperties.enabled) "pending" else "none",
+        )
+    }
+
     private companion object {
         val UPLOADABLE_STATUSES: Set<EventStatus> = setOf(EventStatus.ACTIVE, EventStatus.COMPLETED)
         val ALLOWED_CONTENT_TYPES: Set<String> = setOf("image/jpeg", "image/png", "image/webp")
         val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
         const val UPLOAD_GRACE_DAYS = 4
+
+        // The V24 partial unique index. The race backstop only treats THIS
+        // constraint as a duplicate; any other violation is rethrown.
+        const val CONTENT_HASH_CONSTRAINT = "uq_photos_photographer_content_hash"
     }
 }

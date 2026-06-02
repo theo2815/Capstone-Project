@@ -99,8 +99,17 @@ class PhotoUploadWorker(
             } else {
                 val errorMsg = responseEnvelope.error ?: "Upload rejected by server."
                 database.uploadQueueDao().updateStatus(record.id, "FAILED", errorMsg)
-                database.uploadQueueDao().incrementRetryCount(record.id)
-                hasFailures.set(true)
+                // A duplicate rejection (backend ErrorCodes.PHOTO_DUPLICATE_*) is
+                // TERMINAL — the photo is already in an event, so retrying can
+                // never succeed. Mark it failed but do NOT flag hasFailures,
+                // otherwise WorkManager's Result.retry() loops this record
+                // forever. Network / other failures still retry as before.
+                val terminal = responseEnvelope.errors
+                    ?.any { it.code in TERMINAL_UPLOAD_ERROR_CODES } == true
+                if (!terminal) {
+                    database.uploadQueueDao().incrementRetryCount(record.id)
+                    hasFailures.set(true)
+                }
             }
         } catch (e: Exception) {
             val uploadMs = System.currentTimeMillis() - uploadStart
@@ -108,10 +117,32 @@ class PhotoUploadWorker(
                 "QP/UPLOAD-PERF",
                 "upload id=${record.id} file=${file.name} bytes=${file.length()} status=EXC ms=$uploadMs",
             )
-            val errorMsg = e.localizedMessage ?: "Network connection timeout."
+            // The backend rejects a duplicate with HTTP 409, and Retrofit throws
+            // HttpException for any non-2xx status BEFORE the success-path body
+            // (and its TERMINAL_UPLOAD_ERROR_CODES guard above) is ever reached —
+            // so the real duplicate check has to run HERE, off the thrown
+            // exception's error body. A duplicate is terminal: retrying re-POSTs
+            // the same bytes and can never succeed, so mark it FAILED but do NOT
+            // increment retry or flag hasFailures (either would loop WorkManager
+            // forever). Genuine network failures (no parsed code) still retry.
+            val apiError = RetrofitClient.parseHttpError(e)
+            val terminal = apiError != null && apiError.code in TERMINAL_UPLOAD_ERROR_CODES
+            val errorMsg = apiError?.message ?: e.localizedMessage ?: "Network connection timeout."
             database.uploadQueueDao().updateStatus(record.id, "FAILED", errorMsg)
-            database.uploadQueueDao().incrementRetryCount(record.id)
-            hasFailures.set(true)
+            if (!terminal) {
+                database.uploadQueueDao().incrementRetryCount(record.id)
+                hasFailures.set(true)
+            }
         }
+    }
+
+    private companion object {
+        // Backend dedup rejections (backend ErrorCodes.PHOTO_DUPLICATE_*). A
+        // duplicate can never succeed on retry, so these END the record instead
+        // of driving WorkManager's exponential-backoff retry loop forever.
+        val TERMINAL_UPLOAD_ERROR_CODES = setOf(
+            "PHOTO_DUPLICATE_DIFFERENT_EVENT",
+            "PHOTO_DUPLICATE_SAME_EVENT",
+        )
     }
 }
