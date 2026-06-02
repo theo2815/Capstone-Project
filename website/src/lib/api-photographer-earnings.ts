@@ -116,11 +116,21 @@ export async function fetchPhotographerPayoutReports(
 
 // ───────────────────────────────────────────── Payout requests
 
+export interface PayoutBalancePrimaryAccount {
+  method: "gcash" | "maya" | "gotyme";
+  accountNumber: string;
+  accountName: string;
+}
+
 export interface PayoutBalanceResponse {
   unpaidBalance: number;
   minimum: number;
   hasOpenRequest: boolean;
   openRequest: PhotographerPayout | null;
+  // Backend-authoritative primary payout account (no QR). The request-payout
+  // hero + modal gate on this so the FE never believes a primary exists when
+  // the DB has none. Null when none is configured.
+  primaryAccount: PayoutBalancePrimaryAccount | null;
 }
 
 export async function fetchPhotographerPayoutBalance(): Promise<PayoutBalanceResponse | null> {

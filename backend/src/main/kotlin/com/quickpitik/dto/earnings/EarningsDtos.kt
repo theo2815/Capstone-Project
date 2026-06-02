@@ -128,6 +128,20 @@ data class PayoutBalanceDto(
     val minimum: BigDecimal,
     val hasOpenRequest: Boolean,
     val openRequest: PhotographerPayoutDto?,
+    // Backend-authoritative primary payout account snapshot — slim (no QR) so
+    // the 30s-polled balance endpoint stays presign-free. The request-payout
+    // hero + modal gate on THIS instead of the client settings store, so the
+    // FE can't believe a primary exists when the DB has none (the demo's
+    // PAYOUT_NO_ACCOUNT mismatch). Resolved via the same findByUserIdAnd-
+    // IsPrimaryTrue query the request() check uses, so the gate and the check
+    // are always consistent. Null when no primary account is configured.
+    val primaryAccount: PayoutBalanceAccountDto?,
+)
+
+data class PayoutBalanceAccountDto(
+    val method: String,
+    val accountNumber: String,
+    val accountName: String,
 )
 
 // ─── Transactions ledger ─────────────────────────────────────────────────
