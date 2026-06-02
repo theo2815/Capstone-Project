@@ -168,6 +168,31 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         pageable: Pageable,
     ): List<UUID>
 
+    // Orphan reaper — every ai-api person id still referenced by a photo in the
+    // event, across ALL statuses (a HIDDEN photo still legitimately owns its
+    // person). The reaper deletes any ai-api person for the event NOT in this
+    // set. No status filter on purpose: filtering would make live persons look
+    // orphaned and get erased.
+    @Query(
+        """
+        SELECT DISTINCT fp.aiPersonId FROM Photo p
+        JOIN p.facePersons fp
+        WHERE p.eventId = :eventId
+        """,
+    )
+    fun findReferencedAiPersonIds(@Param("eventId") eventId: UUID): List<String>
+
+    // Orphan reaper — distinct events that have at least one indexed face, i.e.
+    // the events that could hold ai-api persons worth reconciling. Bounded by
+    // the Pageable so one sweep stays cheap.
+    @Query(
+        """
+        SELECT DISTINCT p.eventId FROM Photo p
+        JOIN p.facePersons fp
+        """,
+    )
+    fun findEventsWithFacePersons(pageable: Pageable): List<UUID>
+
     // The PENDING/FAILED photos of ONE event, oldest first, capped by the
     // Pageable to the batch max-size. These get flipped to BATCHING and shipped
     // as a single mega job per kind.

@@ -24,6 +24,12 @@ data class AiApiProperties(
     // how often it runs, and the max attempts before a photo settles as FAILED.
     val reconcileIntervalMs: Long = 60_000L,
     val maxIndexingAttempts: Int = 5,
+    // Orphan-person reaper (PhotoOrphanReaper.reap): deletes ai-api person rows
+    // no live photo references anymore (left when a photo is re-indexed or a
+    // batch is rolled back). Gated additionally by `enabled`. Runs slowly — it
+    // is housekeeping, not on any hot path.
+    val reaperEnabled: Boolean = true,
+    val reaperIntervalMs: Long = 1_800_000L,
     // HTTP connection pool to ai-api. Async indexing issues many concurrent
     // calls (face + bib per photo across the imageProcessing pool), so a pool
     // replaces the old one-connection-per-request factory.

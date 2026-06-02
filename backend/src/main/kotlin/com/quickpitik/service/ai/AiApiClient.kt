@@ -23,7 +23,12 @@ import org.springframework.web.client.HttpClientErrorException
 import org.springframework.web.client.HttpServerErrorException
 import org.springframework.web.client.ResourceAccessException
 import org.springframework.web.client.RestClient
+import java.time.OffsetDateTime
 import java.util.UUID
+
+// One enrolled person as the reaper needs it: its id plus when ai-api created
+// it (used to spare just-enrolled persons from being mistaken for orphans).
+data class AiPersonRef(val id: String, val createdAt: OffsetDateTime)
 
 @Service
 class AiApiClient(
@@ -130,6 +135,34 @@ class AiApiClient(
                 .retrieve()
                 .toBodilessEntity()
         }
+    }
+
+    // Every person ai-api holds for one event (tenant-scoped by the API key),
+    // paged out fully. Best-effort, tree-parsed like the webhook helpers — the
+    // reaper that calls this catches failures and retries on its next sweep.
+    fun listPersonsForEvent(eventId: UUID): List<AiPersonRef> {
+        val persons = mutableListOf<AiPersonRef>()
+        var offset = 0
+        while (true) {
+            val raw = client.get()
+                .uri(
+                    "/api/v1/faces/persons?event_id={e}&offset={o}&limit={l}",
+                    eventId.toString(), offset, PERSON_PAGE_SIZE,
+                )
+                .retrieve()
+                .body(String::class.java) ?: break
+            val data = objectMapper.readTree(raw).path("data")
+            val page = data.path("persons")
+            if (!page.isArray || page.isEmpty) break
+            page.forEach { node ->
+                val id = node.path("person_id").asText("")
+                val createdAt = runCatching { OffsetDateTime.parse(node.path("created_at").asText("")) }.getOrNull()
+                if (id.isNotBlank() && createdAt != null) persons.add(AiPersonRef(id, createdAt))
+            }
+            offset += PERSON_PAGE_SIZE
+            if (offset >= data.path("total").asInt(persons.size)) break
+        }
+        return persons
     }
 
     fun jobStatus(jobId: String, offset: Int? = null, limit: Int? = null): JobStatusResult {
@@ -253,6 +286,8 @@ class AiApiClient(
     }
 
     private companion object {
+        // ai-api caps /faces/persons limit at 200.
+        const val PERSON_PAGE_SIZE = 200
         val facesDetectRef = object : TypeReference<AiApiEnvelope<FacesDetectResult>>() {}
         val facesEnrollRef = object : TypeReference<AiApiEnvelope<FacesEnrollResult>>() {}
         val facesSearchRef = object : TypeReference<AiApiEnvelope<FacesSearchResult>>() {}
