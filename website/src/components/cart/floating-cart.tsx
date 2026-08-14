@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
 import { ROUTES } from "@/lib/constants";
-import { cn } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 import { CartModal } from "@/components/cart/cart-modal";
 import { CheckoutModal } from "@/components/cart/checkout-modal";
 
@@ -49,7 +49,13 @@ export function FloatingCart() {
       if (expressCheckoutPending) {
         openCheckout();
         clearExpressCheckout();
-      } else {
+      } else if (!checkoutOpen) {
+        // Never close an open checkout on a count change. The reachable
+        // trigger isn't a stray add — it's the guest→login resume path:
+        // <CheckoutResumeWatcher> re-opens the modal on `?checkout=1` and
+        // <AuthHydrator>'s mergeCart lands right after, so any server-side
+        // cart item the local cart lacked would slam the modal shut mid-
+        // payment-method selection.
         closeCart();
         closeCheckout();
       }
@@ -62,6 +68,7 @@ export function FloatingCart() {
     itemCount,
     mounted,
     expressCheckoutPending,
+    checkoutOpen,
     openCheckout,
     closeCart,
     closeCheckout,
@@ -146,7 +153,7 @@ export function FloatingCart() {
           aria-expanded={open}
           aria-label={`Open cart · ${itemCount} ${
             itemCount === 1 ? "photo" : "photos"
-          } · ₱${total.toLocaleString()}`}
+          } · ${formatPrice(total)}`}
           className={cn(
             "group relative inline-flex items-center gap-3 pl-4 pr-5 h-14 md:h-16 rounded-full",
             "bg-fresh hover:bg-fresh-deep text-bone",
@@ -186,11 +193,11 @@ export function FloatingCart() {
               Cart
             </span>
             <span className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[12px] tnum">
-              ₱{total.toLocaleString()}
+              {formatPrice(total)}
             </span>
           </span>
-          <span className="md:hidden font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px]">
-            ₱{total.toLocaleString()}
+          <span className="md:hidden font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] tnum">
+            {formatPrice(total)}
           </span>
         </button>
         {/* Minimize close-chip — detached so it doesn't crowd the count badge */}
@@ -233,7 +240,7 @@ export function FloatingCart() {
       onClick={() => setMinimized(false)}
       aria-label={`Show cart · ${itemCount} ${
         itemCount === 1 ? "photo" : "photos"
-      } · ₱${total.toLocaleString()}`}
+      } · ${formatPrice(total)}`}
       tabIndex={minimized ? 0 : -1}
       aria-hidden={!minimized || undefined}
       className={cn(

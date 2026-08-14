@@ -8,7 +8,7 @@ import { useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
-import { cn } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 import { postOrder } from "@/lib/api-orders";
 import { ApiError } from "@/lib/api";
 
@@ -93,16 +93,20 @@ export function CheckoutModal({
 
   useScrollLock(isOpen);
 
+  // Esc is gated on `step` for the same reason the backdrop and the header ✕
+  // are: closing mid-`processing` drops the in-flight postOrder's orderId (the
+  // isOpen reset effect above nulls it on re-entry) and the user is left with
+  // a charge they can't see a reference for.
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && step !== "processing") onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, step, onClose]);
 
   const itemCount = items.length;
   const recipientEmail = isAuthenticated ? authUser?.email ?? email : email;
@@ -444,7 +448,7 @@ function PaymentStep({
             {itemCount === 1 ? "photo" : "photos"} · full resolution
           </span>
           <span className="font-display text-2xl md:text-3xl font-medium text-ink tnum">
-            ₱{total.toLocaleString()}
+            {formatPrice(total)}
           </span>
         </div>
       </section>
@@ -531,7 +535,7 @@ function PaymentStep({
         onClick={onPay}
         className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
       >
-        Pay ₱{total.toLocaleString()} →
+        Pay <span className="tnum">{formatPrice(total)}</span> →
       </button>
 
       <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft text-center -mt-3">
@@ -605,8 +609,8 @@ function SuccessStep({
             </p>
             <p className="font-display text-xl font-medium text-ink tracking-tight leading-tight">
               <span className="tnum">{itemCount}</span>{" "}
-              {itemCount === 1 ? "photo" : "photos"} · ₱
-              <span className="tnum">{total.toLocaleString()}</span>
+              {itemCount === 1 ? "photo" : "photos"} ·{" "}
+              <span className="tnum">{formatPrice(total)}</span>
             </p>
           </div>
         </div>

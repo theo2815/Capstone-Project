@@ -7,7 +7,7 @@ import { useCartStore } from "@/store/cart-store";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
-import { cn } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 import type { CartItem } from "@/types/order";
 import {
   PhotoPreviewCard,
@@ -261,7 +261,7 @@ export function CartModal({
                   Subtotal
                 </span>
                 <span className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight tnum">
-                  ₱{total.toLocaleString()}
+                  {formatPrice(total)}
                 </span>
               </div>
               <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-5">
@@ -402,7 +402,7 @@ function CartRow({
 
         <div className="flex flex-col items-end gap-2 shrink-0">
           <span className="font-mono text-sm text-ink tnum">
-            ₱{item.price.toLocaleString()}
+            {formatPrice(item.price)}
           </span>
         </div>
       </button>

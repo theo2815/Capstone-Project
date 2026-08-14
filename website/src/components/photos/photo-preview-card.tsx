@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useScrollLock } from "@/lib/scroll-lock";
-import { cn } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 
 const TONE_COLORS = [
   "var(--ink)",
@@ -336,7 +336,9 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                   )}
                 >
                   {props.inCart ? "Checkout now" : "Buy now"} ·
-                  <span className="tnum ml-1 sm:ml-1.5">₱{photo.price}</span>
+                  <span className="tnum ml-1 sm:ml-1.5">
+                    {formatPrice(photo.price)}
+                  </span>
                   <span aria-hidden="true" className="ml-1 sm:ml-1.5">→</span>
                 </button>
               </div>

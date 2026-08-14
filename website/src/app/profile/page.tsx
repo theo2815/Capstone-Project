@@ -191,6 +191,10 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
   const date = formatRaceDate(entry.date);
   const isUpcoming = entry.state === "upcoming";
   const showUnsave = isUpcoming && entry.isSaved;
+  // Purchased-only rows carry `order.eventSlug ?? ""`, and the BE sends null
+  // once an event is hard-deleted. Without this, the row renders an "Open →"
+  // chip over a link to `/events/` — the events list, not the race.
+  const canOpen = entry.slug.length > 0;
   const stateLabel: Record<RaceState, string> = {
     upcoming: "Saved",
     live: "Photos uploading",
@@ -251,7 +255,7 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
         >
           Unsave
         </button>
-      ) : !isUpcoming ? (
+      ) : !isUpcoming && canOpen ? (
         <span className="font-sans text-sm text-ink group-hover:text-fresh transition-colors shrink-0 inline-flex items-center gap-1.5">
           Open
           <span
@@ -265,7 +269,7 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
     </div>
   );
 
-  if (isUpcoming) {
+  if (isUpcoming || !canOpen) {
     return <div className="group block">{body}</div>;
   }
 

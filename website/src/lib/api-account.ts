@@ -27,7 +27,20 @@ export interface ChangePasswordArgs {
   newPassword: string;
 }
 
-export async function changePassword(args: ChangePasswordArgs): Promise<unknown> {
+export interface ChangePasswordResult {
+  /**
+   * False when localStorage had no refresh token to exempt, so the BE revoked
+   * every session including this one — the user keeps a working access token
+   * for ≤15 min and is then bounced. The caller must say so instead of
+   * showing a plain success toast.
+   */
+  sessionKept: boolean;
+}
+
+export async function changePassword(
+  args: ChangePasswordArgs,
+): Promise<ChangePasswordResult> {
   const refreshToken = getRefreshToken();
-  return api.put<unknown>("/me/password", { ...args, refreshToken });
+  await api.put<unknown>("/me/password", { ...args, refreshToken });
+  return { sessionKept: refreshToken !== null };
 }

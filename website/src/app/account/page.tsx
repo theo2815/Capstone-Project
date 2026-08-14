@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { SiteHeader } from "@/components/layout/site-header";
 import {
@@ -13,9 +14,12 @@ import { Kicker } from "@/components/ui/kicker";
 import { AvatarSlab } from "@/components/account/avatar-slab";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/store/auth-store";
+import { useCartStore } from "@/store/cart-store";
+import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useToast } from "@/hooks/use-toast";
 import { FieldError } from "@/components/ui/field-error";
 import { ApiError } from "@/lib/api";
+import { resetUserScopedStores } from "@/lib/auth-reset";
 import { updateProfileName, changePassword } from "@/lib/api-account";
 import {
   NAME_MAX,
@@ -26,10 +30,13 @@ import {
 import { ROUTES } from "@/lib/constants";
 import type { User } from "@/types/user";
 
+// "Sign-in email" rather than "Email": every other entry here maps to an
+// editable slab, so a bare "Email" reads as one by association. The slab is
+// read-only until a change-email flow exists on the backend.
 const RUNNER_JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "name", label: "Name" },
   { id: "picture", label: "Picture" },
-  { id: "email", label: "Email" },
+  { id: "email", label: "Sign-in email" },
   { id: "password", label: "Password" },
   { id: "danger", label: "Danger" },
 ];
@@ -40,7 +47,7 @@ const RUNNER_JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
 // pages. Runner accounts are unaffected.
 const PHOTOGRAPHER_JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "name", label: "Name" },
-  { id: "email", label: "Email" },
+  { id: "email", label: "Sign-in email" },
   { id: "password", label: "Password" },
   { id: "danger", label: "Danger" },
 ];
@@ -206,7 +213,12 @@ function PictureSlab({ number }: { number: string }) {
 
 function EmailSlab({ user, number }: { user: User; number: string }) {
   return (
-    <Slab id="email" number={number} title="Email" caption="Used to sign in">
+    <Slab
+      id="email"
+      number={number}
+      title="Sign-in email"
+      caption="Can't be changed here"
+    >
       <div className="space-y-5">
         <div className="border border-line rounded-2xl px-6 py-5 bg-bone-deep/40">
           <Kicker as="p" tone="soft">
@@ -264,9 +276,21 @@ function PasswordSlab({ number }: { number: string }) {
 
     setIsSaving(true);
     try {
-      await changePassword({ currentPassword: current, newPassword: next });
+      const { sessionKept } = await changePassword({
+        currentPassword: current,
+        newPassword: next,
+      });
       reset();
-      showToast({ kind: "success", message: "Password updated." });
+      showToast({
+        kind: "success",
+        // Without a stored refresh token the BE couldn't exempt this device
+        // from the revoke sweep, so the session dies with the access token.
+        // Saying nothing here means a silent bounce ~15 min later.
+        message: sessionKept
+          ? "Password updated."
+          : "Password updated. You'll need to sign in again on this device.",
+        duration: sessionKept ? undefined : 8000,
+      });
     } catch (err) {
       if (err instanceof ApiError) {
         const code = err.errors[0]?.code;
@@ -358,11 +382,24 @@ function PasswordSlab({ number }: { number: string }) {
 
 function DevRoleSlab({ user, number }: { user: User; number: string }) {
   const setUser = useAuthStore((s) => s.setUser);
+  const queryClient = useQueryClient();
   const { showToast } = useToast();
 
   function setRole(next: User["role"]) {
     if (next === user.role) return;
+    // A role swap is an identity change, so it needs the same wipe every real
+    // auth transition gets — otherwise the new role reads the old one's cart,
+    // orders, selfies and admin caches.
+    resetUserScopedStores();
+    queryClient.clear();
     setUser({ ...user, role: next });
+    // resetUserScopedStores() parks cart + saved-events in local-only mode,
+    // and the only thing that flips them back is AuthHydrator's merge effect
+    // — keyed on [isAuthenticated, userId] behind a one-shot ref, so a
+    // same-user swap never re-runs it. Restore sync by hand or every
+    // subsequent cart change stops reaching the server.
+    useCartStore.getState().setSyncEnabled(true);
+    useSavedEventsStore.getState().setSyncEnabled(true);
     showToast({
       kind: "info",
       message: `Now signed in as ${next.toLowerCase()}.`,

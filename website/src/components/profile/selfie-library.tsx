@@ -8,6 +8,7 @@ import {
 } from "@/store/user-media-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
 import { useToast } from "@/hooks/use-toast";
+import { Kicker } from "@/components/ui/kicker";
 import { ApiError } from "@/lib/api";
 import {
   uploadSelfie,
@@ -169,11 +170,13 @@ export function SelfieLibrary() {
             />
           </li>
         ))}
-        {remaining > 0 && (
-          <li>
+        <li>
+          {remaining > 0 ? (
             <SelfieAddTile onPick={handlePick} busy={busy} />
-          </li>
-        )}
+          ) : (
+            <SelfieCapTile />
+          )}
+        </li>
       </ul>
 
       {error && (
@@ -318,6 +321,22 @@ function SelfieAddTile({
         className="sr-only"
       />
     </label>
+  );
+}
+
+// Holds the add-tile's slot at 5/5. Dropping the tile entirely left the grid
+// with no affordance at all — the user saw five selfies and no explanation for
+// why they couldn't add a sixth. Deliberately inert: no input, no hover state.
+function SelfieCapTile() {
+  return (
+    <div className="aspect-square rounded-2xl border-2 border-dashed border-line bg-bone-deep/30 flex flex-col items-center justify-center gap-2 px-3 text-center">
+      <Kicker tone="soft" tnum>
+        {SELFIE_MAX} / {SELFIE_MAX}
+      </Kicker>
+      <span className="font-sans text-sm text-slate leading-snug">
+        Remove one to add another.
+      </span>
+    </div>
   );
 }
 
