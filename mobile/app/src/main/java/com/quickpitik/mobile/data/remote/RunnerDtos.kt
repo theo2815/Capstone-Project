@@ -21,7 +21,13 @@ data class PhotoDto(
     val span: String, // e.g. "portrait"
     val price: Double,
     val imageUrl: String?,
-    val alt: String?
+    val alt: String?,
+    // Presigned URL for the un-watermarked original. Backend populates it only
+    // for photos this user has actually bought (see backend PhotoDto + G-2);
+    // null for everyone else. The lightbox prefers it so a runner stops seeing
+    // the watermark on a photo they paid for. Grid thumbnails stay watermarked,
+    // matching the website.
+    val cleanUrl: String? = null
 )
 
 data class SearchByFaceJsonRequest(

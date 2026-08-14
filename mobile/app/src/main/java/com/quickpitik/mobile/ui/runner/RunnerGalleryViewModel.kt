@@ -88,6 +88,14 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     fun selectEvent(event: EventDto) {
         _activeEvent.value = event
         _isFiltered.value = false
+        // Pre-race-day events have no gallery yet — the website never loads
+        // photos for one, and the cockpit renders an "opens on race day" notice
+        // instead. Skipping the fetch keeps the state Idle so that branch shows
+        // cleanly rather than flashing an empty result.
+        if (deriveEventState(event.date) == EventState.UPCOMING) {
+            _searchState.value = PhotosSearchState.Idle
+            return
+        }
         searchByBib("")
     }
 

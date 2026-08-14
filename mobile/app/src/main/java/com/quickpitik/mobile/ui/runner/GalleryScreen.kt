@@ -25,7 +25,11 @@ import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
 import coil.compose.AsyncImage
+import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.PhotoDto
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,15 +50,22 @@ import com.quickpitik.mobile.ui.theme.*
 fun RunnerGalleryScreen(
     viewModel: RunnerGalleryViewModel,
     cartViewModel: CartViewModel,
+    inboxViewModel: RunnerInboxViewModel,
     onNavigateToOrders: () -> Unit,
     onNavigateToProfile: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateBack: () -> Unit,
+    onOpenOrder: (String) -> Unit,
     onLogout: () -> Unit
 ) {
     var bibSearchQuery by remember { mutableStateOf("") }
     var activeSearchTab by remember { mutableStateOf(0) } // 0 = Selfie, 1 = Bib Number
     var selectedPhotoForDetail by remember { mutableStateOf<PhotoDto?>(null) }
+
+    val inboxMessages by inboxViewModel.messages.collectAsState()
+    val inboxUnread by inboxViewModel.unreadCount.collectAsState()
+    var showInbox by remember { mutableStateOf(false) }
+    var showRefundPolicy by remember { mutableStateOf(false) }
 
     val activeEvent by viewModel.activeEvent.collectAsState()
     val searchState by viewModel.searchState.collectAsState()
@@ -111,6 +122,11 @@ fun RunnerGalleryScreen(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RunnerInboxBell(
+                        messageCount = inboxMessages.size,
+                        unreadCount = inboxUnread,
+                        onClick = { showInbox = true },
+                    )
                     // Cart access lives in the global FloatingCart pill — header icon dropped
                     // to avoid two affordances pointing at the same overlay.
                     var menuExpanded by remember { mutableStateOf(false) }
@@ -181,6 +197,16 @@ fun RunnerGalleryScreen(
                         .fillMaxWidth()
                         .height(220.dp),
                 )
+            } else if (deriveEventState(activeEvent!!.date) == EventState.UPCOMING) {
+                // Pre-race-day: no gallery, no search. Port of the website's
+                // UpcomingEventNotice branch in events/[slug]/page.tsx.
+                UpcomingEventNotice(
+                    event = activeEvent!!,
+                    onBack = {
+                        viewModel.clearSelectedEvent()
+                        onNavigateBack()
+                    },
+                )
             } else {
                 // SELECTED EVENT GALLERY VIEW
                 Card(
@@ -243,6 +269,20 @@ fun RunnerGalleryScreen(
                         }
                     }
                 }
+                // Pre-purchase refund disclosure — port of the web cockpit's
+                // "Refund Policy →" kicker (event-cockpit.tsx). Read-only.
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clickable { showRefundPolicy = true }
+                        .padding(vertical = 8.dp),
+                ) {
+                    Kicker(text = "Refund Policy", color = Slate)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "→", color = Slate, style = Typography.labelMedium)
+                }
+
                 Spacer(modifier = Modifier.height(20.dp))
 
                 // AI Search Selector Cards (Selfie vs Bib)
@@ -606,6 +646,120 @@ fun RunnerGalleryScreen(
             selectedPhotoForDetail = null
         }
     }
+
+    if (showRefundPolicy) {
+        RefundPolicyDialog(onDismiss = { showRefundPolicy = false })
+    }
+
+    if (showInbox) {
+        RunnerInboxSheet(
+            messages = inboxMessages,
+            onDismiss = { showInbox = false },
+            onMarkRead = { inboxViewModel.markRead(it) },
+            onMarkAllRead = { inboxViewModel.markAllRead() },
+            onRemove = { inboxViewModel.remove(it) },
+            onOpenOrder = { orderId ->
+                showInbox = false
+                onOpenOrder(orderId)
+            },
+        )
+    }
+}
+
+// Pre-race-day stand-in for the search cockpit. Faithful port of the website's
+// UpcomingEventNotice (events/[slug]/page.tsx): 16:9 cover, Fresh "OPENS ·
+// [date]" kicker, name, city, venue, and the race-day + four-day-window copy.
+// The runner sees why there's nothing to search yet instead of an empty grid.
+@Composable
+private fun UpcomingEventNotice(
+    event: EventDto,
+    onBack: () -> Unit,
+) {
+    val dateLabel = remember(event.date) { formatUpcomingDate(event.date) }
+    val cityUpper = remember(event.location) {
+        event.location.substringAfterLast(',').trim().uppercase()
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "Back to Events",
+                    tint = Ink,
+                )
+            }
+            Text(
+                text = "ALL EVENTS",
+                style = Typography.labelMedium,
+                color = Slate,
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(QpCardShape)
+                .background(Ink),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!event.bannerUrl.isNullOrEmpty()) {
+                AsyncImage(
+                    model = event.bannerUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Text(
+                    text = event.name,
+                    style = Typography.titleLarge,
+                    color = Bone.copy(alpha = 0.25f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        // The one Fresh element in this viewport — the notice has no CTA, so the
+        // date kicker carries the accent, as it does on the web.
+        Kicker(text = "Opens · $dateLabel", color = Fresh)
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = event.name,
+            style = Typography.displayLarge,
+            color = Ink,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Kicker(text = cityUpper, color = Slate)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = event.location,
+            style = Typography.bodyMedium,
+            color = InkSoft,
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            text = "The gallery and runner search open on race day. " +
+                "Photographers have a four-day window from race day to upload — " +
+                "check back then to find your photos.",
+            style = Typography.bodyMedium,
+            color = InkSoft,
+        )
+    }
+}
+
+// "Saturday, October 3, 2026" — matches the website's toLocaleDateString with
+// weekday/month/day/year. Falls back to the raw ISO date if it can't parse.
+private fun formatUpcomingDate(iso: String): String = try {
+    LocalDate.parse(iso).format(
+        DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy", Locale.US)
+    )
+} catch (e: Exception) {
+    iso
 }
 
 // Compact pill rendered on each photo tile (bottom-right) for inline cart

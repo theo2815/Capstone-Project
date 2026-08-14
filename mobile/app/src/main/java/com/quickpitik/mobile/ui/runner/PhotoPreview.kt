@@ -58,12 +58,16 @@ data class PhotoPreviewData(
 // Buy now). OwnerReview is for the photographer reviewing their own uploads
 // from the event-share page — same Dialog/Pager shell, no purchase UI,
 // "X sold" stat in place of price.
-enum class PhotoPreviewMode { Browse, OwnerReview }
+// Owned is the runner's post-purchase view (website PhotoPreviewCard
+// mode="owned"): no price, no cart — just "Yours to keep" and a download.
+enum class PhotoPreviewMode { Browse, OwnerReview, Owned }
 
 fun PhotoDto.toPreviewData(eventName: String?): PhotoPreviewData = PhotoPreviewData(
     id = id,
     price = price,
-    imageUrl = imageUrl,
+    // cleanUrl is non-null only on photos the runner owns, so this is the
+    // owned-mode swap the website does with `cleanUrl ?? imageUrl`.
+    imageUrl = cleanUrl ?: imageUrl,
     eventName = eventName,
 )
 
@@ -84,6 +88,8 @@ fun PhotoPreview(
     isInCart: (PhotoPreviewData) -> Boolean = { false },
     onToggleCart: (PhotoPreviewData) -> Unit = {},
     onBuyNow: (PhotoPreviewData) -> Unit = {},
+    // Owned mode only — saves the un-watermarked original to the gallery.
+    onDownload: (PhotoPreviewData) -> Unit = {},
     mode: PhotoPreviewMode = PhotoPreviewMode.Browse,
 ) {
     if (photos.isEmpty()) {
@@ -319,6 +325,19 @@ fun PhotoPreview(
                                         modifier = Modifier.weight(1f),
                                     )
                                 }
+                            }
+                            PhotoPreviewMode.Owned -> {
+                                Kicker(
+                                    text = "Yours to keep",
+                                    color = SlateSoft,
+                                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                PrimaryCta(
+                                    text = "Download photo ↓",
+                                    onClick = { onDownload(activePhoto) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
                             }
                             PhotoPreviewMode.OwnerReview -> {
                                 Row(

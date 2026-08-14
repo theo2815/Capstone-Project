@@ -1,6 +1,7 @@
 package com.quickpitik.mobile.data.remote
 
 import okhttp3.MultipartBody
+import retrofit2.Call
 import retrofit2.http.*
 
 interface QuickPitikApi {
@@ -9,6 +10,12 @@ interface QuickPitikApi {
 
     @POST("api/v1/auth/register")
     suspend fun register(@Body request: RegisterRequest): ApiResponseEnvelope<AuthResponse>
+
+    // Non-suspend Call on purpose: TokenAuthenticator runs on OkHttp's thread
+    // outside any coroutine, so it needs a blocking execute(). Called only via
+    // RetrofitClient.refreshApi (the authenticator-free client).
+    @POST("api/v1/auth/refresh")
+    fun refreshToken(@Body request: RefreshRequest): Call<ApiResponseEnvelope<AuthResponse>>
 
     @Multipart
     @POST("api/v1/me/photographer/events/{eventId}/photos")

@@ -1151,7 +1151,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     UploadRecord(
                         filePath = mockFile.absolutePath,
                         eventId = event.id,
-                        photographerId = "simulated_photographer",
+                        // Real owner, not a literal — a hardcoded id polluted the
+                        // queue's analytics. Matches persistCapturedJpeg().
+                        photographerId = sessionManager.getUserEmail() ?: "unknown",
                         captureTimestamp = System.currentTimeMillis(),
                         uploadStatus = "QUEUED"
                     )

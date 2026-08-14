@@ -65,10 +65,12 @@ private const val FLAT_PAGE_SIZE = 12
 fun EventsDiscoveryScreen(
     viewModel: RunnerGalleryViewModel,
     savedEventsViewModel: SavedEventsViewModel,
+    inboxViewModel: RunnerInboxViewModel,
     onEventSelected: (EventDto) -> Unit,
     onNavigateToOrders: () -> Unit,
     onNavigateToProfile: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onOpenOrder: (String) -> Unit,
     onLogout: () -> Unit,
 ) {
     val eventsState by viewModel.eventsState.collectAsState()
@@ -77,6 +79,10 @@ fun EventsDiscoveryScreen(
     var query by remember { mutableStateOf("") }
     var cityFilter by remember { mutableStateOf("all") }
     var dateFilter by remember { mutableStateOf(DateFilter.ANY) }
+
+    val inboxMessages by inboxViewModel.messages.collectAsState()
+    val inboxUnread by inboxViewModel.unreadCount.collectAsState()
+    var showInbox by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
 
@@ -91,6 +97,9 @@ fun EventsDiscoveryScreen(
     // (Loading state is only assigned when no prior Success exists).
     LaunchedEffect(Unit) { viewModel.fetchPublicEvents() }
     LaunchedEffect(Unit) { savedEventsViewModel.refresh() }
+    // Refetch-on-entry stands in for the website's WebSocket push. Cheap, and it
+    // means a refund resolved between sessions is visible on the next open.
+    LaunchedEffect(Unit) { inboxViewModel.fetchMessages() }
     LaunchedEffect(savedMessage) {
         savedMessage?.let {
             snackbarHostState.showSnackbar(it)
@@ -127,6 +136,11 @@ fun EventsDiscoveryScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    RunnerInboxBell(
+                        messageCount = inboxMessages.size,
+                        unreadCount = inboxUnread,
+                        onClick = { showInbox = true },
+                    )
                     // Cart access lives in the global FloatingCart pill — header icon dropped
                     // to avoid two affordances pointing at the same overlay.
                     var menuExpanded by remember { mutableStateOf(false) }
@@ -350,6 +364,20 @@ fun EventsDiscoveryScreen(
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(16.dp)
+        )
+    }
+
+    if (showInbox) {
+        RunnerInboxSheet(
+            messages = inboxMessages,
+            onDismiss = { showInbox = false },
+            onMarkRead = { inboxViewModel.markRead(it) },
+            onMarkAllRead = { inboxViewModel.markAllRead() },
+            onRemove = { inboxViewModel.remove(it) },
+            onOpenOrder = { orderId ->
+                showInbox = false
+                onOpenOrder(orderId)
+            },
         )
     }
 }

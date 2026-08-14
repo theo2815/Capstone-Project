@@ -1,5 +1,7 @@
 package com.quickpitik.mobile.data.remote
 
+import android.content.Context
+import com.quickpitik.mobile.data.local.SessionManager
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -8,6 +10,10 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import com.google.gson.Gson
 import retrofit2.HttpException
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
@@ -59,21 +65,54 @@ object RetrofitClient {
         delegate.intercept(chain)
     }
 
+    // Set once from QuickPitikApp.onCreate(), which always runs before any
+    // screen, worker, or ViewModel can reach the network — so the lazy clients
+    // below can safely assume it.
+    private lateinit var appContext: Context
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+    }
+
     // Default OkHttp read/write timeout is 10s — too tight for the PayMongo
     // Checkout Session call in dev (sandbox latency hits 12-20s easily). The
     // SocketTimeoutException retry storm froze the checkout sheet for ~20s
     // before bubbling up an error. 60s lets the gateway respond cleanly.
-    private val okHttpClient = OkHttpClient.Builder()
-        .addInterceptor(loggingInterceptor)
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .build()
+    private val okHttpClient by lazy {
+        OkHttpClient.Builder()
+            .addInterceptor(loggingInterceptor)
+            .authenticator(TokenAuthenticator(SessionManager.getInstance(appContext)))
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .build()
+    }
+
+    // Separate client for POST /auth/refresh, deliberately WITHOUT the
+    // authenticator: the refresh call must never be able to trigger the refresh
+    // path that issued it. TokenAuthenticator also guards on the path, so this
+    // is belt-and-braces on the one call where a loop would be unrecoverable.
+    private val refreshClient by lazy {
+        OkHttpClient.Builder()
+            .addInterceptor(loggingInterceptor)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+    }
 
     val apiService: QuickPitikApi by lazy {
         Retrofit.Builder()
             .baseUrl(BASE_URL)
             .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(QuickPitikApi::class.java)
+    }
+
+    val refreshApi: QuickPitikApi by lazy {
+        Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .client(refreshClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(QuickPitikApi::class.java)
@@ -108,6 +147,19 @@ object RetrofitClient {
                 "HTTP ${e.code()}"
             }
         }
-        return e.localizedMessage ?: "An unexpected error occurred"
+        // Transport failures reach the UI as toasts, so they must not leak
+        // "java.net.SocketTimeoutException" or "Failed to connect to
+        // /192.168.1.232:8080". Runners on weak race-day Wi-Fi need to know it's
+        // the connection, not the app. Order matters: the specific IOException
+        // subtypes are checked before the generic catch-all below them.
+        return when (e) {
+            is UnknownHostException, is ConnectException ->
+                "Couldn't reach QuickPitik — check your connection."
+            is SocketTimeoutException ->
+                "The connection timed out. Try again."
+            is IOException ->
+                "Network error. Check your connection and try again."
+            else -> e.localizedMessage ?: "An unexpected error occurred"
+        }
     }
 }

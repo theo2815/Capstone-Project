@@ -27,6 +27,11 @@ data class AuthResponse(
     val user: UserDto
 )
 
+// Body for POST /auth/refresh. Mirrors backend dto/auth/RefreshRequest.
+data class RefreshRequest(
+    val refreshToken: String
+)
+
 // Standard Backend Error envelope structure
 data class ApiError(
     val code: String,

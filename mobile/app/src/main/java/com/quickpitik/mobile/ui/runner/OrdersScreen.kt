@@ -33,17 +33,30 @@ import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+// Receipt paging, mirroring the website's PAGE_SIZE.RECEIPT_INITIAL / +10.
+private const val RECEIPT_INITIAL = 10
+private const val RECEIPT_PAGE = 10
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OrdersScreen(
     viewModel: CartViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    // Deep-link target from the runner inbox: a dispute-outcome message carries
+    // an orderId, and tapping it should land on that order's detail with the
+    // refund timeline already open (the website does this via /orders?expand=).
+    // Seeding selectedOrderId is enough — the LaunchedEffect below fetches it.
+    initialOrderId: String? = null,
 ) {
     val ordersState by viewModel.ordersState.collectAsState()
     val orderDetailState by viewModel.orderDetailState.collectAsState()
     val refundAction by viewModel.refundActionState.collectAsState()
 
-    var selectedOrderId by remember { mutableStateOf<String?>(null) }
+    var selectedOrderId by remember { mutableStateOf(initialOrderId) }
+    // How many receipts are rendered; grows by RECEIPT_PAGE on "LOAD MORE".
+    var receiptLimit by remember { mutableStateOf(RECEIPT_INITIAL) }
+    // Index into the open order's photos while the owned lightbox is showing.
+    var ownedPreviewIndex by remember { mutableStateOf<Int?>(null) }
     var showRefundDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -194,12 +207,16 @@ fun OrdersScreen(
                             }
                         } else {
                             val spendStats = remember(visibleOrders) { computeSpendStats(visibleOrders) }
+                            // Client-side paging, port of the website's LoadMoreButton.
+                            // Spend stats stay computed over ALL orders — only the
+                            // rendered rows are capped.
+                            val pagedOrders = visibleOrders.take(receiptLimit)
                             LazyColumn(
                                 modifier = Modifier.fillMaxWidth().weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
                                 item { SpendSection(spendStats) }
-                                items(visibleOrders, key = { it.id }) { order ->
+                                items(pagedOrders, key = { it.id }) { order ->
                                     Card(
                                         onClick = { selectedOrderId = order.id },
                                         colors = CardDefaults.cardColors(containerColor = BoneDeep),
@@ -229,6 +246,18 @@ fun OrdersScreen(
                                                     style = NumeralStyle.copy(fontSize = 16.sp),
                                                     color = Fresh
                                                 )
+                                                // Refund state at a glance, so the runner doesn't
+                                                // have to open each receipt to find the one still
+                                                // in review. Renders nothing when there's no
+                                                // dispute. Backend already sends `disputes` on the
+                                                // list DTO, so this costs no extra fetch.
+                                                RefundStatusChip(
+                                                    rollup = computeRefundRollup(
+                                                        photoCount = order.photoIds.size,
+                                                        disputes = order.disputes,
+                                                    ),
+                                                    photoCount = order.photoIds.size,
+                                                )
                                             }
                                             // No payment-status chip — mirrors website /orders which never
                                             // renders PAID/PENDING on the receipt row. PENDING orders (abandoned
@@ -236,6 +265,15 @@ fun OrdersScreen(
                                             // returns every order; the chevron alone signals tap-for-detail.
                                             Icon(Icons.Default.KeyboardArrowRight, contentDescription = "Detail", tint = Ink)
                                         }
+                                    }
+                                }
+                                if (visibleOrders.size > pagedOrders.size) {
+                                    item {
+                                        GhostCta(
+                                            text = "LOAD MORE",
+                                            onClick = { receiptLimit += RECEIPT_PAGE },
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
                                     }
                                 }
                             }
@@ -370,6 +408,13 @@ fun OrdersScreen(
 
                             items(order.photos, key = { it.id }) { photo ->
                                     Card(
+                                        // Tap opens the owned lightbox — full-size,
+                                        // swipeable, un-watermarked. The row's own
+                                        // Download button still works for a direct save.
+                                        onClick = {
+                                            ownedPreviewIndex = order.photos.indexOfFirst { it.id == photo.id }
+                                                .takeIf { it >= 0 }
+                                        },
                                         colors = CardDefaults.cardColors(containerColor = BoneDeep),
                                         border = BorderStroke(1.dp, Line),
                                         shape = QpCardShape,
@@ -460,7 +505,37 @@ fun OrdersScreen(
             }
         }
     }
+
+    // Owned-photo lightbox. Reuses the shared PhotoPreview primitive in its
+    // Owned mode rather than a bespoke dialog — same pager, same chrome the
+    // runner already knows from browsing.
+    val openOrder = (orderDetailState as? OrderDetailState.Success)?.order
+    if (openOrder != null) {
+        ownedPreviewIndex?.let { index ->
+            PhotoPreview(
+                photos = openOrder.photos.map { it.toOwnedPreviewData(openOrder.eventName) },
+                currentIndex = index,
+                mode = PhotoPreviewMode.Owned,
+                onClose = { ownedPreviewIndex = null },
+                onIndexChange = { ownedPreviewIndex = it },
+                onDownload = { data ->
+                    openOrder.photos.firstOrNull { it.id == data.id }?.let(downloadOne)
+                },
+            )
+        }
+    }
 }
+
+// previewUrl is already the CLEAN original for an order the caller owns
+// (backend OrderService.previewUrlOf serves photo.s3Key — the G-2 fix), so no
+// cleanUrl field is needed here. thumbnailUrl is the watermarked fallback.
+private fun OrderPhotoDetailDto.toOwnedPreviewData(eventName: String?): PhotoPreviewData =
+    PhotoPreviewData(
+        id = id,
+        price = 0.0,
+        imageUrl = previewUrl ?: thumbnailUrl,
+        eventName = eventName,
+    )
 
 // Mirrors website /orders SpendSlab — "Lifetime totals" snapshot. Three stats
 // across the top of the list: total spent (fresh accent), order count, photos

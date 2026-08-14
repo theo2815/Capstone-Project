@@ -21,6 +21,7 @@ import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.OrderDetailDto
 import com.quickpitik.mobile.data.remote.RunnerDisputeDto
 import com.quickpitik.mobile.ui.theme.*
+import java.util.Locale
 
 // ── Refund domain helpers (port of website src/lib/refund-helpers.ts) ────────
 
@@ -36,6 +37,78 @@ val REFUND_REASONS: List<Pair<String, String>> = listOf(
 fun refundReasonLabel(code: String): String =
     REFUND_REASONS.firstOrNull { it.first == code }?.second ?: code
 
+// ── Refund policy copy (verbatim port of website src/lib/refund-policy.ts) ───
+// One source of truth for the words. Surfaced pre-purchase from the event
+// cockpit; the website also reuses it inside the request modal.
+
+private const val REFUND_PROCESSING_DAYS = 3
+private const val REFUND_ELIGIBILITY_DAYS = 30
+
+val REFUND_POLICY_BULLETS: List<Pair<String, String>> = listOf(
+    "Eligibility" to
+        "Request a refund within $REFUND_ELIGIBILITY_DAYS days of your purchase. After that the order is final.",
+    "Accepted reasons" to
+        "Wrong runner in the photo, photo quality too low to use, order paid but never delivered, or you were charged twice for the same order. Anything else, pick Other and tell us what happened.",
+    "Review time" to
+        "We review every request within $REFUND_PROCESSING_DAYS business days. You'll see the status update on this receipt — no email needed.",
+    "Where the money goes" to
+        "Approved refunds return to your original payment method. GCash and Maya land within 24 hours; cards take 5–7 business days depending on the bank.",
+    "What we don't refund" to
+        "Photos you've already downloaded and kept past the eligibility window, change-of-mind after 30 days, or photos that match your bib and selfie correctly.",
+)
+
+// Read-only policy disclosure — port of the website's RefundModal mode="policy",
+// reached from the "Refund Policy →" kicker on the event cockpit. Numbered
+// rules with a left hairline, matching web's border-l list.
+@Composable
+fun RefundPolicyDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Bone,
+        title = {
+            Text(
+                text = "Refund policy",
+                color = Ink,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
+                REFUND_POLICY_BULLETS.forEachIndexed { index, (kicker, body) ->
+                    Row(modifier = Modifier.padding(bottom = 20.dp)) {
+                        // Left hairline rule, web's `border-l border-line pl-4`.
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .fillMaxHeight()
+                                .background(Line),
+                        )
+                        Column(modifier = Modifier.padding(start = 16.dp)) {
+                            Kicker(
+                                text = "${(index + 1).toString().padStart(2, '0')} · $kicker",
+                                color = Slate,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = body,
+                                color = InkSoft,
+                                style = Typography.bodyMedium,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "GOT IT", color = Ink, style = Typography.labelMedium)
+            }
+        },
+    )
+}
+
 // Photo IDs the runner can still dispute. Excludes any photo already attached to
 // an open / escalated / resolved dispute. Denied + withdrawn leave it eligible.
 fun disputablePhotoIds(order: OrderDetailDto): List<String> {
@@ -46,21 +119,84 @@ fun disputablePhotoIds(order: OrderDetailDto): List<String> {
     return order.photoIds.filter { it !in blocked }
 }
 
-// Rollup mirrors website getOrderRefundStatus.kind: none|pending|partial|approved|rejected.
-fun orderRefundKind(order: OrderDetailDto): String {
-    val visible = order.disputes.filter { it.status != "withdrawn" }
-    if (visible.isEmpty()) return "none"
-    val photoCount = order.photoIds.size
-    val pending = visible.count { it.status == "open" || it.status == "escalated" }
-    val approved = visible.count { it.status == "resolved" && it.refundAmount != null }
-    val rejected = visible.count { it.status == "denied" }
-    return when {
-        pending > 0 -> if (visible.size < photoCount) "partial" else "pending"
-        approved > 0 && rejected == 0 -> "approved"
-        rejected > 0 && approved == 0 -> "rejected"
+// Full port of website getOrderRefundStatus — kind plus the counts/amount/note
+// the chip needs. Takes the raw pieces rather than an order type so it serves
+// both OrderListItemDto (list rows) and OrderDetailDto (expanded receipt).
+data class RefundRollup(
+    val kind: String,          // none | pending | partial | approved | rejected
+    val refundAmount: Double,
+    val pendingCount: Int,
+    val approvedCount: Int,
+    val rejectedCount: Int,
+    val rejectedNote: String?,
+    val totalDisputed: Int,
+)
+
+fun computeRefundRollup(photoCount: Int, disputes: List<RunnerDisputeDto>): RefundRollup {
+    val visible = disputes.filter { it.status != "withdrawn" }
+    val pending = visible.filter { it.status == "open" || it.status == "escalated" }
+    val approved = visible.filter { it.status == "resolved" && it.refundAmount != null }
+    val rejected = visible.filter { it.status == "denied" }
+    val kind = when {
+        visible.isEmpty() -> "none"
+        pending.isNotEmpty() -> if (visible.size < photoCount) "partial" else "pending"
+        approved.isNotEmpty() && rejected.isEmpty() -> "approved"
+        rejected.isNotEmpty() && approved.isEmpty() -> "rejected"
         else -> "partial"
     }
+    return RefundRollup(
+        kind = kind,
+        refundAmount = approved.sumOf { it.refundAmount ?: 0.0 },
+        pendingCount = pending.size,
+        approvedCount = approved.size,
+        rejectedCount = rejected.size,
+        // Prefer admin's resolution note over the runner's own submission note —
+        // when the chip says "declined" the runner cares why admin said no.
+        rejectedNote = rejected.firstOrNull()?.let { it.resolutionNote ?: it.note },
+        totalDisputed = visible.size,
+    )
 }
+
+// Rollup mirrors website getOrderRefundStatus.kind: none|pending|partial|approved|rejected.
+fun orderRefundKind(order: OrderDetailDto): String =
+    computeRefundRollup(order.photoIds.size, order.disputes).kind
+
+// Refund-state chip for an order row. Renders nothing when there's no dispute,
+// so an ordinary receipt stays clean. Port of the website's order-row status
+// line: "Refund pending · N of M" / "in review" / "approved · ₱x" / "declined"
+// with the admin's note underneath.
+@Composable
+fun RefundStatusChip(rollup: RefundRollup, photoCount: Int) {
+    if (rollup.kind == "none") return
+
+    val (tone, label) = when (rollup.kind) {
+        "pending" -> WarningOrange to "Refund pending · ${rollup.totalDisputed} of $photoCount"
+        "partial" -> WarningOrange to "Refund in review · ${rollup.totalDisputed} of $photoCount"
+        "approved" -> Fresh to "Refund approved · ₱${formatPeso(rollup.refundAmount)}"
+        "rejected" -> ErrorRed to "Refund declined"
+        else -> Slate to "Refund updated"
+    }
+
+    Column(modifier = Modifier.padding(top = 8.dp)) {
+        Box(
+            modifier = Modifier
+                .clip(BadgeShape)
+                .background(tone.copy(alpha = 0.12f))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        ) {
+            Text(text = label, color = tone, style = Typography.labelMedium)
+        }
+        rollup.rejectedNote?.takeIf { it.isNotBlank() }?.let { note ->
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(text = note, color = SlateSoft, style = Typography.bodySmall)
+        }
+    }
+}
+
+// Whole-peso formatting with thousands separators, matching the website's
+// toLocaleString with no decimals on order totals.
+private fun formatPeso(amount: Double): String =
+    String.format(Locale.US, "%,.0f", amount)
 
 // Can submit a new request once the order has no disputes, or every dispute was
 // denied — and at least one photo is still eligible.
@@ -116,6 +252,7 @@ fun RefundActionsRow(
     val canRequest = canRequestRefund(order)
     val kind = orderRefundKind(order)
     val cancellable = cancellableDispute(order)
+    var showCancelConfirm by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (canRequest) {
@@ -139,7 +276,11 @@ fun RefundActionsRow(
 
         if (cancellable != null) {
             TextButton(
-                onClick = { onCancel(cancellable.id) },
+                // Confirm first — withdrawing is destructive (the dispute row is
+                // hard-deleted) and the button sits directly under the request
+                // CTA, so a mis-tap is easy. Mirrors the website's
+                // confirm({danger:true}) in handleCancelRequest.
+                onClick = { showCancelConfirm = true },
                 enabled = !submitting,
                 colors = ButtonDefaults.textButtonColors(contentColor = Slate),
                 modifier = Modifier.fillMaxWidth()
@@ -150,6 +291,35 @@ fun RefundActionsRow(
                 )
             }
         }
+    }
+
+    if (showCancelConfirm && cancellable != null) {
+        AlertDialog(
+            onDismissRequest = { showCancelConfirm = false },
+            containerColor = Bone,
+            title = {
+                Text(text = "Cancel refund request?", color = Ink, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    text = "You can submit a new request for these photos later if you change your mind.",
+                    color = Slate,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCancelConfirm = false
+                    onCancel(cancellable.id)
+                }) {
+                    Text(text = "CANCEL REQUEST", color = ErrorRed, style = Typography.labelMedium)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelConfirm = false }) {
+                    Text(text = "KEEP REQUEST", color = Ink, style = Typography.labelMedium)
+                }
+            },
+        )
     }
 }
 

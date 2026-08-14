@@ -21,6 +21,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.quickpitik.mobile.data.local.SessionEvents
+import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.ui.auth.AuthViewModel
 import com.quickpitik.mobile.ui.auth.LoginScreen
 import com.quickpitik.mobile.ui.auth.RegisterScreen
@@ -30,6 +32,7 @@ import com.quickpitik.mobile.ui.runner.EventsDiscoveryScreen
 import com.quickpitik.mobile.ui.runner.FloatingCart
 import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
 import com.quickpitik.mobile.ui.runner.RunnerGalleryViewModel
+import com.quickpitik.mobile.ui.runner.RunnerInboxViewModel
 import com.quickpitik.mobile.ui.runner.SavedEventsViewModel
 import com.quickpitik.mobile.ui.runner.CartViewModel
 import com.quickpitik.mobile.ui.runner.OrderReturnScreen
@@ -66,11 +69,39 @@ class MainActivity : ComponentActivity() {
                 // shared instance (selected event + saved-events store stay in sync).
                 val runnerViewModel: RunnerGalleryViewModel = viewModel()
                 val savedEventsViewModel: SavedEventsViewModel = viewModel()
+                // Hoisted like savedEventsViewModel so the bell's unread badge is
+                // the same number on every runner surface that mounts it.
+                val runnerInboxViewModel: RunnerInboxViewModel = viewModel()
+
+                // Cold start with a cached JWT should land on the user's home
+                // surface, not bounce them through login again. Same role→route
+                // mapping as onLoginSuccess below, kept in one place. remember{}
+                // so a later clearSession() can't re-key the NavHost mid-session.
+                val sessionManager = remember { SessionManager.getInstance(this@MainActivity) }
+                val startDestination = remember {
+                    when {
+                        sessionManager.getAccessToken() == null -> "login"
+                        sessionManager.getUserRole()
+                            .equals("PHOTOGRAPHER", ignoreCase = true) -> "dashboard"
+                        else -> "events"
+                    }
+                }
+
+                // Raised by TokenAuthenticator when refresh fails: the session is
+                // unrecoverable, so drop the whole back stack and land on login.
+                LaunchedEffect(Unit) {
+                    SessionEvents.forcedLogout.collect {
+                        navController.navigate("login") {
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+                }
 
                 Box(modifier = Modifier.fillMaxSize()) {
                 NavHost(
                     navController = navController,
-                    startDestination = "login"
+                    startDestination = startDestination
                 ) {
                     composable("login") {
                         LoginScreen(
@@ -119,6 +150,7 @@ class MainActivity : ComponentActivity() {
                         EventsDiscoveryScreen(
                             viewModel = runnerViewModel,
                             savedEventsViewModel = savedEventsViewModel,
+                            inboxViewModel = runnerInboxViewModel,
                             onEventSelected = { event ->
                                 runnerViewModel.selectEvent(event)
                                 navController.navigate("gallery")
@@ -126,6 +158,7 @@ class MainActivity : ComponentActivity() {
                             onNavigateToOrders = { navController.navigate("orders") },
                             onNavigateToProfile = { navController.navigate("profile") },
                             onNavigateToSettings = { navController.navigate("settings") },
+                            onOpenOrder = { orderId -> navController.navigate("orders?orderId=$orderId") },
                             onLogout = {
                                 authViewModel.resetState()
                                 cartViewModel.clearCart()
@@ -139,8 +172,12 @@ class MainActivity : ComponentActivity() {
                         RunnerGalleryScreen(
                             viewModel = runnerViewModel,
                             cartViewModel = cartViewModel,
+                            inboxViewModel = runnerInboxViewModel,
                             onNavigateToOrders = {
                                 navController.navigate("orders")
+                            },
+                            onOpenOrder = { orderId ->
+                                navController.navigate("orders?orderId=$orderId")
                             },
                             onNavigateToProfile = {
                                 navController.navigate("profile")
@@ -198,12 +235,25 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     }
-                    composable("orders") {
+                    // Optional orderId arg so the runner inbox can deep-link a
+                    // dispute-outcome message straight to that order's detail.
+                    // Plain navigate("orders") still matches with a null arg.
+                    composable(
+                        route = "orders?orderId={orderId}",
+                        arguments = listOf(
+                            navArgument("orderId") {
+                                type = NavType.StringType
+                                nullable = true
+                                defaultValue = null
+                            }
+                        ),
+                    ) { entry ->
                         OrdersScreen(
                             viewModel = cartViewModel,
                             onNavigateBack = {
                                 navController.popBackStack()
-                            }
+                            },
+                            initialOrderId = entry.arguments?.getString("orderId"),
                         )
                     }
                     // PayMongo return surface — entered via the quickpitik://

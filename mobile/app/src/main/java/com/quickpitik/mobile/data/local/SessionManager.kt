@@ -49,6 +49,18 @@ class SessionManager private constructor(context: Context) {
         }
     }
 
+    // Token-only writer for the 401-refresh path. saveSession() would blank the
+    // cached role/name/email/avatar (its params are required), and the refresh
+    // response isn't a reliable place to re-derive them — a locally edited name
+    // would be silently reverted. TokenAuthenticator calls this instead.
+    fun updateTokens(accessToken: String, refreshToken: String?) {
+        prefs.edit().apply {
+            putString(KEY_ACCESS_TOKEN, accessToken)
+            if (refreshToken != null) putString(KEY_REFRESH_TOKEN, refreshToken)
+            apply()
+        }
+    }
+
     fun saveUserName(name: String) {
         prefs.edit().putString(KEY_USER_NAME, name).apply()
     }

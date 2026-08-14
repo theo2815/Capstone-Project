@@ -24,7 +24,11 @@ import android.provider.MediaStore
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -38,6 +42,10 @@ import java.io.File
 import java.io.FileOutputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
+// Selfie cap, mirroring the website's SELFIE_MAX. Backend enforces the same
+// limit; this drives the copy and hides the add tile once reached.
+const val SELFIE_MAX = 5
+
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
@@ -167,7 +175,13 @@ fun ProfileScreen(
                                 Kicker("01 · Selfie library")
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Used for AI face recognition.",
+                                    // Header line tracks primary-state, as on web:
+                                    // once a primary exists, searches are live.
+                                    text = if (selfies.any { it.isPrimary }) {
+                                        "Searches running across every event you join."
+                                    } else {
+                                        "Pick a primary selfie below."
+                                    },
                                     style = Typography.bodySmall,
                                     color = Slate
                                 )
@@ -235,41 +249,48 @@ fun ProfileScreen(
                                     .padding(24.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    text = "No selfies uploaded yet.\nUpload one to search marathon photos by face.",
-                                    color = Slate,
-                                    textAlign = TextAlign.Center,
-                                    style = Typography.bodyMedium
-                                )
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "Build your selfie library.",
+                                        color = Ink,
+                                        textAlign = TextAlign.Center,
+                                        style = Typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "Upload up to $SELFIE_MAX clear, frontal selfies so we can " +
+                                            "match you across every event you join.",
+                                        color = Slate,
+                                        textAlign = TextAlign.Center,
+                                        style = Typography.bodyMedium
+                                    )
+                                }
                             }
                         } else {
                             Spacer(modifier = Modifier.height(16.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                selfies.forEach { selfie ->
-                                    key(selfie.id) {
-                                        SelfieCard(
-                                            selfie = selfie,
-                                            onDelete = { viewModel.deleteSelfie(selfie.id) },
-                                            onSetPrimary = {
-                                                hapticFire(QpHaptic.CONFIRM)
-                                                viewModel.setPrimarySelfie(selfie.id)
-                                                snackbarMessage = "Primary selfie updated."
-                                            },
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                    }
-                                }
-                                // Fill empty weight slots to avoid visual bugs when 1 item exists
-                                if (selfies.size < 3) {
-                                    val blanks = 3 - selfies.size
-                                    repeat(blanks) {
-                                        Spacer(modifier = Modifier.weight(1f))
-                                    }
-                                }
-                            }
+                            SelfieGrid(
+                                selfies = selfies,
+                                onDelete = { viewModel.deleteSelfie(it) },
+                                onSetPrimary = { id ->
+                                    hapticFire(QpHaptic.CONFIRM)
+                                    viewModel.setPrimarySelfie(id)
+                                    snackbarMessage = "Primary selfie updated."
+                                },
+                                onAdd = { galleryLauncher.launch("image/*") },
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "${selfies.size} / $SELFIE_MAX selfies stored.",
+                                style = Typography.bodySmall,
+                                color = Slate,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Reused across every event you join — no re-uploading per race.",
+                                style = Typography.bodySmall,
+                                color = SlateSoft,
+                            )
                         }
                     }
                 }
@@ -378,6 +399,91 @@ private fun RaceLogSkeleton() {
     }
 }
 
+// Responsive selfie grid — port of the web's
+// `grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4`. A manual
+// chunked-Row grid rather than LazyVerticalGrid: this sits inside the profile's
+// LazyColumn, and nesting a lazy scroller in the same axis crashes Compose.
+// Bounded at SELFIE_MAX + 1 cells, so a plain grid is the right tool anyway.
+@Composable
+private fun SelfieGrid(
+    selfies: List<SelfieRefDto>,
+    onDelete: (String) -> Unit,
+    onSetPrimary: (String) -> Unit,
+    onAdd: () -> Unit,
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val columns = when {
+            maxWidth >= 1024.dp -> 5
+            maxWidth >= 640.dp -> 3
+            else -> 2
+        }
+        val gap = if (maxWidth >= 768.dp) 16.dp else 12.dp
+        // The add tile trails the list while under the cap, mirroring the web's
+        // file-input tile.
+        val cellCount = selfies.size + if (selfies.size < SELFIE_MAX) 1 else 0
+
+        Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+            (0 until cellCount step columns).forEach { rowStart ->
+                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    (rowStart until rowStart + columns).forEach { cell ->
+                        when {
+                            cell < selfies.size -> {
+                                val selfie = selfies[cell]
+                                key(selfie.id) {
+                                    SelfieCard(
+                                        selfie = selfie,
+                                        onDelete = { onDelete(selfie.id) },
+                                        onSetPrimary = { onSetPrimary(selfie.id) },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+                            cell < cellCount -> SelfieAddTile(
+                                onClick = onAdd,
+                                modifier = Modifier.weight(1f),
+                            )
+                            // Empty filler keeps a partial row's tiles the same
+                            // width as a full row's.
+                            else -> Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Dashed "+" cell for adding a selfie from the gallery. Live camera capture
+// stays on the header button, matching the existing two-affordance split.
+@Composable
+private fun SelfieAddTile(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .aspectRatio(1f)
+            .clip(QpCardShape)
+            .drawBehind {
+                drawRoundRect(
+                    color = Line,
+                    style = Stroke(
+                        width = 1.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f)),
+                    ),
+                    cornerRadius = CornerRadius(16.dp.toPx()),
+                )
+            }
+            .clickable { onClick() },
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(text = "+", color = Slate, style = Typography.titleLarge)
+        Spacer(modifier = Modifier.height(4.dp))
+        Kicker(text = "Add selfie", color = SlateSoft)
+    }
+}
+
 @Composable
 fun SelfieCard(
     selfie: SelfieRefDto,
@@ -387,7 +493,8 @@ fun SelfieCard(
 ) {
     Box(
         modifier = modifier
-            .aspectRatio(0.75f)
+            // Square, matching web's `aspect-square`.
+            .aspectRatio(1f)
             .clip(QpCardShape)
             .background(BoneDeep)
             .clickable { if (!selfie.isPrimary) onSetPrimary() }
