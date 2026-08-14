@@ -28,10 +28,16 @@ class AuthService(
     private val refreshTokenService: RefreshTokenService,
     private val userDtoMapper: UserDtoMapper,
 ) {
+    // A BCrypt(12) hash of a throwaway constant, computed once on first use.
+    // Matching against it costs the same as matching a real user's hash — see
+    // login() for why that matters.
+    private val dummyPasswordHash: String by lazy { passwordEncoder.encode(DUMMY_PASSWORD) }
+
     fun register(req: RegisterRequest): AuthResponse {
         if (req.role == Role.ADMIN) {
             throw ValidationException("Cannot self-register as ADMIN", "INVALID_ROLE", "role")
         }
+        PasswordValidator.validate(req.password, "password")
         val email = req.email.trim().lowercase()
         if (userRepository.existsByEmail(email)) {
             throw ConflictException("Email already registered", "EMAIL_TAKEN")
@@ -49,7 +55,14 @@ class AuthService(
     fun login(req: LoginRequest): AuthResponse {
         val email = req.email.trim().lowercase()
         val user = userRepository.findByEmail(email)
-            ?: throw BadCredentialsException("Invalid email or password")
+        if (user == null) {
+            // Burn the same BCrypt work a real account costs before failing.
+            // Returning immediately made the not-found branch ~10 ms against
+            // ~250 ms for a registered email — a gap wide enough to enumerate
+            // who has an account by timing the response alone.
+            passwordEncoder.matches(req.password, dummyPasswordHash)
+            throw BadCredentialsException("Invalid email or password")
+        }
         if (!passwordEncoder.matches(req.password, user.passwordHash)) {
             throw BadCredentialsException("Invalid email or password")
         }
@@ -67,6 +80,16 @@ class AuthService(
         val (userId, newRefreshToken) = refreshTokenService.validateAndRotate(req.refreshToken)
         val user = userRepository.findById(userId)
             .orElseThrow { UnauthorizedException("User not found", "USER_NOT_FOUND") }
+        // The terminal half of the F4 suspension gate. F4 only blocked re-login,
+        // so a suspended user could rotate refresh tokens indefinitely and was
+        // never actually locked out. Load-bearing in two cases the admin-side
+        // token revocation misses: a suspension written straight to the DB (how
+        // this gets tested), and a refresh that commits alongside the revoke.
+        // Throwing rolls back validateAndRotate above (this class is
+        // @Transactional), so the caller's existing token isn't consumed.
+        if (user.suspendedAt != null) {
+            throw UnauthorizedException("Account suspended", "ACCOUNT_SUSPENDED")
+        }
         val accessToken = tokenProvider.createAccessToken(user)
         return AuthResponse(
             accessToken = accessToken,
@@ -96,5 +119,11 @@ class AuthService(
             refreshToken = refreshToken,
             user = userDtoMapper.toDto(user),
         )
+    }
+
+    private companion object {
+        // Never a real credential — only ever fed to passwordEncoder.encode()
+        // to produce a hash of the right cost for the timing-equalizer above.
+        const val DUMMY_PASSWORD = "quickpitik-login-timing-equalizer"
     }
 }

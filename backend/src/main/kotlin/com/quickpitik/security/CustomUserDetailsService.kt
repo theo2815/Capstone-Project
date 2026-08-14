@@ -13,6 +13,11 @@ class CustomUserDetailsService(
     override fun loadUserByUsername(username: String): UserDetails {
         val user = userRepository.findByEmail(username.trim().lowercase())
             ?: throw UsernameNotFoundException("User not found: $username")
-        return AuthPrincipal(userId = user.id, email = user.email, role = user.role)
+        return AuthPrincipal(
+            userId = user.id,
+            email = user.email,
+            role = user.role,
+            suspended = user.suspendedAt != null,
+        )
     }
 }

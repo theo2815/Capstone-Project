@@ -17,7 +17,16 @@ class CorsConfig(
         val config = CorsConfiguration().apply {
             allowedOrigins = origins
             allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-            allowedHeaders = listOf("*")
+            // Explicit whitelist rather than "*": the CORS spec forbids the
+            // wildcard alongside allowCredentials=true, so browsers were only
+            // honouring it by grace. These four are the complete set the
+            // website + mobile clients actually send.
+            allowedHeaders = listOf(
+                "Content-Type",
+                HttpHeaders.AUTHORIZATION,
+                "Accept",
+                "Idempotency-Key",
+            )
             exposedHeaders = listOf(HttpHeaders.AUTHORIZATION)
             allowCredentials = true
             maxAge = 3600

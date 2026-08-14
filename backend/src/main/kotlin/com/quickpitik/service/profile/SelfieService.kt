@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.profile.SelfieRefDto
+import com.quickpitik.entity.SelfieQualityTestStatus
 import com.quickpitik.entity.UserSelfie
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
@@ -105,6 +106,10 @@ class SelfieService(
         storageService.put(key, uprightBytes, uprightMime)
 
         val isFirst = existingCount == 0L
+        // Reaching here means the gate passed or never ran — a failed gate
+        // throws, so PASSED and UNTESTED are the only reachable states.
+        val testStatus =
+            if (aiApiProperties.enabled) SelfieQualityTestStatus.PASSED else SelfieQualityTestStatus.UNTESTED
         val saved = userSelfieRepository.save(
             UserSelfie(
                 id = selfieId,
@@ -112,6 +117,7 @@ class SelfieService(
                 s3Key = key,
                 isPrimary = isFirst,
                 qualityScore = qualityScore,
+                qualityTestStatusWire = testStatus.wire,
             ),
         )
         return saved.toDto()
@@ -198,10 +204,20 @@ class SelfieService(
             aiApiClient.facesDetect(file = file, contentType = contentType, filename = filename)
         } catch (ex: AiApiException) {
             log.warn("ai-api faces/detect failed during selfie upload: code={} msg={}", ex.aiCode, ex.message)
-            if (ex.aiCode == "LOW_QUALITY" || ex.aiCode == "NO_FACES") {
+            // ai-api's message is internal copy written for API consumers ("No
+            // faces detected in image") — it must never reach a runner. Re-state
+            // the two codes we understand in the same words the local branches
+            // below use, so the same problem reads the same way whichever side
+            // detected it.
+            val rejection = when (ex.aiCode) {
+                "NO_FACES" -> MSG_NO_FACE
+                "LOW_QUALITY" -> MSG_LOW_QUALITY
+                else -> null
+            }
+            if (rejection != null) {
                 throw ValidationException(
                     code = ErrorCodes.SELFIE_REJECTED,
-                    message = ex.message ?: "Selfie rejected",
+                    message = rejection,
                     field = "file",
                 )
             }
@@ -211,7 +227,7 @@ class SelfieService(
         if (result.faces.isEmpty()) {
             throw ValidationException(
                 code = ErrorCodes.SELFIE_REJECTED,
-                message = "No face detected — make sure your face is centered and well-lit.",
+                message = MSG_NO_FACE,
                 field = "file",
             )
         }
@@ -227,7 +243,7 @@ class SelfieService(
         if (confidence < MIN_QUALITY_SCORE) {
             throw ValidationException(
                 code = ErrorCodes.SELFIE_REJECTED,
-                message = "Image quality too low — try a sharper, better-lit selfie.",
+                message = MSG_LOW_QUALITY,
                 field = "file",
             )
         }
@@ -240,6 +256,7 @@ class SelfieService(
         uploadedAt = uploadedAt,
         isPrimary = isPrimary,
         qualityScore = qualityScore,
+        qualityTestStatus = qualityTestStatusWire,
     )
 
     private fun extensionOf(mime: String): String = when (mime) {
@@ -252,6 +269,10 @@ class SelfieService(
     private companion object {
         const val MAX_SELFIES = 5
         const val MAX_SELFIE_BYTES = 5 * 1024 * 1024
+        // Runner-facing rejection copy. Shared by the local checks and the
+        // ai-api-reported equivalents so both read identically.
+        const val MSG_NO_FACE = "No face detected — make sure your face is centered and well-lit."
+        const val MSG_LOW_QUALITY = "Image quality too low — try a sharper, better-lit selfie."
         val MIN_QUALITY_SCORE: BigDecimal = BigDecimal("0.6000")
         val SUPPORTED_TYPES = setOf("image/jpeg", "image/jpg", "image/png", "image/webp")
     }

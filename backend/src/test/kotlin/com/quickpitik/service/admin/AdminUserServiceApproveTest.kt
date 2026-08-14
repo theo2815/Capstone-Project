@@ -16,6 +16,7 @@ import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.RefreshTokenService
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.profile.UserDtoMapper
 import com.quickpitik.service.reference.RegionsService
@@ -48,6 +49,7 @@ class AdminUserServiceApproveTest {
     private lateinit var userDtoMapper: UserDtoMapper
     private lateinit var runnerMessagesService: RunnerMessagesService
     private lateinit var photographerSettingsService: PhotographerSettingsService
+    private lateinit var refreshTokenService: RefreshTokenService
 
     private val adminId = UUID.randomUUID()
     private val photographerId = UUID.randomUUID()
@@ -67,6 +69,7 @@ class AdminUserServiceApproveTest {
         userDtoMapper = Mockito.mock(UserDtoMapper::class.java)
         runnerMessagesService = Mockito.mock(RunnerMessagesService::class.java)
         photographerSettingsService = Mockito.mock(PhotographerSettingsService::class.java)
+        refreshTokenService = Mockito.mock(RefreshTokenService::class.java)
     }
 
     private fun service() = AdminUserService(
@@ -82,6 +85,7 @@ class AdminUserServiceApproveTest {
         userDtoMapper,
         runnerMessagesService,
         photographerSettingsService,
+        refreshTokenService,
     )
 
     private fun photographer(): User = User(

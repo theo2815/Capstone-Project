@@ -3,10 +3,15 @@ package com.quickpitik.service.profile
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.ai.FaceDetection
+import com.quickpitik.dto.ai.FacesDetectResult
+import com.quickpitik.entity.SelfieQualityTestStatus
 import com.quickpitik.entity.UserSelfie
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserSelfieRepository
 import com.quickpitik.service.ai.AiApiClient
+import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -45,14 +50,15 @@ class SelfieServiceTest {
         aiApiClient = Mockito.mock(AiApiClient::class.java)
     }
 
-    // ai-api disabled: the quality gate short-circuits, so these tests exercise
-    // the upload plumbing without needing an inference stub.
-    private fun service() = SelfieService(
+    // Default is ai-api disabled: the quality gate short-circuits, so those tests
+    // exercise the upload plumbing without needing an inference stub. Pass
+    // aiEnabled = true to drive the gate itself.
+    private fun service(aiEnabled: Boolean = false) = SelfieService(
         userSelfieRepository,
         storageService,
         StorageProperties(),
         aiApiClient,
-        AiApiProperties(enabled = false),
+        AiApiProperties(enabled = aiEnabled),
     )
 
     private fun jpegBytes(w: Int = 24, h: Int = 24): ByteArray {
@@ -99,5 +105,77 @@ class SelfieServiceTest {
         assertTrue(original.contentEquals(storedBytes), "bytes must pass through unmodified")
         assertEquals("image/jpeg", storedType)
         assertTrue(storedKey!!.endsWith(".jpg"))
+    }
+
+    // ai-api writes its error copy for API consumers ("No faces detected in
+    // image"). It used to be forwarded verbatim into the runner's 4xx body.
+    @Test
+    fun `an ai-api rejection surfaces our copy, never ai-api's`() {
+        stubHappyPathPlumbing()
+        Mockito.`when`(aiApiClient.facesDetect(anyArg(), anyArg(), anyArg()))
+            .thenThrow(
+                AiApiException(
+                    status = HttpStatus.UNPROCESSABLE_ENTITY,
+                    aiCode = "NO_FACES",
+                    message = "No faces detected in image",
+                ),
+            )
+
+        val ex = assertFailsWith<ValidationException> {
+            service(aiEnabled = true).upload(userId, jpegBytes(), "image/jpeg", "selfie.jpg")
+        }
+
+        assertEquals(ErrorCodes.SELFIE_REJECTED, ex.code)
+        assertEquals("No face detected — make sure your face is centered and well-lit.", ex.message)
+        Mockito.verify(storageService, Mockito.never()).put(anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `an ai-api LOW_QUALITY rejection surfaces our copy`() {
+        stubHappyPathPlumbing()
+        Mockito.`when`(aiApiClient.facesDetect(anyArg(), anyArg(), anyArg()))
+            .thenThrow(
+                AiApiException(
+                    status = HttpStatus.UNPROCESSABLE_ENTITY,
+                    aiCode = "LOW_QUALITY",
+                    message = "Face crop below quality threshold 0.42",
+                ),
+            )
+
+        val ex = assertFailsWith<ValidationException> {
+            service(aiEnabled = true).upload(userId, jpegBytes(), "image/jpeg", "selfie.jpg")
+        }
+
+        assertEquals("Image quality too low — try a sharper, better-lit selfie.", ex.message)
+    }
+
+    // With AI_API_ENABLED=false the selfie stores fine but nothing ever looked at
+    // it. qualityScore=0 alone couldn't say so — hence the explicit status.
+    @Test
+    fun `a selfie uploaded with ai-api off reads back as untested`() {
+        stubHappyPathPlumbing()
+
+        val dto = service(aiEnabled = false).upload(userId, jpegBytes(), "image/jpeg", "selfie.jpg")
+
+        assertEquals(SelfieQualityTestStatus.UNTESTED.wire, dto.qualityTestStatus)
+        Mockito.verifyNoInteractions(aiApiClient)
+    }
+
+    @Test
+    fun `a selfie that clears the gate reads back as passed`() {
+        stubHappyPathPlumbing()
+        Mockito.`when`(aiApiClient.facesDetect(anyArg(), anyArg(), anyArg()))
+            .thenReturn(FacesDetectResult(faces = listOf(FaceDetection(confidence = 0.94))))
+
+        val dto = service(aiEnabled = true).upload(userId, jpegBytes(), "image/jpeg", "selfie.jpg")
+
+        assertEquals(SelfieQualityTestStatus.PASSED.wire, dto.qualityTestStatus)
+    }
+
+    private fun stubHappyPathPlumbing() {
+        Mockito.`when`(userSelfieRepository.countByUserId(userId)).thenReturn(0L)
+        Mockito.`when`(userSelfieRepository.save(anyArg<UserSelfie>()))
+            .thenAnswer { it.arguments[0] as UserSelfie }
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://selfie")
     }
 }

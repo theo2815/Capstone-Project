@@ -34,6 +34,7 @@ import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.RefreshTokenService
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.profile.UserDtoMapper
 import com.quickpitik.service.reference.RegionsService
@@ -60,6 +61,7 @@ class AdminUserService(
     private val userDtoMapper: UserDtoMapper,
     private val runnerMessagesService: RunnerMessagesService,
     private val photographerSettingsService: PhotographerSettingsService,
+    private val refreshTokenService: RefreshTokenService,
 ) {
 
     @Transactional(readOnly = true)
@@ -290,6 +292,11 @@ class AdminUserService(
         user.suspendedAt = OffsetDateTime.now()
         user.suspensionReason = reason
         userRepository.save(user)
+        // Kill every live session. The access token's `suspended` claim expires
+        // the current one within its TTL; without this the user could keep
+        // rotating refresh tokens and mint fresh, unsuspended-looking access
+        // tokens forever. unsuspend() needs no counterpart — the user logs in.
+        refreshTokenService.revokeAllForUser(userId)
         val decision = adminDecisionLogService.logUserDecision(
             adminId = adminId,
             targetUserId = userId,

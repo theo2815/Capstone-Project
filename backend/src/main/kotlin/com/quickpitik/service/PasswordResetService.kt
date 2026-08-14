@@ -43,6 +43,7 @@ class PasswordResetService(
         val user = userRepository.findById(token.userId)
             .orElseThrow { ValidationException("User not found", "USER_NOT_FOUND") }
 
+        PasswordValidator.validate(newPassword, "newPassword")
         user.passwordHash = passwordEncoder.encode(newPassword)
         userRepository.save(user)
 

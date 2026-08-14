@@ -10,6 +10,7 @@ class AuthPrincipal(
     val userId: UUID,
     val email: String,
     val role: Role,
+    val suspended: Boolean = false,
 ) : UserDetails {
     override fun getAuthorities(): Collection<GrantedAuthority> =
         listOf(SimpleGrantedAuthority("ROLE_${role.name}"))
@@ -24,5 +25,8 @@ class AuthPrincipal(
 
     override fun isCredentialsNonExpired(): Boolean = true
 
-    override fun isEnabled(): Boolean = true
+    // Consulted by Spring's AccountStatusUserDetailsChecker on the
+    // CustomUserDetailsService path. JwtAuthenticationFilter never builds a
+    // suspended principal in the first place, so this is belt-and-braces.
+    override fun isEnabled(): Boolean = !suspended
 }

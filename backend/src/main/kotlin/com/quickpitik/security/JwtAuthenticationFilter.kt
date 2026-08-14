@@ -30,10 +30,19 @@ class JwtAuthenticationFilter(
                 val userId = UUID.fromString(claims.subject)
                 val email = claims["email"] as? String ?: error("missing email claim")
                 val role = Role.valueOf(claims["role"] as? String ?: error("missing role claim"))
-                val principal = AuthPrincipal(userId, email, role)
-                val auth = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
-                auth.details = WebAuthenticationDetailsSource().buildDetails(request)
-                SecurityContextHolder.getContext().authentication = auth
+                // Absent claim = token minted before the suspension gate landed;
+                // treat as active so in-flight sessions aren't mass-logged-out.
+                val suspended = claims["suspended"] as? Boolean ?: false
+                if (!suspended) {
+                    val principal = AuthPrincipal(userId, email, role)
+                    val auth = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
+                    auth.details = WebAuthenticationDetailsSource().buildDetails(request)
+                    SecurityContextHolder.getContext().authentication = auth
+                }
+                // Suspended: leave unauthenticated so JsonAuthenticationEntryPoint
+                // returns the standard 401 envelope. The client's refresh attempt
+                // then fails (revoked token, or ACCOUNT_SUSPENDED from
+                // AuthService.refresh), which is what ends the session.
             } catch (_: JwtException) {
                 // invalid / expired / malformed — leave unauthenticated
             } catch (_: IllegalArgumentException) {

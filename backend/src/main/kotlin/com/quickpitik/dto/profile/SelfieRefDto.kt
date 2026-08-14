@@ -13,4 +13,8 @@ data class SelfieRefDto(
     val uploadedAt: OffsetDateTime,
     val isPrimary: Boolean,
     val qualityScore: BigDecimal,
+    // "untested" | "passed" — see SelfieQualityTestStatus. Additive field; a
+    // selfie uploaded while AI_API_ENABLED=false reads back "untested" so the
+    // library UI can prompt a re-upload once ai-api is live.
+    val qualityTestStatus: String,
 )
