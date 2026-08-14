@@ -5,19 +5,25 @@ import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.profile.SelfieRefDto
 import com.quickpitik.entity.UserSelfie
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserSelfieRepository
 import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiApiException
+import com.quickpitik.service.image.ExifOrientation
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.UUID
+import javax.imageio.ImageIO
 
 /**
  * Selfie library — runner uploads sharp, well-lit selfies that the photo
@@ -65,6 +71,18 @@ class SelfieService(
                 field = "file",
             )
         }
+        // Unlike the avatar/cover paths this service does not decode locally on
+        // the happy path, so the cap is not about heap — it bounds what gets
+        // pushed to S3 and forwarded to ai-api, where Spring's 25 MB multipart
+        // ceiling is far too loose for a selfie.
+        if (file.size > MAX_SELFIE_BYTES) {
+            throw ApiException(
+                status = HttpStatus.PAYLOAD_TOO_LARGE,
+                code = ErrorCodes.PAYLOAD_TOO_LARGE,
+                message = "Selfie must be ≤ ${MAX_SELFIE_BYTES / (1024 * 1024)} MB",
+                field = "file",
+            )
+        }
         val existingCount = userSelfieRepository.countByUserId(userId)
         if (existingCount >= MAX_SELFIES) {
             throw ConflictException(
@@ -73,11 +91,18 @@ class SelfieService(
             )
         }
 
-        val qualityScore = qualityGate(file, mime, filename ?: "selfie")
+        // Rotate upright BEFORE both the ai-api call and storage. Phone cameras
+        // store portrait selfies as landscape pixels plus an EXIF tag; ai-api
+        // sees raw pixels, so a sideways selfie silently fails to match and the
+        // runner is told "no face detected". Orientation 1 — every PNG/WebP and
+        // most JPEGs — passes the original bytes straight through untouched.
+        val (uprightBytes, uprightMime) = normaliseOrientation(file, mime)
+
+        val qualityScore = qualityGate(uprightBytes, uprightMime, filename ?: "selfie")
 
         val selfieId = UUID.randomUUID()
-        val key = "selfies/$userId/$selfieId.${extensionOf(mime)}"
-        storageService.put(key, file, mime)
+        val key = "selfies/$userId/$selfieId.${extensionOf(uprightMime)}"
+        storageService.put(key, uprightBytes, uprightMime)
 
         val isFirst = existingCount == 0L
         val saved = userSelfieRepository.save(
@@ -138,6 +163,26 @@ class SelfieService(
             userSelfieRepository.save(target)
         }
         return list(userId)
+    }
+
+    /**
+     * Returns the bytes rotated upright plus the mime they are now encoded in.
+     * Rotation operates on decoded pixels, so it forces a JPEG re-encode — the
+     * stored mime changes for that case only. Any failure to decode or re-encode
+     * falls back to the original bytes rather than storing an empty blob; an
+     * unrotated selfie is a worse match, but a corrupt one is unusable.
+     */
+    private fun normaliseOrientation(file: ByteArray, mime: String): Pair<ByteArray, String> {
+        val orientation = ExifOrientation.read(file)
+        if (orientation <= ExifOrientation.NORMAL) return file to mime
+        val source = ImageIO.read(ByteArrayInputStream(file)) ?: return file to mime
+        val upright = ExifOrientation.apply(source, orientation)
+        val out = ByteArrayOutputStream()
+        if (!ImageIO.write(upright, "jpeg", out)) {
+            log.warn("No JPEG writer for rotated selfie; storing original orientation")
+            return file to mime
+        }
+        return out.toByteArray() to "image/jpeg"
     }
 
     private fun qualityGate(file: ByteArray, contentType: String, filename: String): BigDecimal {
@@ -206,6 +251,7 @@ class SelfieService(
 
     private companion object {
         const val MAX_SELFIES = 5
+        const val MAX_SELFIE_BYTES = 5 * 1024 * 1024
         val MIN_QUALITY_SCORE: BigDecimal = BigDecimal("0.6000")
         val SUPPORTED_TYPES = setOf("image/jpeg", "image/jpg", "image/png", "image/webp")
     }

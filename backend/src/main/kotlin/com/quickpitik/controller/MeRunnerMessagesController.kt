@@ -1,5 +1,6 @@
 package com.quickpitik.controller
 
+import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.photographer.MarkAllReadResponse
 import com.quickpitik.dto.photographer.MessageRemovedResponse
 import com.quickpitik.dto.runner.RunnerMessageDto
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
 
@@ -24,11 +26,17 @@ import java.util.UUID
 class MeRunnerMessagesController(
     private val runnerMessageReaderService: RunnerMessageReaderService,
 ) {
+    // Paged since 2026-08-14 — same shape + default as the photographer inbox.
     @GetMapping
     fun list(
         @AuthenticationPrincipal principal: AuthPrincipal,
+        @RequestParam(required = false) offset: Int?,
+        @RequestParam(required = false) limit: Int?,
     ): List<RunnerMessageDto> =
-        runnerMessageReaderService.list(principal.userId)
+        runnerMessageReaderService.list(
+            runnerId = principal.userId,
+            params = PaginationParams.of(offset, limit ?: MESSAGES_DEFAULT_LIMIT),
+        )
 
     @PatchMapping("/{id}/read")
     fun markRead(
@@ -49,4 +57,8 @@ class MeRunnerMessagesController(
         @PathVariable id: UUID,
     ): MessageRemovedResponse =
         runnerMessageReaderService.remove(principal.userId, id)
+
+    private companion object {
+        const val MESSAGES_DEFAULT_LIMIT = 100
+    }
 }

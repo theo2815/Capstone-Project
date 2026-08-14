@@ -1,6 +1,8 @@
 package com.quickpitik.service.runner
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.common.OffsetLimitPageable
+import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.photographer.MarkAllReadResponse
 import com.quickpitik.dto.photographer.MessageRemovedResponse
 import com.quickpitik.dto.runner.RunnerMessageDto
@@ -27,9 +29,12 @@ class RunnerMessageReaderService(
 ) {
 
     @Transactional(readOnly = true)
-    fun list(runnerId: UUID): List<RunnerMessageDto> =
+    fun list(runnerId: UUID, params: PaginationParams): List<RunnerMessageDto> =
         runnerMessageRepository
-            .findByRunnerIdAndRemovedAtIsNullOrderByCreatedAtDescIdAsc(runnerId)
+            .findByRunnerIdAndRemovedAtIsNullOrderByCreatedAtDescIdAsc(
+                runnerId,
+                OffsetLimitPageable(params),
+            )
             .map { it.toDto() }
 
     fun markRead(runnerId: UUID, messageId: UUID): RunnerMessageDto {

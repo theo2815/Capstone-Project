@@ -156,11 +156,17 @@ class PhotoUploadService(
         // to re-upload via /dashboard/settings rather than dumping a 500.
         val watermarkBytes = try {
             storageService.getBytes(settings.watermarkS3Key!!)
-        } catch (ex: java.nio.file.NoSuchFileException) {
+        } catch (ex: java.io.IOException) {
+            // Broadened from NoSuchFileException, which only covered the local-fs
+            // backend. Under S3 a missing object, timeout, or permission denial
+            // surfaces as a different IOException and used to escape as a 500 —
+            // the photographer got "internal error" instead of the actionable
+            // "re-upload your watermark" 422 this branch exists to give them.
             log.warn(
-                "Watermark file missing for photographer {} (key {})",
+                "Watermark unreadable for photographer {} (key {}): {}",
                 photographerId,
                 settings.watermarkS3Key,
+                ex.message,
             )
             throw ApiException(
                 status = HttpStatus.UNPROCESSABLE_ENTITY,

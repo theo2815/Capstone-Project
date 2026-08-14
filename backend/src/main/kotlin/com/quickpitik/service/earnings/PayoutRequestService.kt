@@ -9,7 +9,6 @@ import com.quickpitik.dto.earnings.toDto
 import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.exception.ApiException
-import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
@@ -144,11 +143,15 @@ class PayoutRequestService(
     }
 
     fun withdraw(photographerId: UUID, cycleId: String) {
+        // Idempotent: withdraw hard-deletes, so a double-click (or any client
+        // retry) would otherwise 404 on the second call for work that already
+        // succeeded. Returning silently matches every sibling photographer-scoped
+        // delete — SelfieService.delete, SocialLinkService.delete,
+        // PayoutAccountService.delete. Ownership is still gated because the
+        // lookup is by (id, photographerId).
         val cycle = payoutCycleRepository.findByIdAndPhotographerId(cycleId, photographerId)
-            ?: throw NotFoundException(
-                code = ErrorCodes.PAYOUT_NOT_FOUND,
-                message = "Payout request not found",
-            )
+            ?: return
+        // A non-HELD cycle is a genuine state error, not a replay — keep the 409.
         if (cycle.status != PayoutCycleStatus.HELD) {
             throw ApiException(
                 status = HttpStatus.CONFLICT,

@@ -1,6 +1,7 @@
 package com.quickpitik.repository
 
 import com.quickpitik.entity.PhotographerMessage
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
@@ -13,9 +14,13 @@ interface PhotographerMessageRepository : JpaRepository<PhotographerMessage, UUI
 
     fun findByPhotographerIdOrderByCreatedAtDescIdAsc(photographerId: UUID): List<PhotographerMessage>
 
-    // List for /me/photographer/messages — filters soft-deleted rows.
+    // List for /me/photographer/messages — filters soft-deleted rows. Paged:
+    // the inbox used to return every row a photographer had ever received. The
+    // derived ordering in the method name still applies; OffsetLimitPageable
+    // passes Sort.unsorted() so it contributes offset/limit only.
     fun findByPhotographerIdAndRemovedAtIsNullOrderByCreatedAtDescIdAsc(
         photographerId: UUID,
+        pageable: Pageable,
     ): List<PhotographerMessage>
 
     // Tenant-safe single-row fetch — guards against IDOR by matching photographer_id.

@@ -1,6 +1,8 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.common.OffsetLimitPageable
+import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.photographer.MarkAllReadResponse
 import com.quickpitik.dto.photographer.MessageRemovedResponse
 import com.quickpitik.dto.photographer.PhotographerMessageDto
@@ -28,9 +30,12 @@ class PhotographerMessageService(
 ) {
 
     @Transactional(readOnly = true)
-    fun list(photographerId: UUID): List<PhotographerMessageDto> =
+    fun list(photographerId: UUID, params: PaginationParams): List<PhotographerMessageDto> =
         photographerMessageRepository
-            .findByPhotographerIdAndRemovedAtIsNullOrderByCreatedAtDescIdAsc(photographerId)
+            .findByPhotographerIdAndRemovedAtIsNullOrderByCreatedAtDescIdAsc(
+                photographerId,
+                OffsetLimitPageable(params),
+            )
             .map { it.toDto() }
 
     fun markRead(photographerId: UUID, messageId: UUID): PhotographerMessageDto {

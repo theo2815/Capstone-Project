@@ -26,6 +26,7 @@ import com.quickpitik.entity.RunnerMessage
 import com.quickpitik.entity.RunnerMessageKind
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.AdminDecisionLogRepository
@@ -33,10 +34,12 @@ import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.profile.UserDtoMapper
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.runner.RunnerMessagesService
 import org.springframework.data.domain.PageRequest
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.OffsetDateTime
@@ -56,6 +59,7 @@ class AdminUserService(
     private val storageProperties: StorageProperties,
     private val userDtoMapper: UserDtoMapper,
     private val runnerMessagesService: RunnerMessagesService,
+    private val photographerSettingsService: PhotographerSettingsService,
 ) {
 
     @Transactional(readOnly = true)
@@ -200,6 +204,19 @@ class AdminUserService(
     fun approve(adminId: UUID, userId: UUID): AdminUserRowDto {
         val (user, settings) = loadUserAndSettings(userId)
         val s = requirePhotographerSettings(user, settings)
+        // Re-validate against the SAME required-field set the photographer's own
+        // submit gate uses, so admin approval and self-submit can never diverge.
+        // Without this an admin could approve a profile that never passed submit
+        // — including one whose settings row requirePhotographerSettings just
+        // lazy-created empty — and the public profile would render broken.
+        val incomplete = photographerSettingsService.collectMissing(userId, s)
+        if (!incomplete.isComplete) {
+            throw ApiException(
+                status = HttpStatus.UNPROCESSABLE_ENTITY,
+                code = ErrorCodes.INCOMPLETE_PROFILE,
+                message = "Cannot approve — profile is missing: ${incomplete.missing.joinToString(", ")}",
+            )
+        }
         s.verificationStatus = VerificationStatus.APPROVED
         photographerSettingsRepository.save(s)
         val decision = adminDecisionLogService.logUserDecision(

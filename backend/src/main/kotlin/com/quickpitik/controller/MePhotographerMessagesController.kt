@@ -1,5 +1,6 @@
 package com.quickpitik.controller
 
+import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.photographer.MarkAllReadResponse
 import com.quickpitik.dto.photographer.MessageRemovedResponse
 import com.quickpitik.dto.photographer.PhotographerMessageDto
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
 
@@ -26,11 +28,20 @@ import java.util.UUID
 class MePhotographerMessagesController(
     private val photographerMessageService: PhotographerMessageService,
 ) {
+    // Paged since 2026-08-14 — this used to return every message the
+    // photographer had ever received. Response stays a bare JSON array (no
+    // envelope change), so existing web + mobile callers that send no params
+    // keep working; they just cap at MESSAGES_DEFAULT_LIMIT.
     @GetMapping
     fun list(
         @AuthenticationPrincipal principal: AuthPrincipal,
+        @RequestParam(required = false) offset: Int?,
+        @RequestParam(required = false) limit: Int?,
     ): List<PhotographerMessageDto> =
-        photographerMessageService.list(principal.userId)
+        photographerMessageService.list(
+            photographerId = principal.userId,
+            params = PaginationParams.of(offset, limit ?: MESSAGES_DEFAULT_LIMIT),
+        )
 
     @PatchMapping("/{id}/read")
     fun markRead(
@@ -51,4 +62,8 @@ class MePhotographerMessagesController(
         @PathVariable id: UUID,
     ): MessageRemovedResponse =
         photographerMessageService.remove(principal.userId, id)
+
+    private companion object {
+        const val MESSAGES_DEFAULT_LIMIT = 100
+    }
 }

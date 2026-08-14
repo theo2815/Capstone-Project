@@ -1,12 +1,9 @@
 package com.quickpitik.service.photographer
 
-import com.drew.imaging.ImageMetadataReader
-import com.drew.metadata.exif.ExifIFD0Directory
-import org.slf4j.LoggerFactory
+import com.quickpitik.service.image.ExifOrientation
 import org.springframework.stereotype.Service
 import java.awt.AlphaComposite
 import java.awt.RenderingHints
-import java.awt.geom.AffineTransform
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -14,7 +11,6 @@ import javax.imageio.ImageIO
 
 @Service
 class WatermarkService {
-    private val log = LoggerFactory.getLogger(javaClass)
 
     // Single processed output that doubles as thumbnail + public watermark for
     // PR 7. Long-edge cap at 1280px keeps payload tiny while staying sharp on
@@ -37,8 +33,8 @@ class WatermarkService {
     fun processThumbnail(input: ByteArray, watermarkImage: ByteArray): ByteArray {
         val source = ImageIO.read(ByteArrayInputStream(input))
             ?: throw IllegalArgumentException("Unreadable image bytes")
-        val orientation = readExifOrientation(input)
-        val upright = applyExifOrientation(source, orientation)
+        val orientation = ExifOrientation.read(input)
+        val upright = ExifOrientation.apply(source, orientation)
         val target = scaleToLongEdge(upright, MAX_LONG_EDGE)
         val watermark = ImageIO.read(ByteArrayInputStream(watermarkImage))
             ?: throw IllegalArgumentException("Unreadable watermark image bytes")
@@ -46,80 +42,6 @@ class WatermarkService {
         val out = ByteArrayOutputStream()
         ImageIO.write(target, "jpg", out)
         return out.toByteArray()
-    }
-
-    private fun readExifOrientation(input: ByteArray): Int {
-        return try {
-            val metadata = ImageMetadataReader.readMetadata(ByteArrayInputStream(input))
-            val dir = metadata.getFirstDirectoryOfType(ExifIFD0Directory::class.java)
-                ?: return ORIENTATION_NORMAL
-            if (!dir.containsTag(ExifIFD0Directory.TAG_ORIENTATION)) return ORIENTATION_NORMAL
-            dir.getInt(ExifIFD0Directory.TAG_ORIENTATION)
-        } catch (ex: Exception) {
-            // PNG / WebP / EXIF-less JPEG / corrupt headers all land here. The
-            // default (1 = normal) means the BufferedImage is returned as-is,
-            // which is the correct fallback for any non-iPhone source.
-            log.debug("EXIF orientation read failed; defaulting to 1: {}", ex.message)
-            ORIENTATION_NORMAL
-        }
-    }
-
-    private fun applyExifOrientation(source: BufferedImage, orientation: Int): BufferedImage {
-        if (orientation <= ORIENTATION_NORMAL) return source
-        val w = source.width
-        val h = source.height
-        val transform = AffineTransform()
-        when (orientation) {
-            2 -> { // horizontal flip
-                transform.scale(-1.0, 1.0)
-                transform.translate(-w.toDouble(), 0.0)
-            }
-            3 -> { // 180° rotation
-                transform.translate(w.toDouble(), h.toDouble())
-                transform.rotate(Math.PI)
-            }
-            4 -> { // vertical flip
-                transform.scale(1.0, -1.0)
-                transform.translate(0.0, -h.toDouble())
-            }
-            5 -> { // transpose: 90° CCW + horizontal flip
-                transform.rotate(-Math.PI / 2)
-                transform.scale(-1.0, 1.0)
-            }
-            6 -> { // 90° CW — by far the most common (iPhone portrait)
-                transform.translate(h.toDouble(), 0.0)
-                transform.rotate(Math.PI / 2)
-            }
-            7 -> { // transverse: 90° CW + horizontal flip
-                transform.scale(-1.0, 1.0)
-                transform.translate(-h.toDouble(), 0.0)
-                transform.translate(0.0, w.toDouble())
-                transform.rotate(3 * Math.PI / 2)
-            }
-            8 -> { // 90° CCW
-                transform.translate(0.0, w.toDouble())
-                transform.rotate(3 * Math.PI / 2)
-            }
-            else -> return source // unknown orientation tag, defensive default
-        }
-        // 90° and 270° rotations swap the output dimensions.
-        val swapsDims = orientation in 5..8
-        val outW = if (swapsDims) h else w
-        val outH = if (swapsDims) w else h
-        val out = BufferedImage(outW, outH, BufferedImage.TYPE_INT_RGB)
-        // AffineTransformOp.filter throws ImagingOpException when source and
-        // destination ColorModels disagree — common for ImageIO-loaded JPEGs
-        // that come back as TYPE_3BYTE_BGR / TYPE_CUSTOM (iPhone, cameras with
-        // embedded ICC profiles). Graphics2D.drawImage handles the conversion
-        // gracefully and matches the scaling path's approach.
-        val g = out.createGraphics()
-        try {
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
-            g.drawImage(source, transform, null)
-        } finally {
-            g.dispose()
-        }
-        return out
     }
 
     private fun scaleToLongEdge(source: BufferedImage, maxLongEdge: Int): BufferedImage {
@@ -199,7 +121,6 @@ class WatermarkService {
 
     companion object {
         private const val MAX_LONG_EDGE = 1280
-        private const val ORIENTATION_NORMAL = 1
         // Corner watermark — 15% of photo width, 70% opacity (sharp + visible).
         private const val CORNER_WIDTH_RATIO = 0.15
         private const val CORNER_OPACITY = 0.70f

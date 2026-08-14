@@ -1,6 +1,7 @@
 package com.quickpitik.repository
 
 import com.quickpitik.entity.RunnerMessage
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
@@ -11,9 +12,11 @@ import java.util.UUID
 
 interface RunnerMessageRepository : JpaRepository<RunnerMessage, UUID> {
 
-    // List for /me/runner/messages — filters soft-deleted rows.
+    // List for /me/runner/messages — filters soft-deleted rows. Paged; mirrors
+    // PhotographerMessageRepository exactly.
     fun findByRunnerIdAndRemovedAtIsNullOrderByCreatedAtDescIdAsc(
         runnerId: UUID,
+        pageable: Pageable,
     ): List<RunnerMessage>
 
     // Tenant-safe single-row fetch — guards against IDOR by matching runner_id.
