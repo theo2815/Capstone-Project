@@ -14,8 +14,11 @@ ai-api/
 ├── Dockerfile.dev              # Development image (with hot-reload).
 ├── docker-compose.yml          # 4 services: ai-api, celery-worker, db (pg+pgvector),
 │                               # redis. Default dev config.
-├── docker-compose.prod.yml     # Production overrides.
-├── docker-compose.gpu.yml      # GPU overlay (NVIDIA runtime + USE_GPU=true).
+├── docker-compose.prod.yml     # Complete standalone PRODUCTION stack — api, 4 per-queue
+│                               # celery workers, db, redis, nginx, certbot. Not an
+│                               # overlay on docker-compose.yml (that one is dev-only).
+├── docker-compose.gpu.yml      # GPU overlay (NVIDIA reservation + USE_GPU=true).
+│                               # Layer on docker-compose.prod.yml.
 ├── nginx.conf                  # Sample nginx reverse-proxy config.
 ├── .dockerignore
 │

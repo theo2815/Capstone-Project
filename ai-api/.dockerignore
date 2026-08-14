@@ -5,8 +5,35 @@ venv
 .env
 .git
 .gitignore
+
+# Model weights are DELIBERATELY not baked into the image — they are mounted
+# read-only from the host by docker-compose.prod.yml (./models:/app/models:ro).
+# Baking is not an option anyway: models/* is gitignored, so a build from a
+# clean checkout would have nothing to copy. Only the manifest ships, so
+# scripts/download_models.py has something to check against inside the
+# container. Unlike git, Docker DOES honour an exception under an excluded
+# parent directory, so the line below is load-bearing — see
+# tests/test_deployment_config.py::TestDockerBuildContext.
 models/
 !models/manifest.json
+
+# Training data and training outputs. Training-Images/ alone is ~16 GB; leaving
+# these in meant every `docker build` shipped ~16 GB to the daemon before the
+# first instruction ran, which is why a production build was never completed.
+Training-Images/
+runs/
+benchmarks/
+
+# Local C++ build artifacts — the extension is optional and every call site has
+# a pure-Python fallback, so the image never needs a host-compiled .pyd.
+build/
+*.pyd
+*.egg-info
+
+# Training checkpoints left at the repo root (yolov8n-cls.pt). The image loads
+# .onnx exports only — BibDetector refuses non-.onnx paths outright.
+*.pt
+
 tests/
 *.md
 .mypy_cache

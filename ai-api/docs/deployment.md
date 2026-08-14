@@ -22,19 +22,46 @@ Starts 4 containers:
 - `db` (port 5432) - PostgreSQL 16 with pgvector
 - `redis` (port 6379) - Cache and task queue broker
 
+> **`docker-compose.yml` is the DEV stack and must never be used to deploy.** It builds
+> `Dockerfile.dev` and sets `DEBUG=true` + `ENVIRONMENT=development`, which means API-key auth
+> is **bypassed with full `["*"]` scope** (`middleware/auth.py`), Swagger/ReDoc are served, and
+> `/metrics` is open. This section of the doc previously named it as the production command.
+
+### Production prerequisites
+
+Production reads two values that have no safe default. Put them in `.env` next to
+`docker-compose.prod.yml`, or export them:
+
+| Variable | Why |
+|---|---|
+| `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | Datastore credentials. |
+| `ALLOWED_ORIGINS` | **Required — the stack refuses to start without it.** Set your real origins, e.g. `["https://quickpitik.com"]`. It used to default to `["*"]`. |
+| `WEBHOOK_SECRET_KEY` | Fernet key encrypting webhook secrets at rest. Empty = plaintext (the app only warns). Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Must be the **same value across the API and all four workers** — the API encrypts and the blur/face/bib workers decrypt, so a mismatch breaks every signature. |
+
+Model weights are **mounted from the host**, not baked into the image — confirm `./models` is
+populated before starting (see "Model Loading Strategy" below):
+
+```bash
+python scripts/download_models.py    # exits non-zero and names anything missing
+```
+
 ### Production (CPU)
 ```bash
-docker compose -f docker-compose.yml up --build -d
+docker compose -f docker-compose.prod.yml up --build -d
 ```
-Uses the production `Dockerfile` (multi-stage, optimized, no hot-reload).
+Uses the production `Dockerfile` (multi-stage, optimized, no hot-reload). This is a complete
+standalone stack — API, four per-queue Celery workers, db, redis, nginx and certbot. The API
+publishes on `127.0.0.1:8000` only; public traffic arrives through nginx on 80/443, so the
+proxy's rate limit and `client_max_body_size` cannot be bypassed.
 
 ### Production (GPU)
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
+docker compose -f docker-compose.prod.yml -f docker-compose.gpu.yml up --build -d
 ```
-Requires NVIDIA Container Toolkit installed on the host. The GPU override adds:
-- `runtime: nvidia` device reservation
-- `USE_GPU=true` environment variable
+Requires NVIDIA Container Toolkit installed on the host. The GPU overlay adds an `nvidia`
+device reservation and `USE_GPU=true` to `ai-api`, `celery-blur`, `celery-face` and
+`celery-bib`. `celery-default` stays on CPU — it runs webhook and maintenance tasks and loads
+no models. Layer it on `docker-compose.prod.yml`, never on `docker-compose.yml`.
 
 ---
 
@@ -131,11 +158,24 @@ providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 - Used by load balancers to know when to send traffic
 - If this fails, stop routing traffic to this instance (but don't restart)
 
+The readiness payload also carries a per-model breakdown:
+
+```json
+{"models_loaded": true, "database": true, "redis": true,
+ "models": {"blur": true, "face": true, "bib_ocr": true,
+            "blur_classifier": false, "bib_detector": false}}
+```
+
+`models_loaded` covers only the **required** set (`blur`, `face`, `bib_ocr`), so it stays
+`true` — and the probe stays 200 — when an optional model is missing. `models` is where that
+shows up. A `blur_classifier: false` means every `/blur/classify*` route is failing, which is
+the desktop app's primary path; check the `./models` mount first.
+
 ### Docker health check
 The Dockerfile includes a built-in health check:
 ```dockerfile
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/api/v1/health').raise_for_status()"
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
+    CMD curl -f http://localhost:8000/api/v1/health || exit 1
 ```
 
 ---
@@ -157,14 +197,31 @@ The 2-second drain is intentionally short — reverse proxies / load balancers a
 
 ## Model Loading Strategy
 
-Models are loaded at **build time** (in Docker) or **first startup** (local development):
+**Weights are never baked into the image.** `models/*` is gitignored (only `manifest.json` is
+tracked), so a build from a clean checkout has nothing to copy — the Dockerfile ships
+`manifest.json` alone, and `docker-compose.prod.yml` mounts the real `./models` directory
+read-only at `/app/models` for the API and all four workers. Miss that mount and the container
+starts with no weights at all.
 
-1. **InsightFace models** (RetinaFace + ArcFace): Downloaded automatically by the InsightFace library on first use. Cached in `~/.insightface/` or the configured MODEL_DIR.
+1. **InsightFace models** (RetinaFace + ArcFace): downloaded automatically on first use into
+   `MODEL_DIR` — so with the mount in place they are already there, and with it missing every
+   container re-downloads ~300 MB on every deploy (or fails outright with no egress). Note the
+   doubled path: `FaceAnalysis(root=MODEL_DIR)` appends its own `models/`, so the bundle lives
+   at `models/models/buffalo_l/`.
 
-2. **PaddleOCR models**: Downloaded automatically by PaddleOCR on first use. Cached in `~/.paddleocr/`.
+2. **PaddleOCR models**: downloaded automatically by PaddleOCR on first use, cached outside
+   `models/` (`~/.paddleocr` or `PADDLE_PDX_MODEL_SOURCE`). Nothing to mount.
 
-3. **YOLOv8 bib detector**: Custom-trained ONNX ships in the repo at `models/bib_detection/yolov8n_bib.onnx`. Replace it to use a newer model.
-4. **Blur classifier**: Custom-trained ONNX ships in the repo at `models/blur_classifier/blur_classifier.onnx` plus `class_names.json`.
+3. **YOLOv8 bib detector**: custom-trained ONNX at `models/bib_detection/yolov8n_bib.onnx`,
+   produced by `scripts/train_bib_detector.py` → `scripts/export_bib_detector.py`. **Optional**
+   — without it, bib recognition falls back to full-image OCR with more false positives.
+
+4. **Blur classifier**: custom-trained ONNX at `models/blur_classifier/blur_classifier.onnx`
+   plus `class_names.json`. **Optional** — without it every `/blur/classify*` route fails.
+
+Both "optional" models are optional to the *registry*, not to the product. Run
+`python scripts/download_models.py` before deploying: it checks every artifact named in
+`models/manifest.json` and exits non-zero listing whatever is absent.
 
 At server startup, the `ModelRegistry` loads all models in parallel (via `asyncio.gather` + `asyncio.to_thread`). Heavy libraries (`torch`, `insightface`, `ultralytics`) are pre-imported on the main thread first to avoid Windows DLL loading races. This takes 5–15 seconds depending on the machine. The readiness probe returns 503 until loading completes.
 

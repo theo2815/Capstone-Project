@@ -35,5 +35,9 @@ class HealthResponse(BaseModel):
 
 class ReadinessResponse(BaseModel):
     models_loaded: bool
+    # Per-model detail. models_loaded covers only the required set
+    # (blur, face, bib_ocr), so this is where a missing optional model —
+    # blur_classifier or bib_detector — becomes visible.
+    models: dict[str, bool] = {}
     database: bool
     redis: bool

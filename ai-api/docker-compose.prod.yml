@@ -3,8 +3,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Loopback only. nginx reaches this over the compose network as ai-api:8000
+    # and needs no published port; binding 0.0.0.0 put the app on the public
+    # interface alongside the proxy, so nginx's rate limit, its 2 GB
+    # client_max_body_size and (once enabled) its TLS were all bypassable by
+    # hitting :8000 directly. That is also why an nginx.conf which could not
+    # parse went unnoticed for months. Matches db/redis below.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/quickpitik
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
@@ -15,7 +21,15 @@ services:
       - ENVIRONMENT=production
       - WORKERS=2
       - USE_GPU=false
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-["*"]}
+      # No default. This was `${ALLOWED_ORIGINS:-["*"]}`, so a deploy that simply
+      # forgot the variable got wildcard CORS in production while
+      # docs/security.md specified named origins. Unset is now a startup error.
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:?set ALLOWED_ORIGINS to your production origins, e.g. ["https://quickpitik.com"]}
+      # Fernet key for webhook secrets at rest. Must be identical across the API
+      # and EVERY worker: the API encrypts (webhook_repo) and blur/face/bib
+      # workers decrypt in complete_job/fail_job (workers/helpers). A partial
+      # rollout is worse than none — signatures break instead of degrading.
+      - WEBHOOK_SECRET_KEY=${WEBHOOK_SECRET_KEY:-}
     depends_on:
       db:
         condition: service_healthy
@@ -29,6 +43,12 @@ services:
       start_period: 90s
     restart: unless-stopped
     volumes:
+      # The ONLY way weights reach a container. The image carries manifest.json
+      # and nothing else (see Dockerfile + .dockerignore). Without this mount
+      # blur_classifier and bib_detector are absent — and because both are
+      # "optional" in the registry, /health/ready still returned 200 while every
+      # /blur/classify* route, the desktop's primary path, failed.
+      - ./models:/app/models:ro
       - blobstore:/data/blobs
     deploy:
       resources:
@@ -52,6 +72,8 @@ services:
       - BLOB_STORE_PATH=/data/blobs
       - USE_GPU=false
       - WORKER_QUEUES=blur
+      # Decrypts webhook secrets in complete_job/fail_job — must match the API's.
+      - WEBHOOK_SECRET_KEY=${WEBHOOK_SECRET_KEY:-}
       - OMP_NUM_THREADS=2
       - ONNX_INTRA_OP_THREADS=2
       - ONNX_INTER_OP_THREADS=2
@@ -59,6 +81,9 @@ services:
       - ai-api
     restart: unless-stopped
     volumes:
+      # Workers load their own models (model_loader.py, queue-aware), so they
+      # need the same host mount the API does — see the note on ai-api.
+      - ./models:/app/models:ro
       - blobstore:/data/blobs
     deploy:
       resources:
@@ -77,10 +102,15 @@ services:
       - BLOB_STORE_PATH=/data/blobs
       - USE_GPU=false
       - WORKER_QUEUES=face
+      # Decrypts webhook secrets in complete_job/fail_job — must match the API's.
+      - WEBHOOK_SECRET_KEY=${WEBHOOK_SECRET_KEY:-}
     depends_on:
       - ai-api
     restart: unless-stopped
     volumes:
+      # Workers load their own models (model_loader.py, queue-aware), so they
+      # need the same host mount the API does — see the note on ai-api.
+      - ./models:/app/models:ro
       - blobstore:/data/blobs
     deploy:
       resources:
@@ -99,11 +129,16 @@ services:
       - BLOB_STORE_PATH=/data/blobs
       - USE_GPU=false
       - WORKER_QUEUES=bib
+      # Decrypts webhook secrets in complete_job/fail_job — must match the API's.
+      - WEBHOOK_SECRET_KEY=${WEBHOOK_SECRET_KEY:-}
       - OCR_MAX_WORKERS=8
     depends_on:
       - ai-api
     restart: unless-stopped
     volumes:
+      # Workers load their own models (model_loader.py, queue-aware), so they
+      # need the same host mount the API does — see the note on ai-api.
+      - ./models:/app/models:ro
       - blobstore:/data/blobs
     deploy:
       resources:
@@ -122,10 +157,15 @@ services:
       - BLOB_STORE_PATH=/data/blobs
       - USE_GPU=false
       - WORKER_QUEUES=default
+      # This queue runs the webhooks.* retry tasks (celery_app task_routes).
+      - WEBHOOK_SECRET_KEY=${WEBHOOK_SECRET_KEY:-}
     depends_on:
       - ai-api
     restart: unless-stopped
     volumes:
+      # Workers load their own models (model_loader.py, queue-aware), so they
+      # need the same host mount the API does — see the note on ai-api.
+      - ./models:/app/models:ro
       - blobstore:/data/blobs
     deploy:
       resources:
