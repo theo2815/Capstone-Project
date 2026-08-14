@@ -17,7 +17,6 @@ import {
   usePhotographerPayoutReports,
   usePhotographerTransactions,
 } from "@/hooks/use-photographer-data";
-import { BE_MAX_LIMIT } from "@/lib/api-photographer-earnings";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate, formatMonthYear } from "@/lib/format";
 import { formatPayoutNumber } from "@/lib/payout-format";
@@ -74,7 +73,7 @@ function PayoutsSlab() {
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PAYOUT_INITIAL);
   const livePayouts = usePhotographerPayouts();
   const balance = usePhotographerPayoutBalance();
-  const payouts = livePayouts ?? [];
+  const payouts = livePayouts?.items ?? [];
   const isLoading = livePayouts === null || balance === null;
   const { user } = useAuth();
   const photographer = resolveCurrentPhotographer(user);
@@ -166,9 +165,9 @@ function PayoutsSlab() {
               </li>
             ))}
           </ul>
-          {/* fetchPhotographerPayouts drops the envelope's `total`, so an
-              exact "X of Y" isn't available here. Sitting on the cap is the
-              signal that older payouts exist beyond what we fetched. */}
+          {/* `total` is every payout the BE has; `payouts` is what this fetch
+              returned (capped at the backend's max limit). When they disagree,
+              say the real number instead of claiming "All N loaded". */}
           <LoadMoreButton
             shown={Math.min(loadedCount, payouts.length)}
             total={payouts.length}
@@ -177,8 +176,8 @@ function PayoutsSlab() {
               setLoadedCount((n) => n + PAGE_SIZE.PAYOUT_INCREMENT)
             }
             terminalLabel={
-              payouts.length >= BE_MAX_LIMIT
-                ? `Showing the ${BE_MAX_LIMIT} most recent payouts`
+              livePayouts && payouts.length < livePayouts.total
+                ? `Showing first ${payouts.length.toLocaleString()} of ${livePayouts.total.toLocaleString()}`
                 : undefined
             }
           />
@@ -643,7 +642,18 @@ function TransactionsSlab() {
             {/* Group by month so the ledger is easier to skim. */}
             {loadedGroups.map((group) => (
               <li key={group.label} className="py-2">
-                <Kicker as="p" tone="soft" tnum className="sticky top-20 bg-bone py-2">
+                {/* Desktop-only sticky. Below md the shell pins
+                    <DesktopNudge> + <DashboardMobileStrip> together at
+                    top-[3.75rem], and the nudge is dismissible per page-visit
+                    — so the stack is ~112px tall or ~60px depending on state
+                    and no fixed mobile offset clears it. Scrolling with the
+                    content is what every other mobile dashboard surface does. */}
+                <Kicker
+                  as="p"
+                  tone="soft"
+                  tnum
+                  className="md:sticky md:top-20 bg-bone py-2"
+                >
                   {group.label} · ₱{group.total.toLocaleString()}
                 </Kicker>
                 <ul className="divide-y divide-line">

@@ -58,35 +58,37 @@ export interface PerEventEarningsArgs {
   limit?: number;
 }
 
+// Returns the whole envelope, not just `items`. The UI needs `total` to tell
+// "exactly 200 events" from "200 of 350" — dropping it forced the load-more
+// terminal label to hedge with "the 200 most recent".
 export async function fetchPerEventEarnings(
   args: PerEventEarningsArgs = {},
-): Promise<PerEventEarning[]> {
+): Promise<PaginatedResponse<PerEventEarning>> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
   // Pre-fetch up to BE MAX_LIMIT so the Hybrid Load-More UI has rows to chunk
   // through client-side. A bare default of 8 made the slab terminal at "All 8
   // loaded" before the first Load More click.
   p.set("limit", String(args.limit ?? BE_MAX_LIMIT));
-  const res = await api.get<PaginatedResponse<PerEventEarning>>(
+  return api.get<PaginatedResponse<PerEventEarning>>(
     `/me/photographer/earnings/per-event?${p.toString()}`,
   );
-  return res.items;
 }
 
 // ───────────────────────────────────────────── Payouts
 
+// Envelope, not just `items` — same reason as fetchPerEventEarnings above.
 export async function fetchPhotographerPayouts(
   args: { offset?: number; limit?: number } = {},
-): Promise<PhotographerPayout[]> {
+): Promise<PaginatedResponse<PhotographerPayout>> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
-  // Pre-fetch up to BE MAX_LIMIT so the Recent-cycles list has rows to chunk
+  // Pre-fetch up to BE MAX_LIMIT so the Recent-payouts list has rows to chunk
   // through client-side (PAGE_SIZE.PAYOUT_INCREMENT at a time).
   p.set("limit", String(args.limit ?? BE_MAX_LIMIT));
-  const res = await api.get<PaginatedResponse<PhotographerPayout>>(
+  return api.get<PaginatedResponse<PhotographerPayout>>(
     `/me/photographer/payouts?${p.toString()}`,
   );
-  return res.items;
 }
 
 export interface SubmitPayoutReportArgs {

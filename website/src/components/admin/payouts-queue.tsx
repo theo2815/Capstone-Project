@@ -193,7 +193,7 @@ export function PayoutsQueue() {
     selectedCycles.length === 0
       ? null
       : selectedCycles.some((c) => c.status === "approved")
-        ? "Some selected cycles are already approved"
+        ? "Some selected payouts are already approved"
         : null;
 
   const selectionActive = selected.size > 0;
@@ -315,7 +315,7 @@ export function PayoutsQueue() {
     if (ok) {
       showToast({
         kind: "success",
-        message: `Approved · ${ids.length} cycles`,
+        message: `Approved · ${ids.length} payouts`,
       });
     }
   }
@@ -349,7 +349,7 @@ export function PayoutsQueue() {
       if (ok) {
         showToast({
           kind: "info",
-          message: `Held · ${target.payoutIds.length} cycles`,
+          message: `Held · ${target.payoutIds.length} payouts`,
         });
       }
     }
@@ -394,7 +394,7 @@ export function PayoutsQueue() {
         caption="Awaiting first decision"
         totalCount={pending.length}
         rows={pending}
-        empty="No cycles pending review."
+        empty="No payouts pending review."
         selected={selected}
         selectionActive={selectionActive}
         toggleSelect={toggleSelect}
@@ -412,7 +412,7 @@ export function PayoutsQueue() {
         caption="Awaiting payment"
         totalCount={approved.length}
         rows={approvedVisible}
-        empty="No approved cycles waiting on payment."
+        empty="No approved payouts waiting on payment."
         selected={selected}
         selectionActive={selectionActive}
         toggleSelect={toggleSelect}
@@ -437,7 +437,7 @@ export function PayoutsQueue() {
         caption="Paused with reason"
         totalCount={held.length}
         rows={heldVisible}
-        empty="No held cycles."
+        empty="No held payouts."
         selected={selected}
         selectionActive={selectionActive}
         toggleSelect={toggleSelect}
@@ -462,7 +462,7 @@ export function PayoutsQueue() {
         caption="Settled"
         totalCount={paid.length}
         rows={paidVisible}
-        empty="No paid cycles yet."
+        empty="No paid payouts yet."
         selected={selected}
         selectionActive={selectionActive}
         toggleSelect={toggleSelect}
@@ -620,7 +620,7 @@ function PayoutSlab({
     onLoadMore: () => void;
   };
 }) {
-  const noun = totalCount === 1 ? "cycle" : "cycles";
+  const noun = totalCount === 1 ? "payout" : "payouts";
   return (
     <Slab
       id={id}
@@ -743,10 +743,10 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
       {isReadyToSend && <ReadyToSendCard cycle={cycle} />}
       <section>
         <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
-          Cycle
+          Payout
         </p>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
-          <FieldRow label="Cycle id" value={cycle.id} mono />
+          <FieldRow label="Payout id" value={cycle.id} mono />
           <FieldRow
             label="Week of"
             value={`${formatLongDate(cycle.weekOf, true)} → ${formatLongDate(weekEnd, true)}`}

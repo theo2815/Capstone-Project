@@ -201,6 +201,9 @@ function EventsCard() {
             <Skeleton className="h-3 w-32" />
           </li>
           <li>
+            <Skeleton className="h-3 w-24" />
+          </li>
+          <li>
             <Skeleton className="h-3 w-28" />
           </li>
           <li>
@@ -212,11 +215,13 @@ function EventsCard() {
       </CardShell>
     );
   }
+  // "open" is its own row rather than being folded into Archived. The two
+  // mean opposite things to a photographer: an open event still accepts
+  // uploads during the 4-day grace window, an archived one doesn't.
   const live = events.filter((e) => e.state === "live").length;
+  const open = events.filter((e) => e.state === "open").length;
   const upcoming = events.filter((e) => e.state === "upcoming").length;
-  const archived = events.filter(
-    (e) => e.state === "open" || e.state === "past",
-  ).length;
+  const archived = events.filter((e) => e.state === "past").length;
 
   return (
     <CardShell href={ROUTES.DASHBOARD_EVENTS}>
@@ -232,6 +237,14 @@ function EventsCard() {
           />
           <span className="text-ink">{live}</span>
           <span>Live</span>
+        </li>
+        <li className="flex items-center gap-2.5">
+          <span
+            aria-hidden="true"
+            className="size-1.5 rounded-full bg-ink-soft"
+          />
+          <span className="text-ink">{open}</span>
+          <span>Open</span>
         </li>
         <li className="flex items-center gap-2.5">
           <span

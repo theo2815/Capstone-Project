@@ -54,20 +54,22 @@ export default function FocusedSharePage() {
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
 
-  const liveDetail = usePhotographerEventDetail(id ?? null);
+  const { detail: liveDetail, isMissing } = usePhotographerEventDetail(
+    id ?? null,
+  );
   const livePhotos = usePhotographerEventPhotos(id ?? null);
+
+  // Only events the photographer actually covers render this page. A 404 means
+  // no event_photographer row, or the event is gone — either way the page
+  // doesn't exist for them.
+  if (isMissing) {
+    notFound();
+  }
 
   // Loading: hook returns null until the BE responds. Don't gate on photos
   // separately — the grid renders its own skeleton when livePhotos is null.
   if (liveDetail === null) {
     return <FocusedShareSkeleton />;
-  }
-
-  // Only events the photographer has actually covered render this page.
-  // Detail is null when the photographer doesn't own this event_photographer
-  // row OR the event was deleted. Either way → 404.
-  if (liveDetail.photoCount === 0) {
-    notFound();
   }
 
   // Build a ListEvent-shaped record so the shared sub-components (Hero,
@@ -88,6 +90,24 @@ export default function FocusedSharePage() {
   };
   const photographer = liveDetail;
 
+  // A covered event with nothing uploaded yet is a normal state, not an error.
+  // The events list filters to photoCount > 0, so this is only reachable by
+  // deep link or bookmark — and it used to 404, which reads as "your event is
+  // gone." ShareHeroBand is deliberately omitted: handing the photographer a
+  // public gallery URL to post would send runners to a blank page.
+  if (liveDetail.photoCount === 0) {
+    return (
+      <main className="bg-bone text-ink min-h-screen flex flex-col">
+        <SiteHeader />
+        <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
+          <BackChip />
+          <Hero event={event} />
+          <NoPhotosYet eventId={event.id} />
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col">
       <SiteHeader />
@@ -103,6 +123,30 @@ export default function FocusedSharePage() {
         />
       </div>
     </main>
+  );
+}
+
+// Dashed-panel empty state, matching the /dashboard overview's "No upcoming
+// coverage." treatment. The CTA is ink-outline rather than fresh — the Hero's
+// StateChip may already own the one fresh accent on this viewport.
+function NoPhotosYet({ eventId }: { eventId: string }) {
+  return (
+    <section className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
+      <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+        No photos yet.
+      </p>
+      <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
+        Upload your first batch and this page becomes the public gallery you
+        share with runners.
+      </p>
+      <Link
+        href={`${ROUTES.UPLOAD}/${eventId}`}
+        className="mt-6 font-sans text-sm font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-2.5 px-5 rounded-full transition-colors inline-flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+      >
+        Upload photos
+        <span aria-hidden="true">→</span>
+      </Link>
+    </section>
   );
 }
 
@@ -281,10 +325,16 @@ function ShareHeroBand({ event }: { event: ListEvent }) {
             dotColor="#1877F2"
             label="Facebook"
           />
+          {/* Instagram has no web share intent, so this copies the link
+              instead of opening a composer. Labelled for what it does — the
+              four chips around it really do open a share window, and looking
+              identical to them was the whole problem. */}
           <ShareChip
             onClick={handleInstagram}
             dotColor="#E4405F"
             label="Instagram"
+            hint="copy"
+            ariaLabel="Copy gallery link for Instagram"
           />
           <ShareChip
             onClick={() => shareTo("x")}
@@ -311,16 +361,21 @@ function ShareChip({
   onClick,
   dotColor,
   label,
+  hint,
+  ariaLabel,
 }: {
   onClick: () => void;
   dotColor: string;
   label: string;
+  /** Trailing qualifier for chips that don't open a share window. */
+  hint?: string;
+  ariaLabel?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={`Share to ${label}`}
+      aria-label={ariaLabel ?? `Share to ${label}`}
       className="inline-flex items-center gap-2 font-sans text-sm font-medium border border-line bg-bone hover:bg-bone-deep hover:border-ink py-2 px-4 rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
     >
       <span
@@ -329,6 +384,11 @@ function ShareChip({
         style={{ backgroundColor: dotColor }}
       />
       <span>{label}</span>
+      {hint && (
+        <span aria-hidden="true" className="text-slate-soft">
+          · {hint}
+        </span>
+      )}
     </button>
   );
 }

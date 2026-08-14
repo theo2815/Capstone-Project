@@ -79,7 +79,7 @@ export function AdminPayoutRow({
       onClick={onActivate}
       onKeyDown={handleArticleKeyDown}
       aria-label={`${subjectLabel}${
-        selectionActive ? " — toggle selection" : " — open cycle"
+        selectionActive ? " — toggle selection" : " — open payout"
       }`}
       className={`group rounded-2xl border bg-bone p-5 md:p-6 transition-colors cursor-pointer ${
         selected ? "border-ink" : "border-line hover:border-ink"
@@ -88,7 +88,7 @@ export function AdminPayoutRow({
       <div className="flex items-start gap-4 flex-wrap md:flex-nowrap">
         <input
           type="checkbox"
-          aria-label={`Select cycle ${cycle.id}`}
+          aria-label={`Select payout ${cycle.id}`}
           checked={selected}
           onChange={onToggleSelect}
           onClick={(e) => e.stopPropagation()}
@@ -151,7 +151,7 @@ export function AdminPayoutRow({
             e.stopPropagation();
             onOpenDrawer();
           }}
-          aria-label={`Open cycle ${cycle.id}`}
+          aria-label={`Open payout ${cycle.id}`}
           className="shrink-0 size-8 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
         >
           <span aria-hidden="true" className="text-lg leading-none">

@@ -298,8 +298,8 @@ function EmptyState() {
     <div className="px-5 py-8">
       <p className="font-sans text-sm text-ink-soft">
         {ADMIN_FLAGS_ENABLED
-          ? "Search anything in admin — pages, pending verifications, disputes, flags, payout cycles, photographers."
-          : "Search anything in admin — pages, pending verifications, disputes, payout cycles, photographers."}
+          ? "Search anything in admin — pages, pending verifications, disputes, flags, payouts, photographers."
+          : "Search anything in admin — pages, pending verifications, disputes, payouts, photographers."}
       </p>
       <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft mt-3">
         Picks you make appear here as recents on next open.

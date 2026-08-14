@@ -11,7 +11,6 @@ import {
   usePhotographerEarnings,
   usePhotographerPerEventEarnings,
 } from "@/hooks/use-photographer-data";
-import { BE_MAX_LIMIT } from "@/lib/api-photographer-earnings";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
@@ -200,7 +199,7 @@ function PerEventSlab() {
   // unchanged.
   const livePerEvent = usePhotographerPerEventEarnings();
   const rawEvents = livePerEvent
-    ? livePerEvent.map((row) => ({
+    ? livePerEvent.items.map((row) => ({
         id: row.eventId,
         slug: row.eventName,
         name: row.eventName,
@@ -263,9 +262,10 @@ function PerEventSlab() {
               </li>
             ))}
           </ul>
-          {/* fetchPerEventEarnings drops the envelope's `total`, so an exact
-              "X of Y" isn't available here. Sitting on the cap is the signal
-              that older events exist beyond what we fetched. */}
+          {/* `total` counts every per-event row the BE has; `items` is what
+              this fetch returned. The rows rendered below are a further
+              subset (zero-revenue events are filtered out), so the label
+              talks about events fetched — not rows shown — to stay true. */}
           <LoadMoreButton
             shown={visibleSlice.length}
             total={events.length}
@@ -274,8 +274,8 @@ function PerEventSlab() {
               setLoadedCount((n) => n + PAGE_SIZE.EARNINGS_INCREMENT)
             }
             terminalLabel={
-              events.length >= BE_MAX_LIMIT
-                ? `Showing the ${BE_MAX_LIMIT} most recent events`
+              livePerEvent.items.length < livePerEvent.total
+                ? `Showing first ${livePerEvent.items.length.toLocaleString()} of ${livePerEvent.total.toLocaleString()} events`
                 : undefined
             }
           />

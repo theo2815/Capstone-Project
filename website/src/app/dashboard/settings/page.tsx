@@ -565,12 +565,19 @@ function EditModeProvider({ children }: { children: ReactNode }) {
           watermark: null,
         };
         setEditing(false);
+        // Name what was saved when the whole batch is one kind of change —
+        // "Cover saved." tells the photographer their edit landed, where the
+        // generic line left them checking. Dedupe mirrors the failure branch
+        // below: three social rows read as "Social link", not three names.
+        const savedLabels = Array.from(new Set(tasks.map((t) => t.label)));
         showToast({
           kind: "success",
           message:
             tasks.length === 0
               ? "No changes to save."
-              : "Settings saved.",
+              : savedLabels.length === 1
+                ? `${savedLabels[0]} saved.`
+                : "Settings saved.",
         });
       } else {
         // Stay in edit mode so the photographer can retry / fix the failure.

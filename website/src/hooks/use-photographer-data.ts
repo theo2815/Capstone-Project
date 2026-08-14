@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { ApiError } from "@/lib/api";
 import {
   fetchPhotographerEvents,
   fetchPhotographerEventDetail,
@@ -41,6 +42,7 @@ import type {
 import type { PhotographerProfile } from "@/lib/photographer-registry";
 import type { MockPhoto } from "@/types/photo";
 import type { EventDetail } from "@/types/event";
+import type { PaginatedResponse } from "@/types/api";
 
 // React Query hooks for photographer reads.
 // Keys: ["photographer", <domain>, ...]
@@ -63,17 +65,35 @@ export function usePhotographerEvents(
   return query.data ?? null;
 }
 
+export interface PhotographerEventDetailResult {
+  /** null while the fetch is in flight — and also on failure. */
+  detail: PhotographerEventDetail | null;
+  /** BE returned 404: the photographer doesn't cover this event, or it's gone. */
+  isMissing: boolean;
+}
+
+// Returns a result object rather than the bare detail because `null` alone
+// can't distinguish "still loading" from "doesn't exist" — and the caller has
+// to 404 on the second. Without `isMissing`, a bad id renders a skeleton
+// forever, since api.get throws on 404 and query.data stays undefined.
 export function usePhotographerEventDetail(
   eventId: string | null,
-): PhotographerEventDetail | null {
+): PhotographerEventDetailResult {
   const query = useQuery<PhotographerEventDetail | null>({
     queryKey: ["photographer", "events", eventId],
     queryFn: () =>
       eventId ? fetchPhotographerEventDetail(eventId) : Promise.resolve(null),
     enabled: !!eventId,
     staleTime: EVENTS_STALE_MS,
+    // A 404 is a verdict, not a blip. Retrying it just holds the skeleton up
+    // for several seconds before the page can render its 404.
+    retry: (failureCount, err) =>
+      !(err instanceof ApiError && err.status === 404) && failureCount < 3,
   });
-  return query.data ?? null;
+  return {
+    detail: query.data ?? null,
+    isMissing: query.error instanceof ApiError && query.error.status === 404,
+  };
 }
 
 export function usePhotographerEventPhotos(
@@ -102,8 +122,10 @@ export function usePhotographerEarnings(): PhotographerEarnings | null {
   return query.data ?? null;
 }
 
-export function usePhotographerPerEventEarnings(): PerEventEarning[] | null {
-  const query = useQuery<PerEventEarning[]>({
+// Envelope, not a bare array — the page needs `total` to say "N of M" instead
+// of hedging with "the 200 most recent".
+export function usePhotographerPerEventEarnings(): PaginatedResponse<PerEventEarning> | null {
+  const query = useQuery<PaginatedResponse<PerEventEarning>>({
     queryKey: ["photographer", "earnings", "per-event"],
     queryFn: () => fetchPerEventEarnings(),
     staleTime: EARNINGS_STALE_MS,
@@ -113,8 +135,8 @@ export function usePhotographerPerEventEarnings(): PerEventEarning[] | null {
 
 // ───────────────────────────────────────────── Payouts
 
-export function usePhotographerPayouts(): PhotographerPayout[] | null {
-  const query = useQuery<PhotographerPayout[]>({
+export function usePhotographerPayouts(): PaginatedResponse<PhotographerPayout> | null {
+  const query = useQuery<PaginatedResponse<PhotographerPayout>>({
     queryKey: ["photographer", "payouts"],
     queryFn: () => fetchPhotographerPayouts(),
     staleTime: EARNINGS_STALE_MS,

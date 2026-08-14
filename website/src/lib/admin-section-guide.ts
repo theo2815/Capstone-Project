@@ -35,7 +35,7 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<SectionGuideEntry> = [
     number: "04",
     href: ROUTES.ADMIN_PAYOUTS,
     label: "Payouts",
-    body: "Weekly cycle status across all photographers. Mark a cycle paid or hold.",
+    body: "Payout requests across all photographers. Mark one paid or hold it.",
   },
   {
     number: "05",

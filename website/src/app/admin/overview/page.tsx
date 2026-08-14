@@ -144,8 +144,8 @@ export default function AdminOverviewPage() {
             value={kpis.pendingPayouts}
             caption={
               kpis.pendingPayouts === 1
-                ? "cycle awaiting review"
-                : "cycles awaiting review"
+                ? "payout awaiting review"
+                : "payouts awaiting review"
             }
             href={ROUTES.ADMIN_PAYOUTS}
           />

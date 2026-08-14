@@ -17,6 +17,7 @@ import { VerificationBanner } from "@/components/dashboard/verification-banner";
 import { SiteHeader } from "@/components/layout/site-header";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import { usePublicEvents } from "@/hooks/use-public-events";
 import { useToast } from "@/hooks/use-toast";
@@ -35,7 +36,14 @@ import {
   uploadDaysRemaining,
 } from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
-import { ACCEPTED_IMAGE_MIME, MAX_UPLOAD_BYTES } from "@/lib/image-utils";
+import {
+  ACCEPTED_IMAGE_MIME,
+  HEIC_GUIDANCE,
+  HEIC_REJECTION,
+  isHeicFile,
+  looksLikeHeic,
+  MAX_UPLOAD_BYTES,
+} from "@/lib/image-utils";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { cn } from "@/lib/utils";
 
@@ -103,16 +111,7 @@ export default function FocusedUploadPage() {
   );
 
   if (liveEvents === null) {
-    return (
-      <main className="bg-bone text-ink min-h-screen flex flex-col">
-        <SiteHeader />
-        <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-            Loading event…
-          </p>
-        </div>
-      </main>
-    );
+    return <FocusedUploadSkeleton />;
   }
 
   if (!event) {
@@ -134,6 +133,31 @@ export default function FocusedUploadPage() {
         <ErrorBoundary>
           <UploadGate event={event} />
         </ErrorBoundary>
+      </div>
+    </main>
+  );
+}
+
+// Mirrors the loaded layout's shape (back chip → hero → dropzone) so the swap
+// is reflow-free when the events fetch resolves. Same precedent as
+// <FocusedShareSkeleton> on /dashboard/events/[id]. The back chip renders for
+// real — it doesn't depend on the fetch, and a photographer who landed here by
+// mistake shouldn't have to wait to leave.
+function FocusedUploadSkeleton() {
+  return (
+    <main className="bg-bone text-ink min-h-screen flex flex-col">
+      <SiteHeader />
+      <div
+        className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24"
+        aria-busy="true"
+      >
+        <BackChip />
+        <section className="mb-12 md:mb-16">
+          <Skeleton className="h-3 w-48" />
+          <Skeleton className="h-10 md:h-14 w-3/4 mt-4" />
+          <Skeleton className="h-4 w-1/3 mt-4" />
+        </section>
+        <Skeleton className="h-64 md:h-80 w-full rounded-2xl" />
       </div>
     </main>
   );
@@ -376,6 +400,13 @@ function UploadForm({ event }: { event: ListEvent }) {
         return [...prev, ...uniq];
       });
 
+      // The row error has to stay short enough to survive `uppercase truncate`,
+      // so the actual iPhone fix goes in a toast. Fired once per batch, not
+      // once per file — a 200-photo camera-roll dump is all HEIC or none.
+      if (slice.some(looksLikeHeic)) {
+        showToast({ kind: "error", message: HEIC_GUIDANCE, duration: 6000 });
+      }
+
       if (dropped > 0) {
         showToast({
           kind: "error",
@@ -411,14 +442,18 @@ function UploadForm({ event }: { event: ListEvent }) {
 
     void (async () => {
       // Hash with bounded concurrency so a 500-file batch doesn't read every
-      // file into memory at once.
+      // file into memory at once. The HEIC sniff rides along here rather than
+      // in validate(): it has to read bytes, and this pass is already reading
+      // every file. A HEIC is rejected outright, so skip hashing it.
       const files = pending.map((e) => e.file);
       const hashes = new Array<string>(files.length);
+      const heic = new Array<boolean>(files.length);
       let cursor = 0;
       const worker = async () => {
         while (cursor < files.length) {
           const i = cursor++;
-          hashes[i] = await sha256Hex(files[i]);
+          heic[i] = await isHeicFile(files[i]);
+          hashes[i] = heic[i] ? "" : await sha256Hex(files[i]);
         }
       };
       await Promise.all(
@@ -427,9 +462,12 @@ function UploadForm({ event }: { event: ListEvent }) {
       if (cancelled) return;
 
       let byHash = new Map<string, PhotoExistsResult>();
+      const checkable = [...new Set(hashes.filter((h) => h.length > 0))];
       try {
-        const results = await checkPhotosExist(event.id, [...new Set(hashes)]);
-        byHash = new Map(results.map((r) => [r.hash, r]));
+        if (checkable.length > 0) {
+          const results = await checkPhotosExist(event.id, checkable);
+          byHash = new Map(results.map((r) => [r.hash, r]));
+        }
       } catch {
         // Leave byHash empty → every file falls through to "queued" and the
         // server-side unique index remains the source of truth.
@@ -437,11 +475,21 @@ function UploadForm({ event }: { event: ListEvent }) {
       if (cancelled) return;
 
       const hashById = new Map(pending.map((e, i) => [e.id, hashes[i]]));
+      const heicById = new Map(pending.map((e, i) => [e.id, heic[i]]));
       setEntries((prev) =>
         prev.map((p) => {
           if (p.status !== "checking") return p;
           const hash = hashById.get(p.id);
           if (hash === undefined) return p;
+          if (heicById.get(p.id)) {
+            return {
+              ...p,
+              status: "error",
+              progress: 0,
+              retryable: false,
+              error: HEIC_REJECTION,
+            };
+          }
           const result = byHash.get(hash);
           if (result?.status === "same_event") {
             return { ...p, status: "skipped", progress: 0, error: undefined };
@@ -460,6 +508,11 @@ function UploadForm({ event }: { event: ListEvent }) {
           return { ...p, status: "queued" };
         }),
       );
+      // Renamed HEICs only surface here — validate() saw image/jpeg and let
+      // them through, so this is the photographer's first notice.
+      if (heic.some(Boolean)) {
+        showToast({ kind: "error", message: HEIC_GUIDANCE, duration: 6000 });
+      }
       // checking → queued doesn't change entries.length, so nudge the upload
       // effect to pick the freshly-queued files up.
       setRetryNonce((n) => n + 1);
@@ -1055,6 +1108,12 @@ const QueueRow = memo(function QueueRow({
 });
 
 function validate(file: File): string | undefined {
+  // Named HEIC is caught here; a HEIC renamed to .jpg reports image/jpeg and
+  // slips past — the pre-flight pass sniffs its header and rejects it there.
+  // Both paths share HEIC_GUIDANCE so the copy doesn't diverge.
+  if (looksLikeHeic(file)) {
+    return HEIC_REJECTION;
+  }
   if (!ACCEPTED_IMAGE_MIME.includes(file.type)) {
     return "JPEG, PNG, or WebP only.";
   }

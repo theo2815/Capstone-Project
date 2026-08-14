@@ -27,7 +27,7 @@ export function AdminSalesLeaderboard() {
       <Column
         title="Top photographers"
         caption="By gross merchandise volume"
-        emptyCopy="No cycles yet — once payouts land, the highest-earning brands surface here."
+        emptyCopy="No payouts yet — once payouts land, the highest-earning brands surface here."
         rows={photographers}
         renderRow={(p, rank) => (
           <PhotographerRow key={p.photographerId} rank={rank} row={p} />
@@ -105,7 +105,7 @@ function PhotographerRow({
             </p>
             <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft tnum mt-1">
               {row.photosSold.toLocaleString()} photos · {row.cycles}{" "}
-              {row.cycles === 1 ? "cycle" : "cycles"}
+              {row.cycles === 1 ? "payout" : "payouts"}
             </p>
           </div>
         </div>

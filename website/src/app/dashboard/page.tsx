@@ -6,7 +6,7 @@ import { Slab } from "@/components/profile-shell";
 import { DashboardActionGrid } from "@/components/dashboard/dashboard-action-grid";
 import { SetupJourney } from "@/components/dashboard/setup-journey";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import {
   usePhotographerEvents,
@@ -40,6 +40,14 @@ export default function DashboardOverviewPage() {
   const hasAnyUploads = (events ?? []).some((e) => e.photoCount > 0);
   const isSetupMode = eventsLoaded && (gate.kind !== "ok" || !hasAnyUploads);
 
+  // Neither branch is safe to render before `events` resolves — gating only
+  // one way (PF-8) traded the verified photographer's SetupJourney flash for
+  // a first-timer's action-grid flash. Hold a skeleton until the fork is
+  // decidable so nobody sees the wrong dashboard.
+  if (!eventsLoaded) {
+    return <OverviewSkeleton />;
+  }
+
   if (isSetupMode) {
     return <SetupJourney />;
   }
@@ -50,6 +58,24 @@ export default function DashboardOverviewPage() {
       <BillingGlance />
       <NextUpGlance />
     </>
+  );
+}
+
+// Deliberately neutral: the fork above can resolve to either SetupJourney or
+// the action grid, and both open with a kicker + headline. Anything more
+// specific would make the wrong destination flash in skeleton form instead of
+// in real content — the same bug one layer down.
+function OverviewSkeleton() {
+  return (
+    <section className="pb-12 md:pb-16" aria-busy="true">
+      <Skeleton className="h-3 w-32" />
+      <Skeleton className="h-9 md:h-11 w-72 max-w-full mt-4" />
+      <div className="mt-8 md:mt-10 grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
+        {[0, 1, 2, 3].map((i) => (
+          <TileSkeleton key={i} aspectRatio="h-44 md:h-48" />
+        ))}
+      </div>
+    </section>
   );
 }
 

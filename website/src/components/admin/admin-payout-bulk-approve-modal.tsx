@@ -27,22 +27,22 @@ export function AdminPayoutBulkApproveModal({
       open={open}
       onClose={onCancel}
       onConfirm={onConfirm}
-      title="Approve cycles"
+      title="Approve payouts"
       confirmLabel="Confirm approve"
     >
       <p className="font-sans text-sm text-ink-soft">
         Approve{" "}
         <span className="text-ink font-display text-base tnum">{count}</span>{" "}
-        {count === 1 ? "cycle" : "cycles"} totaling{" "}
+        {count === 1 ? "payout" : "payouts"} totaling{" "}
         <span className="text-ink font-display text-base tnum">
           {formatPrice(totalAmount)}
         </span>
-        ? Approved cycles enter the queue for marking paid.
+        ? Approved payouts enter the queue for marking paid.
       </p>
       <p className="font-sans text-sm text-slate">
-        Photographers see their cycle move to{" "}
+        Photographers see their request move to{" "}
         <span className="text-ink">Approved</span> on /dashboard/billing.
-        Funds are not released until each cycle is marked paid with a
+        Funds are not released until each payout is marked paid with a
         reference number.
       </p>
     </AdminConfirmModal>

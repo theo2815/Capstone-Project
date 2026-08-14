@@ -142,7 +142,7 @@ const PAGE_SEEDS: ReadonlyArray<PageSeed> = [
   {
     id: "page:payouts",
     title: "Payouts",
-    subtitle: "Photographer payout cycles",
+    subtitle: "Photographer payout requests",
     route: `${ROUTES.ADMIN_INBOX}?type=payouts`,
     keywords: ["inbox", "approve", "hold", "pay"],
   },
