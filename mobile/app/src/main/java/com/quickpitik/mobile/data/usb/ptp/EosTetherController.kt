@@ -1,3 +1,11 @@
+// UNWIRED as a controller — zero call sites as of 2026-08-14. Superseded by
+// UsbEventCaptureController, which drives the same EOS event mode without ever
+// issuing RemoteRelease (host-triggered capture needs Live View on the R6 and
+// returns Device_Busy without it — that wall is why this one was demoted).
+// Kept rather than deleted because the EosEvents parser below is the reference
+// decoding of an EOS_GetEvent payload and is worth diffing against if the live
+// path misbehaves on hardware. Never runtime-verified end-to-end.
+
 package com.quickpitik.mobile.data.usb.ptp
 
 import android.hardware.usb.UsbDevice

@@ -32,6 +32,30 @@ data class RefreshRequest(
     val refreshToken: String
 )
 
+// Body for POST /auth/forgot-password. Mirrors backend
+// dto/auth/ForgotPasswordRequest. The endpoint is anti-enumeration silent —
+// it answers with the same generic message whether or not the email exists,
+// so the UI must never phrase its success copy as "we found your account".
+data class ForgotPasswordRequest(
+    val email: String
+)
+
+// Body for POST /auth/reset-password. Mirrors backend
+// dto/auth/ResetPasswordRequest, which enforces @Size(min = 8) on newPassword;
+// validatePassword() gates the same rule client-side first.
+data class ResetPasswordRequest(
+    val token: String,
+    val newPassword: String
+)
+
+// Both auth-recovery endpoints return Map<String, String> ({"message": "…"}),
+// wrapped by the backend's ResponseEnvelopeAdvice. The screens render their own
+// copy rather than the server string, so this exists to give the envelope a
+// concrete type — not to be displayed.
+data class MessageResponse(
+    val message: String
+)
+
 // Standard Backend Error envelope structure
 data class ApiError(
     val code: String,

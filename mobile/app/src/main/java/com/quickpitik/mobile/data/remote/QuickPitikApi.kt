@@ -17,6 +17,19 @@ interface QuickPitikApi {
     @POST("api/v1/auth/refresh")
     fun refreshToken(@Body request: RefreshRequest): Call<ApiResponseEnvelope<AuthResponse>>
 
+    // Auth recovery. Both are public (SecurityConfig permits /auth/**) so they
+    // carry no Authorization header, and TokenAuthenticator skips /auth/* — a
+    // 4xx here can never trigger a refresh or a forced logout.
+    @POST("api/v1/auth/forgot-password")
+    suspend fun forgotPassword(
+        @Body request: ForgotPasswordRequest
+    ): ApiResponseEnvelope<MessageResponse>
+
+    @POST("api/v1/auth/reset-password")
+    suspend fun resetPassword(
+        @Body request: ResetPasswordRequest
+    ): ApiResponseEnvelope<MessageResponse>
+
     @Multipart
     @POST("api/v1/me/photographer/events/{eventId}/photos")
     suspend fun uploadPhoto(

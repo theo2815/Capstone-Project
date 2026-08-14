@@ -74,7 +74,11 @@ fun FloatingCart(
         if (cartOpen || checkoutOpen) minimized = false
     }
 
-    val hiddenRoute = route == "login" || route == "register"
+    // Mirrors the website's HIDDEN_ROUTES (components/cart/floating-cart.tsx):
+    // no cart pill over an auth surface. Web lists login/register/forgot-password;
+    // reset-password is added here because the web list predates that page's
+    // final route and a pill over a password form is plainly wrong on a phone.
+    val hiddenRoute = route in setOf("login", "register", "forgot-password", "reset-password")
     val showPill = itemCount > 0 && !hiddenRoute
 
     if (showPill) {

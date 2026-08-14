@@ -28,6 +28,7 @@ import com.quickpitik.mobile.ui.theme.*
 fun LoginScreen(
     viewModel: AuthViewModel,
     onNavigateToRegister: () -> Unit,
+    onNavigateToForgotPassword: () -> Unit,
     onLoginSuccess: (isPhotographer: Boolean) -> Unit
 ) {
     var email by remember { mutableStateOf("") }
@@ -226,7 +227,29 @@ fun LoginScreen(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Recovery link. Website places this in the same slot — directly
+            // under the submit button, above the "New here?" divider
+            // (components/auth/login-form.tsx). Box gives the text a 48dp
+            // touch target.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable(enabled = authState !is AuthState.Loading) {
+                        viewModel.resetPasswordResetState()
+                        onNavigateToForgotPassword()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "FORGOT PASSWORD?",
+                    style = Typography.labelMedium,
+                    color = Slate
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Bottom Redirect
             Row(

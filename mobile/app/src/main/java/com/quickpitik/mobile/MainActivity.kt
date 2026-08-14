@@ -24,8 +24,10 @@ import androidx.navigation.navArgument
 import com.quickpitik.mobile.data.local.SessionEvents
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.ui.auth.AuthViewModel
+import com.quickpitik.mobile.ui.auth.ForgotPasswordScreen
 import com.quickpitik.mobile.ui.auth.LoginScreen
 import com.quickpitik.mobile.ui.auth.RegisterScreen
+import com.quickpitik.mobile.ui.auth.ResetPasswordScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
 import com.quickpitik.mobile.ui.runner.EventsDiscoveryScreen
@@ -109,9 +111,42 @@ class MainActivity : ComponentActivity() {
                             onNavigateToRegister = {
                                 navController.navigate("register")
                             },
+                            onNavigateToForgotPassword = {
+                                navController.navigate("forgot-password")
+                            },
                             onLoginSuccess = { isPhotographer ->
                                 val target = if (isPhotographer) "dashboard" else "events"
                                 navController.navigate(target) {
+                                    popUpTo("login") { inclusive = true }
+                                }
+                            }
+                        )
+                    }
+                    // Auth recovery. Both mirror website /(auth)/forgot-password
+                    // and /(auth)/reset-password. No nav arguments: the reset
+                    // email links to the WEBSITE origin (EmailService builds it
+                    // from app.cors.allowed-origins), so the token is pasted on
+                    // the reset screen rather than carried in a deep link.
+                    // "Back to sign in" replaces the login entry instead of
+                    // stacking a second one.
+                    composable("forgot-password") {
+                        ForgotPasswordScreen(
+                            viewModel = authViewModel,
+                            onNavigateToLogin = {
+                                navController.navigate("login") {
+                                    popUpTo("login") { inclusive = true }
+                                }
+                            },
+                            onNavigateToReset = {
+                                navController.navigate("reset-password")
+                            }
+                        )
+                    }
+                    composable("reset-password") {
+                        ResetPasswordScreen(
+                            viewModel = authViewModel,
+                            onNavigateToLogin = {
+                                navController.navigate("login") {
                                     popUpTo("login") { inclusive = true }
                                 }
                             }
