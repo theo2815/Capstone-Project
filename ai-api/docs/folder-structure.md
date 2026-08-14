@@ -235,7 +235,9 @@ ai-api/
 │       ├── image_utils.py      # validate_and_decode (single image), validate_batch_file,
 │       │                       # downscale_for_inference, get_image_dimensions.
 │       │                       # Content-type allowlist, magic-byte check via PIL,
-│       │                       # EXIF rotation, dimension limits (32–4096 px).
+│       │                       # EXIF rotation, dimension limits. Both validators
+│       │                       # share MAX_IMAGE_DIMENSION so single and batch
+│       │                       # paths cannot drift; min 32 px is single-only.
 │       ├── blob_store.py       # store_batch, load_blob, cleanup_batch,
 │       │                       # cleanup_stale_blobs. Atomic write (tmp→rename),
 │       │                       # parallel writes for batch uploads.

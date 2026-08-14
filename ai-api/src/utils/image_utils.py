@@ -8,10 +8,12 @@ import numpy as np
 from fastapi import UploadFile
 from PIL import Image, ImageOps
 
+from src.config import get_settings
 from src.utils.exceptions import ImageValidationError
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
-MAX_DIMENSION = 4096
+# Calibrated upload bound — see MAX_IMAGE_DIMENSION in config.py.
+MAX_DIMENSION = get_settings().MAX_IMAGE_DIMENSION
 MIN_DIMENSION = 32
 
 # Prevent Pillow decompression bombs (matches MAX_DIMENSION)
@@ -20,9 +22,13 @@ Image.MAX_IMAGE_PIXELS = MAX_DIMENSION * MAX_DIMENSION
 
 async def validate_and_decode(
     file: UploadFile,
-    max_file_size: int = 10 * 1024 * 1024,
+    max_file_size: int = 0,
 ) -> tuple[bytes, np.ndarray]:
     """Validate an uploaded image and decode it to a numpy array.
+
+    Args:
+        file: The uploaded file.
+        max_file_size: Override in bytes. 0 (default) uses MAX_FILE_SIZE.
 
     Returns:
         Tuple of (raw_bytes, bgr_numpy_array)
@@ -30,6 +36,9 @@ async def validate_and_decode(
     Raises:
         ImageValidationError: If the image fails validation.
     """
+    if max_file_size <= 0:
+        max_file_size = get_settings().MAX_FILE_SIZE
+
     if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise ImageValidationError(
             f"Unsupported file type: {file.content_type}. "
@@ -115,7 +124,13 @@ def downscale_for_inference(image: np.ndarray, max_dim: int = 0) -> np.ndarray:
 def validate_batch_file(
     raw: bytes, filename: str, max_file_size: int, content_type: str | None = None
 ) -> None:
-    """Validate a single file in a batch upload (size, content type, magic bytes).
+    """Validate a single file in a batch upload (size, content type, magic bytes,
+    dimensions).
+
+    Enforces the same MAX_DIMENSION bound as validate_and_decode. The batch
+    path used to skip it, so an over-cap photo was rejected by /faces/enroll
+    but accepted by /faces/enroll/mega — the same image indexed or failed
+    depending on the backend's INDEXING_MODE.
 
     Raises:
         ImageValidationError: If the file fails validation.
@@ -131,9 +146,19 @@ def validate_batch_file(
         )
     try:
         img = Image.open(io.BytesIO(raw))
+        # .size is populated by open() from the header; verify() invalidates
+        # the object, so read the dimensions before calling it.
+        w, h = img.size
         img.verify()
     except Exception:
         raise ImageValidationError(f"File '{filename}' is not a valid image")
+
+    # Outside the try: an ImageValidationError raised inside would be swallowed
+    # by the bare `except` above and mis-reported as a corrupt file.
+    if w > MAX_DIMENSION or h > MAX_DIMENSION:
+        raise ImageValidationError(
+            f"File '{filename}' dimensions ({w}x{h}) exceed {MAX_DIMENSION}px limit"
+        )
 
 
 def get_image_dimensions(image: np.ndarray) -> tuple[int, int]:

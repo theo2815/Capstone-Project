@@ -146,7 +146,7 @@ celery -A src.workers.celery_app inspect reserved
 | **API throughput** | Increase `WORKERS` (uvicorn workers). Each worker holds all models in memory (~2GB). |
 | **Batch processing** | Scale Celery workers. Dedicate workers per queue with `WORKER_QUEUES`: `WORKER_QUEUES=blur celery -A src.workers.celery_app worker -Q blur -c 4`. Default-queue workers handle webhooks + maintenance and do not need ML models loaded. |
 | **Face search latency** | Add pgvector HNSW index on `face_embeddings.embedding`. Current: exact search. |
-| **Memory pressure** | Reduce `MAX_INFERENCE_DIMENSION` (default 640). Lower = less memory per image, possibly lower accuracy. |
+| **Memory pressure** | Reduce `MAX_INFERENCE_DIMENSION` (default 1280). Lower = less memory per image, possibly lower accuracy — but see the calibration comment in `config.py` first: 1024 made 21% of bibs read a different number. |
 | **DB connections** | Async pool and sync pool sizes are configurable in `src/db/session.py` / `src/db/sync_session.py`. Increase if pool exhaustion is logged. |
 | **Large event (many persons)** | Partition by `event_id`. Face search already filters by `event_id` when provided. |
 | **Throughput on desktop** | Use `/blur/detect/stream` or `/blur/classify/stream` for synchronous NDJSON batches of up to 500 — no polling overhead. |
@@ -182,7 +182,7 @@ celery -A src.workers.celery_app inspect reserved
 
 | Vector | Mitigation | Config |
 |--------|------------|--------|
-| **Image bombs** | Pillow decompression bomb limit (16M pixels, tied to `MAX_DIMENSION`), max file size, max dimension 4096px, downscale before inference | `MAX_FILE_SIZE`, `MAX_INFERENCE_DIMENSION` |
+| **Image bombs** | Pillow decompression bomb limit (tied to `MAX_IMAGE_DIMENSION`²), max file size, max dimension 12000px enforced on both the single-image and batch validators, downscale before inference | `MAX_FILE_SIZE`, `MAX_IMAGE_DIMENSION`, `MAX_INFERENCE_DIMENSION` |
 | **Batch flooding** | Max batch size, max active jobs per key, rate limiting (429) | `MAX_BATCH_SIZE=50`, `MEGA_BATCH_MAX_SIZE=500`, `MAX_ACTIVE_JOBS_PER_KEY=10` |
 | **Inference DoS** | Per-image inference timeout, 60s request timeout, Celery `task_time_limit=3600s` (soft 3300s) | `INFERENCE_TIMEOUT`, `TimeoutMiddleware` |
 | **Embedding spam** | Min enrollment confidence, per-person+hash deduplication in the face repo | `FACE_MIN_ENROLLMENT_CONFIDENCE=0.7` |

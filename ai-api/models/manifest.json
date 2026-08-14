@@ -16,8 +16,10 @@
     "bib_detection": {
       "name": "YOLOv8n Bib Detector",
       "file": "bib_detection/yolov8n_bib.onnx",
-      "source": "Custom trained or fine-tuned YOLOv8n",
-      "notes": "Requires training on bib number dataset before use"
+      "source": "scripts/train_bib_detector.py -> scripts/export_bib_detector.py",
+      "export": { "imgsz": 640, "dynamic": false, "simplify": true },
+      "input_shape": [1, 3, 640, 640],
+      "notes": "Trained and deployed (2026-03-21) on 1,713 Roboflow-annotated event photos. Exported with a STATIC input shape, so the decode dimension never reaches the detector — Ultralytics letterboxes every input down to 640 before the ONNX session and rescales boxes back. MAX_INFERENCE_DIMENSION therefore only affects the crop resolution handed to PaddleOCR, not detection. A dynamic re-export would also need simplify=False (the simplifier folds the dynamic axis back to static — see export_blur_classifier.py) AND an imgsz argument in BibDetector, which currently passes none; measured benefit is unproven (1024 vs 1280 gave identical detections). Source checkpoint: runs/detect/detect/bib_det/weights/best.pt."
     },
     "bib_ocr": {
       "name": "PaddleOCR PP-OCRv5",

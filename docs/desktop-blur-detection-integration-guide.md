@@ -332,9 +332,11 @@ Client rules that matter:
 - For 5k–10k images, send several concurrent requests of 200–500 each rather than
   one giant request.
 
-Unlike `/blur/classify`, the stream path does not enforce the 4096px
-`MAX_DIMENSION` ceiling, so full-resolution frames are accepted. Both paths decode
-to `BLUR_CLASSIFY_DECODE_DIM` (640) internally and score identically.
+The stream path performs no per-file validation at all, so full-resolution frames
+are accepted unconditionally. `/blur/classify` enforces `MAX_IMAGE_DIMENSION`
+(12000 px on the longest edge) — sized to pass any real camera, so in practice
+neither path refuses a normal frame. Both decode to `BLUR_CLASSIFY_DECODE_DIM`
+(640) internally and score identically.
 
 ---
 
@@ -385,7 +387,7 @@ for the duration of the run — a queued job survives a disconnect, a stream doe
 | `202` | Batch accepted -- poll the `poll_url` |
 | `401` | Invalid key -- prompt user to re-enter |
 | `403` | Scope issue -- key needs `blur:read` |
-| `413` | File too large -- max 10 MB per image |
+| `413` | File too large -- max 25 MB per image (`MAX_FILE_SIZE`) |
 | `429` | Rate limited -- wait for `Retry-After` seconds, then retry |
 | `503` | Model not loaded -- blur classifier may not be deployed yet, fall back to `/blur/detect` |
 
@@ -406,7 +408,8 @@ The minimum confidence floor is configurable server-side (`BLUR_DETECTION_MIN_CO
 | Base URL | `http://localhost:8000/api/v1` |
 | Auth header | `X-API-Key: sk_test_...` |
 | Required scope | `blur:read` |
-| Max file size | 10 MB |
+| Max file size | 25 MB (`MAX_FILE_SIZE`) |
+| Max image dimension | 12000 px longest edge (`MAX_IMAGE_DIMENSION`; not enforced on `/stream`) |
 | Max async batch size | 50 images (`MAX_BATCH_SIZE`) |
 | Max stream batch size | 500 images (`STREAM_*_MAX_SIZE`) |
 | Supported formats | JPEG, PNG, WebP |

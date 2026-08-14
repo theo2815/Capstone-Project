@@ -165,9 +165,10 @@ Here's what happens when a client calls `POST /api/v1/blur/detect`:
 7. check_scope("blur:read", key_meta) — 403 if key lacks the scope
    │
 8. Route handler:
-   ├── validate_and_decode() — content type, 10MB cap, PIL magic check,
-   │                          EXIF rotate, 32–4096 px bounds, BGR ndarray
-   │                          (downscaled to MAX_INFERENCE_DIMENSION)
+   ├── validate_and_decode() — content type, MAX_FILE_SIZE cap, PIL magic
+   │                          check, EXIF rotate, 32–MAX_IMAGE_DIMENSION px
+   │                          bounds, BGR ndarray (downscaled to
+   │                          MAX_INFERENCE_DIMENSION)
    ├── registry.get("blur") — BlurDetector
    ├── asyncio.to_thread(detector.detect, image) — runs Laplacian (+ FFT)
    │   off the event loop; uses _quickpitik_cpp when present

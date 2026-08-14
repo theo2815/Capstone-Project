@@ -103,12 +103,29 @@ class TestValidateAndDecode:
 
     # 6. Image too large (dimensions > MAX_DIMENSION) raises ImageValidationError
     async def test_image_too_large(self):
-        big = MAX_DIMENSION + 1
-        raw = _make_image_bytes(width=big, height=big, fmt="PNG")
+        # A strip, not a square: at MAX_DIMENSION=12000 a square would be
+        # 144 Mpx (~432 MB) to allocate. A strip trips the per-side check while
+        # staying far under MAX_IMAGE_PIXELS, so it isolates that check exactly.
+        raw = _make_image_bytes(width=MAX_DIMENSION + 1, height=MIN_DIMENSION, fmt="PNG")
         upload = _make_upload_file(raw, content_type="image/png", filename="big.png")
 
         with pytest.raises(ImageValidationError, match="exceed"):
             await validate_and_decode(upload)
+
+    # 6b. Real DSLR dimensions are ACCEPTED — regression guard for the bug where
+    # a 4096 cap rejected 3.75% of real photos on the single-image endpoints
+    # (the backend forwards originals to /faces/enroll, so those photos ended
+    # up IndexingStatus.FAILED and were never searchable by face or bib).
+    async def test_dslr_dimensions_are_accepted(self):
+        raw = _make_image_bytes(width=6000, height=MIN_DIMENSION, fmt="JPEG")
+        upload = _make_upload_file(raw, content_type="image/jpeg", filename="dslr.jpg")
+
+        _, image = await validate_and_decode(upload)
+
+        # Accepted, and downscaled to the inference dimension rather than refused.
+        from src.config import get_settings
+
+        assert max(image.shape[:2]) == get_settings().MAX_INFERENCE_DIMENSION
 
     # 7. Image too small (dimensions < MIN_DIMENSION) raises ImageValidationError
     async def test_image_too_small(self):
@@ -176,6 +193,27 @@ class TestValidateBatchFile:
         with pytest.raises(ImageValidationError, match="not a valid image"):
             validate_batch_file(b"garbage", filename="bad.jpg", max_file_size=10 * 1024 * 1024)
 
+    # 13b. Over-cap dimensions raise. The batch path had NO dimension check at
+    # all, which is what let /faces/enroll/mega accept photos /faces/enroll
+    # refused.
+    def test_oversized_dimensions_raise(self):
+        raw = _make_image_bytes(width=MAX_DIMENSION + 1, height=MIN_DIMENSION, fmt="PNG")
+        with pytest.raises(ImageValidationError, match="exceed"):
+            validate_batch_file(raw, filename="big.png", max_file_size=50 * 1024 * 1024)
+
+    # 13c. ...and the message is the dimension one, not "not a valid image" —
+    # the check sits outside the try, so the bare except cannot swallow it.
+    def test_oversized_dimensions_report_dimensions(self):
+        raw = _make_image_bytes(width=MAX_DIMENSION + 1, height=MIN_DIMENSION, fmt="PNG")
+        with pytest.raises(ImageValidationError) as exc:
+            validate_batch_file(raw, filename="big.png", max_file_size=50 * 1024 * 1024)
+        assert "not a valid image" not in str(exc.value)
+
+    # 13d. Real DSLR dimensions pass the batch path
+    def test_dslr_dimensions_are_accepted(self):
+        raw = _make_image_bytes(width=6000, height=MIN_DIMENSION, fmt="JPEG")
+        validate_batch_file(raw, filename="dslr.jpg", max_file_size=50 * 1024 * 1024)
+
 
 # ===========================================================================
 # get_image_dimensions
@@ -198,3 +236,68 @@ class TestGetImageDimensions:
         w, h = get_image_dimensions(image)
         assert w == 200
         assert h == 100
+
+
+# ===========================================================================
+# Cross-path parity + calibrated defaults
+# ===========================================================================
+
+
+class TestImageLimitParity:
+    """The single-image and batch paths must enforce the SAME dimension bound.
+
+    They did not: validate_and_decode capped at 4096 while validate_batch_file
+    had no dimension check at all. The same photo was therefore rejected by
+    /faces/enroll and accepted by /faces/enroll/mega, so it indexed or failed
+    depending on the backend's INDEXING_MODE. This fails if they drift again.
+    """
+
+    @pytest.mark.parametrize(
+        "width, expect_rejected",
+        [
+            (MAX_DIMENSION, False),
+            (MAX_DIMENSION + 1, True),
+        ],
+    )
+    async def test_single_and_batch_agree(self, width, expect_rejected):
+        raw = _make_image_bytes(width=width, height=MIN_DIMENSION, fmt="PNG")
+        size_cap = 50 * 1024 * 1024
+
+        def batch_rejects() -> bool:
+            try:
+                validate_batch_file(raw, filename="p.png", max_file_size=size_cap)
+                return False
+            except ImageValidationError:
+                return True
+
+        async def single_rejects() -> bool:
+            upload = _make_upload_file(raw, content_type="image/png", filename="p.png")
+            try:
+                await validate_and_decode(upload, max_file_size=size_cap)
+                return False
+            except ImageValidationError:
+                return True
+
+        assert batch_rejects() is expect_rejected
+        assert (await single_rejects()) is expect_rejected
+
+
+class TestCalibratedUploadLimits:
+    """Guards on the two upload bounds, mirroring TestWorkerDecodeDimensions."""
+
+    def test_max_image_dimension_is_the_calibrated_12000(self):
+        from src.config import Settings
+
+        # Sized to pass any real camera: largest input measured in
+        # Training-Images/ is 6000x4000; 12000 clears 102 MP medium format.
+        assert Settings().MAX_IMAGE_DIMENSION == 12000
+
+    def test_max_file_size_matches_the_backend_multipart_ceiling(self):
+        from src.config import Settings
+
+        # The Spring backend accepts 25 MB and forwards ORIGINAL bytes for
+        # indexing, so anything it accepts must be accepted here.
+        assert Settings().MAX_FILE_SIZE == 25 * 1024 * 1024
+
+    def test_decompression_bomb_guard_tracks_the_cap(self):
+        assert Image.MAX_IMAGE_PIXELS == MAX_DIMENSION * MAX_DIMENSION

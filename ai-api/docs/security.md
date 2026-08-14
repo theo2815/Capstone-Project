@@ -95,9 +95,11 @@ Every uploaded image goes through multiple checks before any processing:
 | Check | What It Does | Why |
 |---|---|---|
 | Content-Type header | Must be `image/jpeg`, `image/png`, or `image/webp` | Reject non-image files early |
-| File size | Maximum 10MB | Prevent memory exhaustion |
+| File size | Maximum 25MB (`MAX_FILE_SIZE`) | Prevent memory exhaustion. Matches the Spring backend's multipart ceiling — it forwards ORIGINAL photo bytes for indexing, so a lower bound here would fail photos it had already accepted. |
 | Magic bytes | Opens file with PIL and calls `.verify()` | A file renamed to .jpg is still detected as non-image |
-| Dimensions | Min 32px, Max 4096px per side | Too small = useless. Too large = memory bomb. |
+| Dimensions | Max 12000px per side (`MAX_IMAGE_DIMENSION`); min 32px on the single-image path | Too large = memory bomb. This is a fail-closed guard, not a quality gate — it is sized to pass any real camera (102 MP = 11648×8736), since every path downscales to `MAX_INFERENCE_DIMENSION` anyway. |
+
+**Which paths enforce which check.** The dimension and file-size bounds are applied by `validate_and_decode` (single-image endpoints) and `validate_batch_file` (batch + mega endpoints). The minimum-dimension check is single-image only. The two `/stream` endpoints perform **no per-file validation** — they read raw bytes straight into `cv2.imdecode`. Stream is desktop-only and blur-only; see the ai-api vault tasks for the open item.
 | EXIF handling | Pillow applies `ImageOps.exif_transpose` (preserves orientation) then the image is converted to a BGR numpy array which carries no EXIF | Privacy: EXIF metadata (GPS, device info, timestamps) is discarded as soon as the bytes leave Pillow |
 
 ### Face Enrollment Quality Gate
@@ -115,7 +117,7 @@ Bib text is cleaned using a strict character filter (`[A-Za-z0-9\-_]`) that pres
   "success": false,
   "error": {
     "code": "ImageValidationError",
-    "message": "File exceeds 10MB limit"
+    "message": "File exceeds 25MB limit"
   }
 }
 ```
@@ -214,7 +216,7 @@ assert hmac.compare_digest(expected, received)
 - [x] API key authentication (SHA-256 hashed, scoped)
 - [x] Rate limiting (token bucket via Redis — enforced on every authenticated endpoint)
 - [x] Per-key concurrent batch job cap (`MAX_ACTIVE_JOBS_PER_KEY`)
-- [x] Input validation (file type, size, dimensions, magic bytes, decompression bomb guard)
+- [x] Input validation (file type, size, dimensions, magic bytes, decompression bomb guard) — single-image and batch/mega paths; **not** the two `/stream` endpoints
 - [x] EXIF rotation applied, EXIF metadata discarded (privacy)
 - [x] No persistent image storage (only embeddings, hashes, and short-lived Celery blob staging)
 - [x] GDPR right-to-erasure endpoint

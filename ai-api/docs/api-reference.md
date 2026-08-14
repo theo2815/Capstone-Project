@@ -21,7 +21,7 @@ On error:
   "data": null,
   "error": {
     "code": "ImageValidationError",
-    "message": "File exceeds 10MB limit"
+    "message": "File exceeds 25MB limit"
   }
 }
 ```

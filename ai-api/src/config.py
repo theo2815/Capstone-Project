@@ -93,7 +93,23 @@ class Settings(BaseSettings):
     CELERY_SECURITY_KEY: str = ""
 
     # File Upload
-    MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10 MB
+    # 25 MB matches the Spring backend's multipart ceiling
+    # (application.yml spring.servlet.multipart.max-file-size). It forwards the
+    # ORIGINAL uploaded bytes to /faces/enroll and /bibs/recognize, so anything
+    # it accepts must be accepted here too — at the previous 10 MB, ~1% of real
+    # photographer originals uploaded fine and then failed indexing.
+    MAX_FILE_SIZE: int = 25 * 1024 * 1024  # 25 MB
+    # Upload bound on the longest edge — NOT the decode target (that is
+    # MAX_INFERENCE_DIMENSION below, which every path downscales to anyway).
+    # This exists only to fail closed on absurd input; it is a bomb guard, not
+    # a quality gate, so it is sized to pass any real camera:
+    #   largest input measured in Training-Images/ is 6000x4000 (24 MP DSLR);
+    #   12000 clears 102 MP medium format (11648x8736) with headroom.
+    # The previous hardcoded 4096 rejected 3.75% of sampled real photos on the
+    # single-image endpoints while the batch/mega paths accepted them, so the
+    # same photo indexed or failed depending on INDEXING_MODE. Enforced by
+    # validate_and_decode AND validate_batch_file so the two cannot drift.
+    MAX_IMAGE_DIMENSION: int = 12000
     MAX_BATCH_SIZE: int = 50  # Raised from 20: Redis now 1GB + lazy decode keeps memory O(1)
     MEGA_BATCH_MAX_SIZE: int = 500  # Max images per mega-batch request (server-side chunking)
     STREAM_BATCH_MAX_SIZE: int = 500  # Max images per streaming sync batch request
