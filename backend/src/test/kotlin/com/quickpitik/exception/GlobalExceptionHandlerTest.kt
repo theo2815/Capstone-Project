@@ -36,9 +36,42 @@ class GlobalExceptionHandlerTest {
         assertEquals(ErrorCodes.AI_API_UNAVAILABLE, codeFor("SOME_FUTURE_CODE"))
     }
 
+    // Runner-flow audit (2026-05-27), "Events + photo discovery" item E5.
+    //
+    // Previously every AiApiException became a 503, so a selfie ai-api had
+    // understood and rejected was reported as "service down, try again" — advice
+    // that can never work. AiApiException.status already knows the difference.
+
     @Test
-    fun `ai-api failures always map to 503 regardless of code`() {
+    fun `ai-api 4xx means the input was rejected, not that the service is down`() {
         val ex = AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, "LOW_QUALITY", "boom")
-        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, handler.handleAiApi(ex).statusCode)
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, handler.handleAiApi(ex).statusCode)
+    }
+
+    @Test
+    fun `ai-api 4xx other than 422 also maps to 422`() {
+        val ex = AiApiException(HttpStatus.BAD_REQUEST, null, "boom")
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, handler.handleAiApi(ex).statusCode)
+    }
+
+    @Test
+    fun `ai-api 5xx and transport failures stay 503`() {
+        assertEquals(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            handler.handleAiApi(AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "offline")).statusCode,
+        )
+        assertEquals(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            handler.handleAiApi(AiApiException(HttpStatus.BAD_GATEWAY, null, "malformed")).statusCode,
+        )
+    }
+
+    @Test
+    fun `status mapping does not disturb the code allowlist`() {
+        val clientFault = AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, "NO_FACES", "boom")
+        assertEquals("NO_FACES", handler.handleAiApi(clientFault).body?.errors?.first()?.code)
+
+        val outage = AiApiException(HttpStatus.SERVICE_UNAVAILABLE, "ImageValidationError", "boom")
+        assertEquals(ErrorCodes.AI_API_UNAVAILABLE, handler.handleAiApi(outage).body?.errors?.first()?.code)
     }
 }

@@ -134,6 +134,19 @@ class AdminDisputeService(
         return hydrateOne(dispute)
     }
 
+    /**
+     * `reason` is **runner-facing**, deliberately. It is interpolated into the
+     * inbox message below, and every dispute decision's reason also reaches
+     * the runner as `RunnerDisputeDto.resolutionNote` on /me/orders (see
+     * `OrderService.hydrateDisputesByOrderId`), which the website renders in
+     * the refund timeline. Admins should write it as an explanation to the
+     * customer, not as an internal note.
+     *
+     * A 2026-05-27 audit filed this as a leak and proposed dropping the
+     * interpolation. That would have left the identical text visible on
+     * /orders, so the two runner surfaces would have disagreed for no gain.
+     * Confirmed intended 2026-08-14 — do not "fix" it back.
+     */
     fun deny(adminId: UUID, disputeId: UUID, reason: String?): AdminDisputeDto {
         val dispute = disputeRepository.findById(disputeId).orElseThrow {
             NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")

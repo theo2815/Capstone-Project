@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.photos.PhotoDto
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
@@ -12,7 +13,12 @@ import com.quickpitik.repository.UserSelfieRepository
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.photos.PhotoSearchService
 import com.quickpitik.service.photos.PhotoService
+import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
+import com.quickpitik.service.ratelimit.RateLimiter
+import com.quickpitik.service.ratelimit.acquireOrThrow
 import com.quickpitik.service.storage.StorageService
+import jakarta.servlet.http.HttpServletRequest
+import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
@@ -34,6 +40,7 @@ class EventPhotoController(
     private val photoSearchService: PhotoSearchService,
     private val userSelfieRepository: UserSelfieRepository,
     private val storageService: StorageService,
+    private val rateLimiter: RateLimiter,
 ) {
     @GetMapping("/{slug}/photos")
     fun list(
@@ -42,7 +49,14 @@ class EventPhotoController(
         @RequestParam(required = false) bib: String?,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
+        request: HttpServletRequest,
     ): PaginatedResponse<PhotoDto> {
+        // Throttle the *search* use of this endpoint only. Without a bib this
+        // is the plain event grid that every visitor pages through, and a
+        // 10/min cap would break ordinary browsing.
+        if (!bib.isNullOrBlank()) {
+            rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_SEARCH, searchKey(principal, request))
+        }
         val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         return photoService.listForEvent(
@@ -63,7 +77,10 @@ class EventPhotoController(
         @RequestPart("selfie") selfie: MultipartFile,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
+        request: HttpServletRequest,
     ): PaginatedResponse<PhotoDto> {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_SEARCH, searchKey(principal, request))
+        validateSelfieUpload(selfie)
         val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         return photoSearchService.searchByFace(
@@ -91,7 +108,9 @@ class EventPhotoController(
         @AuthenticationPrincipal principal: AuthPrincipal?,
         @PathVariable slug: String,
         @RequestBody body: SearchByFaceJsonRequest,
+        request: HttpServletRequest,
     ): PaginatedResponse<PhotoDto> {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_SEARCH, searchKey(principal, request))
         if (principal == null) {
             throw UnauthorizedException(
                 code = ErrorCodes.UNAUTHORIZED,
@@ -139,6 +158,57 @@ class EventPhotoController(
         )
     }
 
+    /**
+     * The multipart part is unauthenticated, arbitrary bytes on their way to
+     * ai-api. Spring's 25 MB multipart ceiling is sized for photographer
+     * originals and is far too loose for a selfie. Same whitelist and same
+     * 5 MB cap `SelfieService.upload` applies to the stored-selfie path, so
+     * both routes into face search agree on what an acceptable selfie is.
+     *
+     * The stored-selfie JSON path needs no equivalent check — those bytes
+     * already cleared this gate when they were uploaded.
+     */
+    private fun validateSelfieUpload(selfie: MultipartFile) {
+        if (selfie.isEmpty) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "selfie file is required",
+                field = "selfie",
+            )
+        }
+        val mime = (selfie.contentType ?: "").lowercase().substringBefore(';').trim()
+        if (mime !in SUPPORTED_SELFIE_TYPES) {
+            throw ValidationException(
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "selfie must be jpeg, png, or webp",
+                field = "selfie",
+            )
+        }
+        if (selfie.size > MAX_SELFIE_BYTES) {
+            throw ApiException(
+                status = HttpStatus.PAYLOAD_TOO_LARGE,
+                code = ErrorCodes.PAYLOAD_TOO_LARGE,
+                message = "Selfie must be ≤ ${MAX_SELFIE_BYTES / (1024 * 1024)} MB",
+                field = "selfie",
+            )
+        }
+    }
+
+    // Bucket key: the signed-in runner when we have one, otherwise the caller's
+    // IP — face search is reachable by guests, so a user-only key would leave
+    // the anonymous path unthrottled.
+    private fun searchKey(principal: AuthPrincipal?, request: HttpServletRequest): String =
+        principal?.userId?.toString() ?: clientIp(request)
+
+    // Mirrors the helper in AuthController / PublicPhotographerController.
+    private fun clientIp(request: HttpServletRequest): String {
+        val forwarded = request.getHeader("X-Forwarded-For")
+        if (!forwarded.isNullOrBlank()) {
+            return forwarded.split(",").first().trim()
+        }
+        return request.remoteAddr ?: "unknown"
+    }
+
     private fun contentTypeOf(key: String): String = when (key.substringAfterLast('.').lowercase()) {
         "jpg", "jpeg" -> MediaType.IMAGE_JPEG_VALUE
         "png" -> MediaType.IMAGE_PNG_VALUE
@@ -151,4 +221,9 @@ class EventPhotoController(
         val offset: Int? = null,
         val limit: Int? = null,
     )
+
+    private companion object {
+        const val MAX_SELFIE_BYTES = 5L * 1024 * 1024
+        val SUPPORTED_SELFIE_TYPES = setOf("image/jpeg", "image/jpg", "image/png", "image/webp")
+    }
 }

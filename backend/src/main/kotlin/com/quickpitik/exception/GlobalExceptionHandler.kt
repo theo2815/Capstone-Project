@@ -112,10 +112,23 @@ class GlobalExceptionHandler {
             ),
         )
 
+    /**
+     * ai-api failures are not all outages. `AiApiException.status` already
+     * carries what actually happened — a 4xx means ai-api understood us and
+     * rejected the input (bad image, unprocessable selfie), a 5xx or a
+     * connect failure means the service is down. Collapsing both to 503 told
+     * the caller to "try again later" for a problem retrying can never fix.
+     * Map 4xx → 422 (the input is the problem), everything else → 503.
+     */
     @ExceptionHandler(AiApiException::class)
     fun handleAiApi(ex: AiApiException): ResponseEntity<ApiResponse<Nothing>> {
         log.warn("ai-api call failed: status={} code={} message={}", ex.status, ex.aiCode, ex.message)
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(
+        val clientFault = ex.status.is4xxClientError
+        val status = if (clientFault) HttpStatus.UNPROCESSABLE_ENTITY else HttpStatus.SERVICE_UNAVAILABLE
+        val message =
+            if (clientFault) "That image could not be processed. Please try a different one."
+            else "AI service is temporarily unavailable. Please try again."
+        return ResponseEntity.status(status).body(
             ApiResponse.failure(
                 ApiError(
                     // F5 (2026-05-27): pass through ai-api's specific code
@@ -124,7 +137,7 @@ class GlobalExceptionHandler {
                     // generic "AI service down" message. Null aiCode = real
                     // outage → falls back to AI_API_UNAVAILABLE.
                     code = aiErrorCode(ex.aiCode),
-                    message = "AI service is temporarily unavailable. Please try again.",
+                    message = message,
                 ),
             ),
         )

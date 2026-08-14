@@ -8,6 +8,10 @@ data class RateLimitProperties(
     val enabled: Boolean = false,
     val photographerUpload: Policy = Policy(capacity = 600, refillPeriod = Duration.ofMinutes(1)),
     val publicGallery: Policy = Policy(capacity = 60, refillPeriod = Duration.ofMinutes(1)),
+    // Runner photo search (face + bib). Each face search forwards an image to
+    // ai-api and burns GPU inference, so it is far more expensive than an
+    // ordinary read. 10/min is generous for a human trying a few selfies.
+    val photoSearch: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(1)),
     // Pre-auth endpoints — keyed by client IP since there's no userId yet.
     // Per-minute caps are sized for normal humans plus a small retry cushion;
     // anything beyond is credential-stuffing / email-bombing / token-brute.

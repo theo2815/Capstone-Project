@@ -43,6 +43,8 @@ class Bucket4jRateLimiter(
                 properties.photographerUpload.capacity to properties.photographerUpload.refillPeriod
             POLICY_PUBLIC_GALLERY ->
                 properties.publicGallery.capacity to properties.publicGallery.refillPeriod
+            POLICY_PHOTO_SEARCH ->
+                properties.photoSearch.capacity to properties.photoSearch.refillPeriod
             POLICY_AUTH_LOGIN ->
                 properties.authLogin.capacity to properties.authLogin.refillPeriod
             POLICY_AUTH_REGISTER ->
@@ -66,6 +68,7 @@ class Bucket4jRateLimiter(
     companion object {
         const val POLICY_PHOTOGRAPHER_UPLOAD = "photographer-upload"
         const val POLICY_PUBLIC_GALLERY = "public-gallery"
+        const val POLICY_PHOTO_SEARCH = "photo-search"
         const val POLICY_AUTH_LOGIN = "auth-login"
         const val POLICY_AUTH_REGISTER = "auth-register"
         const val POLICY_AUTH_FORGOT_PASSWORD = "auth-forgot-password"

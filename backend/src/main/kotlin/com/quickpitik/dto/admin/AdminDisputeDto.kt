@@ -71,6 +71,10 @@ data class ResolveDisputeRequest(
 )
 
 // POST /admin/disputes/{id}/deny — body { reason }.
+//
+// `reason` is shown to the runner: verbatim in the inbox message body, and as
+// `RunnerDisputeDto.resolutionNote` in the /orders refund timeline. Write it
+// for the customer. See the KDoc on AdminDisputeService.deny.
 data class DenyDisputeRequest(
     @field:Size(max = 500)
     val reason: String? = null,

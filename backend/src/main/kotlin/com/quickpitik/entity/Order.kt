@@ -51,6 +51,13 @@ class Order(
     @Column(name = "share_token", length = 64, unique = true)
     var shareToken: String? = null,
 
+    // When the share_token stops authorizing the three token-gated endpoints
+    // (V27). OrderService sets this from `app.platform.share-token-ttl` at
+    // create time — the default here only covers rows built outside that path.
+    // Signed-in runners are unaffected: /me/orders/{id} is JWT-gated.
+    @Column(name = "token_expires_at", nullable = false)
+    var tokenExpiresAt: OffsetDateTime = OffsetDateTime.now().plusDays(90),
+
     // Stamped after the Resend receipt fires. Idempotency guard against
     // PayMongo's retried webhook deliveries — handler checks NULL before send.
     @Column(name = "email_sent_at")

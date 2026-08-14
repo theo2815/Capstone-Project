@@ -5,6 +5,7 @@ import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.PaymongoProperties
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.orders.CreateOrderItem
 import com.quickpitik.dto.orders.CreateOrderRequest
@@ -79,6 +80,7 @@ class OrderService(
     private val paymongoProperties: PaymongoProperties,
     private val disputeRepository: DisputeRepository,
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
+    private val platformProperties: PlatformProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -161,6 +163,10 @@ class OrderService(
                         // the bundle endpoint authorizes via ?token=). Guests use
                         // it for everything (status poll, detail, bundle).
                         shareToken = generateShareToken(),
+                        // V27 — the token is a bearer credential that travels
+                        // in email, so it expires well before the 1-year
+                        // download grant does.
+                        tokenExpiresAt = OffsetDateTime.now().plus(platformProperties.shareTokenTtl),
                     ),
                 )
                 items.forEach { item ->
@@ -280,10 +286,27 @@ class OrderService(
     @Transactional(readOnly = true)
     fun statusByIdAndToken(orderId: UUID, token: String?): OrderStatusDto {
         val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
+        requireValidToken(order, token)
+        return OrderStatusDto(id = order.id, status = order.status, paidAt = order.paidAt)
+    }
+
+    /**
+     * Gate for every token-authorized read. Mismatch and expiry both surface
+     * NOT_FOUND rather than 401/410 — the anti-IDOR property is that probing
+     * by id teaches an attacker nothing, and "this order exists but your token
+     * is stale" would teach them the id was real.
+     *
+     * OrderBundleService.prepare applies the same rule for the streamed
+     * download; it can't share this method because it resolves its own order.
+     */
+    private fun requireValidToken(order: Order, token: String?) {
         if (token.isNullOrBlank() || order.shareToken == null || order.shareToken != token) {
             throw orderNotFound()
         }
-        return OrderStatusDto(id = order.id, status = order.status, paidAt = order.paidAt)
+        if (order.tokenExpiresAt.isBefore(OffsetDateTime.now())) {
+            log.info("Expired share token used for order {} (expired {})", order.id, order.tokenExpiresAt)
+            throw orderNotFound()
+        }
     }
 
     private fun orderNotFound(): NotFoundException =
@@ -564,7 +587,7 @@ class OrderService(
                     } ?: "—",
                     tone = photo?.tone ?: index,
                     thumbnailUrl = photo?.let { thumbnailUrlOf(it) },
-                    previewUrl = photo?.let { previewUrlOf(it) },
+                    previewUrl = photo?.let { previewUrlOf(it, grants[item.id.photoId]) },
                     downloadUrl = photo?.let { downloadUrlOf(it, grants[item.id.photoId]) },
                 )
             },
@@ -583,9 +606,7 @@ class OrderService(
     @Transactional(readOnly = true)
     fun detailByIdAndToken(orderId: UUID, token: String?): OrderDetailDto {
         val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
-        if (token.isNullOrBlank() || order.shareToken == null || order.shareToken != token) {
-            throw orderNotFound()
-        }
+        requireValidToken(order, token)
         return hydrateDetail(order)
     }
 
@@ -594,7 +615,7 @@ class OrderService(
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
 
-    private fun previewUrlOf(photo: Photo): String {
+    private fun previewUrlOf(photo: Photo, grant: DownloadGrant?): String? {
         // Owned-mode preview = the clean original. OrderDetailDto is only ever
         // returned to the order's owner (JWT user_id match) or the share-token
         // holder, so by the time we render `previewUrl` the requester has
@@ -603,6 +624,12 @@ class OrderService(
         // the JPEG and still visible to paying users. Falls back to the
         // watermarked variant only when s3_key is somehow missing (defensive;
         // the column is NOT NULL).
+        //
+        // Gated on the same grant as downloadUrlOf: "proved ownership once" is
+        // not "owns it forever". Without this the clean original stayed
+        // presignable for the life of the row, outliving the entitlement that
+        // paid for it — the widest leak the share token could reach.
+        if (grant == null || grant.grantedUntil.isBefore(OffsetDateTime.now())) return null
         val key = photo.s3Key.ifBlank { photo.watermarkS3Key ?: photo.thumbnailS3Key.orEmpty() }
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.runnerDownload)
     }

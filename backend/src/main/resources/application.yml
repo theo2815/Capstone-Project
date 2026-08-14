@@ -85,6 +85,11 @@ app:
     backoff-base-millis: 500
     face-match-threshold-default: 0.6
     face-top-k-default: 5
+    # Demo safety net: when true, an ai-api failure during face search returns
+    # the event's WHOLE photo grid instead of an error. Off by default — that
+    # response shows every runner's photos, which is the opposite of what face
+    # search promises. Flip only for a live demo with ai-api stopped.
+    search-fallback-on-error: ${AI_SEARCH_FALLBACK:false}
     bib-confidence-threshold-default: 0.7
     # Phase C bulk indexing. PER_PHOTO (default) = Phase-B behaviour (one enroll
     # + one bib HTTP call per photo, off the upload request). BATCH stands that
@@ -112,6 +117,11 @@ app:
     public-gallery:
       capacity: 60
       refill-period: PT1M
+    # Runner photo search (face + bib). Each face search burns ai-api GPU
+    # inference, so it costs far more than an ordinary read.
+    photo-search:
+      capacity: 10
+      refill-period: PT1M
     # Pre-auth endpoints — per-IP buckets. Sized for normal users plus a
     # retry cushion; tighter caps go on credential-stuffing-prone surfaces
     # (login) and email-bombing-prone surfaces (forgot-password).
@@ -130,6 +140,10 @@ app:
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
     platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}
+    # Lifetime of an order's share_token (V27). Bounds the guest status /
+    # detail / bundle-download endpoints. Runners keep JWT access to
+    # /me/orders/{id} for the full 1-year download grant regardless.
+    share-token-ttl: ${SHARE_TOKEN_TTL:P90D}
   webhooks:
     payment:
       # Production: set PAYMENT_WEBHOOK_HMAC_SECRET to a 256-bit random value,
