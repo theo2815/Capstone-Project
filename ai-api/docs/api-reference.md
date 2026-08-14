@@ -219,7 +219,7 @@ Same as `/batch` but up to 500 images via Celery chord.
 
 ## Face Recognition
 
-Pipeline: InsightFace (RetinaFace detection + ArcFace embedding, 512-dim) → pgvector cosine search. Face data is always scoped by `api_key_id`; passing `event_id` narrows enrollment and search further.
+Pipeline: InsightFace (RetinaFace detection + ArcFace embedding, 512-dim) → pgvector cosine search. Face data is always scoped by `api_key_id`, and `event_id` is **required** on every enroll and search surface (root rule 5) — `detect` and `compare` are the exceptions, since neither touches stored data.
 
 ### POST /api/v1/faces/detect
 
@@ -254,8 +254,8 @@ Register a person's face. Detects, embeds, and stores. Faces below `FACE_MIN_ENR
 **Request (multipart form):**
 - `file` (required): Image containing the person
 - `person_name` (required, 1–255 chars)
-- `person_id` (optional, UUID): Add embeddings to an existing person. Must belong to the caller's API key.
-- `event_id` (optional, ≤255 chars): Event to scope this enrollment to
+- `person_id` (optional, UUID): Add embeddings to an existing person. Must belong to the caller's API key **and** to `event_id`.
+- `event_id` (**required**, 1–255 chars): Event to scope this enrollment to. Omitting it (or sending `""`) returns `422` — enrollment is fail-closed event isolation, like search. An embedding stored without an event is unreachable: every search path requires an `event_id`, and `DELETE /faces/persons?event_id=` cannot erase it.
 
 **Scope:** `faces:write`
 
@@ -289,7 +289,7 @@ Register a person's face. Detects, embeds, and stores. Faces below `FACE_MIN_ENR
 
 Async bulk enroll — every image in the batch is attached to the same person (new or existing). Up to `MAX_BATCH_SIZE` (50).
 
-**Form fields:** same as `/enroll` plus `files` (multipart list).
+**Form fields:** same as `/enroll` plus `files` (multipart list). `event_id` is **required** here too (422 if omitted), and a supplied `person_id` must belong to the caller's API key and to that event.
 
 ### POST /api/v1/faces/search
 

@@ -25,6 +25,26 @@ class SyncFaceRepository:
         self.session.flush()
         return person
 
+    def get_person(
+        self,
+        person_id: uuid.UUID,
+        api_key_id: str | None = None,
+        event_id: str | None = None,
+    ) -> Person | None:
+        """Fetch one person, optionally scoped by tenant and event.
+
+        Mirrors FaceRepository.get_person. The enroll worker needs this rather
+        than a bare ``select(Person).where(Person.id == pid)``: an existence-only
+        check lets one tenant enroll faces into another tenant's person by
+        passing its person_id.
+        """
+        stmt = select(Person).where(Person.id == person_id)
+        if api_key_id is not None:
+            stmt = stmt.where(Person.api_key_id == api_key_id)
+        if event_id is not None:
+            stmt = stmt.where(Person.event_id == event_id)
+        return self.session.execute(stmt).scalar_one_or_none()
+
     def store_embedding(
         self,
         person_id: uuid.UUID,
@@ -190,7 +210,17 @@ class SyncFaceRepository:
         api_key_id: str | None = None,
         event_id: str | None = None,
     ) -> list[dict]:
-        """Search using proper vector literal binding and single-computation subquery."""
+        """Search using proper vector literal binding and single-computation subquery.
+
+        Uses ``CAST(:query AS vector)``, never ``:query::vector``. SQLAlchemy's
+        bind-parameter regex for text() requires the char after the name not be
+        a ':', so ``:query::vector`` backtracks and binds a parameter named
+        ``quer`` — the real ``query`` value is never substituted and Postgres
+        receives a literal ':' (``syntax error at or near ":"``). The async repo
+        was fixed for this on 2026-05-20; this sync copy was missed, which broke
+        every single-face image on /faces/search/batch and /search/mega (the
+        len(embeddings) == 1 fallback below routes here).
+        """
         query_vec = "[" + ",".join(str(f) for f in query_embedding) + "]"
         tenant_filter = ""
         params: dict = {"query": query_vec, "threshold": threshold, "top_k": top_k}
@@ -207,7 +237,7 @@ class SyncFaceRepository:
                     SELECT
                         fe.person_id,
                         p.name AS person_name,
-                        1 - (fe.embedding <=> :query::vector) AS similarity
+                        1 - (fe.embedding <=> CAST(:query AS vector)) AS similarity
                     FROM face_embeddings fe
                     JOIN persons p ON p.id = fe.person_id
                     WHERE 1=1 {tenant_filter}

@@ -115,6 +115,27 @@ class Settings(BaseSettings):
     # to 426x640, leaving the bib at ~40x27px which is below the YOLO bib
     # detector's effective range. 1280 keeps inference fast while preserving
     # enough bib pixels for OCR (~80x54px on a typical race shot).
+    #
+    # Shared by the FACE and BIB pipelines end to end — single endpoints AND
+    # Celery workers. The workers used to hardcode their own values (face 768,
+    # bib 1024) while the endpoints used this one, so the same photo produced
+    # different results depending on which path indexed it. Re-measured
+    # 2026-08-14 on the labelled val sets before unifying:
+    #   face (323 photos, 655 GT faces): 1280 detects 657 vs 768's 653, and
+    #     never fewer; 4 faces are found ONLY at 1280. Embedding drift between
+    #     the two dims for the same face is cosine 0.974 mean / 0.818 min —
+    #     comfortably above the backend's 0.6 match threshold, so the drift did
+    #     not flip matches, but it did mean two embedding populations per event.
+    #     Cost of 1280 over 768: +3% end-to-end (+11.7 ms/image); decode is
+    #     unchanged (the full-res JPEG decode dominates the resize) and
+    #     RetinaFace letterboxes to FACE_DET_SIZE either way.
+    #   bib (80 photos): identical YOLO detections (the bib ONNX is a fixed
+    #     640 export, so decode dim never reached it) but 17/80 images READ a
+    #     DIFFERENT bib string at 1024 vs 1280 — e.g. 8037/6037, 80913/80915.
+    #     A bib number is an exact-match key for participant lookup, so that
+    #     divergence mis-attributes photos. 1024 was also below the floor this
+    #     setting was raised to in the first place.
+    # Blur is deliberately NOT on this value: see BLUR_CLASSIFY_DECODE_DIM.
     MAX_INFERENCE_DIMENSION: int = 1280
 
     model_config = {

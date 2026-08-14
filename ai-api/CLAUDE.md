@@ -235,14 +235,14 @@ API endpoints:
 Pipeline: InsightFace (RetinaFace detection + ArcFace embedding, 512-dim) → pgvector cosine similarity search. `FaceEmbedder` drops the unused `genderage` and extra landmark models at load to save ~40% compute/memory.
 
 - `POST /api/v1/faces/detect` — Detect faces, return bounding boxes + landmarks
-- `POST /api/v1/faces/enroll` — Detect, embed, and store (form fields: `person_name`, optional `person_id`, optional `event_id`). Faces below `FACE_MIN_ENROLLMENT_CONFIDENCE` (default 0.7) are skipped; returns `LOW_QUALITY` if none pass.
-- `POST /api/v1/faces/search` — Detect and search against stored embeddings (query params: `threshold=0.4`, `top_k=10`, `event_id`). Always filtered by `api_key_id`.
+- `POST /api/v1/faces/enroll` — Detect, embed, and store (form fields: `person_name`, **required** `event_id`, optional `person_id`). Faces below `FACE_MIN_ENROLLMENT_CONFIDENCE` (default 0.7) are skipped; returns `LOW_QUALITY` if none pass.
+- `POST /api/v1/faces/search` — Detect and search against stored embeddings (query params: `threshold=0.4`, `top_k=10`, **required** `event_id`). Always filtered by `api_key_id`.
 - `POST /api/v1/faces/compare` — 1:1 verification of two uploaded images
 - `GET  /api/v1/faces/persons` — Paginated list of enrolled persons (`offset`, `limit`, `event_id`)
 - `GET  /api/v1/faces/persons/{id}` — Fetch one person (tenant-isolated)
 - `DELETE /api/v1/faces/persons/{id}` — GDPR erasure — cascades to embeddings
 - `POST /api/v1/faces/search/batch` — Async batch; `operation=detect|search`
-- `POST /api/v1/faces/enroll/batch` — Async bulk enroll under one person
+- `POST /api/v1/faces/enroll/batch` — Async bulk enroll under one person (`event_id` required)
 - `POST /api/v1/faces/search/mega` — Async mega-batch
 
 ### Bib Number Recognition

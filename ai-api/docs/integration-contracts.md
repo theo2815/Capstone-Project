@@ -213,8 +213,8 @@ The Web/Mobile Backend uses ai-api's **face and bib** features and manages event
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /api/v1/faces/enroll` | Register participant face for event |
-| `POST /api/v1/faces/enroll/batch` | Bulk-enroll multiple photos under **one** person (many selfies of one runner) |
+| `POST /api/v1/faces/enroll` | Register participant face for event (`event_id` **required** — 422 if omitted) |
+| `POST /api/v1/faces/enroll/batch` | Bulk-enroll multiple photos under **one** person (many selfies of one runner) — `event_id` **required** |
 | `POST /api/v1/faces/enroll/mega` | Bulk **photo indexing** — one person **per image**, every face stored, `ref` echoed (up to 500) |
 | `POST /api/v1/faces/search` | Find participants in uploaded photo (`event_id` **required** — 422 if omitted) |
 | `POST /api/v1/faces/search/batch` · `/search/mega` | Async batch / mega-batch face search (`event_id` **required** when `operation=search`) |
@@ -341,7 +341,11 @@ Photographer (Mobile)    Web/Mobile Backend              ai-api
     │◄─────────────────────────│                           │
 ```
 
-**Event isolation (fail-closed):** `event_id` is **required** on every search — `/faces/search` rejects a missing scope with `422`, and `/search/batch`·`/search/mega` reject it when `operation=search`. Without the guard a search would silently match across every event for the API key. The backend already passes `event_id` on every call; making it required just moves enforcement of root rule 5 to the ai-api boundary instead of trusting the caller.
+**Event isolation (fail-closed):** `event_id` is **required** on every enroll and every search — `/faces/search` rejects a missing scope with `422`, `/search/batch`·`/search/mega` reject it when `operation=search`, and `/faces/enroll`·`/enroll/batch`·`/enroll/mega` reject it outright. The backend already passes `event_id` on every call; making it required just moves enforcement of root rule 5 to the ai-api boundary instead of trusting the caller.
+
+The two directions fail differently, and both matter. An unscoped **search** would silently match across every event for the API key — a leak. An unscoped **enroll** is worse in a quieter way: the embedding is stored with `event_id = NULL`, which no search can ever return (they all require a scope, and `NULL` matches none) and which `DELETE /faces/persons?event_id=` cannot erase — a permanent, invisible, un-GDPR-erasable orphan. Enroll was fail-open until 2026-08-14; `/enroll/mega` had always required it.
+
+When `person_id` is supplied to an enroll, the person is looked up scoped by `api_key_id` **and** `event_id`. An existence-only lookup would let one tenant attach faces to another tenant's person, or file an embedding under a different event than the caller declared.
 
 **Web/Mobile Backend logic:**
 ```python

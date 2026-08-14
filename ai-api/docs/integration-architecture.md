@@ -176,6 +176,32 @@ Web/Mobile Backend                          ai-api
        │◄─────────────────────────────────────│
 ```
 
+### Enforcement (fail-closed, both directions)
+
+`event_id` is **required** by ai-api on every enroll and every search — the
+request is rejected with `422` before any DB work, rather than trusting each
+caller to remember it:
+
+| Surface | Required since |
+|---|---|
+| `/faces/search` · `/search/batch` · `/search/mega` (`operation=search`) | 2026-06-02 |
+| `/faces/enroll/mega` | 2026-06-02 |
+| `/faces/enroll` · `/enroll/batch` | 2026-08-14 |
+
+`/faces/detect` and `/faces/compare` are unrestricted: neither reads or writes
+stored embeddings, so there is no scope to cross.
+
+The two directions fail differently. An unscoped **search** would match across
+every event for the API key — a leak. An unscoped **enroll** produced the quieter
+problem: the embedding was stored with `event_id = NULL`, which no search can
+return (they all require a scope, and `NULL` matches none of them) and which
+`DELETE /faces/persons?event_id=` cannot erase — an invisible, permanently
+un-erasable orphan. Enroll was the last fail-open surface; it is closed now.
+
+When an enroll supplies `person_id`, the person is fetched scoped by
+`api_key_id` **and** `event_id`. An existence-only lookup would let one tenant
+attach faces to another tenant's person.
+
 Desktop Backend does not use face search, so event isolation does not apply to it.
 
 ---
@@ -220,6 +246,29 @@ This means:
 - ai-api never discards results based on business-level thresholds
 - Each backend configures thresholds per event or per user preference
 - The same ai-api response can be interpreted differently by desktop vs web
+
+### Where the shipped defaults live
+
+The numbers above are not illustrative — they are the values in production, owned
+by the backend under `app.ai-api` in `backend/src/main/resources/application.yml`
+and typed in `AiApiProperties.kt`:
+
+| Property | Default | Applied in |
+|---|---|---|
+| `face-match-threshold-default` | `0.6` | `PhotoSearchService.searchByFace` (passed to ai-api as `threshold`) |
+| `face-top-k-default` | `5` | same |
+| `bib-confidence-threshold-default` | `0.7` | `PhotoIndexingService.recognizeBibs` — detections below it are never persisted |
+
+ai-api holds no counterpart to these. `FACE_SIMILARITY_THRESHOLD` (0.4) in
+`src/config.py` is only the floor for `/faces/compare` and the default when a
+caller omits `threshold`; it is deliberately looser than the backend's 0.6 so the
+backend, not ai-api, makes the product call.
+
+**Per-event-type recommended defaults** (road race vs trail vs night run) are
+deliberately not specified here. Picking them without measured data from real
+events would be guesswork dressed as a spec — the tuning belongs after the first
+events run, using their match rates. Until then, one default per feature applies
+to every event and the per-event override exists for when it doesn't.
 
 ---
 

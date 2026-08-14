@@ -52,8 +52,13 @@ def bib_recognize_batch(self, job_id: str, image_paths: list[str], refs: list[st
 
     for chunk_start in range(0, total, sub_batch):
         chunk_paths = image_paths[chunk_start:chunk_start + sub_batch]
-        # Parallel decode: overlaps disk I/O with CPU decompression
-        decoded = decode_images_from_paths(chunk_paths, max_dim=1024)
+        # Parallel decode: overlaps disk I/O with CPU decompression.
+        # No max_dim override — MAX_INFERENCE_DIMENSION (1280) applies, the same
+        # value /bibs/recognize decodes to. This worker used to hardcode 1024,
+        # BELOW the floor that setting was raised to on 2026-05-20 for bib pixel
+        # density, so the same photo could read a different bib number depending
+        # on whether it arrived via the single endpoint or a mega batch.
+        decoded = decode_images_from_paths(chunk_paths)
         chunk_images: list = []
         chunk_global_indices: list[int] = []
 
@@ -136,7 +141,7 @@ def bib_recognize_batch(self, job_id: str, image_paths: list[str], refs: list[st
                 results[i] = {"index": i, "bibs": bib_results}
             elif i in no_detection_indices:
                 # No crop detections — OCR on full image as fallback
-                image = decode_image_from_path(fallback_paths[i], max_dim=1024)
+                image = decode_image_from_path(fallback_paths[i])
                 if image is not None:
                     h, w = image.shape[:2]
                     ocr_result = bib_ocr.recognize(image)

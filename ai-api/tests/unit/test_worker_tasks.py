@@ -638,3 +638,63 @@ class TestUpdateJobProgressThrottle:
         # processed=1, total=1 -> final item -> write
         update_job_progress(JOB_ID, 1, 1, every_n=10)
         mock_session.assert_called_once()
+
+
+class TestWorkerDecodeDimensions:
+    """The face and bib workers must decode at the same dimension as the
+    single-image endpoints.
+
+    Until 2026-08-14 they hardcoded their own: face 768, bib 1024, while
+    /faces/* and /bibs/recognize decoded at MAX_INFERENCE_DIMENSION (1280).
+    Same photo, different result depending on which path indexed it — a photo
+    enrolled by the batch drain got a different embedding than the same photo
+    enrolled synchronously, and 17 of 80 measured race photos read a DIFFERENT
+    bib string at 1024 than at 1280. Bib numbers are exact-match lookup keys,
+    so that divergence mis-attributes photos to runners.
+
+    Blur is deliberately exempt and is asserted separately below: its two
+    calibrated dims are shared with their own endpoints, which is the property
+    that matters. Source-level assertions — no models, no DB.
+    """
+
+    def _decode_calls(self, module_name: str) -> list[str]:
+        """Every decode helper call in a worker module, as source text."""
+        import ast
+        import importlib
+        import inspect
+
+        source = inspect.getsource(importlib.import_module(module_name))
+        decoders = {
+            "decode_image_from_path", "decode_images_from_paths",
+            "_decode_raw_bytes", "decode_gray_from_path", "decode_grays_from_paths",
+        }
+        calls = []
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id in decoders:
+                    kw = {k.arg: ast.unparse(k.value) for k in node.keywords}
+                    calls.append(f"{node.func.id}({kw.get('max_dim', '<default>')})")
+        return calls
+
+    def test_face_worker_uses_the_global_dimension(self):
+        calls = self._decode_calls("src.workers.tasks.face_tasks")
+        assert calls, "no decode calls found — test is looking at the wrong module"
+        overrides = [c for c in calls if "<default>" not in c]
+        assert not overrides, f"face worker overrides the decode dim: {overrides}"
+
+    def test_bib_worker_uses_the_global_dimension(self):
+        calls = self._decode_calls("src.workers.tasks.bib_tasks")
+        assert calls, "no decode calls found — test is looking at the wrong module"
+        overrides = [c for c in calls if "<default>" not in c]
+        assert not overrides, f"bib worker overrides the decode dim: {overrides}"
+
+    def test_blur_classify_worker_shares_the_endpoint_setting(self):
+        # Blur classify legitimately differs from MAX_INFERENCE_DIMENSION, but
+        # the worker and /blur/classify/stream must read the SAME setting.
+        calls = self._decode_calls("src.workers.tasks.blur_tasks")
+        assert any("BLUR_CLASSIFY_DECODE_DIM" in c for c in calls), calls
+
+    def test_default_global_dimension_is_the_calibrated_1280(self):
+        from src.config import Settings
+
+        assert Settings().MAX_INFERENCE_DIMENSION == 1280

@@ -42,8 +42,14 @@ def decode_image_from_path(path: str, max_dim: int = 0) -> np.ndarray | None:
 
     Args:
         path: Blob store file path.
-        max_dim: Pipeline-specific max dimension (0 = use global setting).
-            Blur=640, face=768, bib=1024.
+        max_dim: Max dimension override (0 = use MAX_INFERENCE_DIMENSION).
+            The face and bib workers deliberately pass no override, so they
+            decode at the same dimension as the single-image endpoints — see
+            the 2026-08-14 decode-dim ADR. Blur is the exception: its detect
+            path passes 640 (the reference resolution its Laplacian score is
+            normalised to) and its classify path passes
+            BLUR_CLASSIFY_DECODE_DIM, both of which are calibrated values
+            shared with the corresponding endpoints.
     """
     try:
         from src.utils.blob_store import load_blob
@@ -139,7 +145,7 @@ def decode_images_from_paths(
 
     Args:
         paths: Blob store file paths.
-        max_dim: Pipeline-specific max dimension (0 = global setting).
+        max_dim: Max dimension override (0 = use MAX_INFERENCE_DIMENSION).
         max_workers: Thread pool size. 0 (default) scales to ``min(cpu_count, 8)``.
     """
     from concurrent.futures import ThreadPoolExecutor
