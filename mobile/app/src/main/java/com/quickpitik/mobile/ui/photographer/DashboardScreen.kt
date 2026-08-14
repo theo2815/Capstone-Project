@@ -749,7 +749,14 @@ private fun ShutterWatchLiveCard(
     onStop: () -> Unit,
 ) {
     QpCard(modifier = Modifier.fillMaxWidth()) {
-        StatusChip(text = "Auto-upload · live", tone = StatusTone.Approved)
+        // A dropped cable is a pause, not a failure — the count keeps standing
+        // and the controller is already reopening the session, so this reads as
+        // a state change on the same card rather than an error.
+        if (state.reconnecting) {
+            StatusChip(text = "Auto-upload · reconnecting", tone = StatusTone.Warning)
+        } else {
+            StatusChip(text = "Auto-upload · live", tone = StatusTone.Approved)
+        }
         Spacer(modifier = Modifier.height(14.dp))
         Text(
             text = state.captureCount.toString(),
@@ -758,6 +765,15 @@ private fun ShutterWatchLiveCard(
         )
         Spacer(modifier = Modifier.height(2.dp))
         Kicker(text = "Captured this session", color = SlateSoft)
+        if (state.reconnecting) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "Camera link dropped. Re-plug the USB cable — shots taken " +
+                    "meanwhile upload once it reconnects.",
+                color = Slate,
+                style = Typography.bodyMedium,
+            )
+        }
         state.lastCaptureName?.let { name ->
             Spacer(modifier = Modifier.height(10.dp))
             Text(
@@ -842,6 +858,30 @@ private fun CameraConnectedCardWatchingPreview() {
                 "Capture via EVENT — R6T_1083.JPG (0x00000C4B)",
                 "  R6T_1083.JPG 8412 KB → queued",
             ),
+        ),
+        canStartWatch = true,
+        onStartWatch = {},
+        onStopWatch = {},
+        onSimulate = {},
+        onBrowseCard = {},
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun CameraConnectedCardReconnectingPreview() {
+    CameraConnectedCard(
+        deviceName = "Canon Inc. Canon Digital Camera",
+        vendorId = 0x04A9,
+        productId = 0x32F5,
+        watchState = ShutterWatchState.Watching(
+            captureCount = 12,
+            lastCaptureName = "R6T_1083.JPG",
+            recentLog = listOf(
+                "Camera link lost — retrying. Photos already pulled keep uploading.",
+                "No camera / USB permission (attempt 1)…",
+            ),
+            reconnecting = true,
         ),
         canStartWatch = true,
         onStartWatch = {},

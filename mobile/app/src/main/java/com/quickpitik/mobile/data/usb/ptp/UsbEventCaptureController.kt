@@ -2,9 +2,11 @@ package com.quickpitik.mobile.data.usb.ptp
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import java.io.OutputStream
 
 /**
  * USB physical-shutter capture monitor for a Canon EOS body — live auto-upload:
@@ -26,12 +28,20 @@ import kotlinx.coroutines.isActive
  * when the camera won't give object info). A frame whose download fails is
  * retried the next time a detector surfaces it, up to [MAX_PULL_ATTEMPTS].
  *
+ * **A dropped link is a pause, not the end of the shoot.** A race runs hours
+ * with the phone pocketed, so a knocked USB-C cable, a dozing body, or a wedged
+ * PTP pipe must not silently end the session — that loses every subsequent
+ * frame with no signal beyond a notification quietly disappearing. [run] holds
+ * an outer loop that reopens the session and keeps going, giving up only after
+ * [RECONNECT_BUDGET_MS]. Frames shot during the outage are caught up on
+ * reconnect, because the dedupe set survives the session (see [run]).
+ *
  * Threading contract: every transfer is a synchronous `bulkTransfer` — callers
  * MUST launch [run] on `Dispatchers.IO`. Cancellation is only observed at
  * `delay()` points; an in-flight bulkTransfer finishes or times out (≤5 s)
- * first, so stopping can lag by up to that much. The `finally` block (event/
- * remote mode reset + session close) is entirely non-suspending and therefore
- * safe under cancellation.
+ * first, so stopping can lag by up to that much. The per-session `finally`
+ * (event/remote mode reset + session close) is entirely non-suspending and
+ * therefore safe under cancellation.
  *
  * Takes a [deviceProvider] so each open retry re-fetches the current handle if the
  * camera re-enumerated after sleeping.
@@ -45,107 +55,203 @@ class UsbEventCaptureController(
     suspend fun run(
         onLog: (String) -> Unit,
         onStarted: () -> Unit,
-        onCapture: suspend (filename: String, bytes: ByteArray) -> Boolean,
+        onReconnecting: (Boolean) -> Unit,
+        onCapture: suspend (filename: String, writeTo: (OutputStream) -> Unit) -> Boolean,
     ) {
-        val session = openAndInit(onLog) ?: run {
-            onLog(
-                "Couldn't start auto-upload. Wake the camera (half-press the shutter), set " +
-                    "Auto power off → Disable, confirm the USB permission was allowed, then " +
-                    "tap Start auto-upload again."
-            )
-            return
-        }
+        // These outlive any single PTP session, and that is the whole point of
+        // the outer loop: on a reconnect we must NOT re-baseline. Handles shot
+        // while the camera was away are absent from `seen`, so the card-diff
+        // detector finds them and pulls them — the catch-up falls out for free.
+        // Relaunching run() from the ViewModel instead would reset `seen`, and a
+        // fresh baseline would silently swallow every frame from the outage.
+        val seen = HashSet<Long>()
+        val attempts = HashMap<Long, Int>()
+        var baselined = false
+        // When the current outage started; 0 while a session is healthy.
+        var linkLostAt = 0L
+
         try {
-            // Baseline BOTH detectors so existing frames aren't treated as new.
-            val seen = HashSet<Long>()
-            runCatching { EosEvents.parse(session.eosGetEvent()) }.getOrDefault(emptyList())
-                .filter { it.isObjectArrival }.forEach { seen.add(it.handle) }
-
-            // The card baseline is fail-closed: without it, the first card scan
-            // would see EVERY photo on the card as new and upload all of them.
-            var baseCard: List<Long>? = null
-            for (attempt in 1..BASELINE_ATTEMPTS) {
-                baseCard = runCatching { allCardHandles(session) }.getOrNull()
-                if (baseCard != null) break
-                onLog("Baseline attempt $attempt failed — retrying…")
-                delay(RETRY_MS)
-            }
-            if (baseCard == null) {
-                onLog(
-                    "Couldn't read the card listing to set a baseline. Stopping so the " +
-                        "whole card isn't re-uploaded — unplug/replug and try again."
-                )
-                return
-            }
-            seen.addAll(baseCard)
-            onLog("Baseline set — ${baseCard.size} card object(s) known. Shoot now.")
-            onStarted()
-            onLog("Auto-upload live — press the shutter on the camera; each shot uploads.")
-
-            // Download attempts per handle: retried whenever a detector surfaces
-            // the handle again, then poisoned into `seen` at the cap so one bad
-            // object can't stall the loop forever.
-            val attempts = HashMap<Long, Int>()
-            val loggedCodes = HashSet<Int>()
-            var lastKeepAlive = System.currentTimeMillis()
-            var lastCardScan = System.currentTimeMillis()
-            var lastHeartbeat = System.currentTimeMillis()
-            var consecutiveErrors = 0
-
             while (currentCoroutineContext().isActive) {
-                // ── Detector 1: EOS event stream ────────────────────────────────
-                val blob = try {
-                    session.eosGetEvent()
-                } catch (e: Exception) {
-                    consecutiveErrors++
-                    if (consecutiveErrors == 1 || consecutiveErrors % 25 == 0) {
-                        onLog("GetEvent error (${e.message}) ×$consecutiveErrors")
+                val session = openAndInit(onLog)
+                if (session == null) {
+                    // Never got going at all: a setup problem, not a blip.
+                    if (!baselined) {
+                        onLog(
+                            "Couldn't start auto-upload. Wake the camera (half-press the shutter), set " +
+                                "Auto power off → Disable, confirm the USB permission was allowed, then " +
+                                "tap Start auto-upload again."
+                        )
+                        return
                     }
-                    if (consecutiveErrors >= ERRORS_BEFORE_STOP) {
-                        onLog("Camera keeps rejecting GetEvent (${e.message}). Stopping — send me this log.")
-                        break
-                    }
-                    delay(POLL_MS)
+                    if (outOfPatience(linkLostAt, onLog)) return
+                    delay(RECONNECT_WAIT_MS)
                     continue
                 }
-                consecutiveErrors = 0
-                val events = EosEvents.parse(blob)
-                for (ev in events) if (loggedCodes.add(ev.code)) onLog("event 0x%04X seen".format(ev.code))
-                for (ev in events) {
-                    if (!ev.isObjectArrival || ev.handle in seen) continue
-                    settlePull(seen, attempts, ev.handle, pullViaEvent(session, ev.handle, onLog, onCapture), onLog)
-                }
 
-                val now = System.currentTimeMillis()
-
-                // ── Detector 2: throttled card-listing diff ─────────────────────
-                if (now - lastCardScan > CARD_SCAN_MS) {
-                    lastCardScan = now
-                    val handles = runCatching { allCardHandles(session) }.getOrNull()
-                    if (handles != null) {
-                        val fresh = handles.filter { it !in seen }.sorted()
-                        if (fresh.isNotEmpty()) onLog("card-diff: ${fresh.size} new object(s) on card")
-                        for (h in fresh) {
-                            settlePull(seen, attempts, h, pullViaCard(session, h, onLog, onCapture), onLog)
-                        }
+                if (!baselined) {
+                    if (!setBaseline(session, seen, onLog)) {
+                        runCatching { session.close() }
+                        return
                     }
+                    baselined = true
+                    onStarted()
+                    onLog("Auto-upload live — press the shutter on the camera; each shot uploads.")
+                } else {
+                    onReconnecting(false)
+                    onLog("Reconnected — catching up on anything shot while the camera was away.")
                 }
 
-                if (now - lastHeartbeat > HEARTBEAT_MS) {
-                    onLog("Watching… press the shutter to capture.")
-                    lastHeartbeat = now
+                val sessionStart = System.currentTimeMillis()
+                try {
+                    watch(session, seen, attempts, onLog, onCapture)
+                } catch (e: CancellationException) {
+                    throw e // the photographer stopped — never treat this as a drop
+                } catch (e: Exception) {
+                    // Anything the watch loop didn't handle itself kills only
+                    // this session, for the same reason the error storm does:
+                    // a fresh session is the remedy, and ending the shoot over
+                    // it loses every later frame.
+                    onLog("Session ended on ${e.message ?: e::class.simpleName}.")
+                } finally {
+                    // Non-suspending, so it is safe under cancellation.
+                    runCatching { session.eosSetEventMode(0) }
+                    runCatching { session.eosSetRemoteMode(0) }
+                    runCatching { session.close() }
                 }
-                if (now - lastKeepAlive > KEEPALIVE_MS) {
-                    runCatching { session.eosKeepDeviceOn() }
-                    lastKeepAlive = now
-                }
-                delay(POLL_MS)
+
+                if (!currentCoroutineContext().isActive) break
+
+                // watch() returned on its own, so the link died. Only a session
+                // that ran healthily for a while earns a fresh budget: a body
+                // that accepts a session and immediately storms would otherwise
+                // reopen forever, one short-lived session at a time.
+                val wasHealthy = System.currentTimeMillis() - sessionStart >= MIN_HEALTHY_SESSION_MS
+                if (wasHealthy || linkLostAt == 0L) linkLostAt = System.currentTimeMillis()
+                onReconnecting(true)
+                onLog("Camera link lost — retrying. Photos already pulled keep uploading.")
+                if (outOfPatience(linkLostAt, onLog)) return
+                delay(RECONNECT_WAIT_MS)
             }
         } finally {
-            runCatching { session.eosSetEventMode(0) }
-            runCatching { session.eosSetRemoteMode(0) }
-            runCatching { session.close() }
             onLog("Auto-upload stopped.")
+        }
+    }
+
+    /**
+     * True once we have been trying to reopen for longer than
+     * [RECONNECT_BUDGET_MS] — the point where "the cable got knocked" stops
+     * being the likely explanation and "the photographer packed up" starts.
+     */
+    private fun outOfPatience(linkLostAt: Long, onLog: (String) -> Unit): Boolean {
+        if (linkLostAt == 0L) return false
+        if (System.currentTimeMillis() - linkLostAt < RECONNECT_BUDGET_MS) return false
+        onLog(
+            "Camera hasn't come back in ${RECONNECT_BUDGET_MS / 60_000} minutes — stopping " +
+                "auto-upload. Photos already pulled keep uploading."
+        )
+        return true
+    }
+
+    /**
+     * Prime BOTH detectors so frames already on the card aren't treated as new.
+     * Fail-closed: without a card baseline the first scan would see every photo
+     * on the card as fresh and upload all of them, so a failure here stops the
+     * run rather than guessing. Runs once per [run], never on a reconnect.
+     */
+    private suspend fun setBaseline(
+        session: PtpSession,
+        seen: HashSet<Long>,
+        onLog: (String) -> Unit,
+    ): Boolean {
+        runCatching { EosEvents.parse(session.eosGetEvent()) }.getOrDefault(emptyList())
+            .filter { it.isObjectArrival }.forEach { seen.add(it.handle) }
+
+        var baseCard: List<Long>? = null
+        for (attempt in 1..BASELINE_ATTEMPTS) {
+            baseCard = runCatching { allCardHandles(session) }.getOrNull()
+            if (baseCard != null) break
+            onLog("Baseline attempt $attempt failed — retrying…")
+            delay(RETRY_MS)
+        }
+        if (baseCard == null) {
+            onLog(
+                "Couldn't read the card listing to set a baseline. Stopping so the " +
+                    "whole card isn't re-uploaded — unplug/replug and try again."
+            )
+            return false
+        }
+        seen.addAll(baseCard)
+        onLog("Baseline set — ${baseCard.size} card object(s) known. Shoot now.")
+        return true
+    }
+
+    /**
+     * Poll one open session until it dies or the caller cancels. Returning
+     * normally means "this session is finished" — the error-storm exit is a
+     * reopen signal, since a fresh session is exactly the remedy for a wedged
+     * PTP pipe. [seen] and [attempts] belong to [run] so they survive that.
+     */
+    private suspend fun watch(
+        session: PtpSession,
+        seen: HashSet<Long>,
+        attempts: HashMap<Long, Int>,
+        onLog: (String) -> Unit,
+        onCapture: suspend (String, (OutputStream) -> Unit) -> Boolean,
+    ) {
+        val loggedCodes = HashSet<Int>()
+        var lastKeepAlive = System.currentTimeMillis()
+        var lastCardScan = System.currentTimeMillis()
+        var lastHeartbeat = System.currentTimeMillis()
+        var consecutiveErrors = 0
+
+        while (currentCoroutineContext().isActive) {
+            // ── Detector 1: EOS event stream ────────────────────────────────
+            val blob = try {
+                session.eosGetEvent()
+            } catch (e: Exception) {
+                consecutiveErrors++
+                if (consecutiveErrors == 1 || consecutiveErrors % 25 == 0) {
+                    onLog("GetEvent error (${e.message}) ×$consecutiveErrors")
+                }
+                if (consecutiveErrors >= ERRORS_BEFORE_STOP) {
+                    onLog("Camera stopped answering (${e.message}) — dropping this session.")
+                    return
+                }
+                delay(POLL_MS)
+                continue
+            }
+            consecutiveErrors = 0
+            val events = EosEvents.parse(blob)
+            for (ev in events) if (loggedCodes.add(ev.code)) onLog("event 0x%04X seen".format(ev.code))
+            for (ev in events) {
+                if (!ev.isObjectArrival || ev.handle in seen) continue
+                settlePull(seen, attempts, ev.handle, pullViaEvent(session, ev.handle, onLog, onCapture), onLog)
+            }
+
+            val now = System.currentTimeMillis()
+
+            // ── Detector 2: throttled card-listing diff ─────────────────────
+            if (now - lastCardScan > CARD_SCAN_MS) {
+                lastCardScan = now
+                val handles = runCatching { allCardHandles(session) }.getOrNull()
+                if (handles != null) {
+                    val fresh = handles.filter { it !in seen }.sorted()
+                    if (fresh.isNotEmpty()) onLog("card-diff: ${fresh.size} new object(s) on card")
+                    for (h in fresh) {
+                        settlePull(seen, attempts, h, pullViaCard(session, h, onLog, onCapture), onLog)
+                    }
+                }
+            }
+
+            if (now - lastHeartbeat > HEARTBEAT_MS) {
+                onLog("Watching… press the shutter to capture.")
+                lastHeartbeat = now
+            }
+            if (now - lastKeepAlive > KEEPALIVE_MS) {
+                runCatching { session.eosKeepDeviceOn() }
+                lastKeepAlive = now
+            }
+            delay(POLL_MS)
         }
     }
 
@@ -182,7 +288,7 @@ class UsbEventCaptureController(
         session: PtpSession,
         handle: Long,
         onLog: (String) -> Unit,
-        onCapture: suspend (String, ByteArray) -> Boolean,
+        onCapture: suspend (String, (OutputStream) -> Unit) -> Boolean,
     ): PullOutcome {
         // Standard GetObjectInfo works on event-surfaced handles (same handle
         // space the card path enumerates) and provides the type filter + the
@@ -196,23 +302,14 @@ class UsbEventCaptureController(
         }
         val name = info?.filename?.takeIf { it.isNotBlank() } ?: "R6_%08X.jpg".format(handle)
         onLog("Capture via EVENT — $name (0x%08X)".format(handle))
-        val bytes = try {
-            session.eosGetObject(handle)
-        } catch (e: Exception) {
-            onLog("  EOS download failed: ${e.message}")
-            return PullOutcome.FAILED
+        val outcome = pullInto(name, sniff = info == null, onLog, onCapture) { sink ->
+            session.eosGetObjectTo(handle, sink)
         }
-        // 0 bytes may be an object still mid-write to the card — worth a retry.
-        if (bytes.isEmpty()) { onLog("  0 bytes — will retry"); return PullOutcome.FAILED }
-        runCatching { session.eosTransferComplete(handle) }
-        if (info == null && !looksLikeJpeg(bytes)) {
-            // No ObjectInfo to filter on — sniff the pulled bytes. A CR3 never
-            // becomes a JPEG, so this is a skip, not a retry.
-            onLog("  not a JPEG (no SOI) — left on card")
-            return PullOutcome.SKIPPED
-        }
-        onLog("  $name ${bytes.size / 1024} KB → queued")
-        return if (onCapture(name, bytes)) PullOutcome.UPLOADED else PullOutcome.FAILED
+        // Acknowledge the object only once the bytes are durably ours. The
+        // buffered version told the camera "done" before the persist; if that
+        // persist then failed the frame was already released.
+        if (outcome == PullOutcome.UPLOADED) runCatching { session.eosTransferComplete(handle) }
+        return outcome
     }
 
     /** Pull a frame found by the standard card-listing diff (standard GetObject). */
@@ -220,31 +317,64 @@ class UsbEventCaptureController(
         session: PtpSession,
         handle: Long,
         onLog: (String) -> Unit,
-        onCapture: suspend (String, ByteArray) -> Boolean,
+        onCapture: suspend (String, (OutputStream) -> Unit) -> Boolean,
     ): PullOutcome {
         val info = runCatching { session.getObjectInfo(handle) }.getOrNull()
         if (info != null && info.isAssociation) return PullOutcome.SKIPPED
         if (info != null && !info.isJpeg) return PullOutcome.SKIPPED // RAW stays on the card
         val name = info?.filename?.takeIf { it.isNotBlank() } ?: "IMG_%08X.jpg".format(handle)
         onLog("Capture via CARD — $name (0x%08X)".format(handle))
-        val bytes = try {
-            session.getObject(handle)
+        return pullInto(name, sniff = info == null, onLog, onCapture) { sink ->
+            session.getObjectTo(handle, sink)
+        }
+    }
+
+    /**
+     * Shared tail of both detectors: stream the object into the caller's sink
+     * and fold the result into a [PullOutcome].
+     *
+     * [sniff] is set only when GetObjectInfo failed and there is no format to
+     * filter on, so the JPEG SOI marker has to be checked on the wire. The sink
+     * aborts on the first two bytes, which means a stray RAW now costs two
+     * bytes instead of a full-size download.
+     *
+     * That abort surfaces as `persisted == false` rather than as a throw here:
+     * the exception is raised inside the caller's sink handling (which owns
+     * deleting the partial file), so the outcome is read back off the sniffer.
+     */
+    private suspend fun pullInto(
+        name: String,
+        sniff: Boolean,
+        onLog: (String) -> Unit,
+        onCapture: suspend (String, (OutputStream) -> Unit) -> Boolean,
+        read: (OutputStream) -> Long,
+    ): PullOutcome {
+        var pulled = 0L
+        var sniffer: JpegSniffSink? = null
+        val persisted = try {
+            onCapture(name) { sink ->
+                val target = if (sniff) JpegSniffSink(sink).also { sniffer = it } else sink
+                pulled = read(target)
+            }
         } catch (e: Exception) {
-            onLog("  card download failed: ${e.message}")
+            onLog("  download failed: ${e.message}")
             return PullOutcome.FAILED
         }
-        if (bytes.isEmpty()) { onLog("  0 bytes — will retry"); return PullOutcome.FAILED }
-        if (info == null && !looksLikeJpeg(bytes)) {
+        if (sniffer?.sawNonJpegHead == true) {
+            // A CR3 never becomes a JPEG, so this is a skip, not a retry.
             onLog("  not a JPEG (no SOI) — left on card")
             return PullOutcome.SKIPPED
         }
-        onLog("  $name ${bytes.size / 1024} KB → queued")
-        return if (onCapture(name, bytes)) PullOutcome.UPLOADED else PullOutcome.FAILED
+        if (!persisted) {
+            // 0 bytes usually means the object is still being written to the
+            // card; either way it is worth another try when a detector
+            // surfaces the handle again.
+            onLog("  ${if (pulled == 0L) "0 bytes" else "persist failed"} — will retry")
+            return PullOutcome.FAILED
+        }
+        onLog("  $name ${pulled / 1024} KB → queued")
+        return PullOutcome.UPLOADED
     }
-
-    /** JPEG SOI marker sniff — the filter of last resort when GetObjectInfo failed. */
-    private fun looksLikeJpeg(bytes: ByteArray): Boolean =
-        bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()
 
     /**
      * Union of object handles across every storage; wildcard fallback if empty.
@@ -327,5 +457,60 @@ class UsbEventCaptureController(
         const val ERRORS_BEFORE_STOP = 12
         const val BASELINE_ATTEMPTS = 3
         const val MAX_PULL_ATTEMPTS = 3
+
+        // Reconnect budget. A race lasts hours and a knocked cable re-enumerates
+        // in seconds, so patience is cheap; five minutes covers a lens change or
+        // a body that dozed off, and still ends the shoot in a bounded time once
+        // the photographer has actually packed up.
+        const val RECONNECT_BUDGET_MS = 5L * 60L * 1000L
+        const val RECONNECT_WAIT_MS = 2000L
+
+        // A session that dies faster than this never really worked, so it does
+        // NOT refresh the budget above — otherwise a body that accepts a session
+        // and immediately storms would reopen forever, one short session at a time.
+        const val MIN_HEALTHY_SESSION_MS = 10_000L
+    }
+}
+
+/**
+ * Passes bytes straight through to [delegate] while checking that the object
+ * begins with a JPEG SOI marker (FF D8).
+ *
+ * Only used when GetObjectInfo failed and there is no declared format to filter
+ * on. Aborting on the first two bytes is the point: with the buffered reads this
+ * check happened after a whole RAW had already crossed the wire.
+ */
+private class JpegSniffSink(private val delegate: OutputStream) : OutputStream() {
+
+    /** True once the head was inspected and did not look like a JPEG. */
+    var sawNonJpegHead = false
+        private set
+
+    private val head = ByteArray(2)
+    private var headLen = 0
+    private var verified = false
+
+    override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        var i = 0
+        while (headLen < head.size && i < len) {
+            head[headLen] = b[off + i]
+            headLen++
+            i++
+        }
+        if (!verified && headLen == head.size) {
+            verified = true
+            if (head[0] != SOI_0 || head[1] != SOI_1) {
+                sawNonJpegHead = true
+                throw PtpException("object does not start with a JPEG SOI marker")
+            }
+        }
+        delegate.write(b, off, len)
+    }
+
+    private companion object {
+        const val SOI_0 = 0xFF.toByte()
+        const val SOI_1 = 0xD8.toByte()
     }
 }

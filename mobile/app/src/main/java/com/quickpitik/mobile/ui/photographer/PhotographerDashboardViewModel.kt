@@ -44,6 +44,7 @@ import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
 import java.io.File
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -174,6 +175,13 @@ sealed class ShutterWatchState {
         val lastCaptureName: String?,
         /** Rolling tail of controller log lines (max [WATCH_LOG_LINES], newest last). */
         val recentLog: List<String>,
+        /**
+         * The camera link dropped and the controller is reopening it. Still
+         * [Watching] rather than [Error] on purpose: the shoot is paused, not
+         * over, and the state is what keeps the foreground service (and its
+         * wakelock) alive while we wait for the camera to come back.
+         */
+        val reconnecting: Boolean = false,
     ) : ShutterWatchState()
     data class Error(val message: String) : ShutterWatchState()
 }
@@ -359,6 +367,11 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
      */
     private fun ingestNotice(watch: ShutterWatchState, card: CardBrowseState): String? = when {
         watch is ShutterWatchState.Starting -> "Starting auto-upload…"
+        // Deliberately still a notice, so the service and its wakelock stay up
+        // across the outage. Letting the process go cached here is exactly what
+        // would stop us ever noticing the camera came back.
+        watch is ShutterWatchState.Watching && watch.reconnecting ->
+            "Auto-upload paused · reconnecting to camera…"
         watch is ShutterWatchState.Watching -> {
             val n = watch.captureCount
             "Auto-upload live · $n photo${if (n == 1) "" else "s"} sent"
@@ -1049,8 +1062,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                             CardBrowseState.Error(progress.message)
                     }
                 },
-                onPulled = { photo, bytes ->
-                    persistCapturedJpeg(photo.filename, bytes, activeEvent.id, photographerId)
+                onPulled = { photo, writeTo ->
+                    persistCapturedJpeg(photo.filename, activeEvent.id, photographerId, writeTo)
                 },
             )
             // Tear down the watcher (whether we finished cleanly or the watcher
@@ -1076,15 +1089,24 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
      */
     private suspend fun persistCapturedJpeg(
         originalFilename: String,
-        bytes: ByteArray,
         eventId: String,
         photographerId: String,
+        writeTo: (OutputStream) -> Unit,
     ): Boolean {
         val persistStart = System.currentTimeMillis()
+        val unique = "dslr_import_${System.currentTimeMillis()}_$originalFilename"
+        val file = File(getApplication<Application>().cacheDir, unique)
         return try {
-            val unique = "dslr_import_${System.currentTimeMillis()}_$originalFilename"
-            val file = File(getApplication<Application>().cacheDir, unique)
-            file.outputStream().use { it.write(bytes) }
+            // The PTP read happens inside here, streaming straight to disk, so
+            // a frame never exists whole in memory.
+            file.outputStream().buffered().use { writeTo(it) }
+            // An empty file means the camera handed over nothing (an object
+            // still being written to the card, typically). Leave no orphan and
+            // report failure so the caller retries the handle.
+            if (file.length() == 0L) {
+                file.delete()
+                return false
+            }
             database.uploadQueueDao().insertRecord(
                 UploadRecord(
                     filePath = file.absolutePath,
@@ -1097,10 +1119,14 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             val persistMs = System.currentTimeMillis() - persistStart
             android.util.Log.i(
                 "QP/UPLOAD-PERF",
-                "persist file=$originalFilename bytes=${bytes.size} ms=$persistMs",
+                "persist file=$originalFilename bytes=${file.length()} ms=$persistMs",
             )
             true
         } catch (e: Exception) {
+            // Streaming means a mid-transfer failure leaves a partial file
+            // behind; the buffered version could never produce one. Nothing
+            // was queued, so the file has no owner — drop it.
+            runCatching { file.delete() }
             false
         }
     }
@@ -1132,21 +1158,19 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         watchLogTail = emptyList()
         _shutterWatchState.value = ShutterWatchState.Starting
 
-        // Detach watcher — same shape as the card-import disconnectWatcherJob.
-        // Sets its Error BEFORE cancelling so the job's finally leaves it alone.
+        // Detach watcher. It no longer CANCELS the watch: the controller now
+        // reopens a dropped session itself (its deviceProvider already returns
+        // null while detached), so a knocked cable is a pause, not the end of
+        // the shoot. All this does is flush what's queued and surface the pause
+        // immediately, rather than waiting for the controller's own detection.
         shutterWatchDetachJob?.cancel()
         shutterWatchDetachJob = viewModelScope.launch {
             cameraManager.state.collect { camState ->
-                val watch = _shutterWatchState.value
-                if (camState is CameraConnectionState.Disconnected &&
-                    (watch is ShutterWatchState.Starting || watch is ShutterWatchState.Watching)
-                ) {
-                    _shutterWatchState.value = ShutterWatchState.Error(
-                        "Camera disconnected — auto-upload stopped. Photos already pulled keep uploading."
-                    )
-                    shutterWatchJob?.cancel()
-                    runSyncEngine() // flush what's queued
+                if (camState !is CameraConnectionState.Disconnected) return@collect
+                _shutterWatchState.update { s ->
+                    if (s is ShutterWatchState.Watching) s.copy(reconnecting = true) else s
                 }
+                runSyncEngine() // flush what's queued
             }
         }
 
@@ -1164,8 +1188,15 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                             recentLog = watchLogTail,
                         )
                     },
-                    onCapture = { filename, bytes ->
-                        val ok = persistCapturedJpeg(filename, bytes, eventId, photographerId)
+                    // Fires only after onStarted, so captureCount is never reset
+                    // by a reconnect — the count is for the whole shoot.
+                    onReconnecting = { reconnecting ->
+                        _shutterWatchState.update { s ->
+                            if (s is ShutterWatchState.Watching) s.copy(reconnecting = reconnecting) else s
+                        }
+                    },
+                    onCapture = { filename, writeTo ->
+                        val ok = persistCapturedJpeg(filename, eventId, photographerId, writeTo)
                         if (ok) {
                             _shutterWatchState.update { s ->
                                 if (s is ShutterWatchState.Watching) {
