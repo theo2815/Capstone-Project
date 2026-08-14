@@ -416,20 +416,25 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       const prev = snapPayoutsById.get(p.id);
       if (!prev) {
         // New payout. POST creates the row server-side; if the user attached
-        // a QR locally, a second call uploads it. We queue the QR upload
-        // synchronously inside onSuccess so the dependent ordering holds
-        // regardless of how Promise.allSettled interleaves elsewhere.
+        // a QR locally, a second call uploads it. Both live inside one `run`
+        // so a failed QR reaches the failures list instead of vanishing
+        // behind the parent "Settings saved." toast.
+        //
+        // The store + snapshot commit happens INSIDE run, before the QR
+        // upload, not in onSuccess. onSuccess only fires for fulfilled tasks
+        // (see the results.forEach below), so if the QR throws while the
+        // commit sat in onSuccess, the snapshot would never learn the server
+        // id and the next Save would POST a duplicate payout account. This
+        // ordering is what keeps retries idempotent.
         const localId = p.id;
         tasks.push({
           label: "Payout account",
-          run: () =>
-            postPayoutAccount({
+          run: async () => {
+            const serverRow = await postPayoutAccount({
               method: p.method,
               accountNumber: p.accountNumber,
               accountName: p.accountName,
-            }),
-          onSuccess: (result) => {
-            const serverRow = result as PayoutAccount;
+            });
             usePhotographerSettingsStore.setState((prev) => ({
               payouts: prev.payouts.map((row) =>
                 row.id === localId
@@ -441,22 +446,18 @@ function EditModeProvider({ children }: { children: ReactNode }) {
                   : row,
               ),
             }));
-            snap.payouts = [
-              ...snap.payouts,
-              {
-                ...serverRow,
-                qr: p.qr ? { ...p.qr } : null,
-              },
-            ];
+            // Snapshot the account with qr: null until the QR actually
+            // lands. If the QR upload throws, the next Save diffs a null qr
+            // against the local one, sees qrChanged, and retries just the
+            // QR through the existing path below — no duplicate account.
+            snap.payouts = [...snap.payouts, { ...serverRow, qr: null }];
             if (p.qr) {
               const file = dataUrlToFile(p.qr.dataUrl, `qr-${serverRow.id}.png`);
-              void postPayoutQr(serverRow.id, file).catch((err) => {
-                console.error(
-                  "[photographer/settings] QR upload after payout POST failed",
-                  err,
-                );
-              });
+              await postPayoutQr(serverRow.id, file);
+              const row = snap.payouts.find((x) => x.id === serverRow.id);
+              if (row) row.qr = { ...p.qr };
             }
+            return serverRow;
           },
         });
       } else {
@@ -1351,6 +1352,7 @@ function SubHeading({ label, caption }: { label: string; caption?: string }) {
 
 function LivePreview() {
   const { user } = useAuth();
+  const { editing } = useEditMode();
   const cover = usePhotographerSettingsStore((s) => s.cover);
   const brandName = usePhotographerSettingsStore((s) => s.brandName);
   const brandColor = usePhotographerSettingsStore((s) => s.brandColor);
@@ -1376,7 +1378,10 @@ function LivePreview() {
         <Kicker as="p" tone="soft">
           Live preview
         </Kicker>
-        {handleValid ? (
+        {/* A valid-looking handle isn't a live handle. While editing, the
+            store holds the typed value and the backend still knows the old
+            one, so opening /{handle} in a new tab 404s mid-keystroke. */}
+        {handleValid && !editing ? (
           <Kicker
             as={Link}
             href={`/${trimmedHandle}`}
@@ -1388,7 +1393,7 @@ function LivePreview() {
           </Kicker>
         ) : (
           <Kicker tone="soft">
-            Set URL to open
+            {editing ? "Save to open" : "Set URL to open"}
           </Kicker>
         )}
       </div>
@@ -2089,7 +2094,11 @@ function HandleSlab() {
     ? `quickpitik.com/${handle.trim().toLowerCase()}`
     : "quickpitik.com/your-handle";
 
-  const previewHref = valid ? `/${handle.trim().toLowerCase()}` : "#";
+  // Preview opens the *live* profile, so it stays shut until the handle is
+  // saved — mid-edit the backend still serves the old handle and the new tab
+  // would 404. Copy link is unaffected: copying a not-yet-live URL is fine.
+  const canPreview = valid && !editing;
+  const previewHref = canPreview ? `/${handle.trim().toLowerCase()}` : "#";
 
   const copy = useCallback(async () => {
     if (!valid) return;
@@ -2181,18 +2190,21 @@ function HandleSlab() {
               href={previewHref}
               target="_blank"
               rel="noopener noreferrer"
-              aria-disabled={!valid}
+              aria-disabled={!canPreview}
+              title={
+                valid && editing ? "Save your changes to preview" : undefined
+              }
               onClick={(e) => {
-                if (!valid) e.preventDefault();
+                if (!canPreview) e.preventDefault();
               }}
               className={cn(
                 "font-sans text-sm transition-colors inline-flex items-center gap-1",
-                valid
+                canPreview
                   ? "text-ink hover:text-fresh"
                   : "text-slate-soft cursor-not-allowed",
               )}
             >
-              Preview
+              {valid && editing ? "Save to preview" : "Preview"}
               <span aria-hidden="true">↗</span>
             </a>
           </div>

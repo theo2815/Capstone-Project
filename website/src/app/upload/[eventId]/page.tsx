@@ -47,6 +47,13 @@ import { cn } from "@/lib/utils";
 
 const BATCH_LIMIT = 500;
 
+// Ceiling on simultaneous upload XHRs. Without it a 500-file batch fires 500
+// requests at once — HTTP/2 multiplexes them onto one connection, so nothing
+// queues at the transport layer and the tab holds 500 Files plus 500
+// onprogress closures live. Mirrors the bounded worker pool the pre-flight
+// hash step already uses below.
+const MAX_CONCURRENT_UPLOADS = 4;
+
 // Stable empty-array reference so useEventCatalog's memo doesn't churn while
 // the public events fetch is in-flight.
 const EMPTY_SEED: ReadonlyArray<ListEvent> = [];
@@ -285,6 +292,8 @@ function UploadForm({ event }: { event: ListEvent }) {
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
+  // Upload XHRs currently in flight — see MAX_CONCURRENT_UPLOADS.
+  const activeRef = useRef(0);
 
   const accepted = useMemo(
     () => entries.filter((e) => e.status === "done"),
@@ -466,11 +475,22 @@ function UploadForm({ event }: { event: ListEvent }) {
   // no separate publish step — done == in the gallery (web uploads go straight
   // to live; blur culling is desktop-only via BatchMyPhotos). One XHR per
   // file (Q-013) with onprogress driving setEntries.
+  //
+  // Only MAX_CONCURRENT_UPLOADS run at a time. `activeRef` counts the XHRs in
+  // flight; each settled upload frees its slot and bumps retryNonce, which
+  // re-runs this effect to start the next queued file. The queued → uploading
+  // flip stays synchronous (before any await) so a re-fired effect can never
+  // claim an entry that is already being sent.
   useEffect(() => {
-    const queued = entries.filter((e) => e.status === "queued");
+    const slots = MAX_CONCURRENT_UPLOADS - activeRef.current;
+    if (slots <= 0) return;
+    const queued = entries
+      .filter((e) => e.status === "queued")
+      .slice(0, slots);
     if (queued.length === 0) return;
 
     queued.forEach((entry) => {
+      activeRef.current += 1;
       setEntries((prev) =>
         prev.map((p) =>
           p.id === entry.id ? { ...p, status: "uploading" } : p,
@@ -513,10 +533,27 @@ function UploadForm({ event }: { event: ListEvent }) {
                 : p,
             ),
           );
+        })
+        .finally(() => {
+          // Free the slot and nudge the effect so the next queued file starts.
+          activeRef.current -= 1;
+          setRetryNonce((n) => n + 1);
         });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries.length, retryNonce, event.id]);
+
+  // Guard against losing a batch to F5 / browser-close / back-button. Photos
+  // already marked done persist on the backend, but in-flight XHRs abort and
+  // files still being hashed never get sent — both are gone with no record.
+  // Browsers render their own confirmation copy; a custom string is ignored.
+  const unsavedCount = inFlight.length + checking.length;
+  useEffect(() => {
+    if (unsavedCount === 0) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [unsavedCount]);
 
   function handleSelect(e: ChangeEvent<HTMLInputElement>) {
     if (e.target.files) {

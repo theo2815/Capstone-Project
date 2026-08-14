@@ -371,7 +371,12 @@ function PhotoGrid({
   // flight. Treat null as "still loading" via an empty list so the grid
   // shows its skeleton row count rather than flashing the empty state.
   const photos = livePhotos ?? [];
-  const total = photos.length;
+  // Two different numbers, deliberately. `photoCount` is the event's true
+  // total (event_photographer.photo_count); `photos.length` is how many the
+  // fetch actually returned, capped at the backend's 120 limit. Showing the
+  // fetched count as "total" contradicted the Stats row directly above it.
+  const total = photographer.photoCount;
+  const fetchCapped = photos.length < total;
 
   const { showToast } = useToast();
   const [openIndex, setOpenIndex] = useState<number | null>(null);
@@ -387,14 +392,22 @@ function PhotoGrid({
   const handlePrev = useCallback(() => {
     setOpenIndex((i) => (i === null || i === 0 ? i : i - 1));
   }, []);
+  // Advancing past the last *rendered* tile pulls the next client-side page
+  // in so the arrow keeps working — the grid shows PHOTO_INITIAL (60) but the
+  // fetch already holds up to 120, and those extra photos were unreachable
+  // from the lightbox. Read openIndex from the closure rather than nesting
+  // setLoadedCount inside the setOpenIndex updater: StrictMode double-invokes
+  // updaters, which would advance loadedCount by two increments.
   const handleNext = useCallback(() => {
-    setOpenIndex((i) =>
-      i === null || i === visibleSlice.length - 1 ? i : i + 1,
-    );
-  }, [visibleSlice.length]);
+    if (openIndex === null || openIndex >= photos.length - 1) return;
+    const next = openIndex + 1;
+    if (next >= loadedCount) {
+      setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT);
+    }
+    setOpenIndex(next);
+  }, [openIndex, photos.length, loadedCount]);
   const handleDownload = useCallback(async () => {
-    const photoId =
-      openIndex !== null ? visibleSlice[openIndex]?.id : undefined;
+    const photoId = openIndex !== null ? photos[openIndex]?.id : undefined;
     if (!photoId) return;
     // Signed-URL fetch + programmatic <a download> click (Q-015, 5-min TTL).
     try {
@@ -409,13 +422,22 @@ function PhotoGrid({
         showToast({ kind: "success", message: "Download started." });
         return;
       }
+      // Resolved without a URL (backend 404 / grant missing). Only thrown
+      // errors reach the catch, so without this the click is a silent no-op.
+      showToast({
+        kind: "error",
+        message: "Download unavailable — try again.",
+      });
     } catch (err) {
       console.error("[photographer/download] failed", err);
       showToast({ kind: "error", message: "Download failed. Try again." });
     }
-  }, [openIndex, visibleSlice, showToast]);
+  }, [openIndex, photos, showToast]);
 
-  const openPhoto = openIndex !== null ? visibleSlice[openIndex] : null;
+  // Index against `photos`, not `visibleSlice` — handleNext can advance past
+  // the current slice in the same tick it grows loadedCount. Equivalent for
+  // every already-visible index (visibleSlice is a prefix of photos).
+  const openPhoto = openIndex !== null ? photos[openIndex] : null;
   const previewItem: PhotoPreviewItem | null = openPhoto
     ? {
         id: openPhoto.id,
@@ -450,11 +472,19 @@ function PhotoGrid({
         ))}
       </div>
 
+      {/* `total` here is photos.length, not the event total — the button can
+          only chunk through what the fetch returned. When the fetch was
+          capped, terminalLabel says so instead of claiming "All N loaded". */}
       <LoadMoreButton
         shown={visibleSlice.length}
-        total={total}
+        total={photos.length}
         increment={PAGE_SIZE.PHOTO_INCREMENT}
         onLoadMore={() => setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT)}
+        terminalLabel={
+          fetchCapped
+            ? `Showing first ${photos.length.toLocaleString()} of ${total.toLocaleString()}`
+            : undefined
+        }
       />
 
       {previewItem && openIndex !== null && (
@@ -463,10 +493,10 @@ function PhotoGrid({
           photo={previewItem}
           eventName={event.name}
           index={openIndex + 1}
-          total={visibleSlice.length}
+          total={photos.length}
           onClose={handleClose}
           onPrev={openIndex > 0 ? handlePrev : undefined}
-          onNext={openIndex < visibleSlice.length - 1 ? handleNext : undefined}
+          onNext={openIndex < photos.length - 1 ? handleNext : undefined}
           onDownload={handleDownload}
         />
       )}

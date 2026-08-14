@@ -11,6 +11,7 @@ import {
   usePhotographerEarnings,
   usePhotographerPerEventEarnings,
 } from "@/hooks/use-photographer-data";
+import { BE_MAX_LIMIT } from "@/lib/api-photographer-earnings";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
@@ -262,12 +263,20 @@ function PerEventSlab() {
               </li>
             ))}
           </ul>
+          {/* fetchPerEventEarnings drops the envelope's `total`, so an exact
+              "X of Y" isn't available here. Sitting on the cap is the signal
+              that older events exist beyond what we fetched. */}
           <LoadMoreButton
             shown={visibleSlice.length}
             total={events.length}
             increment={PAGE_SIZE.EARNINGS_INCREMENT}
             onLoadMore={() =>
               setLoadedCount((n) => n + PAGE_SIZE.EARNINGS_INCREMENT)
+            }
+            terminalLabel={
+              events.length >= BE_MAX_LIMIT
+                ? `Showing the ${BE_MAX_LIMIT} most recent events`
+                : undefined
             }
           />
         </>

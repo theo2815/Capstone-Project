@@ -17,6 +17,7 @@ import {
   usePhotographerPayoutReports,
   usePhotographerTransactions,
 } from "@/hooks/use-photographer-data";
+import { BE_MAX_LIMIT } from "@/lib/api-photographer-earnings";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate, formatMonthYear } from "@/lib/format";
 import { formatPayoutNumber } from "@/lib/payout-format";
@@ -165,12 +166,20 @@ function PayoutsSlab() {
               </li>
             ))}
           </ul>
+          {/* fetchPhotographerPayouts drops the envelope's `total`, so an
+              exact "X of Y" isn't available here. Sitting on the cap is the
+              signal that older payouts exist beyond what we fetched. */}
           <LoadMoreButton
             shown={Math.min(loadedCount, payouts.length)}
             total={payouts.length}
             increment={PAGE_SIZE.PAYOUT_INCREMENT}
             onLoadMore={() =>
               setLoadedCount((n) => n + PAGE_SIZE.PAYOUT_INCREMENT)
+            }
+            terminalLabel={
+              payouts.length >= BE_MAX_LIMIT
+                ? `Showing the ${BE_MAX_LIMIT} most recent payouts`
+                : undefined
             }
           />
         </div>
@@ -647,12 +656,21 @@ function TransactionsSlab() {
               </li>
             ))}
           </ul>
+          {/* `total` is what the fetch returned (capped at the backend's 200
+              MAX_LIMIT), since that's all Load More can chunk through. The
+              response envelope also carries the real row count — when the
+              two disagree, say so instead of claiming "All 200 loaded". */}
           <LoadMoreButton
             shown={loadedSlice.length}
             total={transactions.length}
             increment={PAGE_SIZE.TRANSACTION_INCREMENT}
             onLoadMore={() =>
               setLoadedCount((n) => n + PAGE_SIZE.TRANSACTION_INCREMENT)
+            }
+            terminalLabel={
+              liveTx && transactions.length < liveTx.total
+                ? `Showing first ${transactions.length.toLocaleString()} of ${liveTx.total.toLocaleString()}`
+                : undefined
             }
           />
         </>
