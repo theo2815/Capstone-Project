@@ -52,6 +52,15 @@ interface QuickPitikApi {
         @Query("limit") limit: Int = 100
     ): ApiResponseEnvelope<PaginatedResponse<PhotographerLibraryPhotoDto>>
 
+    // Clean original for a photo the caller uploaded. The library listing only
+    // carries the watermarked thumbnailUrl, so the share page resolves this on
+    // demand when the photographer taps Download in the lightbox.
+    @GET("api/v1/me/photographer/photos/{photoId}/download")
+    suspend fun getPhotographerPhotoDownload(
+        @Header("Authorization") token: String,
+        @Path("photoId") photoId: String
+    ): ApiResponseEnvelope<PhotographerDownloadDto>
+
     @GET("api/v1/me/photographer/verification")
     suspend fun getVerificationStatus(
         @Header("Authorization") token: String

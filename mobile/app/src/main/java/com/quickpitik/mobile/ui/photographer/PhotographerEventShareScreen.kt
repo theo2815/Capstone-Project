@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.quickpitik.mobile.data.download.PhotoDownloader
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
@@ -37,6 +38,7 @@ import com.quickpitik.mobile.ui.runner.PhotoPreview
 import com.quickpitik.mobile.ui.runner.PhotoPreviewData
 import com.quickpitik.mobile.ui.runner.PhotoPreviewMode
 import com.quickpitik.mobile.ui.theme.*
+import kotlinx.coroutines.launch
 import java.net.URLEncoder
 
 private fun PhotographerLibraryPhotoDto.toOwnerPreviewData(eventName: String?): PhotoPreviewData =
@@ -64,6 +66,10 @@ fun PhotographerEventShareScreen(
     val brand by viewModel.brandSettings.collectAsState()
     val photosState by viewModel.sharePhotosState.collectAsState()
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
+    val scope = rememberCoroutineScope()
+    // Guards the lightbox download: the presigned-URL fetch plus the save is a
+    // multi-second round trip, and repeat taps would queue duplicate saves.
+    var downloading by remember { mutableStateOf(false) }
 
     LaunchedEffect(event.id) {
         viewModel.fetchSharePhotos(event.id)
@@ -277,6 +283,33 @@ fun PhotographerEventShareScreen(
             currentIndex = safeIdx,
             onClose = { selectedIndex = null },
             onIndexChange = { selectedIndex = it },
+            // Two hops, because the library listing only carries the
+            // watermarked thumbnail: resolve the presigned original, then hand
+            // it to the same saver the runner order screens use.
+            onDownload = { photo ->
+                if (!downloading) {
+                    downloading = true
+                    scope.launch {
+                        val result = viewModel.resolvePhotoDownloadUrl(photo.id)
+                        val message = result.fold(
+                            onSuccess = { url ->
+                                // PhotoPreviewData carries no bib, but the DTO
+                                // list behind it does — look it up so the saved
+                                // file is bib-tagged like the website's.
+                                val bib = current.photos.firstOrNull { it.id == photo.id }?.bib
+                                val filename = PhotoDownloader.buildFilename(photo.id, bib)
+                                when (val saved = PhotoDownloader.saveToGallery(context, url, filename)) {
+                                    is PhotoDownloader.Result.Saved -> "Saved ${saved.displayName} to your gallery."
+                                    is PhotoDownloader.Result.Failed -> saved.message
+                                }
+                            },
+                            onFailure = { it.message ?: "Couldn't get the download link." },
+                        )
+                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                        downloading = false
+                    }
+                }
+            },
             mode = PhotoPreviewMode.OwnerReview,
         )
     }

@@ -704,6 +704,29 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
+    /**
+     * Resolves the presigned URL for the photographer's own un-watermarked
+     * original. Suspending rather than state-backed: the share page needs the
+     * link for exactly one download tap, so parking it in a StateFlow would
+     * leave a stale presigned URL sitting in memory after it expires.
+     */
+    suspend fun resolvePhotoDownloadUrl(photoId: String): Result<String> {
+        val token = sessionManager.getAccessToken()
+            ?: return Result.failure(IllegalStateException("You're signed out. Sign in and try again."))
+        return try {
+            val response = RetrofitClient.apiService
+                .getPhotographerPhotoDownload("Bearer $token", photoId)
+            val url = response.data?.url
+            if (response.success && url != null) {
+                Result.success(url)
+            } else {
+                Result.failure(IllegalStateException(response.error ?: "Couldn't get the download link."))
+            }
+        } catch (e: Exception) {
+            Result.failure(IllegalStateException(RetrofitClient.parseError(e)))
+        }
+    }
+
     fun fetchPublicProfile(handle: String) {
         viewModelScope.launch {
             _publicProfileState.value = PublicProfileState.Loading

@@ -189,6 +189,15 @@ data class PhotographerLibraryPhotoDto(
     val thumbnailUrl: String? = null
 )
 
+// Presigned URL for the photographer's own un-watermarked original — the
+// thumbnailUrl above is the watermarked variant runners see. Mirrors backend
+// PhotographerDownloadDto; expiresAt is ISO-8601 and unused today (the link is
+// consumed immediately by PhotoDownloader), kept so the shape matches the wire.
+data class PhotographerDownloadDto(
+    val url: String,
+    val expiresAt: String? = null
+)
+
 // --- Public photographer profile (GET /public/photographers/{handle}) ---
 data class CoverSourceDto(
     val kind: String, // "gradient" | "image"

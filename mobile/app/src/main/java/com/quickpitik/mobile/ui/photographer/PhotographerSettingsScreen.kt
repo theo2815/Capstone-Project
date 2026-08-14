@@ -1057,13 +1057,25 @@ private fun PayoutRow(
                         color = SlateSoft,
                         style = Typography.bodySmall,
                     )
-                    if (account.qr != null) {
-                        Text(
-                            text = "QR code on file",
-                            color = Slate,
-                            style = Typography.bodySmall,
-                        )
-                    }
+                }
+                // qr.dataUrl is named for the website's local pre-upload shape,
+                // but the backend serves a presigned storage URL (PayoutAccount
+                // Service.qrUrlFor), so Coil loads it directly — HostRewrite
+                // Interceptor on the shared ImageLoader handles the dev
+                // localhost host. Showing the actual code beats "on file": the
+                // photographer can confirm they uploaded the right one.
+                val qrUrl = account.qr?.dataUrl
+                if (qrUrl != null) {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    AsyncImage(
+                        model = qrUrl,
+                        contentDescription = "Payout QR code",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(QpCardShape)
+                            .background(BoneDeep),
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(6.dp))
@@ -1434,7 +1446,14 @@ private fun PayoutEditorSheet(
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else if (mode is PayoutSheetMode.Edit && mode.account.qr != null) {
-                            Text(text = "ON FILE", color = SlateSoft, style = Typography.labelSmall)
+                            // Stored QR — a presigned URL, so Coil renders it
+                            // like any other remote image. See the card above.
+                            AsyncImage(
+                                model = mode.account.qr.dataUrl,
+                                contentDescription = "Payout QR on file",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
                         } else {
                             Text(text = "+", color = Slate, fontSize = 24.sp)
                         }

@@ -1499,9 +1499,12 @@ private fun InboxRow(
         "verification_approved", "unsuspended", "dispute_resolved",
         "payout_approved", "payout_paid", "payout_report_resolved" -> Fresh
         "verification_rejected", "verification_reset",
-        "dispute_escalated", "payout_held" -> WarningOrange
+        "dispute_escalated", "payout_held", "dispute_denied" -> WarningOrange
         "suspended" -> ErrorRed
-        "admin_message" -> Ink
+        "admin_message", "payout_report_acknowledged" -> Ink
+        // force_edit is deliberately absent: the backend removed that admin
+        // action end-to-end, so the kind can never be emitted. Anything else
+        // new from the backend lands on Slate rather than a wrong colour.
         else -> Slate
     }
     val title = message.title?.trim().takeUnless { it.isNullOrEmpty() }

@@ -88,7 +88,9 @@ fun PhotoPreview(
     isInCart: (PhotoPreviewData) -> Boolean = { false },
     onToggleCart: (PhotoPreviewData) -> Unit = {},
     onBuyNow: (PhotoPreviewData) -> Unit = {},
-    // Owned mode only — saves the un-watermarked original to the gallery.
+    // Owned + OwnerReview modes — saves the un-watermarked original to the
+    // gallery. Owned resolves it from the runner's purchase grant; OwnerReview
+    // from the photographer's own /photos/{id}/download endpoint.
     onDownload: (PhotoPreviewData) -> Unit = {},
     mode: PhotoPreviewMode = PhotoPreviewMode.Browse,
 ) {
@@ -356,11 +358,25 @@ fun PhotoPreview(
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(12.dp))
-                                GhostCta(
-                                    text = "Close",
-                                    onClick = onClose,
+                                // Same two-CTA row as Browse mode. The download
+                                // resolves a presigned URL for the photographer's
+                                // own un-watermarked original — website parity with
+                                // /dashboard/events/[id]'s per-photo download.
+                                Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                )
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    GhostCta(
+                                        text = "Close",
+                                        onClick = onClose,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    PrimaryCta(
+                                        text = "Download ↓",
+                                        onClick = { onDownload(activePhoto) },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
                             }
                         }
                     }

@@ -48,6 +48,13 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    testOptions {
+        unitTests {
+            // Robolectric needs the merged manifest + resources on the JVM
+            // test classpath; without this it can't inflate an Application.
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -89,7 +96,15 @@ dependencies {
     // Jetpack Compose Navigation
     implementation(libs.navigation.compose)
 
+    // Custom Tabs — keeps the PayMongo handoff out of an app-chooser dialog
+    implementation(libs.browser)
+
     testImplementation(libs.junit)
+    testImplementation(libs.room.testing)
+    testImplementation(libs.work.testing)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.robolectric)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

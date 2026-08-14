@@ -1,5 +1,9 @@
 package com.quickpitik.mobile.ui.runner
 
+import android.content.ActivityNotFoundException
+import android.net.Uri
+import androidx.browser.customtabs.CustomTabColorSchemeParams
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -12,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalUriHandler
@@ -48,6 +53,7 @@ fun CheckoutSheet(
     var cardCvv by remember { mutableStateOf("") }
 
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val isLoading = checkoutState is CheckoutState.Loading
@@ -64,14 +70,33 @@ fun CheckoutSheet(
     }
 
     // Auto-launch PayMongo the moment the BE returns the redirect URL — the
-    // user shouldn't have to tap anything. Wrapped in try/catch because
-    // openUri throws IllegalArgumentException if no browser is installed.
+    // user shouldn't have to tap anything. Custom Tabs rather than a plain
+    // ACTION_VIEW (which is what LocalUriHandler fires internally): a bare
+    // ACTION_VIEW can raise an app-chooser in the middle of paying, and the
+    // chosen app may not honour the quickpitik:// return deep link. A Custom
+    // Tab hands off to the user's default browser directly, keeps our theme,
+    // and returns to this Activity — so the ON_RESUME bail-back below still
+    // fires. Falls back to the generic handler on devices with no CCT
+    // provider; both paths are wrapped because either can throw when the
+    // device has no browser at all.
     LaunchedEffect(redirectingSuccess) {
         if (!redirectingSuccess) return@LaunchedEffect
         val url = (checkoutState as? CheckoutState.Success)?.order?.redirectUrl
             ?: return@LaunchedEffect
         try {
-            uriHandler.openUri(url)
+            try {
+                CustomTabsIntent.Builder()
+                    .setShowTitle(true)
+                    .setDefaultColorSchemeParams(
+                        CustomTabColorSchemeParams.Builder()
+                            .setToolbarColor(Bone.toArgb())
+                            .build()
+                    )
+                    .build()
+                    .launchUrl(context, Uri.parse(url))
+            } catch (e: ActivityNotFoundException) {
+                uriHandler.openUri(url)
+            }
             cartViewModel.markPaymongoLaunched()
         } catch (e: Exception) {
             cartViewModel.setCheckoutError(
