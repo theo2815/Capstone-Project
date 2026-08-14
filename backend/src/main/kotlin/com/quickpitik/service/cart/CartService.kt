@@ -8,6 +8,7 @@ import com.quickpitik.entity.CartItemId
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -40,6 +41,12 @@ class CartService(
     fun add(userId: UUID, photoId: UUID, eventId: UUID): CartItemDto {
         val photo = photoRepository.findById(photoId).orElseThrow {
             NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
+        }
+        // PROCESSING / HIDDEN photos are not sellable. 404 rather than a
+        // dedicated code — a hidden photo must not be distinguishable from a
+        // missing one.
+        if (photo.status != PhotoStatus.LIVE) {
+            throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
         }
         if (photo.eventId != eventId) {
             throw ValidationException(
@@ -82,15 +89,35 @@ class CartService(
 
     fun clear(userId: UUID): Int = cartItemRepository.deleteAllByUserId(userId)
 
+    /**
+     * Guest → authed cart merge, fired once per login.
+     *
+     * Every gate below **skips** the offending row where [add] **throws**. The
+     * asymmetry is deliberate: [add] is a single-item interactive call where a
+     * 409 is actionable, while merge is a bulk background call the FE fires
+     * inside a `Promise.all` with no partial-recovery path — one rejection
+     * discards the whole merge (cart *and* saved-events), and price drift never
+     * self-heals, so every later login would re-fail and strand the guest cart.
+     *
+     * Same reason `pricePhpAtAdd` is refreshed rather than raising
+     * CART_ITEM_PRICE_CHANGED here: the snapshot is display-only (checkout
+     * prices off `photos.price_php`), so overwriting keeps the cart showing
+     * what the runner will actually be charged.
+     */
     fun merge(userId: UUID, incoming: List<Pair<UUID, UUID>>): List<CartItemDto> {
         val existing = cartItemRepository.findByUserId(userId)
             .associateBy { it.id.photoId }
             .toMutableMap()
         val incomingIds = incoming.map { it.first }.toSet()
         val photoLookup = photoRepository.findAllById(incomingIds).associateBy { it.id }
+        val eventLookup = eventRepository.findAllById(incoming.map { it.second }.toSet())
+            .associateBy { it.id }
         for ((photoId, eventId) in incoming) {
             val photo = photoLookup[photoId] ?: continue
             if (photo.eventId != eventId) continue
+            if (photo.status != PhotoStatus.LIVE) continue
+            val event = eventLookup[eventId] ?: continue
+            if (event.status == EventStatus.ARCHIVED) continue
             val key = CartItemId(userId, photoId)
             val row = existing[photoId]
             if (row == null) {
