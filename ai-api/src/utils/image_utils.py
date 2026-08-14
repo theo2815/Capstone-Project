@@ -161,6 +161,47 @@ def validate_batch_file(
         )
 
 
+def validate_stream_file(
+    raw: bytes, filename: str, max_file_size: int
+) -> str | None:
+    """Validate one file on the streaming path. Returns an error message, or None.
+
+    A lighter sibling of validate_batch_file rather than a flagged variant of it.
+    It returns instead of raising because the stream endpoints answer a bad file
+    with a per-image NDJSON error line, not by failing the whole request.
+
+    Deliberately narrower than validate_batch_file:
+      - no ``img.verify()`` — it walks the entire file, and cv2.imdecode already
+        fails closed on corrupt bytes (returns None, which the callers already
+        render as "Failed to decode image").
+      - no content-type check — cv2.imdecode fails closed on non-images too, and
+        this is the one check that could reject a correct desktop client that
+        posts application/octet-stream.
+
+    What is left is the pair neither of those covers: the bytes admitted into
+    memory, and the pixel count a decode would allocate. cv2.imdecode has no
+    decompression-bomb guard of its own, so the header read below is the only
+    thing standing between a malicious or malformed header and the allocation.
+    """
+    if len(raw) > max_file_size:
+        return f"File '{filename}' exceeds {max_file_size // (1024 * 1024)}MB limit"
+
+    try:
+        w, h = Image.open(io.BytesIO(raw)).size
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+        # Over Image.MAX_IMAGE_PIXELS (MAX_DIMENSION squared) — PIL refuses to
+        # report a size, so report the cap rather than dimensions we never read.
+        return f"File '{filename}' exceeds the {MAX_DIMENSION}px limit"
+    except Exception:
+        # Not something PIL can parse a header from. Leave the verdict to
+        # cv2.imdecode, which handles formats PIL does not.
+        return None
+
+    if w > MAX_DIMENSION or h > MAX_DIMENSION:
+        return f"File '{filename}' dimensions ({w}x{h}) exceed {MAX_DIMENSION}px limit"
+    return None
+
+
 def get_image_dimensions(image: np.ndarray) -> tuple[int, int]:
     """Return (width, height) of a BGR numpy image."""
     h, w = image.shape[:2]

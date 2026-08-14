@@ -32,6 +32,7 @@ from src.utils.image_utils import (
     downscale_for_inference,
     get_image_dimensions,
     validate_and_decode,
+    validate_stream_file,
 )
 from src.utils.logging import get_logger
 
@@ -249,11 +250,14 @@ async def detect_blur_stream(
             ).model_dump(mode="json"),
         )
 
-    # Read all file data into memory (UploadFile is async)
-    items: list[tuple[int, str, bytes]] = []
+    # Read all file data into memory (UploadFile is async). Each item carries the
+    # validation verdict alongside its bytes so a rejected file still gets a line
+    # at its own index instead of shifting the ones after it.
+    items: list[tuple[int, str, bytes, str | None]] = []
     for i, f in enumerate(files):
         data = await f.read()
-        items.append((i, f.filename or f"image_{i}", data))
+        name = f.filename or f"image_{i}"
+        items.append((i, name, data, validate_stream_file(data, name, settings.MAX_FILE_SIZE)))
 
     total = len(items)
     start = time.perf_counter()
@@ -261,7 +265,13 @@ async def detect_blur_stream(
     async def generate():
         sem = asyncio.Semaphore(concurrency)
 
-        async def process(index: int, filename: str, data: bytes) -> str:
+        async def process(index: int, filename: str, data: bytes, error: str | None) -> str:
+            if error is not None:
+                # Rejected before decode: no semaphore slot, no worker thread.
+                return json.dumps(
+                    {"index": index, "filename": filename, "error": error},
+                    separators=(",", ":"),
+                ) + "\n"
             async with sem:
                 result = await asyncio.to_thread(
                     _fast_decode_and_detect, data, filename, index, detector,
@@ -269,7 +279,7 @@ async def detect_blur_stream(
                 )
                 return json.dumps(result, separators=(",", ":")) + "\n"
 
-        tasks = [process(i, name, data) for i, name, data in items]
+        tasks = [process(i, name, data, err) for i, name, data, err in items]
         for coro in asyncio.as_completed(tasks):
             yield await coro
 
@@ -495,11 +505,14 @@ async def classify_blur_stream(
             ).model_dump(mode="json"),
         )
 
-    # Read all file data into memory (UploadFile is async)
-    items: list[tuple[int, str, bytes]] = []
+    # Read all file data into memory (UploadFile is async). Each item carries the
+    # validation verdict alongside its bytes so a rejected file still gets a line
+    # at its own index instead of shifting the ones after it.
+    items: list[tuple[int, str, bytes, str | None]] = []
     for i, f in enumerate(files):
         data = await f.read()
-        items.append((i, f.filename or f"image_{i}", data))
+        name = f.filename or f"image_{i}"
+        items.append((i, name, data, validate_stream_file(data, name, settings.MAX_FILE_SIZE)))
 
     total = len(items)
     bt = blur_type.value if blur_type else None
@@ -508,7 +521,11 @@ async def classify_blur_stream(
     min_conf = classifier.min_detection_confidence
     start = time.perf_counter()
 
-    def _build_line(index: int, filename: str, image, result) -> dict:
+    def _build_line(index: int, filename: str, image, result, error: str | None) -> dict:
+        if error is not None:
+            # More specific than the generic decode failure below — say which
+            # limit the file broke.
+            return {"index": index, "filename": filename, "error": error}
         if image is None:
             return {"index": index, "filename": filename, "error": "Failed to decode image"}
         if result is None:
@@ -537,7 +554,11 @@ async def classify_blur_stream(
     async def generate():
         sem = asyncio.Semaphore(concurrency)
 
-        async def decode_one(data: bytes):
+        async def decode_one(data: bytes, error: str | None):
+            if error is not None:
+                # Rejected before decode. None is what classify_batch already
+                # maps to a None result, so the sub-batch shape is unchanged.
+                return None
             async with sem:
                 return await asyncio.to_thread(_decode_bgr_for_classify, data, decode_dim)
 
@@ -547,7 +568,7 @@ async def classify_blur_stream(
         # dynamic batch axis, and a per-image loop otherwise — identical results.
         for chunk_start in range(0, total, sub_batch):
             sub = items[chunk_start:chunk_start + sub_batch]
-            images = await asyncio.gather(*[decode_one(d) for _, _, d in sub])
+            images = await asyncio.gather(*[decode_one(d, e) for _, _, d, e in sub])
             try:
                 results = await asyncio.to_thread(classifier.classify_batch, images)
             except Exception as e:
@@ -563,12 +584,16 @@ async def classify_blur_stream(
                     size=len(sub),
                     error=str(e),
                 )
-                for idx, name, _ in sub:
-                    line = {"index": idx, "filename": name, "error": str(e)}
+                for idx, name, _, err in sub:
+                    # A file rejected up front gets its own reason, not the
+                    # sub-batch's — it never reached the classifier.
+                    line = {"index": idx, "filename": name, "error": err or str(e)}
                     yield json.dumps(line, separators=(",", ":")) + "\n"
                 continue
-            for (idx, name, _), image, result in zip(sub, images, results):
-                yield json.dumps(_build_line(idx, name, image, result), separators=(",", ":")) + "\n"
+            for (idx, name, _, err), image, result in zip(sub, images, results):
+                yield json.dumps(
+                    _build_line(idx, name, image, result, err), separators=(",", ":")
+                ) + "\n"
 
         # Final summary line
         elapsed = (time.perf_counter() - start) * 1000

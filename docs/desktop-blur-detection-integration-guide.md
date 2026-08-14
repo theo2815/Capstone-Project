@@ -332,11 +332,21 @@ Client rules that matter:
 - For 5k–10k images, send several concurrent requests of 200–500 each rather than
   one giant request.
 
-The stream path performs no per-file validation at all, so full-resolution frames
-are accepted unconditionally. `/blur/classify` enforces `MAX_IMAGE_DIMENSION`
-(12000 px on the longest edge) — sized to pass any real camera, so in practice
-neither path refuses a normal frame. Both decode to `BLUR_CLASSIFY_DECODE_DIM`
-(640) internally and score identically.
+**Limits on the stream path** (added 2026-08-14 — it previously validated nothing):
+
+- **Per file**, `MAX_FILE_SIZE` (25 MB) and `MAX_IMAGE_DIMENSION` (12000 px longest
+  edge). Both are sized to pass any real camera, so a normal frame is never
+  refused. A file that breaks either gets a per-image `error` line at its own
+  index — the request still returns 200 and every other image is still scored.
+  Content-Type is *not* checked on this path, so posting
+  `application/octet-stream` is fine.
+- **Per request**, `MAX_REQUEST_BODY` (1 GB total) — refused with `413` before any
+  file is read. At the ~5 MB typical original this is roughly 200 images per
+  request, which is why the 200–500 chunking advice below matters in practice:
+  500 full-resolution originals will exceed it. Send more, smaller requests.
+
+Both `/blur/classify` and `/blur/classify/stream` decode to
+`BLUR_CLASSIFY_DECODE_DIM` (640) internally and score identically.
 
 ---
 
@@ -387,7 +397,8 @@ for the duration of the run — a queued job survives a disconnect, a stream doe
 | `202` | Batch accepted -- poll the `poll_url` |
 | `401` | Invalid key -- prompt user to re-enter |
 | `403` | Scope issue -- key needs `blur:read` |
-| `413` | File too large -- max 25 MB per image (`MAX_FILE_SIZE`) |
+| `400` | Validation failure on a single-image endpoint -- file over 25 MB (`MAX_FILE_SIZE`), over 12000 px (`MAX_IMAGE_DIMENSION`), wrong type, or corrupt. On `/stream` the same failures arrive as a per-image `error` line instead, with the request still `200`. |
+| `413` | Whole request body over 1 GB (`MAX_REQUEST_BODY`) -- send fewer files per request. Not per-image: no file has been read yet, so the response names no filename. |
 | `429` | Rate limited -- wait for `Retry-After` seconds, then retry |
 | `503` | Model not loaded -- blur classifier may not be deployed yet, fall back to `/blur/detect` |
 
@@ -409,9 +420,10 @@ The minimum confidence floor is configurable server-side (`BLUR_DETECTION_MIN_CO
 | Auth header | `X-API-Key: sk_test_...` |
 | Required scope | `blur:read` |
 | Max file size | 25 MB (`MAX_FILE_SIZE`) |
-| Max image dimension | 12000 px longest edge (`MAX_IMAGE_DIMENSION`; not enforced on `/stream`) |
+| Max image dimension | 12000 px longest edge (`MAX_IMAGE_DIMENSION`) |
+| Max total request body | 1 GB (`MAX_REQUEST_BODY`) -- ~200 full-resolution originals |
 | Max async batch size | 50 images (`MAX_BATCH_SIZE`) |
-| Max stream batch size | 500 images (`STREAM_*_MAX_SIZE`) |
+| Max stream batch size | 500 images (`STREAM_*_MAX_SIZE`), subject to the 1 GB body limit |
 | Supported formats | JPEG, PNG, WebP |
 | Fast check | `POST /blur/detect` |
 | CNN classify | `POST /blur/classify` |

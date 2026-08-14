@@ -18,7 +18,28 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     WORKERS: int = 2
-    MAX_REQUEST_BODY: int = 500 * 1024 * 1024  # 500 MB (covers stream batch of 500 images)
+    # Total request body ceiling, enforced by BodySizeLimitMiddleware in main.py.
+    # Until 2026-08-14 this was defined and never read, so nothing in the app
+    # bounded body size and nginx's client_max_body_size was the only guard.
+    #
+    # It cannot be derived from a worst case: MAX_BATCH_SIZE x MAX_FILE_SIZE is
+    # 2500 MB at the effective batch size of 100, and the mega/stream caps (500
+    # files) put it at 12.5 GB. Calibrated to intended traffic instead, measured
+    # on Training-Images/Sharp_images (n=350, the real photographer originals —
+    # the other subfolders are downscaled training crops): mean 5.06 MB, p90
+    # 11.64 MB, max 15.11 MB.
+    #   - Cannot break the desktop: production nginx has capped at 200 MB all
+    #     along and the desktop works, so anything above that is strictly more
+    #     permissive than what ships. 1 GB is 5x.
+    #   - Covers the backend's Phase-C drain (50 photos/mega job, per its
+    #     application.yml batch.max-size) at the observed MAX file size: 755 MB.
+    #     The 1250 MB absolute worst case (50 x the 25 MB ceiling) is
+    #     deliberately not covered — nothing near it has been observed.
+    #   - Holds a /stream request to ~200 real originals, the low end of the
+    #     200-500 range the desktop integration guide already recommends.
+    # Keep in lockstep with client_max_body_size in nginx.conf — TestBodySizeLimit
+    # parses that file and fails if the two drift.
+    MAX_REQUEST_BODY: int = 1024 * 1024 * 1024  # 1 GB
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/quickpitik"

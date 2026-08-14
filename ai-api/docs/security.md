@@ -99,8 +99,22 @@ Every uploaded image goes through multiple checks before any processing:
 | Magic bytes | Opens file with PIL and calls `.verify()` | A file renamed to .jpg is still detected as non-image |
 | Dimensions | Max 12000px per side (`MAX_IMAGE_DIMENSION`); min 32px on the single-image path | Too large = memory bomb. This is a fail-closed guard, not a quality gate — it is sized to pass any real camera (102 MP = 11648×8736), since every path downscales to `MAX_INFERENCE_DIMENSION` anyway. |
 
-**Which paths enforce which check.** The dimension and file-size bounds are applied by `validate_and_decode` (single-image endpoints) and `validate_batch_file` (batch + mega endpoints). The minimum-dimension check is single-image only. The two `/stream` endpoints perform **no per-file validation** — they read raw bytes straight into `cv2.imdecode`. Stream is desktop-only and blur-only; see the ai-api vault tasks for the open item.
 | EXIF handling | Pillow applies `ImageOps.exif_transpose` (preserves orientation) then the image is converted to a BGR numpy array which carries no EXIF | Privacy: EXIF metadata (GPS, device info, timestamps) is discarded as soon as the bytes leave Pillow |
+| Total request body | Maximum 1 GB (`MAX_REQUEST_BODY`) | The only bound on a multipart upload *in aggregate*. Per-file limits cannot supply it: the `/stream` endpoints hold every file in memory at once, so 500 files each under `MAX_FILE_SIZE` still sum to 12.5 GB. |
+
+**Which paths enforce which check.**
+
+| Path | Size | Dimensions | Content-Type | Magic bytes |
+|---|---|---|---|---|
+| 7 single-image endpoints (`validate_and_decode`) | ✅ | ✅ (+ min 32px) | ✅ | ✅ `.verify()` |
+| 11 batch/mega endpoints (`validate_batch_file`) | ✅ | ✅ | ✅ | ✅ `.verify()` |
+| 2 `/stream` endpoints (`validate_stream_file`) | ✅ | ✅ | ❌ | ❌ |
+
+`validate_stream_file` is deliberately the narrow one. It drops `.verify()` because that walks the whole file while `cv2.imdecode` already fails closed on corrupt bytes, and it drops the Content-Type check because that is the one test that could reject a correct desktop client posting `application/octet-stream`. It keeps size and dimensions — the two `cv2.imdecode` cannot enforce for itself, since unlike Pillow it has no decompression-bomb guard.
+
+A `/stream` rejection is reported as a per-image NDJSON error line, not an HTTP error; the request still returns 200 and the remaining images are still scored.
+
+`MAX_REQUEST_BODY` is enforced by `BodySizeLimitMiddleware` (`src/main.py`) from the `Content-Length` header, before multipart is parsed. A chunked request declares no length and is not caught by it — the per-file layer still applies. Keep the value equal to `client_max_body_size` in `nginx.conf`; `TestBodySizeLimit` parses that file and fails if the two drift.
 
 ### Face Enrollment Quality Gate
 
@@ -123,7 +137,8 @@ Bib text is cleaned using a strict character filter (`[A-Za-z0-9\-_]`) that pres
 ```
 
 Status codes:
-- 400: Any validation failure (wrong file type, corrupt image, too small, too large). The backing `ImageValidationError` always uses `status_code=400`; there is no separate `413 Payload Too Large` response.
+- 400: Any per-image validation failure (wrong file type, corrupt image, too small, too large). The backing `ImageValidationError` always uses `status_code=400`.
+- 413 `REQUEST_TOO_LARGE`: the whole request body exceeds `MAX_REQUEST_BODY`. This is the one case that is not an `ImageValidationError` — it is refused by middleware before any file is parsed, so it names no filename.
 
 ---
 
