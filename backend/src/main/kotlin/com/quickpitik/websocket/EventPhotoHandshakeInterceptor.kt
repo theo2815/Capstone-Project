@@ -11,6 +11,23 @@ import org.springframework.web.socket.WebSocketHandler
 import org.springframework.web.socket.server.HandshakeInterceptor
 import java.util.UUID
 
+/**
+ * Handshake gate for `/ws/events/{id}/photos` — and that endpoint only
+ * (`WebSocketConfig:26`), unlike [MeNotificationHandshakeInterceptor], which
+ * two endpoints share.
+ *
+ * **A token is optional here.** The channel pushes `photo.published` frames
+ * carrying id / bib / tone / span / watermarked-thumbnail URL / uploadedAt —
+ * byte-for-byte what the permitAll `GET /events/{slug}/photos` already serves
+ * to anyone, so a signed-out spectator learns nothing they couldn't get by
+ * polling. Nothing downstream is per-user either: [EventPhotoWebSocketHandler]
+ * and [EventPhotoSessionRegistry] key purely on eventId. Refusing the upgrade
+ * only cost guests live updates (2026-08-14 product call).
+ *
+ * A token that is *present but invalid* still fails the handshake — silently
+ * downgrading it to anonymous would hide expired-session bugs behind a socket
+ * that looks healthy.
+ */
 @Component
 class EventPhotoHandshakeInterceptor(
     private val jwtTokenProvider: JwtTokenProvider,
@@ -29,29 +46,32 @@ class EventPhotoHandshakeInterceptor(
             return false
         }
         val token = extractToken(request)
-        if (token == null) {
-            log.debug("WS handshake rejected: missing token for event {}", eventId)
-            return false
-        }
-        val userId = try {
-            UUID.fromString(jwtTokenProvider.parse(token).subject)
-        } catch (ex: JwtException) {
-            log.debug("WS handshake rejected: invalid token for event {} ({})", eventId, ex.message)
-            return false
-        } catch (ex: IllegalArgumentException) {
-            log.debug("WS handshake rejected: malformed subject for event {} ({})", eventId, ex.message)
-            return false
+        if (token != null) {
+            val userId = try {
+                UUID.fromString(jwtTokenProvider.parse(token).subject)
+            } catch (ex: JwtException) {
+                log.debug("WS handshake rejected: invalid token for event {} ({})", eventId, ex.message)
+                return false
+            } catch (ex: IllegalArgumentException) {
+                log.debug("WS handshake rejected: malformed subject for event {} ({})", eventId, ex.message)
+                return false
+            }
+            attributes[EventPhotoWebSocketHandler.ATTR_USER_ID] = userId
+            // Echo the chosen subprotocol back to the client. Without this,
+            // browsers drop the connection with code 1006 immediately after
+            // the handshake because the upgrade response is malformed (the
+            // server accepted the handshake but didn't select a subprotocol
+            // from the client's offer). Bug since Q-002 — pre-existed this
+            // notifications PR but caught here while debugging the same
+            // failure mode on the admin/photographer channels.
+            //
+            // Only when the client actually offered one: echoing a protocol a
+            // guest never sent is the same malformed upgrade in reverse.
+            response.headers.set("Sec-WebSocket-Protocol", token)
+        } else {
+            log.debug("WS handshake accepted anonymously for event {}", eventId)
         }
         attributes[EventPhotoWebSocketHandler.ATTR_EVENT_ID] = eventId
-        attributes[EventPhotoWebSocketHandler.ATTR_USER_ID] = userId
-        // Echo the chosen subprotocol back to the client. Without this,
-        // browsers drop the connection with code 1006 immediately after
-        // the handshake because the upgrade response is malformed (the
-        // server accepted the handshake but didn't select a subprotocol
-        // from the client's offer). Bug since Q-002 — pre-existed this
-        // notifications PR but caught here while debugging the same
-        // failure mode on the admin/photographer channels.
-        response.headers.set("Sec-WebSocket-Protocol", token)
         return true
     }
 

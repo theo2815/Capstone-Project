@@ -3,6 +3,7 @@ package com.quickpitik.service.cart
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.entity.CartItemEntity
+import com.quickpitik.entity.CartItemId
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
@@ -115,6 +116,26 @@ class CartServiceTest {
         service.merge(userId, listOf(good.id to open.id))
 
         assertEquals(BigDecimal("150.00"), written.single().pricePhpAtAdd)
+    }
+
+    // Spotted 2026-08-14: the cart rendered pricePhpAtAdd while checkout
+    // totalled the live photos.price_php, so an admin re-price left the runner
+    // seeing one number and paying another. The snapshot is no longer a
+    // display value.
+    @Test
+    fun `list renders the live photo price, not the stale snapshot`() {
+        val open = event(EventStatus.ACTIVE)
+        val repriced = photo(open.id, price = BigDecimal("150.00"))
+        val row = CartItemEntity(
+            id = CartItemId(userId, repriced.id),
+            eventId = open.id,
+            pricePhpAtAdd = BigDecimal("125.00"),
+        )
+        Mockito.`when`(cartItemRepository.findByUserId(userId)).thenReturn(listOf(row))
+        stub(listOf(repriced), listOf(open))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+
+        assertEquals(BigDecimal("150.00"), service.list(userId).single().price)
     }
 
     @Test

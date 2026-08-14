@@ -9,6 +9,7 @@ import org.springframework.core.Ordered
 import org.springframework.core.annotation.Order
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.security.access.AccessDeniedException
 import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.web.HttpMediaTypeNotSupportedException
@@ -96,6 +97,30 @@ class GlobalExceptionHandler {
                 ApiError(
                     code = ErrorCodes.VALIDATION_ERROR,
                     message = "Multipart upload was malformed.",
+                ),
+            ),
+        )
+    }
+
+    /**
+     * A body Jackson can't turn into the target type: malformed JSON, a
+     * missing `@RequestBody`, or — because Kotlin's non-null constructor
+     * params have no defaults — a required field left out. All three are the
+     * caller's mistake, but with no handler they fell through to
+     * [handleGeneric] and came back as a 500 INTERNAL_ERROR.
+     *
+     * The message is fixed rather than derived from the exception: Jackson's
+     * text carries parse context — payload fragments and Kotlin class names —
+     * that has no business in a public envelope. Log it, don't ship it.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException::class)
+    fun handleUnreadableBody(ex: HttpMessageNotReadableException): ResponseEntity<ApiResponse<Nothing>> {
+        log.warn("Unreadable request body: {}", ex.message)
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "Request body could not be parsed.",
                 ),
             ),
         )

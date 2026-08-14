@@ -6,6 +6,7 @@ import com.quickpitik.dto.photos.PhotoDto
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.UserSelfieRepository
@@ -19,6 +20,7 @@ import org.mockito.Mockito
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockMultipartFile
 import java.time.LocalDate
+import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
@@ -128,6 +130,27 @@ class EventPhotoSearchGateTest {
 
         Mockito.verify(photoSearchService)
             .searchByFace(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    // The route was opened to guests 2026-08-14 (SecurityConfig permitAll) so a
+    // signed-out visitor can find their photos before signing up. Both variants
+    // share that path, and only the multipart one is meant to be anonymous —
+    // the stored-selfie variant reads a row scoped to the caller, so its own
+    // 401 is now the sole thing standing between a guest and someone else's
+    // selfie library.
+    @Test
+    fun `the stored-selfie variant still refuses an anonymous caller`() {
+        val ex = assertFailsWith<UnauthorizedException> {
+            controller.searchByFaceJson(
+                principal = null,
+                slug = slug,
+                body = EventPhotoController.SearchByFaceJsonRequest(selfieId = UUID.randomUUID().toString()),
+                request = MockHttpServletRequest(),
+            )
+        }
+
+        assertEquals(ErrorCodes.UNAUTHORIZED, ex.code)
+        verifyNoSearch()
     }
 
     private fun search(file: MockMultipartFile) = controller.searchByFaceMultipart(

@@ -60,7 +60,15 @@ class SecurityConfig(
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/regions").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/platform/**").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
-                auth.requestMatchers(HttpMethod.POST, "/api/v1/events/*/photos/search-by-face").authenticated()
+                // Face search is a guest surface — a visitor finds their photos
+                // first and signs up at checkout, if at all. The multipart
+                // variant is written for it (nullable principal, IP-keyed rate
+                // bucket, 5 MB + MIME whitelist). The stored-selfie JSON
+                // variant sharing this path enforces its own 401 in the
+                // controller, so a signed-out caller can never reach another
+                // user's selfie. Same shape as the token-gated order rules
+                // below: permitted here, authorized in the service layer.
+                auth.requestMatchers(HttpMethod.POST, "/api/v1/events/*/photos/search-by-face").permitAll()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/orders").permitAll()
                 // Guest order status polling. Service-layer token check enforces auth.
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*/status").permitAll()

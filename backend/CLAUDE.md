@@ -110,12 +110,12 @@ With Postgres up + app running:
 # 1. Register a runner
 curl -X POST http://localhost:8080/api/v1/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"name":"Test Runner","email":"runner@test.local","password":"password123","role":"RUNNER"}'
+  -d '{"name":"Test Runner","email":"runner@test.local","password":"marathon-cebu-2026","role":"RUNNER"}'
 
 # 2. Login
 curl -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"runner@test.local","password":"password123"}'
+  -d '{"email":"runner@test.local","password":"marathon-cebu-2026"}'
 
 # 3. /me with bearer
 curl http://localhost:8080/api/v1/auth/me \
@@ -143,6 +143,8 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
 ```
 
 All responses come wrapped in `{ success, data, errors? }`. Match the website `ApiResponse<T>` envelope exactly.
+
+**Password gate:** register, reset-password, and change-password all run `PasswordValidator` (NIST SP 800-63B style — no composition rules, screened against a known-weak list). Guessable strings that clear the 8-char floor — `password123`, `12345678`, `changeme123` — 400 with `WEAK_PASSWORD`. Keep the passwords in these snippets off that list. Login is **not** screened, so step 7's bootstrap admin still works with its default.
 
 ## Auth contract (locked, matches website)
 

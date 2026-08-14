@@ -153,9 +153,8 @@ class AdminEventService(
         // under this event so runner-facing galleries pick up the new price
         // on next paint. `compareTo` (not `!=`) because BigDecimal equality
         // also weighs scale — 125 vs 125.00 would otherwise look like a
-        // change. Cart drift is surfaced to runners at checkout via the
-        // existing CART_ITEM_PRICE_CHANGED flow; we deliberately do not
-        // mutate cart_items.price_php_at_add.
+        // change. Existing carts need no fix-up: CartService renders the live
+        // photos.price_php, which is also what OrderService.create charges.
         req.pricePerPhoto?.let { rawPrice ->
             val newPrice = validatedPrice(rawPrice)
             if (event.pricePerPhoto.compareTo(newPrice) != 0) {

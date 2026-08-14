@@ -17,10 +17,10 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     // Bulk re-prices every photo under the event. Used by admin event PATCH
     // when the operator changes events.price_per_photo so existing photos
-    // pick up the new price across runner-facing galleries. Cart drift is
-    // handled separately by CartService.add → CART_ITEM_PRICE_CHANGED at
-    // checkout — we deliberately do not touch cart_items.price_php_at_add
-    // so the server-canonical snapshot guarantee stays intact.
+    // pick up the new price across runner-facing galleries. Carts follow
+    // automatically: CartService renders the live photos.price_php and
+    // OrderService.create charges it, so cart_items.price_php_at_add is
+    // deliberately left alone — nothing displays or bills off that column.
     @Modifying
     @Query("UPDATE Photo p SET p.pricePhp = :price WHERE p.eventId = :eventId")
     fun updatePriceByEventId(

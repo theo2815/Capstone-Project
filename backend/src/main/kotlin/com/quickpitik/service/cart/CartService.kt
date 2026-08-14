@@ -100,9 +100,10 @@ class CartService(
      * self-heals, so every later login would re-fail and strand the guest cart.
      *
      * Same reason `pricePhpAtAdd` is refreshed rather than raising
-     * CART_ITEM_PRICE_CHANGED here: the snapshot is display-only (checkout
-     * prices off `photos.price_php`), so overwriting keeps the cart showing
-     * what the runner will actually be charged.
+     * CART_ITEM_PRICE_CHANGED here: the snapshot is not what the runner sees
+     * or pays. [toDto] renders `photos.price_php` and `OrderService.create`
+     * charges it, so refreshing the column keeps the stored row honest
+     * instead of preserving a number nothing reads.
      */
     fun merge(userId: UUID, incoming: List<Pair<UUID, UUID>>): List<CartItemDto> {
         val existing = cartItemRepository.findByUserId(userId)
@@ -151,11 +152,16 @@ class CartService(
         }
     }
 
+    // `price` is the LIVE `photos.price_php`, not the `pricePhpAtAdd` snapshot.
+    // Checkout has no snapshot to honour — `OrderService.create` totals and
+    // charges `photos.price_php` — so rendering the snapshot here meant an
+    // admin re-price (AdminEventService → PhotoRepository.updatePriceByEventId)
+    // left the runner looking at ₱125 and paying ₱150.
     private fun CartItemEntity.toDto(photo: Photo, event: Event?): CartItemDto = CartItemDto(
         photoId = id.photoId,
         eventId = eventId,
         thumbnailUrl = thumbnailUrlOf(photo),
-        price = pricePhpAtAdd,
+        price = photo.pricePhp,
         bib = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber,
         eventName = event?.name,
         eventSlug = event?.slug,

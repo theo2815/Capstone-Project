@@ -4,7 +4,10 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.service.ai.AiApiException
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpStatus
+import org.springframework.http.converter.HttpMessageNotReadableException
+import org.springframework.mock.http.MockHttpInputMessage
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class GlobalExceptionHandlerTest {
 
@@ -65,6 +68,37 @@ class GlobalExceptionHandlerTest {
             handler.handleAiApi(AiApiException(HttpStatus.BAD_GATEWAY, null, "malformed")).statusCode,
         )
     }
+
+    // Spotted 2026-08-14 while probing the refund endpoint: with no handler for
+    // it, a syntactically bad body fell through to the catch-all and told the
+    // caller the server had broken. Affects every @RequestBody route.
+
+    @Test
+    fun `a body Jackson cannot read is the caller's fault, not a 500`() {
+        val response = handler.handleUnreadableBody(unreadable("Unexpected end-of-input"))
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+        assertEquals(ErrorCodes.VALIDATION_ERROR, response.body?.errors?.first()?.code)
+    }
+
+    @Test
+    fun `the envelope does not echo Jackson's parse context`() {
+        // Jackson's message quotes the offending payload and names the Kotlin
+        // target class; neither belongs in a public error envelope.
+        val leaky = """Cannot construct instance of `com.quickpitik.dto.orders.CreateOrderItem`, """ +
+            """problem: photoId at [Source: (String)"{"items":[{"eventId":"secret"}]}"; line: 1]"""
+
+        val message = handler.handleUnreadableBody(unreadable(leaky)).body?.errors?.first()?.message
+
+        assertEquals("Request body could not be parsed.", message)
+        assertFalse(message!!.contains("CreateOrderItem"))
+        assertFalse(message.contains("secret"))
+    }
+
+    private fun unreadable(message: String) = HttpMessageNotReadableException(
+        message,
+        MockHttpInputMessage(ByteArray(0)),
+    )
 
     @Test
     fun `status mapping does not disturb the code allowlist`() {
