@@ -26,8 +26,13 @@ class PhotoUploadWorker(
         val database = AppDatabase.getDatabase(applicationContext)
         val sessionManager = SessionManager.getInstance(applicationContext)
 
-        // 1. Get access token from session. If not logged in, we fail the job.
-        val token = sessionManager.getAccessToken() ?: return Result.failure()
+        // 1. Nobody logged in ⇒ nothing this job can do. The value is only a
+        // gate: each upload re-reads the token, because TokenAuthenticator
+        // rotates it mid-drain and a captured copy would make every subsequent
+        // request spend a wasted 401 round-trip before the authenticator's
+        // already-refreshed branch healed it — once per photo, on a queue that
+        // can be hundreds long.
+        sessionManager.getAccessToken() ?: return Result.failure()
 
         // 2. Requeue rows a killed process left stuck in UPLOADING. Safe: the
         // backend answers a same-event re-upload of bytes it already has with
@@ -64,7 +69,7 @@ class PhotoUploadWorker(
             coroutineScope {
                 for (record in batch) {
                     launch {
-                        gate.withPermit { uploadOne(record, token, database, hasFailures) }
+                        gate.withPermit { uploadOne(record, sessionManager, database, hasFailures) }
                     }
                 }
             }
@@ -75,7 +80,7 @@ class PhotoUploadWorker(
 
     private suspend fun uploadOne(
         record: UploadRecord,
-        token: String,
+        sessionManager: SessionManager,
         database: AppDatabase,
         hasFailures: AtomicBoolean,
     ) {
@@ -87,6 +92,16 @@ class PhotoUploadWorker(
             // Terminal: a deleted cache file never reappears, so retrying
             // can only fail the same way.
             database.uploadQueueDao().updateStatus(record.id, "FAILED", "Local file not found.")
+            return
+        }
+
+        // Read per record, not per run — see the note in doWork().
+        // Null means the session was cleared mid-drain (TokenAuthenticator gave
+        // up on the refresh). Not terminal for the photo: requeue so the row
+        // survives to a run made after the photographer signs back in.
+        val token = sessionManager.getAccessToken()
+        if (token == null) {
+            settleFailure(record, false, "Signed out.", database, hasFailures)
             return
         }
 

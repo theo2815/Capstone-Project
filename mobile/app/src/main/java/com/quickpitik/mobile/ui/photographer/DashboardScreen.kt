@@ -1,5 +1,11 @@
 package com.quickpitik.mobile.ui.photographer
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -56,13 +62,14 @@ fun PhotographerDashboardScreen(
     var showProfilePreview by remember { mutableStateOf(false) }
     var showNotifDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        viewModel.fetchVerificationStatus()
-        viewModel.fetchEvents()
-        viewModel.fetchEarningsAndTransactions()
-        viewModel.fetchMessages()
-        viewModel.fetchSettings()
-    }
+    // No mount-time fetch here on purpose. PhotographerDashboardViewModel's
+    // init{} already issues all five of these (plus fetchPublicEvents and
+    // observeQueue) and is constructed at the moment this screen mounts, so a
+    // LaunchedEffect(Unit) here just fired a duplicate salvo racing the first
+    // for the same connection pool — ~12 cold-start requests instead of 7. Same
+    // bug the 2026-05-27 ANR pass removed from PhotographerOverviewScreen. The
+    // per-tab refetches below stay: those fire on an explicit tap and are a
+    // deliberate refresh gesture.
 
     val verificationState by viewModel.verificationState.collectAsState()
     val messages by viewModel.messages.collectAsState()
@@ -312,6 +319,29 @@ private fun TetherConsoleView(
     val watchState by viewModel.shutterWatchState.collectAsState()
     val scrollState = rememberScrollState()
 
+    // Android 13+ suppresses TetherIngestService's notification unless
+    // POST_NOTIFICATIONS is granted. The ingest itself runs either way — what's
+    // lost is the shade's live status and Stop button — so the prompt rides
+    // alongside the first ingest instead of gating it. Asked once per mount: a
+    // photographer who declined shouldn't be re-prompted on every start
+    // mid-race.
+    val context = LocalContext.current
+    var notificationsDenied by remember { mutableStateOf(false) }
+    var notificationAsked by remember { mutableStateOf(false) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> notificationsDenied = !granted }
+    val ensureNotificationPermission = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationAsked) {
+            notificationAsked = true
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -381,10 +411,16 @@ private fun TetherConsoleView(
                 productId = cam.productId,
                 watchState = watchState,
                 canStartWatch = activeEvent?.let { canUploadToEvent(it.date) } == true,
-                onStartWatch = { viewModel.startShutterWatch() },
+                onStartWatch = {
+                    ensureNotificationPermission()
+                    viewModel.startShutterWatch()
+                },
                 onStopWatch = { viewModel.stopShutterWatch() },
                 onSimulate = { viewModel.simulatePhotoCapture() },
-                onBrowseCard = { viewModel.browseCameraCard() }
+                onBrowseCard = {
+                    ensureNotificationPermission()
+                    viewModel.browseCameraCard()
+                }
             )
             CameraConnectionState.Searching,
             CameraConnectionState.Disconnected -> CameraConnectPrompt(
@@ -392,6 +428,8 @@ private fun TetherConsoleView(
                 onRescan = { viewModel.refreshCameraConnection() }
             )
         }
+
+        if (notificationsDenied) NotificationsOffNote()
 
         // 2b. Manual card-import sheet — mounted whenever a browse is live.
         // Increment 1 reads; Increment 2 wires selection; Increment 3 pulls
@@ -787,6 +825,31 @@ private fun CameraConnectedCardWatchingPreview() {
         onSimulate = {},
         onBrowseCard = {},
     )
+}
+
+/**
+ * Shown once the photographer declines POST_NOTIFICATIONS.
+ *
+ * Deliberately quiet — Slate body, no ErrorRed, no CTA. Nothing has failed:
+ * the shoot runs exactly the same, they've just given up the shade's live
+ * status and Stop button. Saying so beats leaving a missing notification
+ * unexplained mid-race.
+ */
+@Composable
+private fun NotificationsOffNote(modifier: Modifier = Modifier) {
+    Text(
+        text = "Notifications are off, so the shoot won't appear in your notification " +
+            "shade. Photos still upload — start and stop from this screen.",
+        color = Slate,
+        style = Typography.bodyMedium,
+        modifier = modifier.fillMaxWidth(),
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun NotificationsOffNotePreview() {
+    NotificationsOffNote()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

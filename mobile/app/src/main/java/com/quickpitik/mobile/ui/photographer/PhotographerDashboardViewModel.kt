@@ -2,12 +2,14 @@ package com.quickpitik.mobile.ui.photographer
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.net.Uri
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.Constraints
@@ -17,6 +19,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.TetherEvents
 import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
@@ -26,6 +29,7 @@ import com.quickpitik.mobile.data.usb.ptp.CardPhoto
 import com.quickpitik.mobile.data.usb.ptp.UsbCardBrowseController
 import com.quickpitik.mobile.data.usb.ptp.UsbCardImportController
 import com.quickpitik.mobile.data.usb.ptp.UsbEventCaptureController
+import com.quickpitik.mobile.service.TetherIngestService
 import com.quickpitik.mobile.ui.runner.canUploadToEvent
 import com.quickpitik.mobile.data.remote.EarningsOverviewDto
 import com.quickpitik.mobile.data.remote.PayoutBalanceDto
@@ -45,6 +49,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -274,6 +280,85 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         fetchMessages()
         cameraManager.start()
         observeCameraDetach()
+        observeIngestForService()
+        observeNotificationStopRequests()
+    }
+
+    /**
+     * Keeps [TetherIngestService] running for exactly as long as bytes are
+     * moving off the camera, and feeds it the shade copy.
+     *
+     * Driven off the two ingest states rather than sprinkled through the six
+     * start / stop / error / detach paths: those paths already write the states
+     * read here, so none of them needed an edit, and there is no ref-count to
+     * get wrong when the watch and the card flow hand off to each other.
+     */
+    private fun observeIngestForService() {
+        viewModelScope.launch {
+            combine(_shutterWatchState, _cardBrowseState) { watch, card ->
+                ingestNotice(watch, card)
+            }
+                .distinctUntilChanged()
+                .collect { notice ->
+                    if (notice == null) stopIngestService() else startOrUpdateIngestService(notice)
+                }
+        }
+    }
+
+    /**
+     * Shade copy for the ingest currently in flight, or null when none is.
+     *
+     * [CardBrowseState.Loaded] and [CardBrowseState.ImportDone] are deliberately
+     * null: the sheet is open but no USB I/O is running — the photographer is
+     * choosing photos. Holding a foreground notification while someone reads a
+     * list is user-hostile, and it's the pattern Play policy flags.
+     */
+    private fun ingestNotice(watch: ShutterWatchState, card: CardBrowseState): String? = when {
+        watch is ShutterWatchState.Starting -> "Starting auto-upload…"
+        watch is ShutterWatchState.Watching -> {
+            val n = watch.captureCount
+            "Auto-upload live · $n photo${if (n == 1) "" else "s"} sent"
+        }
+        card is CardBrowseState.Opening -> "Reading camera card…"
+        card is CardBrowseState.Scanning -> "Reading camera card · ${card.seen} of ${card.total}"
+        card is CardBrowseState.Importing -> "Importing photos · ${card.seen} of ${card.total}"
+        else -> null
+    }
+
+    private fun startOrUpdateIngestService(notice: String) {
+        val context = getApplication<Application>()
+        val intent = Intent(context, TetherIngestService::class.java)
+            .setAction(TetherIngestService.ACTION_START)
+            .putExtra(TetherIngestService.EXTRA_NOTICE, notice)
+        // Every first start follows a tap on the Capture tab, so the app is in
+        // the foreground and API 31+'s background-start rule is satisfied; later
+        // calls target an already-foreground service. runCatching is the
+        // backstop — a ForegroundServiceStartNotAllowedException must never take
+        // down a live shoot, and losing the lifeline beats crashing out of it.
+        runCatching { ContextCompat.startForegroundService(context, intent) }
+    }
+
+    private fun stopIngestService() {
+        val context = getApplication<Application>()
+        context.stopService(Intent(context, TetherIngestService::class.java))
+    }
+
+    /**
+     * "Stop" in the notification shade. The service holds no reference to the
+     * controllers, so it raises a signal and we end whichever flow is live.
+     * [closeCardImport] is a no-op when the card flow is already idle.
+     */
+    private fun observeNotificationStopRequests() {
+        viewModelScope.launch {
+            TetherEvents.stopRequested.collect {
+                val watch = _shutterWatchState.value
+                if (watch is ShutterWatchState.Starting || watch is ShutterWatchState.Watching) {
+                    stopShutterWatch()
+                } else {
+                    closeCardImport()
+                }
+            }
+        }
     }
 
     /**
@@ -292,6 +377,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     }
 
     override fun onCleared() {
+        // Logging out mid-ingest tears down this ViewModel and its coroutines;
+        // without this the shade would keep a notification claiming a shoot is
+        // still running.
+        stopIngestService()
         cameraManager.stop()
         super.onCleared()
     }

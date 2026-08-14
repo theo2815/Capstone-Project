@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cameras the app claims on attach. Class 6 is the USB still-image class,
+    which is what a body in "PC connection / PTP" mode enumerates as — the same
+    test CameraConnectionManager.isCamera() applies at runtime.
+
+    Matching this filter lets the user tick "always open QuickPitik for this
+    device", which grants persistent USB permission and stops the prompt from
+    reappearing on every replug mid-shoot. The grant is per-device and is lost
+    on reboot until the next attach.
+-->
+<resources>
+    <usb-device class="6" />
+</resources>
