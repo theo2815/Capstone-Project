@@ -21,11 +21,19 @@ from fastapi.testclient import TestClient
 @pytest.fixture(scope="module")
 def app():
     """Create a test app with mocked dependencies."""
-    # Patch heavy imports before app creation
+    # Import src.main OUTSIDE the patch block. src/main.py binds ModelRegistry
+    # at import time (`from src.ml.registry import ModelRegistry`), so importing
+    # it while the class is patched would bind the mock permanently for the whole
+    # session — every later create_app() would then build a registry whose get()
+    # returns None, and unrelated tests would see 503 MODEL_UNAVAILABLE.
+    from src.main import create_app
+
+    # Patch where the name is *used* (src.main), not where it is defined, so the
+    # mock actually reaches lifespan and is restored cleanly on fixture teardown.
     with (
         patch("src.db.session.init_db", new_callable=AsyncMock),
         patch("src.db.session.close_db", new_callable=AsyncMock),
-        patch("src.ml.registry.ModelRegistry") as MockRegistry,
+        patch("src.main.ModelRegistry") as MockRegistry,
     ):
         mock_registry = MagicMock()
         mock_registry.load_all = AsyncMock()
@@ -35,9 +43,12 @@ def app():
         mock_registry.get.return_value = None
         MockRegistry.return_value = mock_registry
 
-        from src.main import create_app
         test_app = create_app()
-        # Inject settings for test
+        # Inject settings for test. MAX_FILE_SIZE must be a real int: the upload
+        # handlers call validate_and_decode(file, max_file_size=...) before the
+        # model check, and a bare MagicMock compares truthy against len(bytes),
+        # so every request would 400 on "file exceeds limit" and never reach the
+        # 503 MODEL_UNAVAILABLE path these tests exist to cover.
         test_app.state.settings = MagicMock(
             APP_NAME="QuickPitik Test",
             APP_VERSION="1.0.0-test",
@@ -47,6 +58,7 @@ def app():
             ALLOWED_ORIGINS=["*"],
             WEBHOOK_SECRET_KEY="",
             API_KEY_HEADER="X-API-Key",
+            MAX_FILE_SIZE=10 * 1024 * 1024,
         )
         yield test_app
 
@@ -64,7 +76,10 @@ class TestHealthEndpoint:
         response = client.get("/api/v1/health")
         assert response.status_code == 200
         data = response.json()
-        assert "success" in data
+        # Liveness returns HealthResponse (status + version), not the standard
+        # APIResponse envelope — it is the one endpoint with no auth and no
+        # request_id. See src/api/v1/health.py.
+        assert data["status"] == "alive"
 
 
 class TestSecurityHeaders:
@@ -91,31 +106,21 @@ class TestModelUnavailable503:
     """BUG-3: Model unavailable must return 503, not 200."""
 
     def _post_with_image(self, client, url: str) -> dict:
-        """POST a dummy image to an endpoint (using debug auth bypass)."""
-        # 1x1 white JPEG
+        """POST a dummy image to an endpoint (using debug auth bypass).
+
+        The image must be at least MIN_DIMENSION (32px) on both edges — a
+        smaller one is rejected by validate_and_decode with 400 before the
+        handler ever reaches the model-availability check these tests assert on.
+        """
         import io
-        jpeg_bytes = (
-            b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
-            b"\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t"
-            b"\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a"
-            b"\x1f\x1e\x1d\x1a\x1c\x1c $.\' \",#\x1c\x1c(7),01444\x1f\'9=82<.342"
-            b"\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00"
-            b"\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00"
-            b"\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b"
-            b"\xff\xc4\x00\xb5\x10\x00\x02\x01\x03\x03\x02\x04\x03\x05\x05\x04"
-            b"\x04\x00\x00\x01}\x01\x02\x03\x00\x04\x11\x05\x12!1A\x06\x13Qa\x07"
-            b"\x22q\x142\x81\x91\xa1\x08#B\xb1\xc1\x15R\xd1\xf0$3br\x82\t\n\x16"
-            b"\x17\x18\x19\x1a%&\'()*456789:CDEFGHIJSTUVWXYZcdefghijstuvwxyz\x83"
-            b"\x84\x85\x86\x87\x88\x89\x8a\x92\x93\x94\x95\x96\x97\x98\x99\x9a"
-            b"\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xb2\xb3\xb4\xb5\xb6\xb7\xb8"
-            b"\xb9\xba\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xd2\xd3\xd4\xd5\xd6"
-            b"\xd7\xd8\xd9\xda\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xf1\xf2"
-            b"\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa"
-            b"\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xfb\xd2\x8a(\x03\xff\xd9"
-        )
+
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (64, 64), color=(255, 255, 255)).save(buf, format="JPEG")
         return client.post(
             url,
-            files={"file": ("test.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")},
+            files={"file": ("test.jpg", io.BytesIO(buf.getvalue()), "image/jpeg")},
         )
 
     def test_blur_detect_503(self, client, app):
@@ -193,6 +198,9 @@ class TestWebhookSSRFValidation:
                 "events": ["job.completed"],
             },
         )
-        body = resp.json()
-        assert body["success"] is False
-        assert body["error"]["code"] == "INVALID_WEBHOOK_URL"
+        # A non-http(s) scheme never reaches the handler's SSRF check: the
+        # request model types url as pydantic HttpUrl, so FastAPI rejects it at
+        # schema validation with 422 + {"detail": [...]}. Rejected earlier and
+        # harder than INVALID_WEBHOOK_URL — assert the contract that applies.
+        assert resp.status_code == 422
+        assert "detail" in resp.json()

@@ -224,7 +224,7 @@ Some code referenced by this project lives outside the monorepo. Treat each as a
 |------|---------|-------------|
 | `C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos` | Desktop app (Electron) | **Only access when explicitly requested by the user.** Do NOT assume or automatically modify files. Treat as a separate environment outside the main repo. |
 
-If the user asks you to work in BatchMyPhotos, change directory and work there as normal. Do not pre-emptively read or edit files in that path based on monorepo activity.
+If the user asks you to work in BatchMyPhotos, change directory and work there as normal. Do not pre-emptively read or edit files in that path based on monorepo activity. BatchMyPhotos is itself a multi-project repo (`desktop/` Electron app · `backend/` its own Express server · `website/`) — see the **desktop sub-question + lock-in rule** in the session ritual below for how to scope work.
 
 ---
 
@@ -250,9 +250,11 @@ At the start of every session, before doing any other work, the agent MUST:
    - `backend`
    - `website`
    - `mobile`
-   - `desktop`
+   - `desktop` *(BatchMyPhotos — triggers the sub-question + lock-in rule below)*
 3. **After the user selects**, read that module's `tasks.md` (and `index.md` / `decisions.md` if relevant) from the vault and **show the tasks** for the chosen module(s). If the user picked multiple, group the tasks per module.
 4. Only after the user confirms which task(s) to tackle should the agent begin implementation work.
+
+**Desktop sub-question + lock-in rule.** BatchMyPhotos is itself a multi-project repo with three sub-projects — `desktop/` (the Electron app), `backend/` (its own Express server behind batchmyphotos.com), and `website/`. These are **NOT** the QuickPitik Spring Boot `backend/` or Next.js `website/` — same names, different projects. So when the user picks `desktop`, ask a **second question**: *"Within BatchMyPhotos, are we working on the desktop app, its backend, or its website?"* Once `desktop` is chosen, **lock the session into `…\Start Up project\BatchMyPhotos\`** — every file edit stays inside that folder. The **only** exception is **blur-detection work**, which legitimately spans the BatchMyPhotos desktop app ↔ `ai-api` here in `capstone-project`.
 
 Do not skip this ritual. Do not start editing code, planning, or searching the repo before the vault has been read and the user has chosen a module + task.
 

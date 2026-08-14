@@ -1,0 +1,38 @@
+{
+  "version": "1.0.0",
+  "models": {
+    "face_detection": {
+      "name": "RetinaFace R50",
+      "file": "face_detection/retinaface_r50.onnx",
+      "source": "insightface buffalo_l bundle",
+      "notes": "Downloaded automatically by insightface on first run"
+    },
+    "face_recognition": {
+      "name": "ArcFace R100",
+      "file": "face_recognition/arcface_r100.onnx",
+      "source": "insightface buffalo_l bundle",
+      "notes": "Downloaded automatically by insightface on first run"
+    },
+    "bib_detection": {
+      "name": "YOLOv8n Bib Detector",
+      "file": "bib_detection/yolov8n_bib.onnx",
+      "source": "Custom trained or fine-tuned YOLOv8n",
+      "notes": "Requires training on bib number dataset before use"
+    },
+    "bib_ocr": {
+      "name": "PaddleOCR SVTR_LCNet",
+      "file": "bib_ocr/paddleocr/",
+      "source": "PaddleOCR pre-trained models",
+      "notes": "Downloaded automatically by PaddleOCR on first run"
+    },
+    "blur_classifier": {
+      "name": "YOLOv8n-cls Blur Classifier (4-class)",
+      "file": "blur_classifier/blur_classifier.onnx",
+      "source": "scripts/train_blur_classifier.py -> scripts/export_blur_classifier.py",
+      "classes": ["defocused_blurred", "defocused_object_portrait", "motion_blurred", "sharp"],
+      "export": { "imgsz": 224, "dynamic": true, "simplify": false, "opset": 20 },
+      "input_shape": ["batch", 3, "height", "width"],
+      "notes": "Top-1 98.68%. Re-exported 2026-08-14 with dynamic=True: the batch axis is dynamic so classify_batch issues one (N,3,224,224) ONNX call instead of a per-image loop. Ultralytics also makes H/W dynamic; the wrapper always centre-crops and resizes to 224 so that is inert. Verified bit-identical to the previous static export (max abs diff 0.0) and batched-vs-per-image agreement within float32 epsilon. Measured CPU gain is small (~1.06x on 50 images) because the model is tiny and ONNX Runtime already parallelises a single inference — batching is what pays off on GPU. Optional model, loaded only if the .onnx exists. Re-run export_blur_classifier.py to regenerate; it self-verifies the dynamic axis."
+    }
+  }
+}

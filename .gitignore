@@ -30,8 +30,13 @@ docs/api-keys.md
 .claude/settings.local.json
 
 # ML Models (downloaded at build/start time)
-models/
-ai-api/models/
+# Ignore the directory's CONTENTS, not the directory itself: git cannot
+# re-include a file whose parent directory is excluded, so `ai-api/models/` +
+# `!ai-api/models/manifest.json` silently left the manifest untracked.
+# Anchored to the repo root: an unanchored `models/` matches at ANY depth, so it
+# also swallowed ai-api/models/ and defeated the negation below.
+/models/
+ai-api/models/*
 !ai-api/models/manifest.json
 *.pt
 *.onnx

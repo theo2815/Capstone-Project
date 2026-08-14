@@ -24,7 +24,10 @@ env/
 *.swo
 
 # ML Models (downloaded at build/start time)
-models/
+# Ignore the directory's CONTENTS, not the directory itself: git cannot
+# re-include a file whose parent directory is excluded, so `models/` +
+# `!models/manifest.json` silently left the manifest untracked.
+models/*
 !models/manifest.json
 *.pt
 *.onnx

@@ -107,61 +107,28 @@ def _fast_decode_and_detect(
 
 
 # ---------------------------------------------------------------------------
-# Fast decode + classify for streaming batch (bypasses full PIL pipeline)
+# Fast decode for streaming classify batch (bypasses full PIL pipeline)
 # ---------------------------------------------------------------------------
 
-def _fast_decode_and_classify(
-    data: bytes,
-    filename: str,
-    index: int,
-    classifier: Any,
-    blur_type: str | None = None,
-) -> dict:
-    """Decode an image with OpenCV and run blur classification in one call.
+def _decode_bgr_for_classify(data: bytes, max_dim: int) -> np.ndarray | None:
+    """Decode image bytes to a BGR array, downscaled to *max_dim* on the long edge.
 
-    Optimized for throughput:
-    - Decodes as BGR directly (no PIL, no EXIF — desktop pre-rotates via Sharp)
-    - Downscales to 640px max dim (classifier resizes to 224px internally)
-    - Calls classify() or detect_blur_type() depending on blur_type param
+    OpenCV BGR decode (no PIL, no EXIF — desktop pre-rotates via Sharp), then an
+    INTER_AREA downscale to BLUR_CLASSIFY_DECODE_DIM (the classifier resizes to
+    224px internally). That downscale is accuracy-relevant, not just a speed
+    trick — see the setting's note in config.py. Returns None if the bytes cannot
+    be decoded. Inference is done in batch by the caller via
+    BlurClassifier.classify_batch().
     """
-    try:
-        arr = np.frombuffer(data, dtype=np.uint8)
-        image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if image is None:
-            return {"index": index, "filename": filename, "error": "Failed to decode image"}
-
-        h, w = image.shape[:2]
-        if max(h, w) > 640:
-            scale = 640 / max(h, w)
-            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-
-        if blur_type is not None:
-            result = classifier.detect_blur_type(image, blur_type)
-            if result is None:
-                return {"index": index, "filename": filename, "error": "Classifier session unavailable"}
-            return {
-                "index": index,
-                "filename": filename,
-                "blur_type": result["blur_type"],
-                "detected": result["detected"],
-                "confidence": result["confidence"],
-                "blur_type_probability": result["blur_type_probability"],
-                "predicted_class": result["predicted_class"],
-                "probabilities": result["probabilities"],
-            }
-
-        result = classifier.classify(image)
-        if result is None:
-            return {"index": index, "filename": filename, "error": "Classifier session unavailable"}
-        return {
-            "index": index,
-            "filename": filename,
-            "predicted_class": result["predicted_class"],
-            "confidence": result["confidence"],
-            "probabilities": result["probabilities"],
-        }
-    except Exception as e:
-        return {"index": index, "filename": filename, "error": str(e)}
+    arr = np.frombuffer(data, dtype=np.uint8)
+    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    h, w = image.shape[:2]
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    return image
 
 
 @router.post("/detect", response_model=APIResponse)
@@ -523,21 +490,72 @@ async def classify_blur_stream(
 
     total = len(items)
     bt = blur_type.value if blur_type else None
+    sub_batch = settings.INFERENCE_SUB_BATCH_SIZE
+    decode_dim = settings.BLUR_CLASSIFY_DECODE_DIM
+    min_conf = classifier.min_detection_confidence
     start = time.perf_counter()
+
+    def _build_line(index: int, filename: str, image, result) -> dict:
+        if image is None:
+            return {"index": index, "filename": filename, "error": "Failed to decode image"}
+        if result is None:
+            return {"index": index, "filename": filename, "error": "Classifier returned None"}
+        if bt is not None:
+            # Targeted detection — mirror BlurClassifier.detect_blur_type (incl. the
+            # min-confidence floor) so the streaming response contract is unchanged.
+            return {
+                "index": index,
+                "filename": filename,
+                "blur_type": bt,
+                "detected": result["predicted_class"] == bt and result["confidence"] >= min_conf,
+                "confidence": result["confidence"],
+                "blur_type_probability": result["probabilities"].get(bt, 0.0),
+                "predicted_class": result["predicted_class"],
+                "probabilities": result["probabilities"],
+            }
+        return {
+            "index": index,
+            "filename": filename,
+            "predicted_class": result["predicted_class"],
+            "confidence": result["confidence"],
+            "probabilities": result["probabilities"],
+        }
 
     async def generate():
         sem = asyncio.Semaphore(concurrency)
 
-        async def process(index: int, filename: str, data: bytes) -> str:
+        async def decode_one(data: bytes):
             async with sem:
-                result = await asyncio.to_thread(
-                    _fast_decode_and_classify, data, filename, index, classifier, bt,
-                )
-                return json.dumps(result, separators=(",", ":")) + "\n"
+                return await asyncio.to_thread(_decode_bgr_for_classify, data, decode_dim)
 
-        tasks = [process(i, name, data) for i, name, data in items]
-        for coro in asyncio.as_completed(tasks):
-            yield await coro
+        # Sequential sub-batches (mirrors the Celery blur_classify_batch worker):
+        # decode each sub-batch's images in parallel, then ONE batched inference.
+        # classify_batch runs a true (N,3,224,224) ONNX call when the model has a
+        # dynamic batch axis, and a per-image loop otherwise — identical results.
+        for chunk_start in range(0, total, sub_batch):
+            sub = items[chunk_start:chunk_start + sub_batch]
+            images = await asyncio.gather(*[decode_one(d) for _, _, d in sub])
+            try:
+                results = await asyncio.to_thread(classifier.classify_batch, images)
+            except Exception as e:
+                # The status line and headers are already on the wire, so we
+                # cannot turn this into an HTTP error. Letting it propagate would
+                # kill the generator mid-stream and hand the desktop a truncated
+                # body with no _summary — indistinguishable from success. Emit a
+                # per-image error line for this sub-batch instead and keep going,
+                # so the stream stays well-formed and every index is accounted for.
+                logger.error(
+                    "Stream classify sub-batch failed",
+                    chunk_start=chunk_start,
+                    size=len(sub),
+                    error=str(e),
+                )
+                for idx, name, _ in sub:
+                    line = {"index": idx, "filename": name, "error": str(e)}
+                    yield json.dumps(line, separators=(",", ":")) + "\n"
+                continue
+            for (idx, name, _), image, result in zip(sub, images, results):
+                yield json.dumps(_build_line(idx, name, image, result), separators=(",", ":")) + "\n"
 
         # Final summary line
         elapsed = (time.perf_counter() - start) * 1000

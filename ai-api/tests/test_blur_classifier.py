@@ -32,28 +32,38 @@ def _make_bgr_image(width: int = 256, height: int = 256) -> np.ndarray:
 
 
 def _make_mock_onnx_session(num_classes: int = 4):
-    """Create a mock ONNX InferenceSession that returns fake logits."""
+    """Create a mock ONNX InferenceSession returning fake class probabilities.
+
+    The exported YOLOv8-cls graph ends in Softmax, so the session already emits
+    probabilities that sum to 1 — `_logits_to_result` deliberately does NOT
+    re-apply softmax. The mock must match that, or confidence comes back > 1.0.
+    """
     session = MagicMock()
     session.get_inputs.return_value = [MagicMock(name="images", shape=[1, 3, 224, 224])]
 
     def mock_run(output_names, input_feed):
-        # Return logits where class 3 (sharp) has highest score
-        logits = np.array([[0.5, 0.1, 0.2, 2.0]], dtype=np.float32)
-        return [logits]
+        # Probabilities where class 3 (sharp) is the argmax; sums to 1.0
+        probs = np.array([[0.10, 0.05, 0.15, 0.70]], dtype=np.float32)
+        return [probs]
 
     session.run = mock_run
     return session
 
 
 def _make_mock_onnx_session_for_class(class_idx: int, num_classes: int = 4):
-    """Create a mock ONNX session that predicts a specific class index."""
+    """Create a mock ONNX session that predicts a specific class index.
+
+    Emits probabilities (post-Softmax), matching the real graph — see
+    _make_mock_onnx_session.
+    """
     session = MagicMock()
     session.get_inputs.return_value = [MagicMock(name="images", shape=[1, 3, 224, 224])]
 
     def mock_run(output_names, input_feed):
-        logits = np.full((1, num_classes), 0.1, dtype=np.float32)
-        logits[0, class_idx] = 2.0
-        return [logits]
+        remainder = 0.3 / (num_classes - 1)
+        probs = np.full((1, num_classes), remainder, dtype=np.float32)
+        probs[0, class_idx] = 0.7
+        return [probs]
 
     session.run = mock_run
     return session

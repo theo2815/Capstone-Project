@@ -227,3 +227,68 @@ class TestResizeGray:
         resized = cpp.resize_gray(gray, 32, 32)
         # Not exact due to bilinear interpolation center offset, but close
         assert resized.shape == (32, 32)
+
+
+class TestClassifyPreprocess:
+    """classify_preprocess is an accelerator for BlurClassifier._preprocess.
+
+    The two must stay interchangeable: whether the extension happens to be
+    compiled decides which one runs, so a drift between them means the same
+    photo classifies differently on two deployments of the same code.
+    """
+
+    @staticmethod
+    def _python_preprocess(image: np.ndarray, size: int = 224) -> np.ndarray:
+        """The pure-Python/NumPy fallback, verbatim from BlurClassifier."""
+        import cv2
+
+        h, w = image.shape[:2]
+        m = min(h, w)
+        top, left = (h - m) // 2, (w - m) // 2
+        cropped = image[top:top + m, left:left + m]
+        resized = cv2.resize(cropped, (size, size), interpolation=cv2.INTER_LINEAR)
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        return np.expand_dims(np.transpose(rgb, (2, 0, 1)), axis=0)
+
+    def test_output_shape_and_dtype(self):
+        bgr = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
+        out = cpp.classify_preprocess(bgr, 224)
+        assert out.shape == (1, 3, 224, 224)
+        assert out.dtype == np.float32
+
+    def test_normalised_to_unit_range(self):
+        bgr = np.random.randint(0, 256, (300, 300, 3), dtype=np.uint8)
+        out = cpp.classify_preprocess(bgr, 224)
+        assert out.min() >= 0.0
+        assert out.max() <= 1.0
+
+    def test_channels_are_rgb_not_bgr(self):
+        # Pure blue in BGR (255, 0, 0) must land in the LAST channel after the
+        # BGR->RGB swap, not the first.
+        bgr = np.zeros((64, 64, 3), dtype=np.uint8)
+        bgr[:, :, 0] = 255
+        out = cpp.classify_preprocess(bgr, 224)
+        assert out[0, 2].mean() == pytest.approx(1.0, abs=1e-3)
+        assert out[0, 0].mean() == pytest.approx(0.0, abs=1e-3)
+
+    def test_matches_python_fallback(self):
+        """Pins the known divergence so it cannot silently grow.
+
+        C++ interpolates in double and normalises straight from the float
+        result; the Python path goes through cv2.resize, which rounds to uint8
+        first (and uses fixed-point weights). That costs under one uint8 step —
+        measured max ~0.76/255 on real photos. The Python/OpenCV path is the
+        reference (it matches the Ultralytics transform the model was trained
+        with), so C++ is the deviation; the proper fix is to round to uint8
+        inside classify_preprocess before normalising, which needs an extension
+        rebuild. Until then this bounds the drift.
+        """
+        rng = np.random.default_rng(7)
+        for shape in ((480, 640, 3), (640, 480, 3), (512, 512, 3)):
+            bgr = rng.integers(0, 256, shape, dtype=np.uint8)
+            got = cpp.classify_preprocess(bgr, 224)
+            expected = self._python_preprocess(bgr, 224)
+            assert got.shape == expected.shape
+            # 1.5/255 leaves headroom for rounding without admitting a real
+            # algorithmic change (a wrong crop or channel order blows past this).
+            assert np.abs(got - expected).max() < 1.5 / 255

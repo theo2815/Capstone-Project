@@ -137,6 +137,14 @@ class BlurClassifier:
         4. HWC -> CHW, add batch dimension
 
         Uses C++ fused implementation when available (3-5x faster).
+
+        Known divergence (bounded by tests/test_cpp_extension.py): the C++ path
+        interpolates in double and normalises from the float result, while this
+        Python path goes through cv2.resize, which rounds to uint8 first. That is
+        under one uint8 step (max ~0.76/255 measured on real photos) and flipped
+        1 image in 698 on the val set. This path is the reference — it matches the
+        Ultralytics transform the model was trained with — so the C++ side is what
+        should change (round before normalising); that needs an extension rebuild.
         """
         if _HAS_CPP_PREPROCESS:
             return _cpp_classify_preprocess(image, self.input_size)
@@ -201,11 +209,20 @@ class BlurClassifier:
 
         If the ONNX model supports dynamic batch (detected at load time),
         preprocesses all images, stacks into (N, 3, H, W), and runs one
-        session.run() call for 3-5x throughput improvement.
+        session.run() call.
 
-        If the model is static batch=1 (common with default YOLOv8 export),
-        runs per-image inference internally — still benefits from the
-        sub-batch decode parallelism in the caller.
+        If the model is static batch=1 (the default YOLOv8 export — pass
+        dynamic=True, see scripts/export_blur_classifier.py), runs per-image
+        inference internally — still benefits from the sub-batch decode
+        parallelism in the caller. Results are identical either way (verified
+        to float32 epsilon).
+
+        Expected gain: on CPU this is small — measured ~1.06x on a 50-image
+        batch (2.8 vs 3.0 ms/image), because the model is tiny (1.4M params)
+        and ONNX Runtime already parallelises a single inference across
+        ONNX_INTRA_OP_THREADS, leaving little per-call overhead to amortise.
+        Batching is what unlocks throughput on GPU (USE_GPU=true); on CPU the
+        real wins are the parallel decode and the client-side downscale.
 
         Args:
             images: List of BGR numpy arrays. None entries are skipped and

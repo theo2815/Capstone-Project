@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     # Blur Detection
     BLUR_THRESHOLD: float = 100.0
     BLUR_DETECTION_MIN_CONFIDENCE: float = 0.5
+    # Resolution the blur CLASSIFIER decodes to before inference. Calibrated, not
+    # arbitrary: measured on 1057 labelled val images, 640 classifies more
+    # accurately than 1280 (97.5% vs 96.6%, and half the blurry-called-sharp
+    # misses). Reason is that this INTER_AREA downscale supplies the
+    # anti-aliasing that BlurClassifier._preprocess's INTER_LINEAR resize to
+    # 224px does not. Shared by /blur/classify/stream and the blur_classify_batch
+    # worker — keep both on one value or they will disagree on the same photo.
+    BLUR_CLASSIFY_DECODE_DIM: int = 640
 
     # Face Recognition
     FACE_SIMILARITY_THRESHOLD: float = 0.4
@@ -47,6 +55,12 @@ class Settings(BaseSettings):
     INFERENCE_TIMEOUT: int = 120  # Per-image inference timeout in seconds
     INFERENCE_BATCH_TIMEOUT: int = 300  # Max seconds for any single batch ONNX call
     INFERENCE_SUB_BATCH_SIZE: int = 50  # Match MAX_BATCH_SIZE: 1 ONNX call per task
+    # ONNX Runtime thread pools for the blur classifier session. On CPU hosts keep
+    # WORKERS x ONNX_INTRA_OP_THREADS <= physical cores to avoid oversubscription
+    # (e.g. WORKERS=2 -> set intra=3 on a 6-core box). The streaming classify path
+    # now batches per sub-batch, so per-request thread pressure is lower than the
+    # old per-image fan-out. On GPU (USE_GPU=true) inference runs on-device and
+    # these matter less — batching (dynamic axis) is what drives GPU throughput.
     ONNX_INTRA_OP_THREADS: int = 6
     ONNX_INTER_OP_THREADS: int = 4
 

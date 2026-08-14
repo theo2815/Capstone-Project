@@ -205,16 +205,14 @@ The desktop UI doesn't need raw ai-api responses. Shape them:
 
 ## Contract 2: Web/Mobile Backend (Full Features)
 
-The Web/Mobile Backend uses all ai-api features and manages events, participants, and photo galleries.
+The Web/Mobile Backend uses ai-api's **face and bib** features and manages events, participants, and photo galleries.
+
+> **Blur is desktop-only — the web/mobile backend does NOT call it.** Per root `CLAUDE.md` rule 6, web + mobile upload paths MUST NOT call any `/blur/*` endpoint (no `BLUR_REJECTED` gate, no `blur_score` writes), and the Spring Boot `AiApiClient` intentionally has no `blurDetect()` method. Photographers cull blurry shots in BatchMyPhotos (desktop) before upload, so uploaded photos are already culled. All blur usage lives in Contract 1 (Desktop) only.
 
 ### Endpoints Used
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /api/v1/blur/detect` | Photo quality gate on upload |
-| `POST /api/v1/blur/classify` | Detailed blur classification |
-| `POST /api/v1/blur/detect/batch` · `/detect/mega` | Async batch / mega-batch quality check |
-| `POST /api/v1/blur/classify/batch` · `/classify/mega` | Async batch / mega-batch classification |
 | `POST /api/v1/faces/enroll` | Register participant face for event |
 | `POST /api/v1/faces/enroll/batch` | Bulk-enroll multiple photos under **one** person (many selfies of one runner) |
 | `POST /api/v1/faces/enroll/mega` | Bulk **photo indexing** — one person **per image**, every face stored, `ref` echoed (up to 500) |
@@ -237,7 +235,7 @@ The Web/Mobile Backend uses all ai-api features and manages events, participants
 X-API-Key: sk_webmobile_prod_<your_key>
 ```
 
-Required scopes (actual names used in code): `blur:read`, `faces:read`, `faces:write`, `faces:delete`, `bibs:read`, `jobs:read`, `webhooks:read`, `webhooks:write`. A key with the `*` super-scope passes every check.
+Required scopes (actual names used in code): `faces:read`, `faces:write`, `faces:delete`, `bibs:read`, `jobs:read`, `webhooks:read`, `webhooks:write`. (No `blur:read` — blur is desktop-only, see note above.) A key with the `*` super-scope passes every check.
 
 ### Flow 1: Event Setup — Enroll Participant Faces
 
@@ -312,14 +310,7 @@ Photographer (Mobile)    Web/Mobile Backend              ai-api
     │  "Upload race photo"      │                           │
     │─────────────────────────►│                           │
     │                           │                           │
-    │                           │  Step 1: Quality check    │
-    │                           │  POST /blur/detect        │
-    │                           │  + file                   │
-    │                           │─────────────────────────►│
-    │                           │  { is_blurry: false }     │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │                           │  Step 2: Face search      │
+    │                           │  Step 1: Face search      │
     │                           │  POST /faces/search       │
     │                           │  ?event_id=marathon-2026  │
     │                           │  ?threshold=0.6           │
@@ -332,7 +323,7 @@ Photographer (Mobile)    Web/Mobile Backend              ai-api
     │                           │  ] }                      │
     │                           │◄─────────────────────────│
     │                           │                           │
-    │                           │  Step 3: Bib recognition  │
+    │                           │  Step 2: Bib recognition  │
     │                           │  POST /bibs/recognize     │
     │                           │  + file                   │
     │                           │─────────────────────────►│
@@ -342,7 +333,7 @@ Photographer (Mobile)    Web/Mobile Backend              ai-api
     │                           │  ] }                      │
     │                           │◄─────────────────────────│
     │                           │                           │
-    │                           │  Step 4: Backend merges   │
+    │                           │  Step 3: Backend merges   │
     │                           │  face match + bib match   │
     │                           │  into final tagging       │
     │                           │                           │
@@ -355,22 +346,15 @@ Photographer (Mobile)    Web/Mobile Backend              ai-api
 **Web/Mobile Backend logic:**
 ```python
 async def process_uploaded_photo(photo_file, event):
-    """Full pipeline: blur check → face search → bib OCR → merge results."""
+    """Full pipeline: face search → bib OCR → merge results.
+
+    (No blur gate — photos arrive already culled by the desktop app; blur is
+    desktop-only per root CLAUDE.md rule 6.)
+    """
 
     image_bytes = await photo_file.read()
 
-    # Step 1: Blur quality gate
-    blur_resp = await httpx.post(
-        f"{AI_API_URL}/api/v1/blur/detect",
-        headers={"X-API-Key": AI_API_KEY},
-        files={"file": (photo_file.name, image_bytes, "image/jpeg")},
-    )
-    blur = blur_resp.json()["data"]
-
-    if blur["is_blurry"]:
-        return {"status": "rejected", "reason": "Photo is too blurry"}
-
-    # Step 2: Face search (scoped to this event)
+    # Step 1: Face search (scoped to this event)
     face_resp = await httpx.post(
         f"{AI_API_URL}/api/v1/faces/search",
         headers={"X-API-Key": AI_API_KEY},
@@ -383,7 +367,7 @@ async def process_uploaded_photo(photo_file, event):
     )
     face_matches = face_resp.json()["data"]["matches"]
 
-    # Step 3: Bib recognition
+    # Step 2: Bib recognition
     bib_resp = await httpx.post(
         f"{AI_API_URL}/api/v1/bibs/recognize",
         headers={"X-API-Key": AI_API_KEY},
@@ -391,7 +375,7 @@ async def process_uploaded_photo(photo_file, event):
     )
     bib_detections = bib_resp.json()["data"]["detections"]
 
-    # Step 4: Merge results in backend
+    # Step 3: Merge results in backend
     tagged_participants = []
 
     # From face matches: look up our participant by ai_person_id
@@ -430,7 +414,6 @@ async def process_uploaded_photo(photo_file, event):
     photo = Photo(
         event_id=event.id,
         file_url=upload_to_storage(image_bytes),
-        blur_score=blur["metrics"]["laplacian_variance"],
         tags=unique,
     )
     db.save(photo)
@@ -627,9 +610,7 @@ BLUR_CLASSIFY_ON_IMPORT=true   # Run classification on every import
 AI_API_URL=http://ai-api.internal:8000
 AI_API_KEY=sk_webmobile_prod_xxxxxxxxxxxx
 
-# Blur settings
-BLUR_AUTO_REJECT=true                 # Reject blurry photos on upload
-BLUR_REJECT_THRESHOLD=100.0           # Laplacian variance threshold
+# (No blur settings — blur is desktop-only per root CLAUDE.md rule 6)
 
 # Face search settings (per-event defaults, overridable in event settings)
 FACE_MATCH_THRESHOLD_DEFAULT=0.6      # Minimum similarity to show match
@@ -654,8 +635,7 @@ Desktop Backend:
   ❌ webhooks      (optional — polling is fine for desktop)
 
 Web/Mobile Backend:
-  ✅ blur/detect (+ stream/batch/mega variants)
-  ✅ blur/classify (+ stream/batch/mega variants)
+  ❌ blur/*                (desktop-only — root CLAUDE.md rule 6)
   ✅ faces/enroll          (with event_id!)
   ✅ faces/enroll/batch
   ✅ faces/search          (with event_id!)
