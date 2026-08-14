@@ -7,54 +7,85 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
 /**
- * USB physical-shutter capture monitor for a Canon EOS body — the approach meant
- * to let the photographer SHOOT NORMALLY over USB and have each frame auto-upload.
+ * USB physical-shutter capture monitor for a Canon EOS body — live auto-upload:
+ * the photographer SHOOTS NORMALLY over USB and each frame is pulled and handed
+ * to [run]'s `onCapture` for the upload queue.
  *
  * The lever (from on-device findings): a *plain* PTP session ("PC connection")
  * locks the body's shutter, but **EOS remote + event mode keeps the body live —
  * the physical shutter fires and saves to the card** (journal 2026-05-26 §12).
- * What was never solved is *reading the new frame* in that mode: Canon doesn't
- * report a locally-triggered capture through `EOS_GetEvent`. So this controller
- * enters the shutter-alive mode and watches for each new shot TWO ways, logging
- * whichever the R6 actually surfaces:
+ * Because Canon doesn't reliably report a locally-triggered capture through
+ * `EOS_GetEvent` on every body/firmware, new shots are watched for TWO ways,
+ * logging whichever the camera actually surfaces:
  *   1. `EOS_GetEvent` — an ObjectAddedEx for the freshly written frame.
  *   2. a throttled standard `GetObjectHandles` diff — in case the body doesn't
  *      report local captures but the card listing still grows.
  *
- * Every distinct event code + each detection (and whether the card listing grows)
- * is logged, so a single shooting session reveals exactly what works. New frames
- * are deduped by handle across both detectors and pulled with GetObject into the
- * existing upload queue.
+ * New frames are deduped by handle across both detectors; only JPEGs are pulled
+ * (RAW stays on the card — filtered via `GetObjectInfo`, or an SOI byte sniff
+ * when the camera won't give object info). A frame whose download fails is
+ * retried the next time a detector surfaces it, up to [MAX_PULL_ATTEMPTS].
+ *
+ * Threading contract: every transfer is a synchronous `bulkTransfer` — callers
+ * MUST launch [run] on `Dispatchers.IO`. Cancellation is only observed at
+ * `delay()` points; an in-flight bulkTransfer finishes or times out (≤5 s)
+ * first, so stopping can lag by up to that much. The `finally` block (event/
+ * remote mode reset + session close) is entirely non-suspending and therefore
+ * safe under cancellation.
  *
  * Takes a [deviceProvider] so each open retry re-fetches the current handle if the
- * R6 re-enumerated after sleeping.
+ * camera re-enumerated after sleeping.
  */
 class UsbEventCaptureController(
     private val manager: UsbManager,
     private val deviceProvider: () -> UsbDevice?,
 ) {
+    private enum class PullOutcome { UPLOADED, SKIPPED, FAILED }
+
     suspend fun run(
         onLog: (String) -> Unit,
-        onCapture: suspend (filename: String, bytes: ByteArray) -> Unit,
+        onStarted: () -> Unit,
+        onCapture: suspend (filename: String, bytes: ByteArray) -> Boolean,
     ) {
         val session = openAndInit(onLog) ?: run {
             onLog(
-                "Couldn't start shutter watch. Wake the camera (half-press the shutter), set " +
-                    "Auto power off → Disable, confirm the USB permission was allowed, then tap " +
-                    "START SHUTTER WATCH again."
+                "Couldn't start auto-upload. Wake the camera (half-press the shutter), set " +
+                    "Auto power off → Disable, confirm the USB permission was allowed, then " +
+                    "tap Start auto-upload again."
             )
             return
         }
         try {
-            onLog("Shutter watch live — press the shutter on the camera; each shot should upload.")
             // Baseline BOTH detectors so existing frames aren't treated as new.
             val seen = HashSet<Long>()
             runCatching { EosEvents.parse(session.eosGetEvent()) }.getOrDefault(emptyList())
                 .filter { it.isObjectArrival }.forEach { seen.add(it.handle) }
-            val baseCard = runCatching { allCardHandles(session) }.getOrDefault(emptyList())
+
+            // The card baseline is fail-closed: without it, the first card scan
+            // would see EVERY photo on the card as new and upload all of them.
+            var baseCard: List<Long>? = null
+            for (attempt in 1..BASELINE_ATTEMPTS) {
+                baseCard = runCatching { allCardHandles(session) }.getOrNull()
+                if (baseCard != null) break
+                onLog("Baseline attempt $attempt failed — retrying…")
+                delay(RETRY_MS)
+            }
+            if (baseCard == null) {
+                onLog(
+                    "Couldn't read the card listing to set a baseline. Stopping so the " +
+                        "whole card isn't re-uploaded — unplug/replug and try again."
+                )
+                return
+            }
             seen.addAll(baseCard)
             onLog("Baseline set — ${baseCard.size} card object(s) known. Shoot now.")
+            onStarted()
+            onLog("Auto-upload live — press the shutter on the camera; each shot uploads.")
 
+            // Download attempts per handle: retried whenever a detector surfaces
+            // the handle again, then poisoned into `seen` at the cap so one bad
+            // object can't stall the loop forever.
+            val attempts = HashMap<Long, Int>()
             val loggedCodes = HashSet<Int>()
             var lastKeepAlive = System.currentTimeMillis()
             var lastCardScan = System.currentTimeMillis()
@@ -81,8 +112,8 @@ class UsbEventCaptureController(
                 val events = EosEvents.parse(blob)
                 for (ev in events) if (loggedCodes.add(ev.code)) onLog("event 0x%04X seen".format(ev.code))
                 for (ev in events) {
-                    if (!ev.isObjectArrival || !seen.add(ev.handle)) continue
-                    pullViaEvent(session, ev.handle, onLog, onCapture)
+                    if (!ev.isObjectArrival || ev.handle in seen) continue
+                    settlePull(seen, attempts, ev.handle, pullViaEvent(session, ev.handle, onLog, onCapture), onLog)
                 }
 
                 val now = System.currentTimeMillis()
@@ -92,9 +123,11 @@ class UsbEventCaptureController(
                     lastCardScan = now
                     val handles = runCatching { allCardHandles(session) }.getOrNull()
                     if (handles != null) {
-                        val fresh = handles.filter { seen.add(it) }.sorted()
+                        val fresh = handles.filter { it !in seen }.sorted()
                         if (fresh.isNotEmpty()) onLog("card-diff: ${fresh.size} new object(s) on card")
-                        for (h in fresh) pullViaCard(session, h, onLog, onCapture)
+                        for (h in fresh) {
+                            settlePull(seen, attempts, h, pullViaCard(session, h, onLog, onCapture), onLog)
+                        }
                     }
                 }
 
@@ -112,7 +145,35 @@ class UsbEventCaptureController(
             runCatching { session.eosSetEventMode(0) }
             runCatching { session.eosSetRemoteMode(0) }
             runCatching { session.close() }
-            onLog("Shutter watch stopped.")
+            onLog("Auto-upload stopped.")
+        }
+    }
+
+    /**
+     * Fold a pull result into the dedupe/retry books. Success and deliberate
+     * skips are final; failures earn another try the next time the handle
+     * surfaces, up to [MAX_PULL_ATTEMPTS].
+     */
+    private fun settlePull(
+        seen: HashSet<Long>,
+        attempts: HashMap<Long, Int>,
+        handle: Long,
+        outcome: PullOutcome,
+        onLog: (String) -> Unit,
+    ) {
+        when (outcome) {
+            PullOutcome.UPLOADED, PullOutcome.SKIPPED -> {
+                seen.add(handle)
+                attempts.remove(handle)
+            }
+            PullOutcome.FAILED -> {
+                val n = (attempts[handle] ?: 0) + 1
+                attempts[handle] = n
+                if (n >= MAX_PULL_ATTEMPTS) {
+                    seen.add(handle)
+                    onLog("handle 0x%08X gave up after $n attempts".format(handle))
+                }
+            }
         }
     }
 
@@ -121,19 +182,37 @@ class UsbEventCaptureController(
         session: PtpSession,
         handle: Long,
         onLog: (String) -> Unit,
-        onCapture: suspend (String, ByteArray) -> Unit,
-    ) {
-        onLog("Capture via EVENT — handle 0x%08X".format(handle))
+        onCapture: suspend (String, ByteArray) -> Boolean,
+    ): PullOutcome {
+        // Standard GetObjectInfo works on event-surfaced handles (same handle
+        // space the card path enumerates) and provides the type filter + the
+        // real filename. In RAW+JPEG the camera reports BOTH objects — the RAW
+        // must stay on the card.
+        val info = runCatching { session.getObjectInfo(handle) }.getOrNull()
+        if (info != null && info.isAssociation) return PullOutcome.SKIPPED
+        if (info != null && !info.isJpeg) {
+            onLog("non-JPEG (RAW) left on card — ${info.filename.ifBlank { "0x%08X".format(handle) }}")
+            return PullOutcome.SKIPPED
+        }
+        val name = info?.filename?.takeIf { it.isNotBlank() } ?: "R6_%08X.jpg".format(handle)
+        onLog("Capture via EVENT — $name (0x%08X)".format(handle))
         val bytes = try {
             session.eosGetObject(handle)
         } catch (e: Exception) {
             onLog("  EOS download failed: ${e.message}")
-            return
+            return PullOutcome.FAILED
         }
-        if (bytes.isEmpty()) { onLog("  0 bytes — skipped"); return }
+        // 0 bytes may be an object still mid-write to the card — worth a retry.
+        if (bytes.isEmpty()) { onLog("  0 bytes — will retry"); return PullOutcome.FAILED }
         runCatching { session.eosTransferComplete(handle) }
-        onLog("  R6_%08X.jpg ${bytes.size / 1024} KB → queued".format(handle))
-        onCapture("R6_%08X.jpg".format(handle), bytes)
+        if (info == null && !looksLikeJpeg(bytes)) {
+            // No ObjectInfo to filter on — sniff the pulled bytes. A CR3 never
+            // becomes a JPEG, so this is a skip, not a retry.
+            onLog("  not a JPEG (no SOI) — left on card")
+            return PullOutcome.SKIPPED
+        }
+        onLog("  $name ${bytes.size / 1024} KB → queued")
+        return if (onCapture(name, bytes)) PullOutcome.UPLOADED else PullOutcome.FAILED
     }
 
     /** Pull a frame found by the standard card-listing diff (standard GetObject). */
@@ -141,32 +220,46 @@ class UsbEventCaptureController(
         session: PtpSession,
         handle: Long,
         onLog: (String) -> Unit,
-        onCapture: suspend (String, ByteArray) -> Unit,
-    ) {
+        onCapture: suspend (String, ByteArray) -> Boolean,
+    ): PullOutcome {
         val info = runCatching { session.getObjectInfo(handle) }.getOrNull()
-        if (info != null && info.isAssociation) return
-        if (info != null && !info.isJpeg) return // RAW stays on the card
+        if (info != null && info.isAssociation) return PullOutcome.SKIPPED
+        if (info != null && !info.isJpeg) return PullOutcome.SKIPPED // RAW stays on the card
         val name = info?.filename?.takeIf { it.isNotBlank() } ?: "IMG_%08X.jpg".format(handle)
         onLog("Capture via CARD — $name (0x%08X)".format(handle))
         val bytes = try {
             session.getObject(handle)
         } catch (e: Exception) {
             onLog("  card download failed: ${e.message}")
-            return
+            return PullOutcome.FAILED
         }
-        if (bytes.isEmpty()) { onLog("  0 bytes — skipped"); return }
+        if (bytes.isEmpty()) { onLog("  0 bytes — will retry"); return PullOutcome.FAILED }
+        if (info == null && !looksLikeJpeg(bytes)) {
+            onLog("  not a JPEG (no SOI) — left on card")
+            return PullOutcome.SKIPPED
+        }
         onLog("  $name ${bytes.size / 1024} KB → queued")
-        onCapture(name, bytes)
+        return if (onCapture(name, bytes)) PullOutcome.UPLOADED else PullOutcome.FAILED
     }
 
-    /** Union of object handles across every storage; wildcard fallback if empty. */
+    /** JPEG SOI marker sniff — the filter of last resort when GetObjectInfo failed. */
+    private fun looksLikeJpeg(bytes: ByteArray): Boolean =
+        bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()
+
+    /**
+     * Union of object handles across every storage; wildcard fallback if empty.
+     * Transport failures PROPAGATE — the baseline needs to distinguish "card is
+     * empty" from "couldn't read the card" (a swallowed failure here is how an
+     * empty baseline ends up re-uploading the entire card). The scan-loop call
+     * site wraps with runCatching and just skips that tick.
+     */
     private fun allCardHandles(session: PtpSession): List<Long> {
         val all = LinkedHashSet<Long>()
-        for (sid in runCatching { session.getStorageIds() }.getOrDefault(emptyList())) {
-            runCatching { session.getObjectHandles(sid) }.getOrNull()?.let(all::addAll)
+        for (sid in session.getStorageIds()) {
+            all.addAll(session.getObjectHandles(sid))
         }
         if (all.isEmpty()) {
-            runCatching { session.getObjectHandles(0xFFFFFFFFL) }.getOrNull()?.let(all::addAll)
+            all.addAll(session.getObjectHandles(0xFFFFFFFFL))
         }
         return all.toList()
     }
@@ -215,6 +308,15 @@ class UsbEventCaptureController(
     }
 
     private companion object {
+        // Known latency characteristic (tuning hooks for the on-device session):
+        // on an EMPTY event queue PtpSession.eosGetEvent() blocks up to ~3 s
+        // (two 1.5 s readContainerOrNull legs around a clearHalt), so the
+        // effective event-poll cadence is ~3.3 s, worst-case capture latency
+        // ≈ 3–6.5 s including the card-scan fallback. Do NOT change PtpSession
+        // read semantics without a camera in hand — a shorter read timeout
+        // risks clearing a halt mid-data-phase and desyncing container framing.
+        // Tune these constants using the timing log from the R6 verification
+        // protocol, never blind.
         const val POLL_MS = 300L
         const val CARD_SCAN_MS = 3000L
         const val KEEPALIVE_MS = 4000L
@@ -223,5 +325,7 @@ class UsbEventCaptureController(
         const val RETRY_MS = 1000L
         const val SETTLE_MS = 200L
         const val ERRORS_BEFORE_STOP = 12
+        const val BASELINE_ATTEMPTS = 3
+        const val MAX_PULL_ATTEMPTS = 3
     }
 }

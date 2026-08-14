@@ -254,7 +254,9 @@ object EosEvents {
             val size = bb.getInt(off)
             if (size < 8) break // size 0 / terminator / malformed
             val code = bb.getInt(off + 4)
-            if (code != 0 && off + 12 <= blob.size) {
+            // size >= 12 keeps a payload-less (8-byte) record from reading the
+            // NEXT record's size field as its handle.
+            if (code != 0 && size >= 12 && off + 12 <= blob.size) {
                 val handle = bb.getInt(off + 8).toLong() and 0xFFFFFFFFL
                 events.add(EosEvent(code, handle))
             }

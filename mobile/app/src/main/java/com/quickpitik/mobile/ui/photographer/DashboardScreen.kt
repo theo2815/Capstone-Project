@@ -1,5 +1,6 @@
 package com.quickpitik.mobile.ui.photographer
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -7,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -306,6 +309,7 @@ private fun TetherConsoleView(
     val activeEvent by viewModel.activeEvent.collectAsState()
     val queueStats by viewModel.queueStats.collectAsState()
     val cameraState by viewModel.cameraConnectionState.collectAsState()
+    val watchState by viewModel.shutterWatchState.collectAsState()
     val scrollState = rememberScrollState()
 
     Column(
@@ -367,10 +371,18 @@ private fun TetherConsoleView(
         // CameraConnectionManager. Mobile is tether-only — gallery upload lives
         // on the website (`/dashboard/upload`), not here.
         when (val cam = cameraState) {
+            // Detach edge (accepted): unplugging mid-watch swaps this branch to
+            // CameraConnectPrompt, hiding the VM's shutter-watch Error until the
+            // camera is re-plugged. The detach watcher still stops the session
+            // and flushes the queue.
             is CameraConnectionState.Connected -> CameraConnectedCard(
                 deviceName = cam.deviceName,
                 vendorId = cam.vendorId,
                 productId = cam.productId,
+                watchState = watchState,
+                canStartWatch = activeEvent?.let { canUploadToEvent(it.date) } == true,
+                onStartWatch = { viewModel.startShutterWatch() },
+                onStopWatch = { viewModel.stopShutterWatch() },
                 onSimulate = { viewModel.simulatePhotoCapture() },
                 onBrowseCard = { viewModel.browseCameraCard() }
             )
@@ -571,9 +583,15 @@ private fun CameraConnectedCard(
     deviceName: String,
     vendorId: Int,
     productId: Int,
+    watchState: ShutterWatchState,
+    canStartWatch: Boolean,
+    onStartWatch: () -> Unit,
+    onStopWatch: () -> Unit,
     onSimulate: () -> Unit,
     onBrowseCard: () -> Unit,
 ) {
+    val watchBusy = watchState is ShutterWatchState.Starting ||
+        watchState is ShutterWatchState.Watching
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -597,21 +615,178 @@ private fun CameraConnectedCard(
                 style = Typography.bodyMedium
             )
         }
-        // Until the real tether stream lands, simulate stands in as the
-        // primary path that exercises the camera → cloud → gallery pipeline.
-        PrimaryCta(
+
+        // Live auto-upload slot: Idle/Error offer the start CTA (the single
+        // Fresh in this viewport); Watching swaps to the live-session card.
+        AnimatedContent(
+            targetState = watchState,
+            contentKey = { it::class },
+            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            label = "shutterWatch",
+        ) { state ->
+            when (state) {
+                is ShutterWatchState.Watching -> ShutterWatchLiveCard(
+                    state = state,
+                    onStop = onStopWatch,
+                )
+                else -> Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    if (state is ShutterWatchState.Error) {
+                        QpCard(modifier = Modifier.fillMaxWidth()) {
+                            Kicker(text = "Auto-upload", color = ErrorRed)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = state.message,
+                                color = Slate,
+                                style = Typography.bodyMedium,
+                                lineHeight = 20.sp
+                            )
+                        }
+                    }
+                    PrimaryCta(
+                        text = "Start auto-upload",
+                        onClick = onStartWatch,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = canStartWatch && state !is ShutterWatchState.Starting,
+                        loading = state is ShutterWatchState.Starting,
+                    )
+                    if (!canStartWatch) {
+                        Text(
+                            text = "This event's upload window has closed.",
+                            color = Slate,
+                            style = Typography.bodyMedium
+                        )
+                    }
+                }
+            }
+        }
+
+        // Simulate stays as the wire-free pipeline exercise; it never touches
+        // USB, so it's safe even while a live watch holds the session.
+        GhostCta(
             text = "Simulate DSLR shoot",
             onClick = onSimulate,
             modifier = Modifier.fillMaxWidth()
         )
-        // Manual card-import — Increment 1 lists the JPEGs on the card; later
-        // increments add selection + transfer through the existing upload queue.
+        // Manual card-import opens its OWN PTP session, which would force-claim
+        // the interface out from under a live watch — disabled while watching.
         GhostCta(
             text = "Import from camera card",
             onClick = onBrowseCard,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !watchBusy
+        )
+    }
+}
+
+@Composable
+private fun ShutterWatchLiveCard(
+    state: ShutterWatchState.Watching,
+    onStop: () -> Unit,
+) {
+    QpCard(modifier = Modifier.fillMaxWidth()) {
+        StatusChip(text = "Auto-upload · live", tone = StatusTone.Approved)
+        Spacer(modifier = Modifier.height(14.dp))
+        Text(
+            text = state.captureCount.toString(),
+            style = NumeralStyle.copy(fontSize = 22.sp),
+            color = Ink
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Kicker(text = "Captured this session", color = SlateSoft)
+        state.lastCaptureName?.let { name ->
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "Last capture: $name",
+                color = Slate,
+                style = Typography.bodyMedium,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+        }
+        // Field-diagnostics tail — the controller's own log lines, so the first
+        // on-device run reveals which detector fires without needing adb.
+        if (state.recentLog.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Divider(color = Line)
+            Spacer(modifier = Modifier.height(12.dp))
+            state.recentLog.forEach { line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SlateSoft,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        GhostCta(
+            text = "Stop auto-upload",
+            onClick = onStop,
             modifier = Modifier.fillMaxWidth()
         )
     }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun CameraConnectedCardIdlePreview() {
+    CameraConnectedCard(
+        deviceName = "Canon Inc. Canon Digital Camera",
+        vendorId = 0x04A9,
+        productId = 0x32F5,
+        watchState = ShutterWatchState.Idle,
+        canStartWatch = true,
+        onStartWatch = {},
+        onStopWatch = {},
+        onSimulate = {},
+        onBrowseCard = {},
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun CameraConnectedCardErrorPreview() {
+    CameraConnectedCard(
+        deviceName = "Canon Inc. Canon Digital Camera",
+        vendorId = 0x04A9,
+        productId = 0x32F5,
+        watchState = ShutterWatchState.Error(
+            "Camera disconnected — auto-upload stopped. Photos already pulled keep uploading."
+        ),
+        canStartWatch = true,
+        onStartWatch = {},
+        onStopWatch = {},
+        onSimulate = {},
+        onBrowseCard = {},
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun CameraConnectedCardWatchingPreview() {
+    CameraConnectedCard(
+        deviceName = "Canon Inc. Canon Digital Camera",
+        vendorId = 0x04A9,
+        productId = 0x32F5,
+        watchState = ShutterWatchState.Watching(
+            captureCount = 12,
+            lastCaptureName = "R6T_1083.JPG",
+            recentLog = listOf(
+                "event 0xC181 seen",
+                "Capture via EVENT — R6T_1083.JPG (0x00000C4B)",
+                "  R6T_1083.JPG 8412 KB → queued",
+            ),
+        ),
+        canStartWatch = true,
+        onStartWatch = {},
+        onStopWatch = {},
+        onSimulate = {},
+        onBrowseCard = {},
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

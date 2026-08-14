@@ -29,11 +29,13 @@ class PhotoUploadWorker(
         // 1. Get access token from session. If not logged in, we fail the job.
         val token = sessionManager.getAccessToken() ?: return Result.failure()
 
-        // 2. Fetch all queued photos awaiting synchronization
-        val pendingRecords = database.uploadQueueDao().getRecordsWithStatus("QUEUED")
-        if (pendingRecords.isEmpty()) {
-            return Result.success()
-        }
+        // 2. Requeue rows a killed process left stuck in UPLOADING. Safe: the
+        // backend answers a same-event re-upload of bytes it already has with
+        // an idempotent 200; a cross-event duplicate is a terminal 409 handled
+        // below. Only one worker runs at a time (unique work, KEEP), so these
+        // rows can't belong to a live sibling.
+        database.uploadQueueDao().getRecordsWithStatus("UPLOADING")
+            .forEach { database.uploadQueueDao().updateStatus(it.id, "QUEUED", null) }
 
         val hasFailures = AtomicBoolean(false)
         // Parallel upload gate. The 2026-05-28 diagnosis showed wall-clock per
@@ -45,10 +47,25 @@ class PhotoUploadWorker(
         // contend with the phone's radio and gives diminishing returns.
         val gate = Semaphore(permits = 3)
 
-        coroutineScope {
-            for (record in pendingRecords) {
-                launch {
-                    gate.withPermit { uploadOne(record, token, database, hasFailures) }
+        // 3. Drain until the queue is empty. Re-querying after each batch picks
+        // up rows inserted mid-run (live capture enqueues while uploads are in
+        // flight) — this is what lets runSyncEngine() use ExistingWorkPolicy.KEEP
+        // and still miss nothing. The `attempted` filter gives each record at
+        // most ONE attempt per run, so rows that settleFailure() requeued wait
+        // for the next run (scheduled by Result.retry() with backoff) and the
+        // loop always terminates.
+        val attempted = HashSet<Long>()
+        while (true) {
+            val batch = database.uploadQueueDao()
+                .getRecordsWithStatus("QUEUED")
+                .filter { it.id !in attempted }
+            if (batch.isEmpty()) break
+            batch.forEach { attempted.add(it.id) }
+            coroutineScope {
+                for (record in batch) {
+                    launch {
+                        gate.withPermit { uploadOne(record, token, database, hasFailures) }
+                    }
                 }
             }
         }
@@ -67,8 +84,9 @@ class PhotoUploadWorker(
 
         val file = File(record.filePath)
         if (!file.exists()) {
+            // Terminal: a deleted cache file never reappears, so retrying
+            // can only fail the same way.
             database.uploadQueueDao().updateStatus(record.id, "FAILED", "Local file not found.")
-            hasFailures.set(true)
             return
         }
 
@@ -98,18 +116,12 @@ class PhotoUploadWorker(
                 database.uploadQueueDao().updateStatus(record.id, "COMPLETED", null)
             } else {
                 val errorMsg = responseEnvelope.error ?: "Upload rejected by server."
-                database.uploadQueueDao().updateStatus(record.id, "FAILED", errorMsg)
                 // A duplicate rejection (backend ErrorCodes.PHOTO_DUPLICATE_*) is
                 // TERMINAL — the photo is already in an event, so retrying can
-                // never succeed. Mark it failed but do NOT flag hasFailures,
-                // otherwise WorkManager's Result.retry() loops this record
-                // forever. Network / other failures still retry as before.
+                // never succeed. Everything else is retryable.
                 val terminal = responseEnvelope.errors
                     ?.any { it.code in TERMINAL_UPLOAD_ERROR_CODES } == true
-                if (!terminal) {
-                    database.uploadQueueDao().incrementRetryCount(record.id)
-                    hasFailures.set(true)
-                }
+                settleFailure(record, terminal, errorMsg, database, hasFailures)
             }
         } catch (e: Exception) {
             val uploadMs = System.currentTimeMillis() - uploadStart
@@ -122,17 +134,42 @@ class PhotoUploadWorker(
             // (and its TERMINAL_UPLOAD_ERROR_CODES guard above) is ever reached —
             // so the real duplicate check has to run HERE, off the thrown
             // exception's error body. A duplicate is terminal: retrying re-POSTs
-            // the same bytes and can never succeed, so mark it FAILED but do NOT
-            // increment retry or flag hasFailures (either would loop WorkManager
-            // forever). Genuine network failures (no parsed code) still retry.
+            // the same bytes and can never succeed. Genuine network failures
+            // (no parsed code) requeue via settleFailure.
             val apiError = RetrofitClient.parseHttpError(e)
             val terminal = apiError != null && apiError.code in TERMINAL_UPLOAD_ERROR_CODES
             val errorMsg = apiError?.message ?: e.localizedMessage ?: "Network connection timeout."
+            settleFailure(record, terminal, errorMsg, database, hasFailures)
+        }
+    }
+
+    /**
+     * Single decision point for a failed attempt. Terminal failures end the
+     * record. Non-terminal ones go BACK to QUEUED — Result.retry() re-runs
+     * doWork(), which only picks up QUEUED rows, so a row left FAILED would
+     * never actually be retried. retryCount caps the cycle at MAX_RETRIES
+     * attempts, after which the row fails for good and stops driving retries.
+     * The errorMessage is kept on a requeued row for diagnostics; the sync
+     * card's lastError only reads FAILED rows, so the UI stays quiet until the
+     * record truly gives up.
+     */
+    private suspend fun settleFailure(
+        record: UploadRecord,
+        terminal: Boolean,
+        errorMsg: String,
+        database: AppDatabase,
+        hasFailures: AtomicBoolean,
+    ) {
+        if (terminal) {
             database.uploadQueueDao().updateStatus(record.id, "FAILED", errorMsg)
-            if (!terminal) {
-                database.uploadQueueDao().incrementRetryCount(record.id)
-                hasFailures.set(true)
-            }
+            return
+        }
+        database.uploadQueueDao().incrementRetryCount(record.id)
+        if (record.retryCount + 1 < MAX_RETRIES) {
+            database.uploadQueueDao().updateStatus(record.id, "QUEUED", errorMsg)
+            hasFailures.set(true)
+        } else {
+            database.uploadQueueDao().updateStatus(record.id, "FAILED", errorMsg)
         }
     }
 
@@ -144,5 +181,9 @@ class PhotoUploadWorker(
             "PHOTO_DUPLICATE_DIFFERENT_EVENT",
             "PHOTO_DUPLICATE_SAME_EVENT",
         )
+
+        // Attempts per record across runs (tracked in UploadRecord.retryCount)
+        // before a non-terminal failure is declared permanent.
+        const val MAX_RETRIES = 5
     }
 }
