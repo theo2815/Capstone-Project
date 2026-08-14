@@ -100,7 +100,7 @@ Every uploaded image goes through multiple checks before any processing:
 | Dimensions | Max 12000px per side (`MAX_IMAGE_DIMENSION`); min 32px on the single-image path | Too large = memory bomb. This is a fail-closed guard, not a quality gate — it is sized to pass any real camera (102 MP = 11648×8736), since every path downscales to `MAX_INFERENCE_DIMENSION` anyway. |
 
 | EXIF handling | Pillow applies `ImageOps.exif_transpose` (preserves orientation) then the image is converted to a BGR numpy array which carries no EXIF | Privacy: EXIF metadata (GPS, device info, timestamps) is discarded as soon as the bytes leave Pillow |
-| Total request body | Maximum 1 GB (`MAX_REQUEST_BODY`) | The only bound on a multipart upload *in aggregate*. Per-file limits cannot supply it: the `/stream` endpoints hold every file in memory at once, so 500 files each under `MAX_FILE_SIZE` still sum to 12.5 GB. |
+| Total request body | Maximum 2 GB (`MAX_REQUEST_BODY`) | The only bound on a multipart upload *in aggregate*. Per-file limits cannot supply it: the `/stream` endpoints hold every file in memory at once, so 500 files each under `MAX_FILE_SIZE` still sum to 12.5 GB. Sized by the backend's mega drain at its worst case — 50 photos (its `batch.max-size`) × the 25 MB ceiling = 1250 MB. |
 
 **Which paths enforce which check.**
 
@@ -114,7 +114,9 @@ Every uploaded image goes through multiple checks before any processing:
 
 A `/stream` rejection is reported as a per-image NDJSON error line, not an HTTP error; the request still returns 200 and the remaining images are still scored.
 
-`MAX_REQUEST_BODY` is enforced by `BodySizeLimitMiddleware` (`src/main.py`) from the `Content-Length` header, before multipart is parsed. A chunked request declares no length and is not caught by it — the per-file layer still applies. Keep the value equal to `client_max_body_size` in `nginx.conf`; `TestBodySizeLimit` parses that file and fails if the two drift.
+`MAX_REQUEST_BODY` is enforced by `BodySizeLimitMiddleware` (`src/main.py`) from the `Content-Length` header, before multipart is parsed. A chunked request declares no length and is not caught by it — the per-file layer still applies. Keep the value equal to `client_max_body_size` in `nginx.conf`; `TestBodySizeLimit` both parses that file for the value and hands it to a real `nginx -t` (the value check alone passed for months against a config nginx could not load).
+
+**Memory consequence of the 2 GB ceiling.** The batch/mega paths spill to the blob store, so they hold no more than one file at a time. `/stream` does not — it reads every file into a list before processing, so this ceiling *is* its worst-case resident size. At `WORKERS=2` two saturating requests reach 4 GB of raw bytes against the 8 GB container limit in `docker-compose.prod.yml`. The exposure is theoretical today: the only `/stream` client is the desktop, which downscales to 1280px/q90 before uploading and sends ~49 MB per 200-image chunk. Revisit if a client ever streams originals.
 
 ### Face Enrollment Quality Gate
 

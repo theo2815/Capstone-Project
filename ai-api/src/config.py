@@ -22,24 +22,27 @@ class Settings(BaseSettings):
     # Until 2026-08-14 this was defined and never read, so nothing in the app
     # bounded body size and nginx's client_max_body_size was the only guard.
     #
-    # It cannot be derived from a worst case: MAX_BATCH_SIZE x MAX_FILE_SIZE is
-    # 2500 MB at the effective batch size of 100, and the mega/stream caps (500
-    # files) put it at 12.5 GB. Calibrated to intended traffic instead, measured
-    # on Training-Images/Sharp_images (n=350, the real photographer originals —
-    # the other subfolders are downscaled training crops): mean 5.06 MB, p90
-    # 11.64 MB, max 15.11 MB.
-    #   - Cannot break the desktop: production nginx has capped at 200 MB all
-    #     along and the desktop works, so anything above that is strictly more
-    #     permissive than what ships. 1 GB is 5x.
-    #   - Covers the backend's Phase-C drain (50 photos/mega job, per its
-    #     application.yml batch.max-size) at the observed MAX file size: 755 MB.
-    #     The 1250 MB absolute worst case (50 x the 25 MB ceiling) is
-    #     deliberately not covered — nothing near it has been observed.
-    #   - Holds a /stream request to ~200 real originals, the low end of the
-    #     200-500 range the desktop integration guide already recommends.
+    # Sized by the ONE caller that can legitimately approach it: the backend's
+    # Phase-C mega drain. It posts MAX_BATCH_SIZE (50, per its own
+    # application.yml batch.max-size) ORIGINAL photos to /faces/enroll/mega and
+    # /bibs/recognize/mega, so its worst case is 50 x the 25 MB MAX_FILE_SIZE
+    # ceiling = 1250 MB. The previous 1 GB did not cover that: any 50-photo
+    # batch averaging >20.5 MB/photo 413s and the WHOLE indexing batch fails
+    # before a byte is read. 2 GB covers it with ~64% headroom. (Measured
+    # originals for reference — Training-Images/Sharp_images, n=350: mean
+    # 5.06 MB, p90 11.64, max 15.11; so the observed-max drain is 756 MB.)
+    #
+    # /stream is NOT what sizes this, contrary to the note this comment
+    # replaced. The desktop resizes to 1280px/q90 before uploading
+    # (BLUR_AI_MAX_DIMENSION in BatchMyPhotos), giving ~253 KB per image and
+    # ~49 MB for its 200-image chunk — 40x under the ceiling.
+    #
+    # Consequence accepted: /stream buffers every file in RAM with no blob-store
+    # offload, so its worst case doubles with this value. See docs/security.md.
+    #
     # Keep in lockstep with client_max_body_size in nginx.conf — TestBodySizeLimit
     # parses that file and fails if the two drift.
-    MAX_REQUEST_BODY: int = 1024 * 1024 * 1024  # 1 GB
+    MAX_REQUEST_BODY: int = 2 * 1024 * 1024 * 1024  # 2 GB
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/quickpitik"

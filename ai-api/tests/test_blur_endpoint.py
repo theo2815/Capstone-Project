@@ -640,3 +640,36 @@ class TestBodySizeLimit:
         units = {"K": 1024, "M": 1024**2, "G": 1024**3}
         for number, unit in found:
             assert int(number) * units[unit] == Settings().MAX_REQUEST_BODY
+
+    def test_nginx_config_parses(self):
+        """The value-matching test above passed for months against a file nginx
+        could not load at all (`limit_req off;` — no such parameter). Regexing a
+        directive proves nothing about the config being valid, so hand it to a
+        real nginx.
+
+        Fed on stdin rather than bind-mounted: mounting a Windows path into a
+        container needs path translation this suite should not own. The
+        --add-host is required — without a resolvable upstream nginx aborts on
+        the `server ai-api:8000` line and never reaches the rest of the file.
+        """
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        if shutil.which("docker") is None:
+            pytest.skip("docker unavailable — cannot validate nginx.conf")
+
+        conf = Path(__file__).resolve().parents[1] / "nginx.conf"
+        result = subprocess.run(
+            [
+                "docker", "run", "--rm", "-i",
+                "--add-host", "ai-api:127.0.0.1",
+                "--entrypoint", "sh", "nginx:alpine",
+                "-c", "cat > /etc/nginx/conf.d/default.conf && nginx -t",
+            ],
+            input=conf.read_bytes(),
+            capture_output=True,
+            timeout=180,
+        )
+
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
