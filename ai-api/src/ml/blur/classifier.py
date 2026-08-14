@@ -10,12 +10,6 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-try:
-    from _quickpitik_cpp import classify_preprocess as _cpp_classify_preprocess
-    _HAS_CPP_PREPROCESS = True
-except ImportError:
-    _HAS_CPP_PREPROCESS = False
-
 
 class BlurClassifier:
     """Classify images into blur categories using an ONNX model.
@@ -130,25 +124,28 @@ class BlurClassifier:
     def _preprocess(self, image: np.ndarray) -> np.ndarray:
         """Preprocess BGR image for ONNX inference.
 
-        Matches YOLOv8 classify inference pipeline:
         1. Center-crop to square (using shorter dimension)
-        2. Resize to input_size x input_size
+        2. Area-average down to input_size x input_size
         3. BGR -> RGB, normalize to [0, 1]
         4. HWC -> CHW, add batch dimension
 
-        Uses C++ fused implementation when available (3-5x faster).
+        INTER_AREA, not INTER_LINEAR: the model was trained and validated by
+        Ultralytics on PIL/torchvision resizes, which anti-alias. OpenCV's
+        INTER_LINEAR does not — it point-samples a 2x2 neighbourhood, so a large
+        downscale undersamples and manufactures high-frequency edges. Those fake
+        edges make blurry photos read as `sharp`, the one error the cull must not
+        make. Measured on 1057 labelled val images: blurry-called-sharp 10 -> 4,
+        accuracy 97.45% -> 98.30%, with sharp-called-blurry staying at 0.
 
-        Known divergence (bounded by tests/test_cpp_extension.py): the C++ path
-        interpolates in double and normalises from the float result, while this
-        Python path goes through cv2.resize, which rounds to uint8 first. That is
-        under one uint8 step (max ~0.76/255 measured on real photos) and flipped
-        1 image in 698 on the val set. This path is the reference — it matches the
-        Ultralytics transform the model was trained with — so the C++ side is what
-        should change (round before normalising); that needs an extension rebuild.
+        The C++ `classify_preprocess` is deliberately NOT used here. It is also
+        bilinear, so it aliases the same way, and it is not actually faster
+        (measured 0.485 vs 0.481 ms — see docs/cpp-integration.md, which already
+        rates it "neutral to slower"). It also ships in no deployment: the
+        package builds with the setuptools backend and no ext_modules, and the
+        Dockerfile copies only src/ and models/. Keeping the branch meant a dev
+        box with a locally built .pyd classified photos differently from
+        production. See the 2026-08-14 ADR.
         """
-        if _HAS_CPP_PREPROCESS:
-            return _cpp_classify_preprocess(image, self.input_size)
-
         h, w = image.shape[:2]
         # Center-crop to square (matches YOLOv8 CenterCrop)
         m = min(h, w)
@@ -156,7 +153,7 @@ class BlurClassifier:
         cropped = image[top : top + m, left : left + m]
         # Resize to target size
         resized = cv2.resize(
-            cropped, (self.input_size, self.input_size), interpolation=cv2.INTER_LINEAR
+            cropped, (self.input_size, self.input_size), interpolation=cv2.INTER_AREA
         )
         # BGR -> RGB, normalize to [0, 1]
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0

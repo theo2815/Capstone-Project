@@ -210,6 +210,33 @@ class TestBlurClassifierPreprocess:
         assert result.min() >= 0.0
         assert result.max() <= 1.0
 
+    def test_downscale_is_anti_aliased(self, classifier):
+        """The resize to 224 must area-average, not point-sample.
+
+        This is an accuracy property, not a style preference. A non-anti-aliased
+        downscale undersamples high-frequency detail and manufactures fake sharp
+        edges, which makes blurry photos read as `sharp` — the one failure the
+        cull must not make. Measured on the 1057-image labelled val set, fixing
+        it cut blurry-called-sharp from 10 to 4 (see the 2026-08-14 ADR).
+
+        Period-3 stripes are pure high frequency at this scale. Area-averaging
+        collapses them toward their mean; bilinear keeps sampling individual
+        stripes and the output swings with the sampling phase. The mean survives
+        either way — only the variance separates them (measured: 0.086 area vs
+        0.342 bilinear), so this asserts on variance.
+        """
+        stripes = np.zeros((1000, 1000, 3), dtype=np.uint8)
+        stripes[:, ::3] = 255
+
+        result = classifier._preprocess(stripes)
+
+        assert result.std() < 0.15, (
+            f"std={result.std():.4f} — the 224 resize is point-sampling instead "
+            "of area-averaging, so high-frequency detail is aliasing through"
+        )
+        # Brightness is preserved; only the aliasing is gone.
+        assert result.mean() == pytest.approx(1 / 3, abs=0.02)
+
 
 # ---------------------------------------------------------------------------
 # Unit tests: detect_blur_type

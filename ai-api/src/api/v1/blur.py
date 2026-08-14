@@ -28,7 +28,11 @@ from src.schemas.blur import (
     BlurTypeDetectionResponse,
 )
 from src.schemas.common import APIResponse
-from src.utils.image_utils import get_image_dimensions, validate_and_decode
+from src.utils.image_utils import (
+    downscale_for_inference,
+    get_image_dimensions,
+    validate_and_decode,
+)
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -343,6 +347,17 @@ async def classify_blur(
 
     settings = request.app.state.settings
     _, image = await validate_and_decode(file, max_file_size=settings.MAX_FILE_SIZE)
+    # Reported before the classify downscale so the response keeps meaning the
+    # same thing it did before.
+    reported_w, reported_h = get_image_dimensions(image)
+    # validate_and_decode caps at MAX_INFERENCE_DIMENSION (1280), which is sized
+    # for bib OCR, not for this model. Take it the rest of the way down to the
+    # calibrated classify dimension so this endpoint agrees with
+    # /blur/classify/stream and the blur_classify_batch worker. Measured on the
+    # 1057-image val set, holding preprocess constant: at 640 this endpoint now
+    # scores the same as the stream path (4/698 blurry called sharp); at 1280 it
+    # scored 7. See BLUR_CLASSIFY_DECODE_DIM in config.py.
+    image = downscale_for_inference(image, settings.BLUR_CLASSIFY_DECODE_DIM)
 
     registry = request.app.state.model_registry
     classifier = registry.get("blur_classifier")
@@ -376,14 +391,13 @@ async def classify_blur(
             )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
-        w, h = get_image_dimensions(image)
 
         response_data = BlurTypeDetectionResponse(
             blur_type=result["blur_type"],
             detected=result["detected"],
             confidence=result["confidence"],
             blur_type_probability=result["blur_type_probability"],
-            image_dimensions=(w, h),
+            image_dimensions=(reported_w, reported_h),
             processing_time_ms=round(elapsed_ms, 2),
         )
     else:
@@ -403,13 +417,12 @@ async def classify_blur(
             )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
-        w, h = get_image_dimensions(image)
 
         response_data = BlurClassificationResponse(
             predicted_class=result["predicted_class"],
             confidence=result["confidence"],
             probabilities=BlurClassProbabilities(**result["probabilities"]),
-            image_dimensions=(w, h),
+            image_dimensions=(reported_w, reported_h),
             processing_time_ms=round(elapsed_ms, 2),
         )
 

@@ -125,7 +125,14 @@ def blur_classify_batch(
                         continue
                     if blur_type is not None:
                         blur_type_probability = classification["probabilities"].get(blur_type, 0.0)
-                        detected = classification["predicted_class"] == blur_type
+                        # Same min-confidence floor as BlurClassifier.detect_blur_type
+                        # and /blur/classify/stream — without it the async path
+                        # reports `detected` for a photo the sync endpoints do not.
+                        detected = (
+                            classification["predicted_class"] == blur_type
+                            and classification["confidence"]
+                            >= classifier.min_detection_confidence
+                        )
                         results[img_i] = {
                             "index": img_i,
                             "detected": detected,

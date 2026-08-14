@@ -29,6 +29,8 @@ Two-tier pipeline:
 
 **Key guarantee:** zero false positives on valid portraits (sharp subject + blurred background). Callers can pass `?blur_type=...` to get a targeted `detected: true/false` response; omitting it returns the full class probability vector.
 
+**Served accuracy (2026-08-14, `scripts/blur_gate.py` over 1057 labelled val images through the live HTTP path):** 98.30% overall, with 4/698 blurry photos called `sharp` and 0/359 sharp photos called blurry. The 98.68% above is Ultralytics' training-time figure; the gap is the serving preprocess, which reimplements Ultralytics' PIL/torchvision transform in OpenCV. Both the decode step and the 224 px resize area-average — see `BLUR_CLASSIFY_DECODE_DIM` in `src/config.py` and `BlurClassifier._preprocess`. Re-check with `python scripts/blur_gate.py Training-Images/dataset/val` after any change to either.
+
 ## Face Search
 
 **Endpoints:** `POST /api/v1/faces/detect`, `/enroll`, `/search` (with optional `event_id`), `/compare`, `GET /faces/persons`, `GET /faces/persons/{id}`, `DELETE /faces/persons/{id}`, plus `/search/batch`, `/search/mega`, `/enroll/batch`.

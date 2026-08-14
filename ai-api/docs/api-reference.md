@@ -161,7 +161,9 @@ Classify an image into blur categories using a CNN model (YOLOv8n-cls). Returns 
 Two modes:
 
 - **Full classification** (default): predicted class + probability vector over `sharp`, `defocused_object_portrait`, `defocused_blurred`, `motion_blurred`.
-- **Targeted detection**: when `blur_type` is set, returns a binary Detected / Not Detected answer for that type.
+- **Targeted detection**: when `blur_type` is set, returns a binary Detected / Not Detected answer for that type. `detected` requires both a matching predicted class **and** `confidence >= BLUR_DETECTION_MIN_CONFIDENCE` (0.5) — identical on `/classify`, `/classify/stream` and `/classify/batch`.
+
+All classify paths downscale to `BLUR_CLASSIFY_DECODE_DIM` (640) before inference, so the single, streaming and Celery endpoints return the same class for the same image. `image_dimensions` reports the decoded size before that step.
 
 **Request:**
 - `file` (multipart)

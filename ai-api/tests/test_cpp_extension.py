@@ -230,16 +230,22 @@ class TestResizeGray:
 
 
 class TestClassifyPreprocess:
-    """classify_preprocess is an accelerator for BlurClassifier._preprocess.
+    """Pins the exported `classify_preprocess` binding's own contract.
 
-    The two must stay interchangeable: whether the extension happens to be
-    compiled decides which one runs, so a drift between them means the same
-    photo classifies differently on two deployments of the same code.
+    BlurClassifier no longer calls this. It does a bilinear crop-and-resize, and
+    the classifier needs an area-averaged one — bilinear aliases on a large
+    downscale and makes blurry photos read as `sharp` (2026-08-14 ADR). It is
+    also not faster than the OpenCV path, and it ships in no deployment (the
+    package builds with the setuptools backend and no ext_modules).
+
+    These tests still earn their place: the binding is exported and documented,
+    so shape / range / channel-order regressions should be caught. What they no
+    longer imply is that a compiled extension changes how photos classify.
     """
 
     @staticmethod
-    def _python_preprocess(image: np.ndarray, size: int = 224) -> np.ndarray:
-        """The pure-Python/NumPy fallback, verbatim from BlurClassifier."""
+    def _bilinear_reference(image: np.ndarray, size: int = 224) -> np.ndarray:
+        """OpenCV equivalent of what the C++ claims to do: bilinear crop+resize."""
         import cv2
 
         h, w = image.shape[:2]
@@ -271,23 +277,20 @@ class TestClassifyPreprocess:
         assert out[0, 2].mean() == pytest.approx(1.0, abs=1e-3)
         assert out[0, 0].mean() == pytest.approx(0.0, abs=1e-3)
 
-    def test_matches_python_fallback(self):
-        """Pins the known divergence so it cannot silently grow.
+    def test_matches_bilinear_reference(self):
+        """The binding really is a bilinear crop-and-resize, within rounding.
 
-        C++ interpolates in double and normalises straight from the float
-        result; the Python path goes through cv2.resize, which rounds to uint8
-        first (and uses fixed-point weights). That costs under one uint8 step —
-        measured max ~0.76/255 on real photos. The Python/OpenCV path is the
-        reference (it matches the Ultralytics transform the model was trained
-        with), so C++ is the deviation; the proper fix is to round to uint8
-        inside classify_preprocess before normalising, which needs an extension
-        rebuild. Until then this bounds the drift.
+        It interpolates in double and normalises straight from the float, while
+        cv2.resize rounds to uint8 first (and uses fixed-point weights), so the
+        two differ by under one uint8 step — measured max ~0.76/255 on real
+        photos. That gap is why the two paths were never bit-identical; it is no
+        longer a classification risk now that BlurClassifier uses only OpenCV.
         """
         rng = np.random.default_rng(7)
         for shape in ((480, 640, 3), (640, 480, 3), (512, 512, 3)):
             bgr = rng.integers(0, 256, shape, dtype=np.uint8)
             got = cpp.classify_preprocess(bgr, 224)
-            expected = self._python_preprocess(bgr, 224)
+            expected = self._bilinear_reference(bgr, 224)
             assert got.shape == expected.shape
             # 1.5/255 leaves headroom for rounding without admitting a real
             # algorithmic change (a wrong crop or channel order blows past this).

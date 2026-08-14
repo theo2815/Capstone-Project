@@ -171,6 +171,7 @@ class TestBlurClassifyBatch:
         detected/blur_type_probability from it, rather than calling
         detect_blur_type per image (which would forfeit the batch)."""
         mock_classifier = MagicMock()
+        mock_classifier.min_detection_confidence = 0.5
         mock_classifier.classify_batch.return_value = [{
             "predicted_class": "motion_blurred",
             "confidence": 0.9,
@@ -188,6 +189,38 @@ class TestBlurClassifyBatch:
         assert results[0]["detected"] is True
         assert results[0]["blur_type"] == "motion_blurred"
         assert results[0]["blur_type_probability"] == 0.9
+
+    @patch(f"{_MODEL}.get_blur_classifier")
+    @patch(f"{_HELP}.complete_job")
+    @patch(f"{_HELP}.fail_job")
+    @patch(f"{_HELP}.update_job_progress")
+    @patch(f"{_HELP}.decode_images_from_paths")
+    def test_blur_type_mode_applies_min_confidence_floor(
+        self, mock_decode, mock_progress, mock_fail, mock_complete, mock_get_classifier
+    ):
+        """A below-floor prediction is NOT detected, matching the sync paths.
+
+        BlurClassifier.detect_blur_type and /blur/classify/stream both gate
+        `detected` on min_detection_confidence. This path skipped it, so the
+        same photo came back detected=True from /classify/batch and
+        detected=False from /classify — a contract split by endpoint.
+        """
+        mock_classifier = MagicMock()
+        mock_classifier.min_detection_confidence = 0.5
+        mock_classifier.classify_batch.return_value = [{
+            "predicted_class": "motion_blurred",
+            "confidence": 0.35,  # matches blur_type, but below the floor
+            "probabilities": {"motion_blurred": 0.35, "sharp": 0.33},
+        }]
+        mock_get_classifier.return_value = mock_classifier
+        mock_decode.return_value = [FAKE_IMAGE]
+
+        task_fn = self._import_task()
+        task_fn(JOB_ID, [FAKE_PATH], blur_type="motion_blurred")
+
+        results = mock_complete.call_args[0][1]
+        assert results[0]["detected"] is False
+        assert results[0]["predicted_class"] == "motion_blurred"
 
     # ----- classifier is None -----------------------------------------------
     @patch(f"{_MODEL}.get_blur_classifier")

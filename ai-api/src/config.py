@@ -35,12 +35,17 @@ class Settings(BaseSettings):
     BLUR_THRESHOLD: float = 100.0
     BLUR_DETECTION_MIN_CONFIDENCE: float = 0.5
     # Resolution the blur CLASSIFIER decodes to before inference. Calibrated, not
-    # arbitrary: measured on 1057 labelled val images, 640 classifies more
-    # accurately than 1280 (97.5% vs 96.6%, and half the blurry-called-sharp
-    # misses). Reason is that this INTER_AREA downscale supplies the
-    # anti-aliasing that BlurClassifier._preprocess's INTER_LINEAR resize to
-    # 224px does not. Shared by /blur/classify/stream and the blur_classify_batch
-    # worker — keep both on one value or they will disagree on the same photo.
+    # arbitrary: re-measured 2026-08-14 on 1057 labelled val images after
+    # _preprocess switched to INTER_AREA, so this is no longer just standing in
+    # for missing anti-aliasing — 640 is genuinely the better input scale.
+    # Holding preprocess constant and varying only this value:
+    #   640  -> 4/698 blurry called sharp
+    #   1280 -> 7/698 blurry called sharp
+    # (End-to-end served accuracy is 98.30% — `python scripts/blur_gate.py`.)
+    # Shared by /blur/classify, /blur/classify/stream and the blur_classify_batch
+    # worker — keep all three on one value or they will disagree on the same
+    # photo. Distinct from MAX_INFERENCE_DIMENSION (1280), which is sized for bib
+    # OCR and must stay there.
     BLUR_CLASSIFY_DECODE_DIM: int = 640
 
     # Face Recognition
