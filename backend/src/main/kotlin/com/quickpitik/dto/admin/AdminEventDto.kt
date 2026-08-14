@@ -38,8 +38,7 @@ data class AdminListEventDto(
 // location/pricePerPhoto off the multipart request and builds this DTO
 // before handing to the service. The cover image arrives as a separate
 // file part (handled by AdminEventsController + EventCoverService) so the
-// row's `cover_s3_key` is set after the event is persisted; `bannerUrl`
-// here stays for legacy callers that pre-set a remote URL.
+// row's `cover_s3_key` is set after the event is persisted.
 data class CreateAdminEventRequest(
     @field:NotBlank
     @field:Size(max = 200)
@@ -50,7 +49,6 @@ data class CreateAdminEventRequest(
     @field:Size(max = 200)
     val location: String,
     val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
-    val bannerUrl: String? = null,
 )
 
 // PATCH /admin/events/{id} — body { title?, date?, location?, pricePerPhoto? }.

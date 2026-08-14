@@ -78,7 +78,6 @@ class AdminEventService(
                 name = req.title.trim(),
                 date = date,
                 location = req.location.trim(),
-                bannerUrl = null,
                 photoCount = 0,
                 participantCount = 0,
                 status = EventStatus.ACTIVE,

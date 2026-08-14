@@ -71,7 +71,6 @@ class AdminEventsController(
             date = date.trim(),
             location = location.trim(),
             pricePerPhoto = parsePrice(pricePerPhoto) ?: BigDecimal.ZERO,
-            bannerUrl = null,
         )
         if (req.title.isBlank()) {
             throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "title is required", field = "title")

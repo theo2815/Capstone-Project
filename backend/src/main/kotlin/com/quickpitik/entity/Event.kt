@@ -37,15 +37,16 @@ class Event(
     @Column(nullable = false)
     var location: String,
 
-    @Column(name = "banner_url")
-    var bannerUrl: String? = null,
-
     @Column(name = "cover_s3_key")
     var coverS3Key: String? = null,
 
     @Column(name = "photo_count", nullable = false)
     var photoCount: Int = 0,
 
+    // Reserved for participant management (roadmap). No participants table
+    // exists yet, so this is always 0. The wire field is kept so website
+    // (src/types/event.ts) + mobile (RunnerDtos.kt) don't break — both declare
+    // it required/non-null. Do not remove without coordinating both clients.
     @Column(name = "participant_count", nullable = false)
     var participantCount: Int = 0,
 

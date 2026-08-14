@@ -123,7 +123,7 @@ class GlobalExceptionHandler {
                     // map it to targeted copy instead of always showing the
                     // generic "AI service down" message. Null aiCode = real
                     // outage → falls back to AI_API_UNAVAILABLE.
-                    code = ex.aiCode ?: ErrorCodes.AI_API_UNAVAILABLE,
+                    code = aiErrorCode(ex.aiCode),
                     message = "AI service is temporarily unavailable. Please try again.",
                 ),
             ),
@@ -146,6 +146,35 @@ class GlobalExceptionHandler {
         log.error("Unhandled exception", ex)
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
             ApiResponse.failure(ApiError(code = "INTERNAL_ERROR", message = "Internal server error")),
+        )
+    }
+
+    /**
+     * `AiApiException.aiCode` is ai-api's `error.code` verbatim off the wire.
+     * Per ai-api/docs/integration-contracts.md, only some of those are stable
+     * wire codes — `QuickPitikError` subclasses set `error.code` to the Python
+     * *class name* (`ImageValidationError`, `JobNotFoundError`, …). Forwarding
+     * that raw leaks ai-api internals into our public envelope and hands the FE
+     * a code it can't map. Allowlist the documented codes; collapse everything
+     * else (class names, future codes, null) to AI_API_UNAVAILABLE.
+     */
+    private fun aiErrorCode(aiCode: String?): String =
+        if (aiCode in AI_WIRE_CODES) aiCode!! else ErrorCodes.AI_API_UNAVAILABLE
+
+    private companion object {
+        // ai-api/docs/integration-contracts.md § Error Handling Contract.
+        val AI_WIRE_CODES = setOf(
+            "LOW_QUALITY",
+            "NO_FACES",
+            "NOT_FOUND",
+            "INVALID_INPUT",
+            "INVALID_WEBHOOK_URL",
+            "DELETE_FAILED",
+            "EMPTY_BATCH",
+            "BATCH_TOO_LARGE",
+            "TOO_MANY_JOBS",
+            "MODEL_UNAVAILABLE",
+            "REQUEST_TIMEOUT",
         )
     }
 }

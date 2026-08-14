@@ -15,10 +15,10 @@ import java.time.ZoneId
  * Single point of truth for Event → DTO conversion.
  *
  * Resolves `bannerUrl` from `cover_s3_key` with a presigned GET (cover TTL)
- * when the admin uploaded a cover via POST /admin/events. Falls back to the
- * legacy `events.banner_url` column so V2 seed rows that ship pre-populated
- * URLs continue rendering. The mapper is the only code that knows about the
- * fallback — callers always see a single `bannerUrl` field.
+ * when the admin uploaded a cover via POST /admin/events, and null otherwise
+ * (the FE paints a text-only banner fallback). The legacy `events.banner_url`
+ * column this used to fall back to was dropped in V25 — it was never written
+ * with a non-null value.
  */
 @Service
 class EventDtoMapper(
@@ -74,13 +74,10 @@ class EventDtoMapper(
         adminOverrides = event.adminOverrides,
     )
 
-    fun resolveBannerUrl(event: Event): String? {
-        val key = event.coverS3Key
-        if (!key.isNullOrBlank()) {
-            return storageService.presignedGetUrl(key, storageProperties.presignedTtl.cover)
-        }
-        return event.bannerUrl
-    }
+    fun resolveBannerUrl(event: Event): String? =
+        event.coverS3Key
+            ?.takeIf { it.isNotBlank() }
+            ?.let { storageService.presignedGetUrl(it, storageProperties.presignedTtl.cover) }
 
     companion object {
         internal val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
