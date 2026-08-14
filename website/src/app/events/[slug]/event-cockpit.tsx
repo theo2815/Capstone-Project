@@ -515,7 +515,7 @@ function BrowseMode({
         </div>
       </header>
 
-      <div className="sticky top-[3.75rem] z-20 bg-bone/90 backdrop-blur-md border-y border-line">
+      <div className="sticky top-[var(--site-header-h)] z-20 bg-bone/90 backdrop-blur-md border-y border-line">
         <div className="max-w-7xl mx-auto px-6 md:px-10 py-3 flex items-center gap-3">
           <Kicker
             as="button"

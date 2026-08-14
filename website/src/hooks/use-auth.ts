@@ -66,8 +66,15 @@ export function useAuth() {
     return identity;
   }, [setPendingOAuth]);
 
+  // Third auth entry point alongside login/register, and it authenticates a
+  // user the same way — so it owes the same wipe. Unreachable while
+  // OAUTH_ENABLED is false (google-button.tsx), but the reset belongs with the
+  // transition, not with whoever wires real OAuth later.
   const completeOnboarding = useCallback(
-    (role: Role) => completeOnboardingInStore(role),
+    (role: Role) => {
+      resetUserScopedStores();
+      return completeOnboardingInStore(role);
+    },
     [completeOnboardingInStore],
   );
 

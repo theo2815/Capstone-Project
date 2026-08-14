@@ -5,9 +5,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
-import { ApiError } from "@/lib/api";
 import { isSafeRedirect, roleHome } from "@/lib/redirect";
-import { validateEmail, validatePassword } from "@/lib/auth-validation";
+import {
+  splitApiFieldErrors,
+  validateEmail,
+  validatePassword,
+} from "@/lib/auth-validation";
 import {
   AuthDivider,
   GoogleButton,
@@ -19,6 +22,10 @@ interface FieldErrors {
   email?: string | null;
   password?: string | null;
 }
+
+// Backend field name → the local state key that has an input to render under.
+// Allow-list: a BE field absent here falls through to the submit-level slot.
+const BE_FIELDS = { email: "email", password: "password" } as const;
 
 export function LoginForm() {
   const router = useRouter();
@@ -59,9 +66,12 @@ export function LoginForm() {
       const user = await login({ email: email.trim(), password });
       router.push(preservedRedirect ?? roleHome(user.role));
     } catch (err) {
-      setSubmitError(
-        err instanceof ApiError ? err.message : "Login failed. Please try again.",
-      );
+      // Per-field BE validation goes under its input; anything field-less
+      // (INVALID_CREDENTIALS, ACCOUNT_SUSPENDED) stays in the submit slot.
+      const { fields, message } = splitApiFieldErrors(err, BE_FIELDS);
+      const handled = message !== null || Object.keys(fields).length > 0;
+      setErrors(fields);
+      setSubmitError(handled ? message : "Login failed. Please try again.");
     } finally {
       setIsLoading(false);
     }

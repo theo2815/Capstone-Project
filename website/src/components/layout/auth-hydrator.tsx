@@ -4,12 +4,8 @@ import { useEffect, useRef } from "react";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
-import {
-  clearTokens,
-  getAccessToken,
-  getRefreshToken,
-  setTokens,
-} from "@/lib/auth";
+import { clearTokens, getAccessToken, getRefreshToken } from "@/lib/auth";
+import { refreshAccessToken } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/constants";
 import { mergeCart } from "@/lib/api-cart";
 import { mergeSavedEvents } from "@/lib/api-saved-events";
@@ -42,7 +38,10 @@ export function AuthHydrator() {
       if (cancelled) return;
 
       if (!user && refreshToken) {
-        const refreshedAccess = await refreshAccess(refreshToken);
+        // Shared single-flight with ApiClient — this hook and the page's
+        // React Query hooks all wake on the same expired token, and the BE
+        // revokes on rotate, so independent refreshes would kill the session.
+        const refreshedAccess = await refreshAccessToken();
         if (cancelled) return;
         if (refreshedAccess) {
           user = await fetchMe(refreshedAccess);
@@ -110,24 +109,6 @@ async function fetchMe(accessToken: string | null): Promise<User | null> {
     if (!res.ok) return null;
     const body: ApiResponse<User> = await res.json();
     return body.success ? body.data : null;
-  } catch {
-    return null;
-  }
-}
-
-async function refreshAccess(refreshToken: string): Promise<string | null> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken }),
-    });
-    if (!res.ok) return null;
-    const body: ApiResponse<{ accessToken: string; refreshToken: string }> =
-      await res.json();
-    if (!body.success) return null;
-    setTokens(body.data.accessToken, body.data.refreshToken);
-    return body.data.accessToken;
   } catch {
     return null;
   }

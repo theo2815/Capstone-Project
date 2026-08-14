@@ -4,19 +4,22 @@ import { useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ROUTES } from "@/lib/constants";
-import { api, ApiError } from "@/lib/api";
-import { validatePassword } from "@/lib/auth-validation";
+import { api } from "@/lib/api";
+import { splitApiFieldErrors, validatePassword } from "@/lib/auth-validation";
 import { FieldError } from "@/components/ui/field-error";
 
-type Status = "request" | "sent" | "missing-token";
+type Status = "request" | "sent";
+
+// Backend field name → the local state key that has an input to render under.
+// `token` is deliberately absent: it comes from the URL and has no input, so a
+// token failure belongs in the submit-level message.
+const BE_FIELDS = { newPassword: "password" } as const;
 
 export function ResetPasswordForm() {
   const searchParams = useSearchParams();
   const token = searchParams?.get("token") ?? "";
 
-  const [status, setStatus] = useState<Status>(
-    token ? "request" : "missing-token",
-  );
+  const [status, setStatus] = useState<Status>("request");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordError, setPasswordError] = useState<string | null>(null);
@@ -45,9 +48,12 @@ export function ResetPasswordForm() {
       });
       setStatus("sent");
     } catch (err) {
+      const { fields, message } = splitApiFieldErrors(err, BE_FIELDS);
+      const handled = message !== null || Object.keys(fields).length > 0;
+      setPasswordError(fields.password ?? null);
       setSubmitError(
-        err instanceof ApiError
-          ? err.message
+        handled
+          ? message
           : "Could not reset your password. The link may have expired — request a new one.",
       );
     } finally {
@@ -55,7 +61,12 @@ export function ResetPasswordForm() {
     }
   }
 
-  if (status === "missing-token") {
+  // Derived, not stored. `useSearchParams()` re-renders on URL change, so a
+  // client-side nav that drops `?token=` is re-detected — the old `useState`
+  // initializer latched the answer at first mount and never revisited it.
+  // Excluded from `sent` so the success screen survives its own token being
+  // spent.
+  if (status !== "sent" && !token) {
     return (
       <div className="stagger-children space-y-7">
         <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">

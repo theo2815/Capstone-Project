@@ -14,7 +14,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
       <SiteHeader />
-      <div className="md:hidden sticky top-[3.75rem] z-20">
+      <div className="md:hidden sticky top-[var(--site-header-h)] z-20">
         <DesktopNudge />
         <AdminMobileStrip />
       </div>

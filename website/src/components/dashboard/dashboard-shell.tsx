@@ -24,8 +24,9 @@ import { usePhotographerVerificationSync } from "@/lib/photographer-verification
 // and every 30s while pending — single mount keeps duplicate polling away.
 //
 // Mobile-only sticky stack under <SiteHeader>: a single wrapper at
-// `top-[3.75rem]` (matching the /events/[slug]?browse=1 "Find your photos"
-// pattern) holds <DesktopNudge> on top + <DashboardMobileStrip> below. Both
+// `top-[var(--site-header-h)]` (matching the /events/[slug]?browse=1 "Find
+// your photos" pattern) holds <DesktopNudge> on top + <DashboardMobileStrip>
+// below. Both
 // pin together as the user scrolls every /dashboard/* route. When the user
 // dismisses the nudge, it returns null and the wrapper shrinks so the strip
 // pins flush under the header — no gap. Putting both in one sticky parent
@@ -42,7 +43,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
       <SiteHeader />
-      <div className="md:hidden sticky top-[3.75rem] z-20">
+      <div className="md:hidden sticky top-[var(--site-header-h)] z-20">
         <DesktopNudge />
         <DashboardMobileStrip />
       </div>

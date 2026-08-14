@@ -26,7 +26,7 @@ class ApiClient {
     });
 
     if (res.status === 401 && !isPublicAuthEndpoint(path)) {
-      const refreshed = await this.refreshToken();
+      const refreshed = await refreshAccessToken();
       if (refreshed) return this.fetch<T>(path, options);
       this.redirectToLogin();
       throw new Error("Unauthorized");
@@ -69,40 +69,73 @@ class ApiClient {
     return this.fetch<T>(path, { method: "DELETE" });
   }
 
-  private async refreshToken(): Promise<boolean> {
-    const refreshToken = getRefreshToken();
-    if (!refreshToken) return false;
-
-    try {
-      const res = await fetch(`${this.baseUrl}/auth/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken }),
-      });
-
-      if (!res.ok) return false;
-
-      const data: ApiResponse<{
-        accessToken: string;
-        refreshToken: string;
-      }> = await res.json();
-
-      if (data.success) {
-        setTokens(data.data.accessToken, data.data.refreshToken);
-        return true;
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  }
-
   private redirectToLogin(): void {
     if (typeof window !== "undefined") {
       clearTokens();
       const currentUrl = window.location.pathname + window.location.search;
       window.location.href = buildLoginRedirect(currentUrl);
     }
+  }
+}
+
+let inFlightRefresh: Promise<string | null> | null = null;
+
+// Single-flight refresh, shared by every caller in this JS context.
+//
+// The backend ROTATES on refresh — `RefreshTokenService.validateAndRotate`
+// revokes the presented token before issuing the replacement. So two
+// concurrent refreshes carrying the same plaintext mean the second one is
+// rejected as already-revoked, and its caller tears down a perfectly valid
+// session (ApiClient bounces to /login; AuthHydrator clears tokens).
+//
+// The common trigger is NOT two tabs — it is one page load with an expired
+// access token: <AuthHydrator> refreshes while the page's React Query hooks
+// each 401 and refresh alongside it. Funnelling every caller through one
+// promise means exactly one POST /auth/refresh per expiry.
+export function refreshAccessToken(): Promise<string | null> {
+  if (inFlightRefresh) return inFlightRefresh;
+  inFlightRefresh = doRefresh().finally(() => {
+    inFlightRefresh = null;
+  });
+  return inFlightRefresh;
+}
+
+async function doRefresh(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+
+  const accessToken = await postRefresh(refreshToken);
+  if (accessToken) return accessToken;
+
+  // Cross-tab fallback. The single-flight promise above is per-JS-context, so
+  // another tab can still rotate out from under us. If storage now holds a
+  // different token than the one we just sent, that tab already succeeded —
+  // retry once with the fresh value rather than bouncing a live session.
+  const current = getRefreshToken();
+  if (current && current !== refreshToken) return postRefresh(current);
+  return null;
+}
+
+async function postRefresh(refreshToken: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (!res.ok) return null;
+
+    const data: ApiResponse<{
+      accessToken: string;
+      refreshToken: string;
+    }> = await res.json();
+
+    if (!data.success) return null;
+    setTokens(data.data.accessToken, data.data.refreshToken);
+    return data.data.accessToken;
+  } catch {
+    return null;
   }
 }
 

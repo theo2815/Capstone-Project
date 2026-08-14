@@ -57,6 +57,16 @@ export function useEventLivePhotos(
 
     function connect() {
       if (cancelled) return;
+      // Bearer JWT carried via Sec-WebSocket-Protocol per Q-002. Backend
+      // reads the first protocol value as the access token.
+      const token = getAccessToken();
+      // `EventPhotoHandshakeInterceptor.beforeHandshake` returns false when no
+      // token is present, so a tokenless socket can only fail the upgrade. The
+      // browser reports that as a 1006 close with no `onopen`, which walks the
+      // retry ladder and lands every signed-out visitor on a live event at the
+      // false "Connection lost · Refresh" banner. Don't open what will be
+      // refused — guests simply get no live push (tracked in backend/tasks.md).
+      if (!token) return;
       // BE registers the handler at /ws/events/*/photos — NOT under the REST
       // /api/v1 prefix. buildWsUrl strips API_BASE_URL's path component before
       // appending the WS path; matches use-admin-notifications-ws + use-
@@ -64,10 +74,7 @@ export function useEventLivePhotos(
       const url = buildWsUrl(
         `/ws/events/${encodeURIComponent(args.eventId)}/photos`,
       );
-      const token = getAccessToken();
-      // Bearer JWT carried via Sec-WebSocket-Protocol per Q-002. Backend
-      // reads the first protocol value as the access token.
-      const ws = token ? new WebSocket(url, [token]) : new WebSocket(url);
+      const ws = new WebSocket(url, [token]);
       wsRef.current = ws;
 
       ws.onopen = () => {

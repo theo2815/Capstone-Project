@@ -11,7 +11,8 @@ import { usePathname } from "next/navigation";
 //
 // Renders as a flush horizontal bar (no rounded card) so it can sit pinned
 // under <SiteHeader> alongside <DashboardMobileStrip>. The shared sticky
-// wrapper in <DashboardShell> handles `md:hidden` and `sticky top-[3.75rem]`
+// wrapper in <DashboardShell> handles `md:hidden` and `sticky
+// top-[var(--site-header-h)]`
 // — this component is responsible only for its own bar styling and dismiss
 // behavior. Returning null on dismiss lets the wrapper shrink so the strip
 // pins flush under the header.

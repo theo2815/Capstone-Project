@@ -3,11 +3,14 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { ROUTES } from "@/lib/constants";
-import { api, ApiError } from "@/lib/api";
-import { validateEmail } from "@/lib/auth-validation";
+import { api } from "@/lib/api";
+import { splitApiFieldErrors, validateEmail } from "@/lib/auth-validation";
 import { FieldError } from "@/components/ui/field-error";
 
 type Status = "request" | "sent";
+
+// Backend field name → the local state key that has an input to render under.
+const BE_FIELDS = { email: "email" } as const;
 
 export function ForgotPasswordForm() {
   const [status, setStatus] = useState<Status>("request");
@@ -30,10 +33,11 @@ export function ForgotPasswordForm() {
       setSubmittedEmail(email.trim());
       setStatus("sent");
     } catch (err) {
+      const { fields, message } = splitApiFieldErrors(err, BE_FIELDS);
+      const handled = message !== null || Object.keys(fields).length > 0;
+      setEmailError(fields.email ?? null);
       setSubmitError(
-        err instanceof ApiError
-          ? err.message
-          : "Could not send reset link. Please try again.",
+        handled ? message : "Could not send reset link. Please try again.",
       );
     } finally {
       setIsLoading(false);

@@ -644,10 +644,11 @@ function TransactionsSlab() {
               <li key={group.label} className="py-2">
                 {/* Desktop-only sticky. Below md the shell pins
                     <DesktopNudge> + <DashboardMobileStrip> together at
-                    top-[3.75rem], and the nudge is dismissible per page-visit
-                    — so the stack is ~112px tall or ~60px depending on state
-                    and no fixed mobile offset clears it. Scrolling with the
-                    content is what every other mobile dashboard surface does. */}
+                    top-[var(--site-header-h)], and the nudge is dismissible
+                    per page-visit — so the stack is ~112px tall or ~52px
+                    depending on state and no fixed mobile offset clears it.
+                    Scrolling with the content is what every other mobile
+                    dashboard surface does. */}
                 <Kicker
                   as="p"
                   tone="soft"

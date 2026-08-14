@@ -31,7 +31,7 @@ const DASHBOARD_ROUTES: ReadonlyArray<DashboardRoute> = [
 // lives on the parent wrapper in <DashboardShell>** so this component
 // stacks together with <DesktopNudge> in a single sticky block under the
 // SiteHeader (z-30). Doing the sticky here would race with the nudge's
-// own sticky — they'd both pin at `top-[3.75rem]` and overlap. The shared
+// own sticky — they'd both pin at `top-[var(--site-header-h)]` and overlap. The shared
 // wrapper also gives us "nudge dismissed → strip pins flush" for free
 // because the wrapper's height collapses when the nudge returns null.
 //

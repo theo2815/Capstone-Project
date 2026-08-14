@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
-import { ApiError } from "@/lib/api";
 import { isSafeRedirect, roleHome } from "@/lib/redirect";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types/user";
@@ -17,6 +16,7 @@ import {
 import { FieldError } from "@/components/ui/field-error";
 import {
   NAME_MAX,
+  splitApiFieldErrors,
   validateEmail,
   validateName,
   validatePassword,
@@ -46,6 +46,15 @@ interface FieldErrors {
   email?: string | null;
   password?: string | null;
 }
+
+// Backend field name → the local state key that has an input to render under.
+// Allow-list: `role` is deliberately absent — it's a segmented control with no
+// error slot, so a role failure belongs in the submit-level message.
+const BE_FIELDS = {
+  name: "name",
+  email: "email",
+  password: "password",
+} as const;
 
 export function RegisterForm() {
   const router = useRouter();
@@ -97,10 +106,13 @@ export function RegisterForm() {
       });
       router.push(preservedRedirect ?? roleHome(user.role));
     } catch (err) {
+      // Per-field BE validation goes under its input; anything field-less
+      // (e.g. EMAIL_ALREADY_REGISTERED) stays in the submit slot.
+      const { fields, message } = splitApiFieldErrors(err, BE_FIELDS);
+      const handled = message !== null || Object.keys(fields).length > 0;
+      setErrors(fields);
       setSubmitError(
-        err instanceof ApiError
-          ? err.message
-          : "Registration failed. Please try again.",
+        handled ? message : "Registration failed. Please try again.",
       );
     } finally {
       setIsLoading(false);

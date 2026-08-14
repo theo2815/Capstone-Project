@@ -31,6 +31,17 @@
   --success: var(--fresh);
   --error: #DC2626;
   --warning: #D97706;
+
+  /* Layout — <SiteHeader> height, and the offset every sticky bar that pins
+     beneath it must use. These have to be one number: the header is
+     `sticky top-0`, so a sticky sibling with a smaller offset slides under it
+     and a larger one leaves a gap. Header content is 36px (size-9 bells +
+     avatar) inside 16px padding, plus the 1px border-b; box-sizing: border-box
+     from Tailwind preflight means this value IS the rendered height.
+     Previously each call site hardcoded `top-[3.75rem]` (60px), which was
+     right for neither auth state — the header measured 69px signed-in and
+     ~57px signed-out, because its tallest child depends on who's looking. */
+  --site-header-h: 69px;
 }
 
 @theme inline {

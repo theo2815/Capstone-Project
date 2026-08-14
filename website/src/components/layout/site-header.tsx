@@ -25,8 +25,13 @@ export function SiteHeader({
   const isEventsActive = pathname === ROUTES.EVENTS;
 
   return (
-    <header className="sticky top-0 z-30 bg-bone/85 backdrop-blur-md border-b border-line">
-      <div className="px-6 md:px-10 py-4 flex items-center justify-between max-w-7xl mx-auto">
+    // Height is pinned to --site-header-h rather than falling out of the
+    // padding, because every sticky bar on the site offsets against it. Left
+    // to `py-4` the header measured 69px signed-in but ~57px signed-out (the
+    // size-9 bells/avatar are the tallest child, and guests don't get them),
+    // so no single offset could sit flush in both states.
+    <header className="sticky top-0 z-30 h-[var(--site-header-h)] bg-bone/85 backdrop-blur-md border-b border-line">
+      <div className="px-6 md:px-10 h-full flex items-center justify-between max-w-7xl mx-auto">
         <Link
           href={ROUTES.HOME}
           className="flex items-center gap-2 text-ink"
