@@ -22,10 +22,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.EventDto
@@ -97,9 +100,24 @@ fun EventsDiscoveryScreen(
     // (Loading state is only assigned when no prior Success exists).
     LaunchedEffect(Unit) { viewModel.fetchPublicEvents() }
     LaunchedEffect(Unit) { savedEventsViewModel.refresh() }
-    // Refetch-on-entry stands in for the website's WebSocket push. Cheap, and it
-    // means a refund resolved between sessions is visible on the next open.
-    LaunchedEffect(Unit) { inboxViewModel.fetchMessages() }
+    // Inbox pushes live over /ws/me/runner/notifications, held only while this
+    // screen is on-screen so a pocketed phone isn't keeping a socket open. The
+    // socket refetches on every (re)open, which also covers the cold-start load.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> inboxViewModel.connect()
+                Lifecycle.Event.ON_STOP -> inboxViewModel.disconnect()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            inboxViewModel.disconnect()
+        }
+    }
     LaunchedEffect(savedMessage) {
         savedMessage?.let {
             snackbarHostState.showSnackbar(it)

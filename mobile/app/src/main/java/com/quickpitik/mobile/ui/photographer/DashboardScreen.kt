@@ -30,6 +30,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 
@@ -84,6 +87,27 @@ fun PhotographerDashboardScreen(
         else -> true
     }
     val unreadCount = remember(messages) { messages.count { it.readAt == null } }
+
+    // Inbox push channel (/ws/me/photographer/notifications) — an admin
+    // approving a verification reaches the bell without a tab tap. Held only
+    // while the dashboard is on screen: the tether foreground service is the one
+    // path meant to survive backgrounding, and the bell must not extend it.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.connectInbox()
+                Lifecycle.Event.ON_STOP -> viewModel.disconnectInbox()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.disconnectInbox()
+        }
+    }
+
     val resolvedAvatarUrl = brandSettings?.avatarUrl?.let {
         // M-2 (2026-05-27 PM): derive host from RetrofitClient.BASE_URL so
         // physical-device Wi-Fi setups pick up the right host without an edit here.

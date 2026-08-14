@@ -50,3 +50,11 @@ data class RunnerMessageDto(
     val createdAt: String,
     val readAt: String?,
 )
+
+// Push frame on /ws/me/runner/notifications. The backend builds `message` from
+// the same field set as the REST DTO above (RunnerMessagesService.pushMessage),
+// so it deserializes straight into RunnerMessageDto with nothing missing.
+data class RunnerMessageFrame(
+    val type: String?,
+    val message: RunnerMessageDto?,
+)

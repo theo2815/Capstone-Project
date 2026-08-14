@@ -5,6 +5,11 @@ import android.net.Uri
 import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,6 +25,8 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.List
@@ -27,6 +34,8 @@ import androidx.compose.material3.*
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.PhotoDto
+import com.quickpitik.mobile.data.remote.QpWebSocket
+import com.quickpitik.mobile.data.remote.WsState
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -36,7 +45,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.foundation.shape.CircleShape
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.quickpitik.mobile.data.local.SessionManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -44,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickpitik.mobile.ui.theme.*
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +83,39 @@ fun RunnerGalleryScreen(
     val activeEvent by viewModel.activeEvent.collectAsState()
     val searchState by viewModel.searchState.collectAsState()
     val isFiltered by viewModel.isFiltered.collectAsState()
+    val newPhotoCount by viewModel.newPhotoCount.collectAsState()
+    val liveState by viewModel.liveState.collectAsState()
+    // Hoisted so the live-photos pill can jump the runner back to the top when
+    // new shots land while they're scrolled down the grid.
+    val scrollState = rememberScrollState()
+    val scope = rememberCoroutineScope()
+
+    // Push channels are held only while the cockpit is actually on screen. A
+    // race lasts hours; a socket surviving in a pocketed phone would burn
+    // battery for frames nobody can see, and Android freezes cached processes
+    // anyway. Every reconnect refetches, so nothing is missed on return.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, activeEvent?.id) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> {
+                    viewModel.connectLivePhotos()
+                    inboxViewModel.connect()
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    viewModel.disconnectLivePhotos()
+                    inboxViewModel.disconnect()
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.disconnectLivePhotos()
+            inboxViewModel.disconnect()
+        }
+    }
     // Hoisted so the grid tile's inline +cart / buy buttons can read in-cart
     // state for the ✓-cart label flip without each tile collecting its own copy.
     val cartItems by cartViewModel.cartItems.collectAsState()
@@ -98,7 +144,7 @@ fun RunnerGalleryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(24.dp)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .statusBarsPadding()
                 .navigationBarsPadding()
         ) {
@@ -449,6 +495,16 @@ fun RunnerGalleryScreen(
                         )
                     }
                 }
+                LivePhotosBanner(
+                    newPhotoCount = newPhotoCount,
+                    liveState = liveState,
+                    onJumpToTop = {
+                        viewModel.resetNewPhotoCount()
+                        scope.launch { scrollState.animateScrollTo(0) }
+                    },
+                    onRetry = { viewModel.retryLivePhotos() },
+                )
+
                 Spacer(modifier = Modifier.height(12.dp))
 
                 // Beautiful Watermarked Photo Grid
@@ -663,6 +719,70 @@ fun RunnerGalleryScreen(
                 onOpenOrder(orderId)
             },
         )
+    }
+}
+
+/**
+ * Live-arrival strip above the grid. Port of the website's cockpit banner
+ * (`event-cockpit.tsx`): a count of photos that landed while the runner was
+ * looking, or a manual refresh once the socket has stopped healing itself.
+ *
+ * The grid refreshes on its own — this is purely "something changed below the
+ * fold", so it stays a quiet mono line rather than a filled CTA.
+ */
+@Composable
+private fun LivePhotosBanner(
+    newPhotoCount: Int,
+    liveState: WsState,
+    onJumpToTop: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    // Only nag about the connection once it has stopped quietly retrying;
+    // a blip mid-race is not the runner's problem to solve.
+    val giveUp = liveState is WsState.Failed && liveState.attempts > QpWebSocket.MAX_QUIET_ATTEMPTS
+    AnimatedVisibility(
+        visible = newPhotoCount > 0 || giveUp,
+        enter = slideInVertically { -it } + fadeIn(),
+        exit = slideOutVertically { -it } + fadeOut(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .clip(PillShape)
+                .clickable { if (giveUp) onRetry() else onJumpToTop() }
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (giveUp) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    tint = Slate,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Kicker("Connection lost · Refresh", color = Slate)
+            } else {
+                Text(
+                    text = "$newPhotoCount",
+                    style = NumeralStyle.copy(fontSize = 12.sp),
+                    color = Fresh,
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Kicker(
+                    text = if (newPhotoCount == 1) "new photo · jump to top" else "new photos · jump to top",
+                    color = Fresh,
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowUp,
+                    contentDescription = null,
+                    tint = Fresh,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
     }
 }
 

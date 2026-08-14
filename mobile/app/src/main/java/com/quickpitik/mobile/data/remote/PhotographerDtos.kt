@@ -162,6 +162,14 @@ data class PhotographerMessageDto(
     val readAt: String?
 )
 
+// Push frame on /ws/me/photographer/notifications. Built by
+// AdminDecisionLogService.pushMessage from the same field set as the REST DTO
+// above, so it deserializes straight in. Mirrors RunnerMessageFrame.
+data class PhotographerMessageFrame(
+    val type: String?,
+    val message: PhotographerMessageDto?,
+)
+
 data class MarkAllReadResponse(
     val markedRead: Int
 )

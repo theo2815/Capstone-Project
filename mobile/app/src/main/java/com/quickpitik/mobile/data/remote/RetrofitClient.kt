@@ -40,6 +40,18 @@ object RetrofitClient {
     val backendOrigin: String
         get() = BASE_URL.trimEnd('/')
 
+    // WebSocket origin ("ws://host:port"), derived from BASE_URL for the same
+    // reason as the getters above — one host change flows everywhere. The BE
+    // registers its handlers at /ws/... on the server ROOT, not under the REST
+    // /api/v1 prefix, so callers pass an absolute path and we contribute only
+    // the scheme + authority. Mirrors the website's buildWsUrl().
+    val wsOrigin: String
+        get() {
+            val url = BASE_URL.toHttpUrlOrNull() ?: return "ws://10.0.2.2:8080"
+            val scheme = if (url.isHttps) "wss" else "ws"
+            return "$scheme://${url.host}:${url.port}"
+        }
+
     // Two interceptors, one per verbosity. `bodyLogger` is what we want for JSON
     // traffic (auth, events, profile) — full request/response payloads in logcat
     // make debugging trivial. `headersLogger` is what we MUST use for multipart

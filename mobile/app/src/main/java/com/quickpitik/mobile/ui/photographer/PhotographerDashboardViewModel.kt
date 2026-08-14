@@ -22,7 +22,10 @@ import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.TetherEvents
 import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
+import com.quickpitik.mobile.data.remote.PhotographerMessageFrame
+import com.quickpitik.mobile.data.remote.QpWebSocket
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.WsState
 import com.quickpitik.mobile.data.usb.CameraConnectionManager
 import com.quickpitik.mobile.data.usb.CameraConnectionState
 import com.quickpitik.mobile.data.usb.ptp.CardPhoto
@@ -217,6 +220,12 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     private val _messages = MutableStateFlow<List<com.quickpitik.mobile.data.remote.PhotographerMessageDto>>(emptyList())
     val messages: StateFlow<List<com.quickpitik.mobile.data.remote.PhotographerMessageDto>> = _messages
 
+    // Inbox push channel. Same shape as the runner inbox in
+    // RunnerInboxViewModel — the two were structurally identical on the refetch
+    // path and stay identical here.
+    private val inboxSocket = QpWebSocket(sessionManager, viewModelScope)
+    private val inboxGson = com.google.gson.Gson()
+
     private val _sharePhotosState = MutableStateFlow<SharePhotosState>(SharePhotosState.Loading)
     val sharePhotosState: StateFlow<SharePhotosState> = _sharePhotosState
 
@@ -278,11 +287,46 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         fetchVerificationStatus()
         fetchSettings()
         fetchMessages()
+        observeInboxPush()
         cameraManager.start()
         observeCameraDetach()
         observeIngestForService()
         observeNotificationStopRequests()
     }
+
+    /**
+     * Bell parity with the website's photographer notification channel: an
+     * admin approving a verification or resolving a dispute reaches the shade
+     * badge without the photographer navigating anywhere.
+     *
+     * [connectInbox] / [disconnectInbox] are driven by the screen's lifecycle,
+     * not from here, so a backgrounded app isn't holding a socket open.
+     */
+    private fun observeInboxPush() {
+        viewModelScope.launch {
+            inboxSocket.state.collect { state ->
+                // Every (re)open refetches: anything pushed while the socket was
+                // down was missed outright. Matches the website's onopen grace.
+                if (state is WsState.Open) fetchMessages()
+            }
+        }
+        viewModelScope.launch {
+            inboxSocket.frames.collect { raw ->
+                val frame = runCatching {
+                    inboxGson.fromJson(raw, PhotographerMessageFrame::class.java)
+                }.getOrNull()
+                if (frame?.type != "message.created") return@collect
+                val message = frame.message ?: return@collect
+                val current = _messages.value
+                if (current.any { it.id == message.id }) return@collect
+                _messages.value = listOf(message) + current
+            }
+        }
+    }
+
+    fun connectInbox() = inboxSocket.connect(INBOX_CHANNEL)
+
+    fun disconnectInbox() = inboxSocket.close()
 
     /**
      * Keeps [TetherIngestService] running for exactly as long as bytes are
@@ -382,6 +426,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         // still running.
         stopIngestService()
         cameraManager.stop()
+        inboxSocket.release()
         super.onCleared()
     }
 
@@ -1618,6 +1663,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
             }
         }
+    }
+
+    private companion object {
+        const val INBOX_CHANNEL = "/ws/me/photographer/notifications"
     }
 }
 
