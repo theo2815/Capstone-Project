@@ -312,15 +312,16 @@ function AboutStrip({ event }: { event: EventDetail }) {
             <Kicker as="p" tone="soft">
               <span className="tnum">{dateLong}</span> · {event.location}
             </Kicker>
+            {/* No runner count: `participantCount` is a reserved wire field the
+                BE always sends as 0 (there is no participants table — it's a
+                placeholder for roadmap participant management), so rendering it
+                told every visitor this race had "0 runners". Restore the stat
+                when the feature lands, not before. */}
             <Kicker as="p" tone="soft">
               <span className="tnum">
                 {event.photoCount.toLocaleString()}
               </span>{" "}
-              photos ·{" "}
-              <span className="tnum">
-                {event.participantCount.toLocaleString()}
-              </span>{" "}
-              runners
+              photos
             </Kicker>
           </div>
         </div>

@@ -17,6 +17,7 @@ export function AuthHydrator() {
   const setLoading = useAuthStore((s) => s.setLoading);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const userId = useAuthStore((s) => s.user?.id);
+  const role = useAuthStore((s) => s.user?.role);
 
   // One-shot guard so React strict-mode double-mount can't fire merge twice.
   // Reset on logout (user transition to null) so re-login re-fires.
@@ -77,6 +78,15 @@ export function AuthHydrator() {
     if (mergedForUserRef.current === userId) return;
     mergedForUserRef.current = userId;
 
+    // Both endpoints are @PreAuthorize("hasRole('RUNNER')") backend-side, but
+    // this hydrator is mounted globally in providers.tsx — so every
+    // photographer and admin login was firing two calls that could only 403.
+    // Harmless (api.ts reacts to 401 only, and the catch below swallows it)
+    // but noisy in the network log and in the BE's access log. Claim the
+    // one-shot ref above regardless, so a non-runner session doesn't re-try on
+    // every mount.
+    if (role !== "RUNNER") return;
+
     const localItems = useCartStore.getState().items;
     const localIds = useSavedEventsStore.getState().ids;
 
@@ -95,7 +105,7 @@ export function AuthHydrator() {
         useCartStore.getState().setSyncEnabled(true);
         useSavedEventsStore.getState().setSyncEnabled(true);
       });
-  }, [isAuthenticated, userId]);
+  }, [isAuthenticated, userId, role]);
 
   return null;
 }

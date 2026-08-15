@@ -506,9 +506,12 @@ export interface UpdateAdminEventPatch {
   date?: string;
   location?: string;
   /** New per-photo price in PHP. When this changes the BE re-prices every
-   *  existing photo under the event (UPDATE photos SET price_php = ?). Active
-   *  carts fail at checkout with CART_ITEM_PRICE_CHANGED — the snapshot is
-   *  deliberately not mutated. */
+   *  existing photo under the event (UPDATE photos SET price_php = ?).
+   *  Signed-in carts follow along: `GET /me/cart` renders the live
+   *  `photos.price_php`, and checkout charges the same, so there is no drift
+   *  to fail on. (An earlier comment here claimed active carts fail with
+   *  CART_ITEM_PRICE_CHANGED — they never did; that code only fires on
+   *  `CartService.add`.) */
   pricePerPhoto?: number;
   /** New cover file. Wins over `removeCover` when both are present. */
   cover?: File | null;

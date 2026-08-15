@@ -402,7 +402,7 @@ function OpenRequestHero({
           <>
             Submitted{" "}
             <span className="font-mono">
-              {formatLongDate(cycle.weekOf, true)}
+              {formatLongDate(cycle.requestedAt)}
             </span>{" "}
             · admin is reviewing
           </>
@@ -503,7 +503,7 @@ function PayoutRow({
     <div className="py-5 md:py-6 flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
       <div className="flex-1 min-w-0">
         <Kicker as="p" tnum className="flex items-center gap-2 flex-wrap">
-          <span>Payout of {formatLongDate(payout.weekOf, true)}</span>
+          <span>Payout of {formatLongDate(payout.requestedAt)}</span>
           <span className="text-slate-soft">·</span>
           <span className={STATUS_TONE[payout.status]}>
             {STATUS_LABEL[payout.status]}

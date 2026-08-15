@@ -131,7 +131,7 @@ export function FilePayoutReportModal({
   return (
     <Modal isOpen={cycle !== null} onClose={onClose} title="File a report">
       <Kicker as="p" tone="soft" tnum className="mb-5">
-        CYCLE · {cycle.id} · {formatLongDate(cycle.weekOf, true)} ·{" "}
+        PAYOUT · {cycle.id} · {formatLongDate(cycle.requestedAt)} ·{" "}
         {formatPrice(cycle.amount)}
       </Kicker>
 

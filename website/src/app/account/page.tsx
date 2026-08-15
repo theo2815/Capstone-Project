@@ -20,19 +20,25 @@ import { useToast } from "@/hooks/use-toast";
 import { FieldError } from "@/components/ui/field-error";
 import { ApiError } from "@/lib/api";
 import { resetUserScopedStores } from "@/lib/auth-reset";
-import { updateProfileName, changePassword } from "@/lib/api-account";
 import {
+  updateProfileName,
+  changePassword,
+  requestEmailChange,
+} from "@/lib/api-account";
+import {
+  EMAIL_MAX,
   NAME_MAX,
   PASSWORD_MIN,
+  validateEmail,
   validateName,
   validatePassword,
 } from "@/lib/auth-validation";
 import { ROUTES } from "@/lib/constants";
 import type { User } from "@/types/user";
 
-// "Sign-in email" rather than "Email": every other entry here maps to an
-// editable slab, so a bare "Email" reads as one by association. The slab is
-// read-only until a change-email flow exists on the backend.
+// "Sign-in email" rather than "Email": it names what the address is FOR, which
+// matters now that the slab can change it — this is the credential that
+// receives password resets, not a contact field.
 const RUNNER_JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "name", label: "Name" },
   { id: "picture", label: "Picture" },
@@ -211,26 +217,143 @@ function PictureSlab({ number }: { number: string }) {
   );
 }
 
+interface EmailErrors {
+  next?: string | null;
+  password?: string | null;
+}
+
 function EmailSlab({ user, number }: { user: User; number: string }) {
+  const { showToast } = useToast();
+  const [nextEmail, setNextEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errors, setErrors] = useState<EmailErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    const nextErrors: EmailErrors = {
+      next:
+        validateEmail(nextEmail) ??
+        (nextEmail.trim().toLowerCase() === user.email.toLowerCase()
+          ? "That's already your sign-in email."
+          : null),
+      password: password ? null : "Current password is required.",
+    };
+    setErrors(nextErrors);
+    setSubmitError(null);
+    if (nextErrors.next || nextErrors.password) return;
+
+    setIsSaving(true);
+    try {
+      const message = await requestEmailChange({
+        newEmail: nextEmail.trim(),
+        currentPassword: password,
+      });
+      setNextEmail("");
+      setPassword("");
+      // The backend's own wording, because nothing has changed yet — a bare
+      // "Saved." would claim a swap that only happens once the link in the new
+      // inbox is opened. Long duration: the next step is in another app.
+      showToast({ kind: "success", message, duration: 9000 });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const code = err.errors[0]?.code;
+        const message = err.errors[0]?.message;
+        if (code === "INVALID_CREDENTIALS") {
+          setErrors((prev) => ({
+            ...prev,
+            password: "Current password is incorrect.",
+          }));
+        } else if (code === "SAME_EMAIL" || code === "EMAIL_TAKEN") {
+          setErrors((prev) => ({ ...prev, next: message ?? null }));
+        } else {
+          setSubmitError(message ?? "Could not send the confirmation. Try again.");
+        }
+      } else {
+        setSubmitError("Could not send the confirmation. Try again.");
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function clearFieldError(field: keyof EmailErrors) {
+    if (errors[field] || submitError) {
+      setErrors((prev) => ({ ...prev, [field]: null }));
+      setSubmitError(null);
+    }
+  }
+
   return (
     <Slab
       id="email"
       number={number}
       title="Sign-in email"
-      caption="Can't be changed here"
+      caption="Confirmed from the new inbox"
     >
-      <div className="space-y-5">
+      <div className="space-y-7">
         <div className="border border-line rounded-2xl px-6 py-5 bg-bone-deep/40">
           <Kicker as="p" tone="soft">
-            Sign-in email
+            Current
           </Kicker>
           <p className="font-mono text-xl md:text-2xl text-ink mt-3 break-all">
             {user.email}
           </p>
         </div>
+
+        <form onSubmit={handleSubmit} noValidate className="space-y-6">
+          <FieldShell id="new-email" label="New email">
+            <input
+              id="new-email"
+              type="email"
+              value={nextEmail}
+              onChange={(e) => {
+                setNextEmail(e.target.value);
+                clearFieldError("next");
+              }}
+              placeholder="you@example.com"
+              autoComplete="email"
+              maxLength={EMAIL_MAX}
+              aria-invalid={!!errors.next}
+              aria-describedby={errors.next ? "new-email-error" : undefined}
+              className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-4 text-lg text-ink placeholder:text-slate-soft transition-colors"
+            />
+            <FieldError
+              message={errors.next}
+              id="new-email-error"
+              density="tight"
+            />
+          </FieldShell>
+
+          <PasswordField
+            id="email-current-password"
+            label="Current password"
+            autoComplete="current-password"
+            value={password}
+            error={errors.password}
+            onChange={(v) => {
+              setPassword(v);
+              clearFieldError("password");
+            }}
+          />
+
+          <FieldError message={submitError} id="account-email-submit-error" />
+
+          <button
+            type="submit"
+            disabled={isSaving}
+            className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+          >
+            {isSaving ? "Sending…" : "Send confirmation"}
+            {!isSaving && <span aria-hidden="true">→</span>}
+          </button>
+        </form>
+
         <p className="font-sans text-sm text-slate max-w-md">
-          Email can&apos;t be changed from here. Contact support if you need to
-          update the address on your account.
+          We&apos;ll email a confirmation link to the new address. Your sign-in
+          email stays the same until you open it &mdash; and confirming signs
+          you out on every device.
         </p>
       </div>
     </Slab>

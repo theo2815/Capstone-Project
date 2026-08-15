@@ -23,6 +23,13 @@ export interface MockPhoto {
   // bought a photo sees an unwatermarked preview while browsing the event.
   // Null for everyone else — closes G-2.
   cleanUrl?: string | null;
+  // Who took the shot, so a runner can tap through to /{handle}.
+  // `photographerHandle` is null for a photographer who hasn't been verified
+  // yet — the handle is only assigned at verification. A null handle means
+  // "not linkable": render the name as plain text, never a link to /{null}.
+  // Both are absent on legacy/seed rows that carry no photographer at all.
+  photographerHandle?: string | null;
+  photographerName?: string | null;
   alt?: string;
 }
 

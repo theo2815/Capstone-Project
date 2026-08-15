@@ -731,7 +731,6 @@ function PayoutDrawerActions({
 }
 
 function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
-  const weekEnd = addDays(cycle.weekOf, 6);
   // "approved" is the post-review, pre-payment state — the moment the admin
   // actually has to send money. Surface the focal ReadyToSendCard at the
   // top; we hide the duplicate inline PayoutAccountCard below so the same
@@ -747,11 +746,10 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
         </p>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
           <FieldRow label="Payout id" value={cycle.id} mono />
-          <FieldRow
-            label="Week of"
-            value={`${formatLongDate(cycle.weekOf, true)} → ${formatLongDate(weekEnd, true)}`}
-            mono
-          />
+          {/* No "Week of" row: payouts are request-based, so there is no week
+              they cover. `Submitted` below is the real date and has been
+              backed by `cycle.createdAt` all along (BE AdminPayoutService
+              .hydrateOne). */}
           <FieldRow
             label="Submitted"
             value={formatLongDate(cycle.submittedAt)}

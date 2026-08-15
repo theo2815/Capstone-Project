@@ -63,7 +63,7 @@ export function TrackPayoutReportModal({
       </div>
 
       <Kicker as="p" tone="soft" tnum className="mb-6">
-        CYCLE · {cycle.id} · {formatLongDate(cycle.weekOf, true)} ·{" "}
+        PAYOUT · {cycle.id} · {formatLongDate(cycle.requestedAt)} ·{" "}
         {formatPrice(cycle.amount)}
       </Kicker>
 

@@ -208,8 +208,14 @@ export type PayoutStatus = "paid" | "pending" | "scheduled" | "held";
 
 export interface PhotographerPayout {
   id: string;
-  /** ISO Monday of the cycle this payout covers. */
+  /** @deprecated ISO Monday, an artifact of the scheduled-weekly model that
+   *  the request-based flow replaced on 2026-05-19. There are no weekly cycles
+   *  any more, so "Week of {weekOf}" mislabels a payout. Still populated by the
+   *  BE because mobile reads it; render `requestedAt` instead. */
   weekOf: string;
+  /** ISO timestamp of when the photographer asked to be paid. The honest label
+   *  for a request-based payout. */
+  requestedAt: string;
   amount: number;
   status: PayoutStatus;
   /** ISO timestamp when the payout was settled (paid) or admin approved it.

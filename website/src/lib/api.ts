@@ -10,7 +10,14 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
-  async fetch<T>(path: string, options?: RequestInit): Promise<T> {
+  async fetch<T>(
+    path: string,
+    options?: RequestInit,
+    // Set on the one retry we allow after a token refresh. A second refresh
+    // can never help: if a freshly-minted token still 401s, a newer one will
+    // too — and unbounded recursion here re-submits the request forever.
+    retried = false,
+  ): Promise<T> {
     const token = getAccessToken();
     const headers: HeadersInit = {
       ...(options?.body instanceof FormData
@@ -25,14 +32,34 @@ class ApiClient {
       headers,
     });
 
-    if (res.status === 401 && !isPublicAuthEndpoint(path)) {
-      const refreshed = await refreshAccessToken();
-      if (refreshed) return this.fetch<T>(path, options);
+    // Parsed before the 401 branch, because an expired session and a rejected
+    // password both arrive as 401 and only the envelope's code tells them
+    // apart. Guarded: a 401 raised outside the app (proxy, gateway) may carry
+    // no JSON at all, and that still has to reach the refresh path.
+    let data: ApiResponse<T> | null = null;
+    try {
+      data = (await res.json()) as ApiResponse<T>;
+    } catch {
+      data = null;
+    }
+
+    if (
+      res.status === 401 &&
+      !isPublicAuthEndpoint(path) &&
+      !isCredentialRejection(data)
+    ) {
+      const refreshed = retried ? false : await refreshAccessToken();
+      if (refreshed) return this.fetch<T>(path, options, true);
       this.redirectToLogin();
       throw new Error("Unauthorized");
     }
 
-    const data: ApiResponse<T> = await res.json();
+    if (!data) {
+      throw new ApiError(
+        [{ code: "UNKNOWN", message: "Request failed" }],
+        res.status,
+      );
+    }
     if (!data.success) {
       throw new ApiError(
         data.errors ?? [{ code: "UNKNOWN", message: "Request failed" }],
@@ -145,12 +172,29 @@ const PUBLIC_AUTH_ENDPOINTS = new Set([
   "/auth/refresh",
   "/auth/forgot-password",
   "/auth/reset-password",
+  // Opened from a link in the NEW inbox, so the caller is frequently signed
+  // out — or signed in with a stale token, since confirming revokes every
+  // session. Either way a 401 here must surface as an error on the page, not
+  // bounce the user to /login and swallow their confirmation.
+  "/auth/confirm-email-change",
   "/auth/logout",
 ]);
 
 function isPublicAuthEndpoint(path: string): boolean {
   const [pathname] = path.split("?");
   return PUBLIC_AUTH_ENDPOINTS.has(pathname);
+}
+
+// A 401 carrying INVALID_CREDENTIALS is the server rejecting a password the
+// user just typed — `PUT /me/password` and `PUT /me/email` both re-verify the
+// current password and throw UnauthorizedException on a mismatch. That is not
+// an expired session, and treating it as one is a trap: the refresh SUCCEEDS
+// (the session is fine), the retry re-submits the same wrong password, and the
+// pair loops forever. Observed live at 58 requests before the tab was closed.
+// Letting it fall through as an ApiError is also what makes the forms' own
+// INVALID_CREDENTIALS branches reachable — they never were.
+function isCredentialRejection<T>(data: ApiResponse<T> | null): boolean {
+  return data?.errors?.some((e) => e.code === "INVALID_CREDENTIALS") ?? false;
 }
 
 export class ApiError extends Error {

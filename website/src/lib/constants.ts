@@ -8,6 +8,10 @@ export const ROUTES = {
   LOGIN: "/login",
   REGISTER: "/register",
   FORGOT_PASSWORD: "/forgot-password",
+  // Target of the confirmation link in the change-email mail. The backend
+  // builds it as `${frontendOrigin}/confirm-email-change?token=…`, so this
+  // path is a contract with backend EmailService — don't rename it alone.
+  CONFIRM_EMAIL_CHANGE: "/confirm-email-change",
   ONBOARDING: "/onboarding",
   EVENTS: "/events",
   ORDERS: "/orders",

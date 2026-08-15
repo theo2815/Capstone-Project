@@ -528,6 +528,10 @@ function PhotoPreviewMount({
       eventName={event.name}
       index={index + 1}
       total={total}
+      // Every photo on this page is this photographer's, and their name is in
+      // the header — crediting each shot back to the page you're standing on
+      // is noise.
+      showPhotographerCredit={false}
       inCart={inCart}
       onClose={onClose}
       onPrev={onPrev}

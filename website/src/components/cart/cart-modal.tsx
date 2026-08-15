@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useCartStore } from "@/store/cart-store";
 import { useConfirmation } from "@/hooks/use-confirmation";
+import { fetchEventDetail } from "@/lib/api-events";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn, formatPrice } from "@/lib/utils";
@@ -47,7 +48,66 @@ export function CartModal({
   const removeItem = useCartStore((s) => s.removeItem);
   const clear = useCartStore((s) => s.clear);
   const total = useCartStore((s) => s.total());
+  const syncEnabled = useCartStore((s) => s.syncEnabled);
   const { confirm } = useConfirmation();
+
+  // Guest carts carry the price captured at browse time. A signed-in runner's
+  // cart self-corrects — the server owns the row and `GET /me/cart` renders
+  // the live `photos.price_php` — but a guest has no `cart_items` row for the
+  // BE to correct, while checkout still charges the live price. So an admin
+  // re-price between browsing and checking out would bill more than the cart
+  // showed. Re-read on open.
+  //
+  // One GET per distinct event, not per photo: price is an event-level value
+  // (admin PATCH re-prices every photo under the event), so the event detail
+  // answers for the whole cart. Items with no `eventSlug` — persisted before
+  // the field existed — are skipped rather than guessed at.
+  useEffect(() => {
+    if (!isOpen || syncEnabled) return;
+    let cancelled = false;
+
+    const slugs = Array.from(
+      new Set(
+        useCartStore
+          .getState()
+          .items.map((i) => i.eventSlug)
+          .filter((s): s is string => Boolean(s)),
+      ),
+    );
+    if (slugs.length === 0) return;
+
+    void Promise.all(
+      slugs.map(async (slug) => {
+        const event = await fetchEventDetail(slug);
+        return [slug, event?.pricePerPhoto ?? null] as const;
+      }),
+    ).then((pairs) => {
+      if (cancelled) return;
+      const priceBySlug = new Map<string, number>();
+      for (const [slug, price] of pairs) {
+        if (price !== null) priceBySlug.set(slug, price);
+      }
+      if (priceBySlug.size === 0) return;
+
+      // Re-read at write time — an add or remove may have landed while the
+      // requests were in flight, and setItems replaces the whole array.
+      const current = useCartStore.getState().items;
+      let changed = false;
+      const next = current.map((item) => {
+        const price = item.eventSlug
+          ? priceBySlug.get(item.eventSlug)
+          : undefined;
+        if (price === undefined || price === item.price) return item;
+        changed = true;
+        return { ...item, price };
+      });
+      if (changed) useCartStore.getState().setItems(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, syncEnabled]);
 
   async function handleClearCart() {
     const ok = await confirm({

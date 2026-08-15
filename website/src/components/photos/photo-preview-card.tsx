@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
+import { Kicker } from "@/components/ui/kicker";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn, formatPrice } from "@/lib/utils";
 
@@ -24,6 +26,11 @@ export interface PhotoPreviewItem {
   // The lightbox prefers it over `imageUrl` so owned-mode (and any owned
   // gallery thumbnail upgraded mid-browse) renders an unwatermarked source.
   cleanUrl?: string | null;
+  // Attribution from the BE. A null `photographerHandle` on a present name
+  // means the photographer isn't verified yet and has no public profile —
+  // the credit renders as plain text, never a link to /{null}.
+  photographerHandle?: string | null;
+  photographerName?: string | null;
   alt?: string;
 }
 
@@ -35,6 +42,12 @@ interface BasePhotoPreviewProps {
   onClose: () => void;
   onPrev?: () => void;
   onNext?: () => void;
+  /**
+   * Set false where the credit would be noise because the surrounding page is
+   * already the photographer's — e.g. their own public gallery. Defaults true;
+   * surfaces whose data simply carries no attribution render nothing anyway.
+   */
+  showPhotographerCredit?: boolean;
 }
 
 interface BrowsePhotoPreviewProps extends BasePhotoPreviewProps {
@@ -65,7 +78,16 @@ type PhotoPreviewCardProps =
   | ReviewPhotoPreviewProps;
 
 export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
-  const { photo, eventName, index, total, onClose, onPrev, onNext } = props;
+  const {
+    photo,
+    eventName,
+    index,
+    total,
+    onClose,
+    onPrev,
+    onNext,
+    showPhotographerCredit = true,
+  } = props;
   const mode = props.mode ?? "browse";
   useScrollLock(true);
 
@@ -290,6 +312,12 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
         </div>
 
         <div className="px-5 md:px-7 py-4 sm:py-5 md:py-6 bg-bone-deep border-t border-line">
+          {showPhotographerCredit && (
+            <PhotographerCredit
+              handle={photo.photographerHandle}
+              name={photo.photographerName}
+            />
+          )}
           {props.mode === "owned" ? (
             <>
               <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-3 sm:mb-4 text-center">
@@ -398,4 +426,47 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
   );
 
   return createPortal(content, document.body);
+}
+
+// Photo credit line above the footer's CTA block.
+//
+// Both branches are real BE states, not a loading fallback: a photographer's
+// handle is only minted at verification, so an approved-but-unverified
+// photographer has a name and no public profile to link to. Linking anyway
+// would send the runner to /{null}. Legacy rows carry neither field and get
+// no credit at all.
+//
+// Stays off `fresh` deliberately — the Buy-now CTA a few pixels below owns the
+// one accent this viewport is allowed.
+function PhotographerCredit({
+  handle,
+  name,
+}: {
+  handle?: string | null;
+  name?: string | null;
+}) {
+  if (!handle && !name) return null;
+
+  return (
+    // `truncate` is load-bearing, not defensive: mono uppercase at kicker
+    // tracking measures roughly double its intuitive width, so a long handle
+    // overflows the 375px modal without it. See vault notes/ui-pitfalls
+    // 2026-05-06 "mono-uppercase chip wrapped mid-word at 375px".
+    <Kicker as="p" tone="soft" className="mb-3 sm:mb-4 text-center truncate">
+      Photo by{" "}
+      {handle ? (
+        <Link
+          href={`/${handle}`}
+          className="text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep rounded-sm"
+        >
+          @{handle}
+          <span aria-hidden="true" className="ml-1.5 no-underline">
+            →
+          </span>
+        </Link>
+      ) : (
+        <span className="text-ink">{name}</span>
+      )}
+    </Kicker>
+  );
 }
