@@ -27,7 +27,17 @@ data class PhotoDto(
     // null for everyone else. The lightbox prefers it so a runner stops seeing
     // the watermark on a photo they paid for. Grid thumbnails stay watermarked,
     // matching the website.
-    val cleanUrl: String? = null
+    val cleanUrl: String? = null,
+    // Who took the shot, so the runner can tap through to that photographer's
+    // public profile. Both come from backend PhotoDto (2026-08-15).
+    //
+    // A null handle is a CONTRACT, not a missing value: PhotographerSettings.handle
+    // is only assigned at verification, so an unverified photographer has a name
+    // and no handle. Render the name as plain text there — never a tap target,
+    // or the runner lands on /{null}. Both are null on legacy/seed rows that
+    // carry no photographerId at all.
+    val photographerHandle: String? = null,
+    val photographerName: String? = null
 )
 
 data class SearchByFaceJsonRequest(

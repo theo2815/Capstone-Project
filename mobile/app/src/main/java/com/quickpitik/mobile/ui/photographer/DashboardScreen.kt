@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 
@@ -64,6 +65,10 @@ fun PhotographerDashboardScreen(
     var shareEvent by remember { mutableStateOf<PhotographerEventSummaryDto?>(null) }
     var showProfilePreview by remember { mutableStateOf(false) }
     var showNotifDialog by remember { mutableStateOf(false) }
+
+    // Public-profile state lives in its own VM so the same screen serves a
+    // runner tapping a photo byline (see PublicPhotographerViewModel).
+    val publicPhotographerViewModel: PublicPhotographerViewModel = viewModel()
 
     // No mount-time fetch here on purpose. PhotographerDashboardViewModel's
     // init{} already issues all five of these (plus fetchPublicEvents and
@@ -141,7 +146,8 @@ fun PhotographerDashboardScreen(
         }
         if (showProfilePreview) {
             PhotographerPublicProfileScreen(
-                viewModel = viewModel,
+                handle = brandSettings?.handle,
+                viewModel = publicPhotographerViewModel,
                 onBack = { showProfilePreview = false }
             )
             return@MaterialTheme

@@ -69,6 +69,7 @@ fun RunnerGalleryScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateBack: () -> Unit,
     onOpenOrder: (String) -> Unit,
+    onOpenPhotographer: (String) -> Unit,
     onLogout: () -> Unit
 ) {
     var bibSearchQuery by remember { mutableStateOf("") }
@@ -695,6 +696,12 @@ fun RunnerGalleryScreen(
                         cartViewModel.addToCart(targetPhoto, event.id, event.slug, event.name)
                     }
                     selectedPhotoForDetail = null
+                },
+                onOpenPhotographer = { handle ->
+                    // Close the lightbox first — otherwise device-back from the
+                    // profile lands on a re-opened dialog instead of the grid.
+                    selectedPhotoForDetail = null
+                    onOpenPhotographer(handle)
                 },
             )
         } else {

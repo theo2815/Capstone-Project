@@ -89,18 +89,6 @@ sealed class SharePhotosState {
     data class Error(val message: String) : SharePhotosState()
 }
 
-sealed class PublicProfileState {
-    object Loading : PublicProfileState()
-    data class Success(val profile: com.quickpitik.mobile.data.remote.PhotographerProfileDto) : PublicProfileState()
-    data class Error(val message: String) : PublicProfileState()
-}
-
-sealed class ProfileEventPhotosState {
-    object Loading : ProfileEventPhotosState()
-    data class Success(val photos: List<com.quickpitik.mobile.data.remote.PhotoDto>) : ProfileEventPhotosState()
-    data class Error(val message: String) : ProfileEventPhotosState()
-}
-
 data class QueueStats(
     val syncedCount: Int = 0,
     val queuedCount: Int = 0,
@@ -236,12 +224,6 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     private val _sharePhotosState = MutableStateFlow<SharePhotosState>(SharePhotosState.Loading)
     val sharePhotosState: StateFlow<SharePhotosState> = _sharePhotosState
-
-    private val _publicProfileState = MutableStateFlow<PublicProfileState>(PublicProfileState.Loading)
-    val publicProfileState: StateFlow<PublicProfileState> = _publicProfileState
-
-    private val _profileEventPhotosState = MutableStateFlow<ProfileEventPhotosState>(ProfileEventPhotosState.Loading)
-    val profileEventPhotosState: StateFlow<ProfileEventPhotosState> = _profileEventPhotosState
 
     // Manual camera-card import. Browse + import are two short sessions, not
     // one long one — holding a session open locks the R6's physical shutter
@@ -724,38 +706,6 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             }
         } catch (e: Exception) {
             Result.failure(IllegalStateException(RetrofitClient.parseError(e)))
-        }
-    }
-
-    fun fetchPublicProfile(handle: String) {
-        viewModelScope.launch {
-            _publicProfileState.value = PublicProfileState.Loading
-            try {
-                val response = RetrofitClient.apiService.getPublicPhotographerProfile(handle)
-                if (response.success && response.data != null) {
-                    _publicProfileState.value = PublicProfileState.Success(response.data)
-                } else {
-                    _publicProfileState.value = PublicProfileState.Error(response.error ?: "Failed to load profile.")
-                }
-            } catch (e: Exception) {
-                _publicProfileState.value = PublicProfileState.Error(RetrofitClient.parseError(e))
-            }
-        }
-    }
-
-    fun fetchProfileEventPhotos(handle: String, slug: String) {
-        viewModelScope.launch {
-            _profileEventPhotosState.value = ProfileEventPhotosState.Loading
-            try {
-                val response = RetrofitClient.apiService.getPublicPhotographerEventPhotos(handle, slug)
-                if (response.success && response.data != null) {
-                    _profileEventPhotosState.value = ProfileEventPhotosState.Success(response.data.items)
-                } else {
-                    _profileEventPhotosState.value = ProfileEventPhotosState.Error(response.error ?: "Failed to load photos.")
-                }
-            } catch (e: Exception) {
-                _profileEventPhotosState.value = ProfileEventPhotosState.Error(RetrofitClient.parseError(e))
-            }
         }
     }
 

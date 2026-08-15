@@ -32,29 +32,33 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 
 // Mobile mirror of website /{handle} (public photographer profile) and
-// /{handle}/events/[slug] (per-event public gallery). Reached via "Preview
-// public profile" in the photographer Overview tab — the only handle the app
-// knows without a backend change is the logged-in photographer's own.
+// /{handle}/events/[slug] (per-event public gallery). Two entry points:
+//   • the photographer's own "Preview public profile" (Overview tab), which
+//     passes the handle off their brand settings — null until verification;
+//   • a runner tapping the photographer byline in the photo lightbox, which
+//     routes here with the handle off PhotoDto (2026-08-15).
+// [handle] is therefore a parameter rather than something read off the
+// logged-in photographer — a runner has no brand settings to read.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhotographerPublicProfileScreen(
-    viewModel: PhotographerDashboardViewModel,
+    handle: String?,
+    viewModel: PublicPhotographerViewModel,
     onBack: () -> Unit
 ) {
-    val brand by viewModel.brandSettings.collectAsState()
     val profileState by viewModel.publicProfileState.collectAsState()
-    val handle = brand?.handle?.takeIf { it.isNotBlank() }
+    val resolvedHandle = handle?.takeIf { it.isNotBlank() }
     var selectedEventSlug by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(handle) {
-        if (handle == null) viewModel.fetchSettings() else viewModel.fetchPublicProfile(handle)
+    LaunchedEffect(resolvedHandle) {
+        if (resolvedHandle != null) viewModel.fetchPublicProfile(resolvedHandle)
     }
 
     val gallerySlug = selectedEventSlug
-    if (handle != null && gallerySlug != null) {
+    if (resolvedHandle != null && gallerySlug != null) {
         ProfileEventGalleryView(
             viewModel = viewModel,
-            handle = handle,
+            handle = resolvedHandle,
             slug = gallerySlug,
             onBack = { selectedEventSlug = null }
         )
@@ -73,7 +77,10 @@ fun PhotographerPublicProfileScreen(
             BackRow(label = "BACK", onBack = onBack)
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (handle == null) {
+            // Only reachable from the photographer's own preview: the runner
+            // byline is a tap target only when the handle is non-null, so a
+            // runner can never land here handle-less.
+            if (resolvedHandle == null) {
                 EmptyStateCard("Set your public handle in the Settings tab to preview your profile.")
                 return@Column
             }
@@ -85,7 +92,7 @@ fun PhotographerPublicProfileScreen(
                     }
                 }
                 is PublicProfileState.Error -> {
-                    EmptyStateCard(state.message, onRetry = { viewModel.fetchPublicProfile(handle) })
+                    EmptyStateCard(state.message, onRetry = { viewModel.fetchPublicProfile(resolvedHandle) })
                 }
                 is PublicProfileState.Success -> {
                     val profile = state.profile
@@ -204,7 +211,7 @@ private fun EventCoverageCard(coverage: PhotographerEventCoverageDto, onClick: (
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ProfileEventGalleryView(
-    viewModel: PhotographerDashboardViewModel,
+    viewModel: PublicPhotographerViewModel,
     handle: String,
     slug: String,
     onBack: () -> Unit

@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -52,6 +53,12 @@ data class PhotoPreviewData(
     val imageUrl: String?,
     val eventName: String?,
     val salesCount: Int? = null,
+    // Photographer credit. Null name = a legacy/seed photo with no
+    // photographerId, so no byline renders at all. Non-null name with a null
+    // handle = an unverified photographer (the handle is assigned at
+    // verification) — the byline renders as plain text, never a tap target.
+    val photographerHandle: String? = null,
+    val photographerName: String? = null,
 )
 
 // PhotoPreview has two flavors. Browse is the runner buy-flow (Add to cart /
@@ -69,6 +76,8 @@ fun PhotoDto.toPreviewData(eventName: String?): PhotoPreviewData = PhotoPreviewD
     // owned-mode swap the website does with `cleanUrl ?? imageUrl`.
     imageUrl = cleanUrl ?: imageUrl,
     eventName = eventName,
+    photographerHandle = photographerHandle,
+    photographerName = photographerName,
 )
 
 fun CartItemDto.toPreviewData(): PhotoPreviewData = PhotoPreviewData(
@@ -77,6 +86,52 @@ fun CartItemDto.toPreviewData(): PhotoPreviewData = PhotoPreviewData(
     imageUrl = thumbnailUrl,
     eventName = eventName,
 )
+
+/**
+ * "Photo by {name}" credit in the lightbox. Tappable only when the
+ * photographer has a handle — an unverified photographer has a name and no
+ * handle, and linking one would route to /{null}. Carries no Fresh: the
+ * Browse viewport already spends its one accent on the Buy CTA.
+ */
+@Composable
+private fun PhotographerByline(
+    name: String,
+    handle: String?,
+    onOpen: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .clip(BadgeShape)
+            .then(
+                if (handle != null) Modifier.clickable { onOpen(handle) } else Modifier,
+            )
+            // Padding inside the clickable so the tap target clears 48dp:
+            // kicker (~16dp) + name (~20dp) + 16dp padding.
+            .padding(horizontal = 8.dp, vertical = 8.dp)
+            .widthIn(max = 180.dp),
+        horizontalAlignment = Alignment.End,
+    ) {
+        Kicker("Photo by", color = SlateSoft)
+        Spacer(modifier = Modifier.height(2.dp))
+        if (handle != null) {
+            ArrowLabel(
+                text = "$name →",
+                color = Ink,
+                style = Typography.bodyMedium,
+                iconSize = 12.dp,
+            )
+        } else {
+            Text(
+                text = name,
+                style = Typography.bodyMedium,
+                color = Ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.End,
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -92,6 +147,9 @@ fun PhotoPreview(
     // gallery. Owned resolves it from the runner's purchase grant; OwnerReview
     // from the photographer's own /photos/{id}/download endpoint.
     onDownload: (PhotoPreviewData) -> Unit = {},
+    // Browse mode only — opens the photographer's public profile. Called with a
+    // non-null handle; the byline is not a tap target without one.
+    onOpenPhotographer: (String) -> Unit = {},
     mode: PhotoPreviewMode = PhotoPreviewMode.Browse,
 ) {
     if (photos.isEmpty()) {
@@ -308,6 +366,15 @@ fun PhotoPreview(
                                             text = "₱${"%,.2f".format(activePhoto.price)}",
                                             style = NumeralStyle.copy(fontSize = 22.sp),
                                             color = Ink,
+                                        )
+                                    }
+                                    // Credit sits in the dead half of the price
+                                    // row, so it costs the image no height.
+                                    if (activePhoto.photographerName != null) {
+                                        PhotographerByline(
+                                            name = activePhoto.photographerName,
+                                            handle = activePhoto.photographerHandle,
+                                            onOpen = onOpenPhotographer,
                                         )
                                     }
                                 }

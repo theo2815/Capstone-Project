@@ -30,6 +30,8 @@ import com.quickpitik.mobile.ui.auth.RegisterScreen
 import com.quickpitik.mobile.ui.auth.ResetPasswordScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
+import com.quickpitik.mobile.ui.photographer.PhotographerPublicProfileScreen
+import com.quickpitik.mobile.ui.photographer.PublicPhotographerViewModel
 import com.quickpitik.mobile.ui.runner.EventsDiscoveryScreen
 import com.quickpitik.mobile.ui.runner.FloatingCart
 import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
@@ -214,6 +216,9 @@ class MainActivity : ComponentActivity() {
                             onOpenOrder = { orderId ->
                                 navController.navigate("orders?orderId=$orderId")
                             },
+                            onOpenPhotographer = { handle ->
+                                navController.navigate("photographer/$handle")
+                            },
                             onNavigateToProfile = {
                                 navController.navigate("profile")
                             },
@@ -230,6 +235,22 @@ class MainActivity : ComponentActivity() {
                                     popUpTo("events") { inclusive = true }
                                 }
                             }
+                        )
+                    }
+                    // Public photographer profile — website /{handle}. Reached
+                    // from the photo byline in the runner lightbox; the same
+                    // screen also serves the photographer's own "Preview public
+                    // profile" from inside the dashboard shell. Only ever
+                    // navigated to with a non-null handle.
+                    composable(
+                        route = "photographer/{handle}",
+                        arguments = listOf(navArgument("handle") { type = NavType.StringType }),
+                    ) { entry ->
+                        val publicPhotographerViewModel: PublicPhotographerViewModel = viewModel()
+                        PhotographerPublicProfileScreen(
+                            handle = entry.arguments?.getString("handle"),
+                            viewModel = publicPhotographerViewModel,
+                            onBack = { navController.popBackStack() },
                         )
                     }
                     composable("profile") {
