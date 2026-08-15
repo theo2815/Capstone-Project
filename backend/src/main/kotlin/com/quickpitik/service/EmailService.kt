@@ -55,6 +55,84 @@ class EmailService(
         }
     }
 
+    // Goes to the NEW address, never the old one — receiving it is the proof
+    // that the requester actually controls that inbox. Unlike the reset mail,
+    // a delivery failure here MUST be visible: EmailChangeService is not
+    // anti-enumeration silent (the caller already proved who they are with
+    // their password), and silently swallowing this would leave the user
+    // waiting for a confirmation that never comes.
+    fun sendEmailChangeConfirmation(toEmail: String, changeToken: String) {
+        val confirmUrl = "$frontendOrigin/confirm-email-change?token=" +
+            URLEncoder.encode(changeToken, StandardCharsets.UTF_8)
+
+        if (devMode) {
+            log.info("[EMAIL STUB] email change for {} — link: {}", toEmail, confirmUrl)
+            return
+        }
+
+        val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
+        val response = resendClient.send(
+            ResendSendEmailRequest(
+                from = sender,
+                to = listOf(toEmail),
+                subject = "Confirm your new QuickPitik email",
+                html = renderEmailChangeHtml(toEmail, confirmUrl),
+            ),
+        )
+        log.info("Email-change confirmation sent · to={} resendId={}", toEmail, response.id)
+    }
+
+    private fun renderEmailChangeHtml(toEmail: String, confirmUrl: String): String {
+        return """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /><title>Confirm your new QuickPitik email</title></head>
+<body style="margin:0;padding:0;background:#f7f5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;">
+  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f7f5ee;padding:32px 16px;">
+    <tr><td align="center">
+      <table cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#fafaf6;border-radius:16px;padding:36px 32px;border:1px solid #e5e2d8;">
+        <tr><td>
+          <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:11px;color:#7a7a7a;margin:0 0 10px;">
+            QuickPitik · Email change
+          </p>
+          <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:32px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.05;color:#1a1a1a;">
+            Confirm this address.
+          </h1>
+          <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 28px;">
+            Someone asked to make <strong>${escapeHtml(toEmail)}</strong> the sign-in email for their
+            QuickPitik account. Tap below to confirm — the link works for 1 hour. Until you do,
+            the account keeps its current address.
+          </p>
+
+          <table cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
+            <tr><td style="padding:6px 0;">
+              <a href="${escapeUrl(confirmUrl)}"
+                 style="display:inline-block;background:#3b8c5f;color:#fafaf6;
+                        text-decoration:none;padding:16px 32px;border-radius:999px;
+                        font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+                        text-transform:uppercase;letter-spacing:0.2em;font-size:13px;
+                        font-weight:500;">
+                Confirm this email  →
+              </a>
+            </td></tr>
+          </table>
+
+          <hr style="border:none;border-top:1px solid #e5e2d8;margin:28px 0;" />
+
+          <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
+            If you weren't expecting this, ignore it — nothing changes, and whoever asked
+            cannot sign in with this address.
+          </p>
+        </td></tr>
+      </table>
+      <p style="text-align:center;font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:10px;color:#a8a8a8;margin:24px 0 0;">
+        QuickPitik · Cebu, Philippines
+      </p>
+    </td></tr>
+  </table>
+</body></html>
+        """.trimIndent()
+    }
+
     private fun renderHtml(toEmail: String, resetUrl: String): String {
         return """
 <!DOCTYPE html>

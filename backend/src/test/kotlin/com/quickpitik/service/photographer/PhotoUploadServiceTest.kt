@@ -10,6 +10,7 @@ import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
@@ -24,7 +25,9 @@ import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.http.HttpStatus
 import org.springframework.web.multipart.MultipartFile
+import javax.imageio.IIOException
 import java.math.BigDecimal
 import java.sql.SQLException
 import java.time.LocalDate
@@ -271,6 +274,40 @@ class PhotoUploadServiceTest {
         assertFailsWith<DataIntegrityViolationException> {
             service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
         }
+    }
+
+    // Cross-module reconciliation (2026-08-15). A mobile hardware test on
+    // 2026-05-28 saw ~43% of camera-card uploads come back 500; the gap was
+    // never filed backend-side. One certain route to a 500 was this: ImageIO
+    // signals a TRUNCATED stream with IOException (typically IIOException)
+    // rather than returning null, and only the null path was handled. Bytes
+    // pulled off a DSLR over PTP are exactly where truncation comes from — a
+    // knocked cable mid-frame yields a partial JPEG.
+    //
+    // It must be a 4xx so the upload worker treats the file as terminal; a 500
+    // reads as transient and gets retried forever.
+    @Test
+    fun `a truncated image is rejected as unsupported media, not a 500`() {
+        stubValidationsPass()
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
+            .thenReturn(null)
+        Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(byteArrayOf(9))
+        // doAnswer, not thenThrow: Kotlin declares no checked exceptions, so
+        // Mockito rejects thenThrow(IIOException) as "invalid for this method"
+        // even though ImageIO throws exactly that through this call at runtime.
+        Mockito.doAnswer { throw IIOException("Image is truncated") }
+            .`when`(watermarkService).processThumbnail(anyArg(), anyArg())
+
+        val ex = assertFailsWith<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+
+        assertEquals(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ex.status)
+        // Nothing hit storage — a photo we can't decode must not leave an
+        // orphan original in the bucket.
+        Mockito.verify(storageService, Mockito.never())
+            .put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
+        Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
     }
 
     // A Spring DataIntegrityViolationException wrapping a Hibernate

@@ -186,6 +186,23 @@ class PhotoUploadService(
                 code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
                 message = "Could not decode image bytes.",
             )
+        } catch (ex: java.io.IOException) {
+            // ImageIO.read signals a TRUNCATED or structurally corrupt stream
+            // with IOException (usually IIOException) rather than returning
+            // null, and only the null path raised IllegalArgumentException
+            // above — so a partial JPEG escaped as a 500.
+            //
+            // This is not hypothetical: the camera-card import path pulls bytes
+            // off a DSLR over PTP, and a pull interrupted by a cable knock or a
+            // detach mid-frame produces exactly these bytes. The client should
+            // be told the file is unusable so it can stop retrying it, which a
+            // 500 does not do.
+            log.warn("Undecodable image bytes on upload for photographer {}: {}", photographerId, ex.message)
+            throw ApiException(
+                status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "Could not decode image bytes.",
+            )
         }
 
         storageService.put(originalKey, bytes, contentType)

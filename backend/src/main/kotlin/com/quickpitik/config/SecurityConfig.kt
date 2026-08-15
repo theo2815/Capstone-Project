@@ -48,6 +48,9 @@ class SecurityConfig(
                     "/api/v1/auth/logout",
                     "/api/v1/auth/forgot-password",
                     "/api/v1/auth/reset-password",
+                    // Opened from the NEW inbox, so the browser usually has no
+                    // session. The opaque token in the body is the credential.
+                    "/api/v1/auth/confirm-email-change",
                 ).permitAll()
                 auth.requestMatchers("/error", "/actuator/**").permitAll()
                 auth.requestMatchers("/ws/**").permitAll()

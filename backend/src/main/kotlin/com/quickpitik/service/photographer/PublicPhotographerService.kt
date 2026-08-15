@@ -10,6 +10,7 @@ import com.quickpitik.dto.photographer.PhotographerEventCoverageDto
 import com.quickpitik.dto.photographer.PhotographerProfileDto
 import com.quickpitik.dto.photographer.deriveEventState
 import com.quickpitik.dto.photos.PhotoDto
+import com.quickpitik.dto.photos.PhotographerRef
 import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.Photo
@@ -124,8 +125,17 @@ class PublicPhotographerService(
             ),
         )
         if (page.isEmpty) return PaginatedResponse.empty(pagination)
+        // Every photo on this page belongs to the photographer resolved above,
+        // so attribution is a constant — no per-page lookup like PhotoService
+        // needs for a mixed event grid.
+        val photographer = PhotographerRef(handle = settings.handle, name = user.name)
         return PaginatedResponse(
-            items = page.content.map { it.toDto(::resolveWatermarkedUrl) },
+            items = page.content.map {
+                it.toDto(
+                    thumbnailUrlResolver = ::resolveWatermarkedUrl,
+                    photographerResolver = { photographer },
+                )
+            },
             total = page.totalElements,
             offset = pagination.offset,
             limit = pagination.limit,

@@ -10,9 +10,11 @@ import org.springframework.web.util.ContentCachingRequestWrapper
 import org.springframework.web.util.WebUtils
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.time.Instant
 import java.util.HexFormat
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import kotlin.math.abs
 
 // HMAC-SHA256 verification for PayMongo webhook deliveries. The provider
 // signs `${timestamp}.${raw_body}` and sends the digest in
@@ -26,12 +28,16 @@ import javax.crypto.spec.SecretKeySpec
 // digest mismatch, bad timestamp) raises the SAME UnauthorizedException
 // so a probing attacker learns nothing about which step rejected.
 //
-// Limitation (deferred): no timestamp drift check. A captured signature
-// stays replay-able indefinitely. The application-level (provider,
-// provider_ref, order_id) UNIQUE on payments and the order status guard
-// in PaymongoWebhookService dedupe the most common case (same event
-// re-sent). A full defense rejects requests outside a ±5-minute window;
-// land alongside live-mode go-live.
+// Anti-replay: deliveries outside a ±5-minute window are rejected, so a
+// captured signature stops being useful once the window closes (previously it
+// stayed replay-able indefinitely — D-3). This layers on top of the
+// application-level (provider, provider_ref, order_id) UNIQUE on payments and
+// the order status guard in PaymongoWebhookService, which already deduped the
+// common case of the same event being re-sent.
+//
+// The window is checked only AFTER the HMAC matches: an attacker without the
+// secret can't use it to probe for a valid timestamp format, and a genuine
+// delivery delayed past the window is the only thing that ever reaches it.
 @Component
 class PaymongoSignatureVerifier(
     private val properties: PaymongoProperties,
@@ -83,6 +89,24 @@ class PaymongoSignatureVerifier(
             log.warn("PayMongo webhook rejected: signature mismatch")
             throw signatureFailure()
         }
+
+        // The signature is authentic; now make sure it isn't a replay of an old
+        // one. A non-numeric `t` can't have produced a valid HMAC in practice,
+        // but treat it as a rejection rather than trusting it.
+        val sentAtEpochSeconds = timestamp.toLongOrNull()
+        if (sentAtEpochSeconds == null) {
+            log.warn("PayMongo webhook rejected: non-numeric timestamp")
+            throw signatureFailure()
+        }
+        val skewSeconds = abs(Instant.now().epochSecond - sentAtEpochSeconds)
+        if (skewSeconds > MAX_CLOCK_SKEW_SECONDS) {
+            log.warn(
+                "PayMongo webhook rejected: timestamp outside the replay window (skew={}s, max={}s)",
+                skewSeconds,
+                MAX_CLOCK_SKEW_SECONDS,
+            )
+            throw signatureFailure()
+        }
     }
 
     private fun parseSignatureHeader(header: String): Map<String, String> =
@@ -106,5 +130,10 @@ class PaymongoSignatureVerifier(
     companion object {
         const val HEADER = "Paymongo-Signature"
         private const val HMAC_ALGORITHM = "HmacSHA256"
+
+        // ±5 minutes, the same window Stripe and PayMongo document. Wide enough
+        // to absorb ordinary clock drift between their senders and our host,
+        // narrow enough that a captured delivery expires quickly.
+        private const val MAX_CLOCK_SKEW_SECONDS = 300L
     }
 }

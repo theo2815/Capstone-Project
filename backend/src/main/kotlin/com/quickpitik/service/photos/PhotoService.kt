@@ -5,11 +5,14 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photos.PhotoDto
+import com.quickpitik.dto.photos.PhotographerRef
 import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.PhotographerSettingsRepository
+import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -20,6 +23,8 @@ import java.util.UUID
 class PhotoService(
     private val photoRepository: PhotoRepository,
     private val downloadGrantRepository: DownloadGrantRepository,
+    private val photographerSettingsRepository: PhotographerSettingsRepository,
+    private val userRepository: UserRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
 ) {
@@ -64,12 +69,16 @@ class PhotoService(
         requesterUserId: UUID?,
     ): PaginatedResponse<PhotoDto> {
         val ownedIds = resolveOwnedIds(requesterUserId, photos)
+        val photographers = resolvePhotographers(photos)
         return PaginatedResponse(
             items = photos.map {
                 it.toDto(
                     thumbnailUrlResolver = ::resolveThumbnailUrl,
                     cleanUrlResolver = { photo ->
                         if (photo.id in ownedIds) resolveCleanUrl(photo) else null
+                    },
+                    photographerResolver = { photo ->
+                        photo.photographerId?.let { photographers[it] }
                     },
                 )
             },
@@ -84,6 +93,31 @@ class PhotoService(
         return downloadGrantRepository
             .findOwnedPhotoIdsByUserAndPhotoIds(requesterUserId, photos.map { it.id })
             .toSet()
+    }
+
+    // Photographer attribution for a whole page in two reads, not two per photo.
+    // A marathon event page is 60-240 photos from a handful of photographers, so
+    // the distinct-id set is tiny and findAllById collapses to one IN query each.
+    // Mirrors resolveOwnedIds above: batch here, map lookup in the resolver.
+    //
+    // handle comes from PhotographerSettings (null until verification assigns
+    // one), name from User. A photographer with settings but no handle still
+    // gets a name, which is why the two are looked up independently rather than
+    // skipping the user read when the handle is missing.
+    private fun resolvePhotographers(photos: List<Photo>): Map<UUID, PhotographerRef> {
+        if (photos.isEmpty()) return emptyMap()
+        // photographerId is nullable on Photo (legacy/seed rows predate the
+        // column), so drop the nulls here — those photos simply carry no
+        // attribution and the resolver returns null for them.
+        val photographerIds = photos.mapNotNullTo(mutableSetOf()) { it.photographerId }
+        if (photographerIds.isEmpty()) return emptyMap()
+        val handles = photographerSettingsRepository.findAllById(photographerIds)
+            .associate { it.userId to it.handle }
+        val names = userRepository.findAllById(photographerIds)
+            .associate { it.id to it.name }
+        return photographerIds.associateWith { id ->
+            PhotographerRef(handle = handles[id], name = names[id])
+        }
     }
 
     private fun resolveThumbnailUrl(photo: Photo): String? {

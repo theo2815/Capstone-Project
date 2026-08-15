@@ -8,9 +8,11 @@ import com.quickpitik.dto.auth.RefreshRequest
 import com.quickpitik.dto.auth.RegisterRequest
 import com.quickpitik.dto.auth.ResetPasswordRequest
 import com.quickpitik.dto.auth.UserDto
+import com.quickpitik.dto.profile.EmailChangeConfirmRequest
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.AuthService
 import com.quickpitik.service.PasswordResetService
+import com.quickpitik.service.profile.EmailChangeService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
@@ -28,6 +30,7 @@ import org.springframework.web.bind.annotation.RestController
 class AuthController(
     private val authService: AuthService,
     private val passwordResetService: PasswordResetService,
+    private val emailChangeService: EmailChangeService,
     private val rateLimiter: RateLimiter,
 ) {
     @PostMapping("/register")
@@ -80,6 +83,23 @@ class AuthController(
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_RESET_PASSWORD, clientIp(request))
         passwordResetService.confirmReset(req.token, req.newPassword)
         return mapOf("message" to "Password reset successful.")
+    }
+
+    // Step 2 of the change-email flow. Public because the link is opened from
+    // the NEW inbox, which is very often a browser with no QuickPitik session —
+    // same reason /reset-password is public. The opaque token is the credential.
+    //
+    // Shares the reset-password rate policy on purpose: identical threat shape
+    // (unauthenticated, token in the body, so a guessing surface), and no reason
+    // to give an attacker a second independent budget.
+    @PostMapping("/confirm-email-change")
+    fun confirmEmailChange(
+        @Valid @RequestBody req: EmailChangeConfirmRequest,
+        request: HttpServletRequest,
+    ): Map<String, String> {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_RESET_PASSWORD, clientIp(request))
+        emailChangeService.confirmChange(req.token)
+        return mapOf("message" to "Email updated. Sign in again with your new address.")
     }
 
     @GetMapping("/me")

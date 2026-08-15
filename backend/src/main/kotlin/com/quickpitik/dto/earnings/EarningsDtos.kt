@@ -47,7 +47,16 @@ data class PerEventEarningDto(
 // wire form pulled from the entity wire columns.
 data class PhotographerPayoutDto(
     val id: String,
+    // DEPRECATED — a leftover from the scheduled weekly-cycle model that the
+    // request-based flow replaced (PayoutRequestService, 2026-05-19). There are
+    // no weekly cycles any more: a photographer requests a payout whenever their
+    // unpaid balance clears the minimum, so "Week of {weekOf}" mislabels it. Kept
+    // populated because the website payouts queue and mobile both read it — read
+    // `requestedAt` instead, and this field goes once both have migrated.
     val weekOf: LocalDate,
+    // When the photographer actually asked to be paid. This is the honest label
+    // for a request-based payout and what clients should render.
+    val requestedAt: OffsetDateTime,
     val amount: BigDecimal,
     val status: String,
     val settledAt: OffsetDateTime?,
@@ -62,6 +71,7 @@ data class PhotographerPayoutDto(
 fun PayoutCycle.toDto(): PhotographerPayoutDto = PhotographerPayoutDto(
     id = id,
     weekOf = weekOf,
+    requestedAt = createdAt,
     amount = amountPhp,
     status = statusWire,
     settledAt = settledAt,
