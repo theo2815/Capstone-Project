@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ROUTES } from "@/lib/constants";
@@ -26,9 +26,13 @@ export function ResetPasswordForm() {
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Not `isLoading` — setIsLoading lands on the next render, so a burst of
+  // submit events before a paint reads it as false every time. See login-form.
+  const submitting = useRef(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submitting.current) return;
     const passErr = validateNewPassword(password);
     const confirmErr = !confirmPassword
       ? "Please confirm your new password."
@@ -40,6 +44,7 @@ export function ResetPasswordForm() {
     setSubmitError(null);
     if (passErr || confirmErr) return;
 
+    submitting.current = true;
     setIsLoading(true);
     try {
       await api.post("/auth/reset-password", {
@@ -57,6 +62,7 @@ export function ResetPasswordForm() {
           : "Could not reset your password. The link may have expired — request a new one.",
       );
     } finally {
+      submitting.current = false;
       setIsLoading(false);
     }
   }

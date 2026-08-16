@@ -23,6 +23,7 @@ interface SavedEventsState {
   summaries: SavedEventSummary[];
   syncEnabled: boolean;
   setSyncEnabled: (enabled: boolean) => void;
+  setIds: (ids: string[]) => void;
   setSummaries: (summaries: SavedEventSummary[]) => void;
   save: (eventId: string, optimistic?: SavedEventSummary) => void;
   unsave: (eventId: string) => void;
@@ -37,6 +38,10 @@ export const useSavedEventsStore = create<SavedEventsState>()(
       summaries: [],
       syncEnabled: false,
       setSyncEnabled: (syncEnabled) => set({ syncEnabled }),
+      // Ids without summaries — the guest-buffer shape. setSummaries() can't
+      // stand in for this: a guest's saved ids have no BE summary yet, which
+      // is the whole reason the merge exists.
+      setIds: (ids) => set({ ids }),
       setSummaries: (summaries) =>
         set({ summaries, ids: summaries.map((s) => s.id) }),
       save: (eventId, optimistic) => {

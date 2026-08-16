@@ -2,7 +2,7 @@
 
 **Status:** All four roles (Guest · Runner · Photographer · Admin) feature-complete; last reconciled 2026-08-16. Wired to the live Spring Boot backend throughout — **there is no mock fallback and no `NEXT_PUBLIC_BACKEND_LIVE` gate** (that flag was never wired and is dead code; see vault `website/decisions.md` 2026-05-18). Per-surface truth lives in vault `ROLE-STATUS.md`.
 
-Baselines to hold: `npx tsc --noEmit` clean · `npm run lint` 0 errors / ~298 warnings · `npm run build` succeeds.
+Baselines to hold: `npx tsc --noEmit` clean · `npm run lint` 0 errors / **300** warnings · `npm run build` succeeds. (Measured 2026-08-16 by stashing the working diff and re-running; the "~298" recorded here before that was already stale. If your count differs, re-measure the same way before assuming you added warnings.)
 
 ## Role in the project
 

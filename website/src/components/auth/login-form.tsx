@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
@@ -43,6 +43,12 @@ export function LoginForm() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Guards double-submit. Deliberately NOT `isLoading`: setIsLoading only
+  // lands on the next render, so a held Enter — several submit events before a
+  // paint — reads it as false every time. Measured on /forgot-password: five
+  // submits in one tick sent five requests behind a state guard, one behind
+  // this ref, which flips synchronously.
+  const submitting = useRef(false);
 
   function clearFieldError(field: keyof FieldErrors) {
     if (errors[field] || submitError) {
@@ -53,6 +59,7 @@ export function LoginForm() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submitting.current) return;
     const next: FieldErrors = {
       email: validateEmail(email),
       password: validatePassword(password),
@@ -61,6 +68,7 @@ export function LoginForm() {
     setSubmitError(null);
     if (next.email || next.password) return;
 
+    submitting.current = true;
     setIsLoading(true);
     try {
       const user = await login({ email: email.trim(), password });
@@ -73,6 +81,7 @@ export function LoginForm() {
       setErrors(fields);
       setSubmitError(handled ? message : "Login failed. Please try again.");
     } finally {
+      submitting.current = false;
       setIsLoading(false);
     }
   }

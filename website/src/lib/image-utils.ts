@@ -31,6 +31,12 @@ export class ImageProcessingError extends Error {
 }
 
 export function validateImageFile(file: File): string | null {
+  // Ahead of the MIME gate: a HEIC fails SUPPORTED_TYPES anyway, but "Use a
+  // JPEG, PNG, or WebP image." tells an iPhone user nothing about how to get
+  // one — and HEIC is what iPhones shoot by default. HEIC_GUIDANCE names the
+  // Settings path. Mostly reached by drag-and-drop and "All files" picks; the
+  // `accept` list filters honestly-named .heic out of most OS pickers.
+  if (looksLikeHeic(file)) return HEIC_GUIDANCE;
   if (!SUPPORTED_TYPES.has(file.type)) {
     return "Use a JPEG, PNG, or WebP image.";
   }

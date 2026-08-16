@@ -4,7 +4,7 @@ import { useCallback } from "react";
 import { useAuthStore } from "@/store/auth-store";
 import { api } from "@/lib/api";
 import { getRefreshToken, setTokens, clearTokens } from "@/lib/auth";
-import { resetUserScopedStores } from "@/lib/auth-reset";
+import { captureGuestBuffer, resetUserScopedStores } from "@/lib/auth-reset";
 import type {
   AuthResponse,
   LoginRequest,
@@ -34,8 +34,12 @@ export function useAuth() {
       const data = await api.post<AuthResponse>("/auth/login", credentials);
       // Clear any leftover state from a previous user in this browser BEFORE
       // setting the new user — prevents User A's photographer settings,
-      // cart, etc. from bleeding into User B's session.
+      // cart, etc. from bleeding into User B's session. The guest's own cart
+      // and bookmarks are carried across the wipe so <AuthHydrator>'s merge
+      // still has something to merge — see captureGuestBuffer().
+      const restoreGuestBuffer = captureGuestBuffer();
       resetUserScopedStores();
+      restoreGuestBuffer();
       setTokens(data.accessToken, data.refreshToken);
       setUser(data.user);
       return data.user;
@@ -46,7 +50,9 @@ export function useAuth() {
   const register = useCallback(
     async (payload: RegisterRequest) => {
       const data = await api.post<AuthResponse>("/auth/register", payload);
+      const restoreGuestBuffer = captureGuestBuffer();
       resetUserScopedStores();
+      restoreGuestBuffer();
       setTokens(data.accessToken, data.refreshToken);
       setUser(data.user);
       return data.user;

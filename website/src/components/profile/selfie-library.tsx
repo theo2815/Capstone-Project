@@ -86,26 +86,34 @@ export function SelfieLibrary() {
         }
       }
 
+      // The cap rides the success toast rather than a red line beneath it. A
+      // multi-pick past the limit used to fire both at once — green "Added 2
+      // selfies" over red "Only 2 could be added" — two messages contradicting
+      // each other about one action. The count also says out loud how many of
+      // the picked files landed, which `files.slice(0, remaining)` above did
+      // silently, in whatever order the OS handed them over.
+      const capBlocked = capHit || files.length > remaining;
+
       if (addedCount > 0) {
         invalidateSelfieDependents();
         showToast({
           kind: "success",
-          message:
-            addedCount === 1
+          message: capBlocked
+            ? `Added ${addedCount} of ${files.length} — ${SELFIE_MAX} selfies is the cap.`
+            : addedCount === 1
               ? "Selfie added to your library."
               : `Added ${addedCount} selfies to your library.`,
         });
+      } else if (capBlocked) {
+        setError(
+          `Library is full — ${SELFIE_MAX} selfies is the cap. Remove one to add another.`,
+        );
       }
 
-      if (capHit) {
-        setError(`Reached the ${SELFIE_MAX}-selfie cap.`);
-      } else if (files.length > remaining) {
-        setError(
-          `Only ${remaining} selfie${remaining === 1 ? "" : "s"} could be added — ${SELFIE_MAX} is the cap.`,
-        );
-      } else if (firstSkipReason) {
-        setError(firstSkipReason);
-      }
+      // A rejected file is a different class from the cap: it names a file and
+      // a reason, so it keeps the inline slot even when the toast fired. The
+      // old `else if` chain dropped it whenever the pick was over cap too.
+      if (firstSkipReason) setError(firstSkipReason);
     } catch {
       setError("Could not process one of the images. Try again.");
     } finally {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
@@ -77,6 +77,9 @@ export function RegisterForm() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Not `isLoading` — setIsLoading lands on the next render, so a burst of
+  // submit events before a paint reads it as false every time. See login-form.
+  const submitting = useRef(false);
 
   function clearFieldError(field: keyof FieldErrors) {
     if (errors[field] || submitError) {
@@ -87,6 +90,7 @@ export function RegisterForm() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submitting.current) return;
     const next: FieldErrors = {
       name: validateName(name),
       email: validateEmail(email),
@@ -96,6 +100,7 @@ export function RegisterForm() {
     setSubmitError(null);
     if (next.name || next.email || next.password) return;
 
+    submitting.current = true;
     setIsLoading(true);
     try {
       const user = await register({
@@ -115,6 +120,7 @@ export function RegisterForm() {
         handled ? message : "Registration failed. Please try again.",
       );
     } finally {
+      submitting.current = false;
       setIsLoading(false);
     }
   }

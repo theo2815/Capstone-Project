@@ -67,3 +67,27 @@ export function resetUserScopedStores(): void {
   useAdminLegendStore.getState().setOpen(false);
   useAdminWsStatusStore.getState().setStatus("degraded");
 }
+
+// The guest buffer is the one thing the wipe above must not eat.
+//
+// resetUserScopedStores() runs inside useAuth.login/register, BEFORE
+// <AuthHydrator> reads the cart and saved-event ids for the guest→authed merge
+// (Q-003). So the merge was handed `[]` on every login: a guest who filled a
+// cart, hit Checkout, and signed in to pay arrived at an empty checkout, and a
+// guest's bookmarks never reached /me/saved-events/merge at all.
+//
+// Capture before the wipe, restore after it, then let the merge run. Safe
+// because every other teardown wipes too — logout (useAuth.logout) and the
+// revoked-session path in <AuthHydrator> — so whatever survives in these two
+// stores at login time is the guest's own, not a previous user's residue.
+// That invariant is why this can be a straight restore instead of scoping the
+// persist keys by userId.
+export function captureGuestBuffer(): () => void {
+  const items = useCartStore.getState().items;
+  const ids = useSavedEventsStore.getState().ids;
+
+  return () => {
+    if (items.length > 0) useCartStore.getState().setItems(items);
+    if (ids.length > 0) useSavedEventsStore.getState().setIds(ids);
+  };
+}

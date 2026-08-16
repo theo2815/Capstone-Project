@@ -5,6 +5,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { clearTokens, getAccessToken, getRefreshToken } from "@/lib/auth";
+import { resetUserScopedStores } from "@/lib/auth-reset";
 import { refreshAccessToken } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/constants";
 import { mergeCart } from "@/lib/api-cart";
@@ -53,7 +54,17 @@ export function AuthHydrator() {
       if (user) {
         setUser(user);
       } else {
+        // A refresh token that can't be redeemed is an auth transition like
+        // login or logout, and owes the same wipe. clearTokens() alone left
+        // every persisted store intact, so the tab carried on as a guest still
+        // holding the previous user's saved events and cart — visible
+        // immediately as filled bookmark hearts on events they never saved.
+        //
+        // This is also what lets useAuth.login() trust the guest buffer: once
+        // every teardown wipes, whatever sits in those stores at login time
+        // belongs to the guest sitting there now. See captureGuestBuffer().
         clearTokens();
+        resetUserScopedStores();
         setLoading(false);
       }
     }

@@ -12,10 +12,26 @@ export function isSafeRedirect(value: string | null | undefined): value is strin
   return true;
 }
 
+// The current view, in the form `buildLoginRedirect` wants. The hash is part
+// of "the exact view they were on": every slab deep-link carries one
+// (`/account#password` from the IdentityRail, `/dashboard/settings#payout`
+// from the billing CTA, `/profile#selfies`), and dropping it landed the user
+// back at the top of a long page after signing in.
+//
+// Guarded rather than assumed — `lib/api.ts` imports this module, and that
+// import must not pull anything browser-only into the server bundle. Returns
+// "" server-side, which `buildLoginRedirect` already treats as "no redirect".
+export function currentUrlForRedirect(): string {
+  if (typeof window === "undefined") return "";
+  const { pathname, search, hash } = window.location;
+  return pathname + search + hash;
+}
+
 // Builds the `/login?redirect=...` URL used by `<ProtectedRoute>` and the
-// ApiClient 401 handler. `currentUrl` should be `pathname + search` so the
-// user returns to the exact view they were on. Skips the redirect param
-// entirely when already on `/login` (defense against loops).
+// ApiClient 401 handler. `currentUrl` should come from
+// `currentUrlForRedirect()` so the user returns to the exact view they were
+// on. Skips the redirect param entirely when already on `/login` (defense
+// against loops).
 export function buildLoginRedirect(currentUrl: string): string {
   if (!currentUrl || currentUrl.startsWith(ROUTES.LOGIN)) return ROUTES.LOGIN;
   return `${ROUTES.LOGIN}?redirect=${encodeURIComponent(currentUrl)}`;

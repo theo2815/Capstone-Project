@@ -47,9 +47,23 @@ export function useUrlState<T extends string>(
     }
   }, [urlValue]);
 
+  // Read through a ref rather than the render closure. `searchParams` changes
+  // identity on every navigation, so listing it in writeToUrl's deps made
+  // writeToUrl unstable — which turned the unmount-flush effect below into
+  // something that re-ran on every URL change, flushing the pending value
+  // against a params snapshot that predated whatever a sibling hook had just
+  // written. On /events that meant typing in the search box and picking a city
+  // inside the 300ms debounce silently reverted the city.
+  const searchParamsRef = useRef(searchParams);
+  useEffect(() => {
+    searchParamsRef.current = searchParams;
+  }, [searchParams]);
+
   const writeToUrl = useCallback(
     (value: T) => {
-      const params = new URLSearchParams(Array.from(searchParams.entries()));
+      const params = new URLSearchParams(
+        Array.from(searchParamsRef.current.entries()),
+      );
       const serialized = serialize(value);
       if (serialized === null || serialized === defaultValue) {
         params.delete(name);
@@ -59,19 +73,25 @@ export function useUrlState<T extends string>(
       const qs = params.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
-    [name, defaultValue, pathname, router, searchParams, serialize],
+    [name, defaultValue, pathname, router, serialize],
   );
 
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingValueRef = useRef<T | null>(null);
 
+  // Flush a pending debounced write on unmount so a value typed and then
+  // navigated away from still lands. Both refs are cleared after the flush —
+  // leaving them set meant a later cleanup saw a stale timer id plus a stale
+  // pending value and wrote it to the URL again, resurrecting a search term
+  // the user had already cleared.
   useEffect(() => {
     return () => {
-      if (debounceTimer.current) {
-        clearTimeout(debounceTimer.current);
-        if (pendingValueRef.current !== null) {
-          writeToUrl(pendingValueRef.current);
-        }
+      if (!debounceTimer.current) return;
+      clearTimeout(debounceTimer.current);
+      debounceTimer.current = null;
+      if (pendingValueRef.current !== null) {
+        writeToUrl(pendingValueRef.current);
+        pendingValueRef.current = null;
       }
     };
   }, [writeToUrl]);

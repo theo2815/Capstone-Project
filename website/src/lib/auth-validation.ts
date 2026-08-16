@@ -8,7 +8,20 @@
 
 import { ApiError } from "@/lib/api";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Shaped to agree with the backend's Jakarta `@Email`, which was rejecting
+// addresses this gate waved through — `a@b..c`, `a@b.c.`, `a@-b.co` all cost a
+// round-trip to learn "must be a well-formed email address".
+//
+//   local   dot-separated atoms of RFC-5322 atext — so no leading, trailing,
+//           or consecutive dots
+//   domain  labels that start and end alphanumeric (hyphens only inside)
+//   TLD     2+ letters. Deliberately one notch stricter than Jakarta, which
+//           accepts `a@b.c`; no single-letter TLD is deliverable.
+//
+// Quoted local parts (`"foo bar"@x.com`) are not supported. They are legal and
+// effectively extinct, and the backend rejects them too.
+const EMAIL_RE =
+  /^[a-z0-9!#$%&'*+\/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+\/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i;
 
 export const PASSWORD_MIN = 8;
 export const NAME_MAX = 80;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { ROUTES } from "@/lib/constants";
 import { api } from "@/lib/api";
@@ -19,14 +19,19 @@ export function ForgotPasswordForm() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Not `isLoading` — setIsLoading lands on the next render, so a burst of
+  // submit events before a paint reads it as false every time. See login-form.
+  const submitting = useRef(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submitting.current) return;
     const fieldError = validateEmail(email);
     setEmailError(fieldError);
     setSubmitError(null);
     if (fieldError) return;
 
+    submitting.current = true;
     setIsLoading(true);
     try {
       await api.post("/auth/forgot-password", { email: email.trim() });
@@ -40,6 +45,7 @@ export function ForgotPasswordForm() {
         handled ? message : "Could not send reset link. Please try again.",
       );
     } finally {
+      submitting.current = false;
       setIsLoading(false);
     }
   }

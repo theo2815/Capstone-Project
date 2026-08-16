@@ -1,6 +1,6 @@
 import { getAccessToken, getRefreshToken, setTokens, clearTokens } from "./auth";
 import { API_BASE_URL } from "./constants";
-import { buildLoginRedirect } from "./redirect";
+import { buildLoginRedirect, currentUrlForRedirect } from "./redirect";
 import type { ApiResponse } from "@/types/api";
 
 class ApiClient {
@@ -99,8 +99,7 @@ class ApiClient {
   private redirectToLogin(): void {
     if (typeof window !== "undefined") {
       clearTokens();
-      const currentUrl = window.location.pathname + window.location.search;
-      window.location.href = buildLoginRedirect(currentUrl);
+      window.location.href = buildLoginRedirect(currentUrlForRedirect());
     }
   }
 }
