@@ -9,6 +9,7 @@ import org.springframework.boot.ApplicationArguments
 import org.springframework.boot.ApplicationRunner
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Component
+import java.time.OffsetDateTime
 
 @Component
 class BootstrapAdminRunner(
@@ -34,6 +35,13 @@ class BootstrapAdminRunner(
             passwordHash = passwordEncoder.encode(bootstrapPassword),
             name = bootstrapName,
             role = Role.ADMIN,
+            // Provisioned from env by whoever runs the service, not
+            // self-registered — so there is nobody to send a link to, and the
+            // default `admin@quickpitik.local` isn't a deliverable inbox at
+            // all. Without this the admin would read as permanently
+            // unverified, which is the wrong signal for the one account the
+            // operator chose deliberately.
+            emailVerifiedAt = OffsetDateTime.now(),
         )
         userRepository.save(admin)
         log.info("Bootstrap admin created: {}", admin.email)

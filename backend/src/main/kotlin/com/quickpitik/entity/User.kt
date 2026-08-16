@@ -44,11 +44,27 @@ class User(
     @Column(name = "avatar_s3_key", length = 512)
     var avatarS3Key: String? = null,
 
+    // When the address on this row was proven reachable (V30). Advisory —
+    // nothing gates on it. NULL means "never confirmed", which is the honest
+    // reading for every account that predates the flow.
+    @Column(name = "email_verified_at")
+    var emailVerifiedAt: OffsetDateTime? = null,
+
     @Column(name = "suspended_at")
     var suspendedAt: OffsetDateTime? = null,
 
     @Column(name = "suspension_reason", length = 500)
     var suspensionReason: String? = null,
+
+    // Consecutive failed logins since the last success (V29). Reset to 0 both
+    // on a successful login and at the moment a lock is applied — the lock
+    // itself is the state that matters from then on. Only LoginAttemptService
+    // writes these two; see it for why that has to be a separate bean.
+    @Column(name = "failed_login_attempts", nullable = false)
+    var failedLoginAttempts: Int = 0,
+
+    @Column(name = "locked_until")
+    var lockedUntil: OffsetDateTime? = null,
 
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),

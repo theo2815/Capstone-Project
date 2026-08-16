@@ -51,8 +51,23 @@ class SecurityConfig(
                     // Opened from the NEW inbox, so the browser usually has no
                     // session. The opaque token in the body is the credential.
                     "/api/v1/auth/confirm-email-change",
+                    // Same shape: followed from a mail client, token is the
+                    // credential. Note /auth/resend-verification is NOT here —
+                    // its caller is always signed in, so it falls through to
+                    // anyRequest().authenticated() below.
+                    "/api/v1/auth/verify-email",
                 ).permitAll()
                 auth.requestMatchers("/error", "/actuator/**").permitAll()
+                // Generated API docs. Whether they exist at all is decided by
+                // springdoc's own `enabled` flags (API_DOCS_ENABLED) — with
+                // those off there is no handler here to reach, so this rule
+                // stops mattering rather than becoming a hole.
+                auth.requestMatchers(
+                    "/v3/api-docs",
+                    "/v3/api-docs/**",
+                    "/swagger-ui.html",
+                    "/swagger-ui/**",
+                ).permitAll()
                 auth.requestMatchers("/ws/**").permitAll()
                 // LocalFs storage mount (StaticResourceConfig) — <img> tags
                 // can't carry the bearer token; in prod S3StorageService serves

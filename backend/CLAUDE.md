@@ -71,10 +71,25 @@ App boots on `http://localhost:8080`. Frontend talks to `http://localhost:8080/a
 ### Run tests
 
 ```powershell
-.\gradlew.bat test
+.\gradlew.bat test              # unit suite — no Docker, no Postgres
+.\gradlew.bat integrationTest   # real Postgres via Testcontainers — needs Docker running
 ```
 
-Unit tests run without Postgres. End-to-end is verified via `curl` (see Smoke Test below).
+`test` runs the Mockito unit suite and **excludes** anything tagged `integration`, so it still
+works on a machine with nothing but a JDK. `integrationTest` runs the other half against a
+throwaway Postgres 16 container: Flyway V1→V30 applying to a virgin database, `ddl-auto: validate`
+proving the entities still match, the `uq_photos_photographer_content_hash` partial index, and the
+lockout counter's survival of a rolled-back login transaction. Extend `PostgresIntegrationTest`
+to add one. End-to-end is verified via `curl` (see Smoke Test below).
+
+### API docs
+
+With the app running, `http://localhost:8080/swagger-ui.html` (spec at `/v3/api-docs`).
+Generated from the controllers by springdoc; `OpenApiConfig` rewrites the response schemas into the
+`{ success, data, errors }` envelope that `ResponseEnvelopeAdvice` actually emits, so what the page
+shows is what the wire carries. The padlocks are declared globally — public routes show one they
+don't enforce; `config/SecurityConfig.kt` is authoritative. Set `API_DOCS_ENABLED=false` to remove
+the surface entirely.
 
 ### Stop Postgres
 

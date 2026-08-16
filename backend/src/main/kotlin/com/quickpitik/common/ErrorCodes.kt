@@ -28,6 +28,8 @@ object ErrorCodes {
     const val EMAIL_TAKEN = "EMAIL_TAKEN"
     const val SAME_EMAIL = "SAME_EMAIL"
     const val INVALID_EMAIL_CHANGE_TOKEN = "INVALID_EMAIL_CHANGE_TOKEN"
+    const val INVALID_VERIFICATION_TOKEN = "INVALID_VERIFICATION_TOKEN"
+    const val EMAIL_ALREADY_VERIFIED = "EMAIL_ALREADY_VERIFIED"
     const val LOW_CONFIDENCE = "LOW_CONFIDENCE"
 
     const val CART_ITEM_PRICE_CHANGED = "CART_ITEM_PRICE_CHANGED"
@@ -39,6 +41,9 @@ object ErrorCodes {
 
     const val PHOTOGRAPHER_NOT_VERIFIED = "PHOTOGRAPHER_NOT_VERIFIED"
     const val ACCOUNT_SUSPENDED = "ACCOUNT_SUSPENDED"
+    // Temporary, self-clearing (V29) — unlike ACCOUNT_SUSPENDED, which is an
+    // admin decision and only an admin can lift.
+    const val ACCOUNT_LOCKED = "ACCOUNT_LOCKED"
     const val WATERMARK_MISSING = "WATERMARK_MISSING"
     const val INCOMPLETE_PROFILE = "INCOMPLETE_PROFILE"
     const val RESERVED_HANDLE = "RESERVED_HANDLE"

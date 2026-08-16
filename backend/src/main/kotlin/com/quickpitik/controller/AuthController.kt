@@ -1,9 +1,11 @@
 package com.quickpitik.controller
 
 import com.quickpitik.dto.auth.AuthResponse
+import com.quickpitik.dto.auth.EmailVerificationConfirmRequest
 import com.quickpitik.dto.auth.ForgotPasswordRequest
 import com.quickpitik.dto.auth.LoginRequest
 import com.quickpitik.dto.auth.LogoutRequest
+import com.quickpitik.dto.auth.MessageResponse
 import com.quickpitik.dto.auth.RefreshRequest
 import com.quickpitik.dto.auth.RegisterRequest
 import com.quickpitik.dto.auth.ResetPasswordRequest
@@ -11,6 +13,7 @@ import com.quickpitik.dto.auth.UserDto
 import com.quickpitik.dto.profile.EmailChangeConfirmRequest
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.AuthService
+import com.quickpitik.service.EmailVerificationService
 import com.quickpitik.service.PasswordResetService
 import com.quickpitik.service.profile.EmailChangeService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
@@ -31,6 +34,7 @@ class AuthController(
     private val authService: AuthService,
     private val passwordResetService: PasswordResetService,
     private val emailChangeService: EmailChangeService,
+    private val emailVerificationService: EmailVerificationService,
     private val rateLimiter: RateLimiter,
 ) {
     @PostMapping("/register")
@@ -69,20 +73,20 @@ class AuthController(
     fun forgotPassword(
         @Valid @RequestBody req: ForgotPasswordRequest,
         request: HttpServletRequest,
-    ): Map<String, String> {
+    ): MessageResponse {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_FORGOT_PASSWORD, clientIp(request))
         passwordResetService.requestReset(req.email)
-        return mapOf("message" to "If that email exists, a reset link has been sent.")
+        return MessageResponse("If that email exists, a reset link has been sent.")
     }
 
     @PostMapping("/reset-password")
     fun resetPassword(
         @Valid @RequestBody req: ResetPasswordRequest,
         request: HttpServletRequest,
-    ): Map<String, String> {
+    ): MessageResponse {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_RESET_PASSWORD, clientIp(request))
         passwordResetService.confirmReset(req.token, req.newPassword)
-        return mapOf("message" to "Password reset successful.")
+        return MessageResponse("Password reset successful.")
     }
 
     // Step 2 of the change-email flow. Public because the link is opened from
@@ -96,10 +100,42 @@ class AuthController(
     fun confirmEmailChange(
         @Valid @RequestBody req: EmailChangeConfirmRequest,
         request: HttpServletRequest,
-    ): Map<String, String> {
+    ): MessageResponse {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_RESET_PASSWORD, clientIp(request))
         emailChangeService.confirmChange(req.token)
-        return mapOf("message" to "Email updated. Sign in again with your new address.")
+        return MessageResponse("Email updated. Sign in again with your new address.")
+    }
+
+    // Redeems the link mailed at registration. Public for the same reason
+    // /confirm-email-change is — it's opened from an inbox, and the opaque
+    // token is the credential. Shares the reset-password bucket: identical
+    // threat shape (unauthenticated, guessable-token surface).
+    //
+    // Advisory: this stamps users.email_verified_at and nothing else. No
+    // endpoint gates on it. See EmailVerificationService.
+    @PostMapping("/verify-email")
+    fun verifyEmail(
+        @Valid @RequestBody req: EmailVerificationConfirmRequest,
+        request: HttpServletRequest,
+    ): MessageResponse {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_RESET_PASSWORD, clientIp(request))
+        emailVerificationService.confirm(req.token)
+        return MessageResponse("Email confirmed. Thanks!")
+    }
+
+    // Deliberately NOT in SecurityConfig's permitAll list — register signs the
+    // user straight in, so the one caller that needs this already has a bearer
+    // token. Keyed by userId rather than IP for the same reason, and on the
+    // forgot-password policy because the abuse shape is identical: mail sent to
+    // a third party on demand.
+    @PostMapping("/resend-verification")
+    fun resendVerification(@AuthenticationPrincipal principal: AuthPrincipal): MessageResponse {
+        rateLimiter.acquireOrThrow(
+            Bucket4jRateLimiter.POLICY_AUTH_FORGOT_PASSWORD,
+            principal.userId.toString(),
+        )
+        emailVerificationService.resend(principal.userId)
+        return MessageResponse("Verification email sent. Check your inbox.")
     }
 
     @GetMapping("/me")

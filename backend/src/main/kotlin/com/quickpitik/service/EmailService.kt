@@ -82,6 +82,85 @@ class EmailService(
         log.info("Email-change confirmation sent · to={} resendId={}", toEmail, response.id)
     }
 
+    // Sent AFTER_COMMIT of a registration (EmailVerificationListener), never
+    // inline. Failures are swallowed the way the password-reset mail's are, for
+    // a stronger reason: verification is advisory, so a lost mail costs the user
+    // a flag, not access. `POST /auth/resend-verification` is the retry.
+    fun sendEmailVerification(toEmail: String, verificationToken: String) {
+        val verifyUrl = "$frontendOrigin/verify-email?token=" +
+            URLEncoder.encode(verificationToken, StandardCharsets.UTF_8)
+
+        if (devMode) {
+            log.info("[EMAIL STUB] verification for {} — link: {}", toEmail, verifyUrl)
+            return
+        }
+
+        val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
+        try {
+            val response = resendClient.send(
+                ResendSendEmailRequest(
+                    from = sender,
+                    to = listOf(toEmail),
+                    subject = "Confirm your QuickPitik email",
+                    html = renderVerificationHtml(toEmail, verifyUrl),
+                ),
+            )
+            log.info("Verification email sent · to={} resendId={}", toEmail, response.id)
+        } catch (ex: Exception) {
+            log.error("Verification email failed · to={} err={}", toEmail, ex.message, ex)
+        }
+    }
+
+    private fun renderVerificationHtml(toEmail: String, verifyUrl: String): String {
+        return """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /><title>Confirm your QuickPitik email</title></head>
+<body style="margin:0;padding:0;background:#f7f5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;">
+  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f7f5ee;padding:32px 16px;">
+    <tr><td align="center">
+      <table cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#fafaf6;border-radius:16px;padding:36px 32px;border:1px solid #e5e2d8;">
+        <tr><td>
+          <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:11px;color:#7a7a7a;margin:0 0 10px;">
+            QuickPitik · Welcome
+          </p>
+          <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:32px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.05;color:#1a1a1a;">
+            Confirm your email.
+          </h1>
+          <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 28px;">
+            Thanks for joining QuickPitik. Tap below to confirm <strong>${escapeHtml(toEmail)}</strong> —
+            the link works for 24 hours. Your account is already active either way; confirming just
+            lets us reach you about your photos and orders.
+          </p>
+
+          <table cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
+            <tr><td style="padding:6px 0;">
+              <a href="${escapeUrl(verifyUrl)}"
+                 style="display:inline-block;background:#3b8c5f;color:#fafaf6;
+                        text-decoration:none;padding:16px 32px;border-radius:999px;
+                        font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+                        text-transform:uppercase;letter-spacing:0.2em;font-size:13px;
+                        font-weight:500;">
+                Confirm my email  &rarr;
+              </a>
+            </td></tr>
+          </table>
+
+          <hr style="border:none;border-top:1px solid #e5e2d8;margin:28px 0;" />
+
+          <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
+            If you didn't sign up for QuickPitik, ignore this email — no account action is needed.
+          </p>
+        </td></tr>
+      </table>
+      <p style="text-align:center;font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:10px;color:#a8a8a8;margin:24px 0 0;">
+        QuickPitik · Cebu, Philippines
+      </p>
+    </td></tr>
+  </table>
+</body></html>
+        """.trimIndent()
+    }
+
     private fun renderEmailChangeHtml(toEmail: String, confirmUrl: String): String {
         return """
 <!DOCTYPE html>

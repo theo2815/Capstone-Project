@@ -1,5 +1,6 @@
 package com.quickpitik.service
 
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.auth.AuthResponse
 import com.quickpitik.dto.auth.LoginRequest
 import com.quickpitik.dto.auth.RefreshRequest
@@ -7,6 +8,7 @@ import com.quickpitik.dto.auth.RegisterRequest
 import com.quickpitik.dto.auth.UserDto
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
@@ -14,6 +16,8 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.security.JwtTokenProvider
 import com.quickpitik.service.profile.UserDtoMapper
+import org.springframework.context.ApplicationEventPublisher
+import org.springframework.http.HttpStatus
 import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
@@ -27,6 +31,8 @@ class AuthService(
     private val tokenProvider: JwtTokenProvider,
     private val refreshTokenService: RefreshTokenService,
     private val userDtoMapper: UserDtoMapper,
+    private val loginAttemptService: LoginAttemptService,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
     // A BCrypt(12) hash of a throwaway constant, computed once on first use.
     // Matching against it costs the same as matching a real user's hash — see
@@ -49,6 +55,11 @@ class AuthService(
             role = req.role,
         )
         val saved = userRepository.save(user)
+        // AFTER_COMMIT + @Async, via EmailVerificationListener: a rolled-back
+        // registration must not mail a link, and a slow Resend call must not
+        // become sign-up latency. Verification is advisory — the tokens below
+        // are issued regardless of whether that mail ever lands.
+        eventPublisher.publishEvent(UserRegisteredEvent(saved.id))
         return buildAuthResponse(saved)
     }
 
@@ -63,7 +74,33 @@ class AuthService(
             passwordEncoder.matches(req.password, dummyPasswordHash)
             throw BadCredentialsException("Invalid email or password")
         }
-        if (!passwordEncoder.matches(req.password, user.passwordHash)) {
+        // Computed before any branch below, never inside one. The lockout check
+        // that follows must not be able to return earlier (or cheaper) than a
+        // password check would have — that would re-open the timing channel the
+        // dummy hash above exists to close.
+        val passwordMatches = passwordEncoder.matches(req.password, user.passwordHash)
+
+        // Lockout wins over a wrong password AND over a right one: an attacker
+        // who guesses correctly on attempt six still gets nothing, which is the
+        // entire point. Answering with a distinct code is safe here — /auth/register
+        // already discloses whether an address is taken (EMAIL_TAKEN), so this
+        // reveals nothing new, and silently refusing a correct password would
+        // send real users to support instead of back in 15 minutes.
+        loginAttemptService.lockRemaining(user)?.let { remaining ->
+            val minutes = remaining.toMinutes() + 1
+            throw ApiException(
+                status = HttpStatus.TOO_MANY_REQUESTS,
+                code = ErrorCodes.ACCOUNT_LOCKED,
+                message = "Too many failed sign-in attempts. Try again in about $minutes minute(s).",
+                retryAfterSeconds = remaining.toSeconds() + 1,
+            )
+        }
+
+        if (!passwordMatches) {
+            // Separate bean + REQUIRES_NEW: the throw below rolls this method's
+            // transaction back, and an increment written inside it would go with
+            // it. See LoginAttemptService.
+            loginAttemptService.recordFailure(user.id)
             throw BadCredentialsException("Invalid email or password")
         }
         // F4 (2026-05-27): suspended users must not get fresh tokens.
@@ -73,6 +110,7 @@ class AuthService(
         if (user.suspendedAt != null) {
             throw UnauthorizedException("Account suspended", "ACCOUNT_SUSPENDED")
         }
+        loginAttemptService.recordSuccess(user.id)
         return buildAuthResponse(user)
     }
 

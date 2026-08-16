@@ -49,6 +49,16 @@ app:
     api-base-url: ${PUBLIC_API_BASE_URL:http://localhost:8080/api/v1}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  auth:
+    # Temporary account lockout (V29). Complements the per-IP auth-login bucket
+    # below rather than replacing it: that one caps how fast one host may guess,
+    # this one caps how often one ACCOUNT may be guessed at regardless of source,
+    # and it stays on even when RATE_LIMIT_ENABLED is false (the dev default).
+    # A lock auto-clears after `duration`; raise max-attempts if a demo needs
+    # more headroom.
+    lockout:
+      max-attempts: ${AUTH_LOCKOUT_MAX_ATTEMPTS:5}
+      duration: ${AUTH_LOCKOUT_DURATION:PT15M}
   admin:
     bootstrap-email: ${ADMIN_BOOTSTRAP_EMAIL:admin@quickpitik.local}
     bootstrap-password: ${ADMIN_BOOTSTRAP_PASSWORD:changeme123}
@@ -187,6 +197,22 @@ app:
       base-url: ${RESEND_BASE_URL:https://api.resend.com}
       connect-timeout: PT5S
       read-timeout: PT15S
+
+# Generated OpenAPI spec + Swagger UI (springdoc). ON by default: the point of
+# the surface is local exploration and the adviser demo, and this service has no
+# production deployment yet. Set API_DOCS_ENABLED=false when one exists —
+# publishing a full route inventory to the internet is free reconnaissance.
+springdoc:
+  api-docs:
+    enabled: ${API_DOCS_ENABLED:true}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${API_DOCS_ENABLED:true}
+    path: /swagger-ui.html
+    # Alphabetical instead of controller-declaration order — 29 controllers is
+    # too many to scan otherwise.
+    operations-sorter: alpha
+    tags-sorter: alpha
 
 logging:
   level:

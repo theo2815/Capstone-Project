@@ -1,5 +1,6 @@
 package com.quickpitik.controller
 
+import com.quickpitik.dto.auth.MessageResponse
 import com.quickpitik.dto.auth.UserDto
 import com.quickpitik.dto.profile.EmailChangeRequest
 import com.quickpitik.dto.profile.PasswordChangeRequest
@@ -30,9 +31,9 @@ class MeProfileController(
     fun changePassword(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @Valid @RequestBody body: PasswordChangeRequest,
-    ): Map<String, String> {
+    ): MessageResponse {
         profileService.changePassword(principal.userId, body)
-        return mapOf("message" to "Password updated. Sign in again on your other devices.")
+        return MessageResponse("Password updated. Sign in again on your other devices.")
     }
 
     // Step 1 of 2. Deliberately returns the same generic message whether or not
@@ -43,10 +44,10 @@ class MeProfileController(
     fun requestEmailChange(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @Valid @RequestBody body: EmailChangeRequest,
-    ): Map<String, String> {
+    ): MessageResponse {
         emailChangeService.requestChange(principal.userId, body)
-        return mapOf(
-            "message" to "Check your new inbox — we sent a confirmation link. " +
+        return MessageResponse(
+            "Check your new inbox — we sent a confirmation link. " +
                 "Your sign-in email stays the same until you use it.",
         )
     }
