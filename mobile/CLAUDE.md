@@ -52,7 +52,25 @@ Sub-agents (feature / Explore / general-purpose) do **NOT** automatically load t
 * **Check compile validity:** `.\gradlew.bat compileDebugKotlin`
 ## 📱 Mobile-to-PC Backend Network Bridging Guide (ADB & Emulator)
 
-When debugging the mobile app on a physical phone or an emulator, the Android device sees **"localhost"** as its own internal loopback interface rather than your PC. To route phone traffic straight to your laptop's running Spring Boot server on port `8080`, use the guides below:
+When debugging the mobile app on a physical phone or an emulator, the Android device sees **"localhost"** as its own internal loopback interface rather than your PC. To route phone traffic straight to your laptop's running Spring Boot server on port `8080`, use the guides below.
+
+### ⭐ Option 0: Set it in the app (debug builds — start here)
+
+Since 2026-08-16 the backend origin is **settable at runtime**, so a changed laptop IP no longer costs a recompile + reinstall:
+
+1. On the **Login** screen, scroll to the bottom and tap the `SERVER · <host>` row.
+2. Enter the laptop's Wi-Fi IPv4 with the port — e.g. `192.168.1.232:8080`. The `http://` and the trailing slash are added for you.
+3. Tap **Use this server**. It persists across restarts *and across sign-out*, and takes effect on the next request — no restart needed.
+
+`Reset to default` returns to the compiled-in `RetrofitClient.DEFAULT_BASE_URL`.
+
+Everything derives from that one value — image URLs (`backendHost`/`backendOrigin`), WebSockets (`wsOrigin`), and Coil's separate `ImageLoader` via `HostRewriteInterceptor` — so there are no per-screen hardcodes to chase.
+
+> **Debug builds only.** `BuildConfig.DEBUG` gates both the UI and `RetrofitClient.setBaseUrl`, so a release APK is pinned to the compiled default and cannot be pointed at another host. Caveat: an **already-open** WebSocket keeps the host it dialled — irrelevant in practice, since the field lives on Login before any socket is opened.
+
+This is what unblocked the physical-device protocols: during a camera shoot the phone's USB-C port is occupied by the body, so there is no cable to push a new build over.
+
+The options below remain valid, and `DEFAULT_BASE_URL` in `RetrofitClient.kt` is still what a fresh install uses.
 
 ### 🔌 Option A: Physical Android Phone via USB (Highly Recommended)
 1. **Enable USB Debugging on your phone:**
@@ -82,17 +100,15 @@ When debugging the mobile app on a physical phone or an emulator, the Android de
 
 ### 💻 Option B: Android Emulator (Virtual Device)
 * If using the standard Android Studio Emulator, the laptop's loopback interface is mapped to the special IP address **`10.0.2.2`**.
-* Open `RetrofitClient.kt` and change the `BASE_URL` to:
+* Enter `10.0.2.2:8080` via **Option 0**, or change the compiled default in `RetrofitClient.kt`:
   ```kotlin
-  private const val BASE_URL = "http://10.0.2.2:8080/"
+  const val DEFAULT_BASE_URL = "http://10.0.2.2:8080/"
   ```
 
 ### 📶 Option C: Wireless local Wi-Fi (No USB cable)
 * Ensure both your laptop and phone are connected to the exact same Wi-Fi network.
-* Open `RetrofitClient.kt` and change `localhost` to your computer's local Wi-Fi IP address (e.g. `192.168.1.XX`):
-  ```kotlin
-  private const val BASE_URL = "http://192.168.1.50:8080/"
-  ```
+* Run `ipconfig` (PowerShell) to find the laptop's Wi-Fi IPv4, then enter it via **Option 0** — e.g. `192.168.1.50:8080`. Editing `DEFAULT_BASE_URL` also works but needs a rebuild.
+* Allow inbound `8080` through the Windows firewall.
 
 ---
 

@@ -69,6 +69,9 @@ browser = { group = "androidx.browser", name = "browser", version.ref = "browser
 # JVM test stack — Robolectric so the Room + WorkManager suite runs via
 # `gradlew testDebugUnitTest` with no device or emulator attached.
 room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
+# Lets the worker tests drive PhotoUploadWorker's real upload path — the seam is
+# RetrofitClient.setBaseUrl, added 2026-08-16.
+mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
 work-testing = { group = "androidx.work", name = "work-testing", version.ref = "work" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidxTestCore" }

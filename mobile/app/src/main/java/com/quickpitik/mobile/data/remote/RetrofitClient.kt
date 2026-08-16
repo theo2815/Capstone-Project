@@ -1,6 +1,7 @@
 package com.quickpitik.mobile.data.remote
 
 import android.content.Context
+import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.local.SessionManager
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
@@ -17,16 +18,27 @@ import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
-    // DEMO TODO (2026-05-28): if running on a physical phone over Wi-Fi, set this
-    // to your laptop's Wi-Fi IPv4 (e.g. "http://192.168.X.Y:8080/"). Run
-    // `ipconfig` in PowerShell while connected to the demo Wi-Fi to find it.
-    // All image URL rewrites (avatar/cover/banner/share/profile/settings) read
-    // from this constant via `backendHost` / `backendOrigin` below, so changing
-    // this single line is enough — no need to hunt down per-screen hardcodes.
+    // Compiled-in fallback. Used verbatim on a fresh install, in every release
+    // build, and whenever the debug override is cleared.
     //
     // When using the Android Studio Emulator, "http://10.0.2.2:8080/" routes to your PC's backend.
     // If you use a physical phone via USB instead of Wi-Fi, run "adb reverse tcp:8080 tcp:8080".
-    const val BASE_URL = "http://192.168.1.232:8080/"
+    const val DEFAULT_BASE_URL = "http://192.168.1.232:8080/"
+
+    // The live backend origin. Was a `const val` until 2026-08-16, which meant
+    // every laptop IP change cost a Kotlin edit + recompile + reinstall — and on
+    // a camera shoot the phone's USB-C port is occupied by the body, so there is
+    // no cable to push that build over. Debug builds can now set it in-app (see
+    // setBaseUrl); release builds are pinned to DEFAULT_BASE_URL.
+    //
+    // Still read-only to the outside world, and still named BASE_URL, so every
+    // existing reader — HostRewriteInterceptor, the five photographer screens,
+    // the getters below — is unchanged.
+    @Volatile
+    private var _baseUrl: String = DEFAULT_BASE_URL
+
+    val BASE_URL: String
+        get() = _baseUrl
 
     // Single source of truth for image URL rewriting across the photographer
     // screens. Derived from BASE_URL so any host change (emulator → Wi-Fi IP →
@@ -84,6 +96,62 @@ object RetrofitClient {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        // Deliberately NOT SessionManager's prefs file: the server address has
+        // to survive sign-out, and clearSession() wiping it mid-test would be a
+        // genuinely nasty bug. Runs here — before the first network call — so
+        // the cached clients below are built against the right origin.
+        if (BuildConfig.DEBUG) {
+            readPersistedBaseUrl()?.let { _baseUrl = it }
+        }
+    }
+
+    private fun prefs() =
+        appContext.getSharedPreferences(DEV_PREF_NAME, Context.MODE_PRIVATE)
+
+    private fun readPersistedBaseUrl(): String? =
+        prefs().getString(KEY_BASE_URL, null)?.let(::normalizeBaseUrl)
+
+    /**
+     * Points the app at a different backend. Debug builds only — a release
+     * build ignores this and stays on [DEFAULT_BASE_URL], so no shipped APK can
+     * be talked into calling an arbitrary host.
+     *
+     * Returns false (changing nothing) if [raw] isn't a usable HTTP(S) origin.
+     * On success the next call rebuilds Retrofit, so no app restart is needed —
+     * but an ALREADY-OPEN WebSocket keeps the host it dialled. That's fine for
+     * the only caller: the field lives on Login, before any socket is opened.
+     */
+    fun setBaseUrl(raw: String): Boolean {
+        if (!BuildConfig.DEBUG) return false
+        val normalized = normalizeBaseUrl(raw) ?: return false
+        _baseUrl = normalized
+        prefs().edit().putString(KEY_BASE_URL, normalized).apply()
+        return true
+    }
+
+    /** Drops the override and returns to the compiled-in [DEFAULT_BASE_URL]. */
+    fun resetBaseUrl() {
+        if (!BuildConfig.DEBUG) return
+        _baseUrl = DEFAULT_BASE_URL
+        prefs().edit().remove(KEY_BASE_URL).apply()
+    }
+
+    /**
+     * "192.168.1.5:8080" → "http://192.168.1.5:8080/". Forgiving about the two
+     * things a human typing an IP on a phone keyboard always omits — the scheme
+     * and the trailing slash (Retrofit throws on a baseUrl without one) — and
+     * strict about everything else: null means don't touch the current value.
+     */
+    private fun normalizeBaseUrl(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        val withScheme =
+            if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed
+            else "http://$trimmed"
+        val withSlash = if (withScheme.endsWith("/")) withScheme else "$withScheme/"
+        // toHttpUrlOrNull is the same parser Retrofit and OkHttp use, so if it
+        // accepts the value every downstream consumer will too.
+        return if (withSlash.toHttpUrlOrNull() != null) withSlash else null
     }
 
     // Default OkHttp read/write timeout is 10s — too tight for the PayMongo
@@ -112,23 +180,45 @@ object RetrofitClient {
             .build()
     }
 
-    val apiService: QuickPitikApi by lazy {
-        Retrofit.Builder()
-            .baseUrl(BASE_URL)
-            .client(okHttpClient)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(QuickPitikApi::class.java)
-    }
+    // Retrofit bakes the baseUrl in at build time, so these two can't be plain
+    // `by lazy` any more — a URL change after first use would be silently
+    // ignored. Each is cached against the URL that built it and rebuilt only on
+    // a mismatch, which is the ONLY thing that changes: the OkHttp clients above
+    // are URL-independent, so the connection pool, timeouts and authenticator
+    // all survive a server switch untouched.
+    @Volatile
+    private var apiCache: Pair<String, QuickPitikApi>? = null
 
-    val refreshApi: QuickPitikApi by lazy {
+    @Volatile
+    private var refreshCache: Pair<String, QuickPitikApi>? = null
+
+    val apiService: QuickPitikApi
+        get() {
+            val url = _baseUrl
+            apiCache?.let { (cachedUrl, api) -> if (cachedUrl == url) return api }
+            return synchronized(this) {
+                apiCache?.let { (cachedUrl, api) -> if (cachedUrl == url) return api }
+                buildApi(url, okHttpClient).also { apiCache = url to it }
+            }
+        }
+
+    val refreshApi: QuickPitikApi
+        get() {
+            val url = _baseUrl
+            refreshCache?.let { (cachedUrl, api) -> if (cachedUrl == url) return api }
+            return synchronized(this) {
+                refreshCache?.let { (cachedUrl, api) -> if (cachedUrl == url) return api }
+                buildApi(url, refreshClient).also { refreshCache = url to it }
+            }
+        }
+
+    private fun buildApi(url: String, client: OkHttpClient): QuickPitikApi =
         Retrofit.Builder()
-            .baseUrl(BASE_URL)
-            .client(refreshClient)
+            .baseUrl(url)
+            .client(client)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(QuickPitikApi::class.java)
-    }
 
     // Structured backend error (code + message) recovered from a failed call.
     // Retrofit throws HttpException for any non-2xx status (e.g. the backend's
@@ -174,4 +264,7 @@ object RetrofitClient {
             else -> e.localizedMessage ?: "An unexpected error occurred"
         }
     }
+
+    private const val DEV_PREF_NAME = "quickpitik_dev"
+    private const val KEY_BASE_URL = "dev_base_url"
 }

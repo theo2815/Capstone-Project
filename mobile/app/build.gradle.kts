@@ -39,6 +39,10 @@ android {
     }
     buildFeatures {
         compose = true
+        // AGP 8 stopped generating BuildConfig unless asked. RetrofitClient and
+        // the Login screen's debug server field both gate on BuildConfig.DEBUG
+        // so no release build can be pointed at another backend.
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.1"
@@ -105,6 +109,7 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.robolectric)
+    testImplementation(libs.mockwebserver)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

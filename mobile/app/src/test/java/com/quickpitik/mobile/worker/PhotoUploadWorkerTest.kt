@@ -7,7 +7,10 @@ import androidx.work.testing.TestListenableWorkerBuilder
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.UploadRecord
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -15,17 +18,16 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.File
 
 /**
- * Covers the branches of [PhotoUploadWorker.doWork] that settle a record
- * WITHOUT reaching the network — the signed-out gate, the missing-file terminal
- * failure, and the stuck-row requeue a killed process leaves behind.
+ * Covers [PhotoUploadWorker.doWork] end to end.
  *
- * The upload path itself (success, terminal 409 duplicate, the retry ladder up
- * to MAX_RETRIES) is deliberately not covered here: the worker reaches the
- * global `RetrofitClient.apiService`, built from a `const val BASE_URL`, so
- * there is no seam to point at a MockWebServer. Adding one is a production
- * refactor and is tracked separately rather than smuggled into a test change.
+ * The pre-network branches (signed-out gate, missing file, stuck-row requeue)
+ * need no server. The upload path — success, the terminal 409 duplicate, and
+ * the retry ladder up to MAX_RETRIES — runs against a [MockWebServer] that
+ * [RetrofitClient.setBaseUrl] points the app at. That seam landed 2026-08-16;
+ * before it, `BASE_URL` was a `const val` and these five cases were untestable.
  */
 @RunWith(RobolectricTestRunner::class)
 class PhotoUploadWorkerTest {
@@ -33,6 +35,7 @@ class PhotoUploadWorkerTest {
     private lateinit var context: Context
     private lateinit var db: AppDatabase
     private lateinit var session: SessionManager
+    private var server: MockWebServer? = null
 
     @Before
     fun setUp() {
@@ -57,7 +60,48 @@ class PhotoUploadWorkerTest {
     fun tearDown() {
         db.close()
         clearDatabaseSingleton()
+        server?.shutdown()
+        server = null
+        // RetrofitClient is an object, so a URL left pointing at a shut-down
+        // MockWebServer would leak into the next method in this class.
+        // Robolectric's sandbox is per-class, not per-method.
+        RetrofitClient.resetBaseUrl()
     }
+
+    /**
+     * Starts a server, points the app at it, and returns it. Each enqueued
+     * response is one upload attempt, in order.
+     */
+    private fun startServer(vararg responses: MockResponse): MockWebServer =
+        MockWebServer().apply {
+            responses.forEach { enqueue(it) }
+            start()
+            server = this
+            RetrofitClient.setBaseUrl(url("/").toString())
+        }
+
+    /** A real file on disk — the worker bails before the network without one. */
+    private fun realJpeg(): File =
+        File.createTempFile("upload", ".jpg").apply {
+            writeBytes(ByteArray(64) { 0xFF.toByte() })
+            deleteOnExit()
+        }
+
+    private fun ok() = MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "application/json")
+        .setBody("""{"success":true,"data":{"id":"photo-1"}}""")
+
+    /** The backend's dedup rejection: HTTP 409 carrying a terminal error code. */
+    private fun duplicate(code: String) = MockResponse()
+        .setResponseCode(409)
+        .setHeader("Content-Type", "application/json")
+        .setBody("""{"success":false,"errors":[{"code":"$code","message":"Already uploaded."}]}""")
+
+    private fun serverError() = MockResponse()
+        .setResponseCode(500)
+        .setHeader("Content-Type", "application/json")
+        .setBody("""{"success":false,"errors":[{"code":"INTERNAL_ERROR","message":"Boom."}]}""")
 
     /**
      * Resets `AppDatabase.INSTANCE`. Reflection because the field is private and
@@ -152,8 +196,102 @@ class PhotoUploadWorkerTest {
         assertTrue(db.uploadQueueDao().getRecordsWithStatus("QUEUED").isEmpty())
     }
 
+    // ---- upload path (MockWebServer) ----
+
+    @Test
+    fun `a 200 completes the record`() = runTest {
+        signIn()
+        val http = startServer(ok())
+        val id = enqueue(filePath = realJpeg().absolutePath)
+
+        val result = runWorker()
+
+        val stored = requireNotNull(db.uploadQueueDao().getRecordById(id))
+        assertEquals("COMPLETED", stored.uploadStatus)
+        assertTrue(result is ListenableWorker.Result.Success)
+        // The path carries the event, so a mis-templated URL would silently
+        // upload every frame to the wrong gallery.
+        val request = http.takeRequest()
+        assertEquals("POST", request.method)
+        assertTrue(request.path!!.endsWith("/api/v1/me/photographer/events/$EVENT/photos"))
+        assertEquals("Bearer test-access-token", request.getHeader("Authorization"))
+    }
+
+    /**
+     * The 2026-06-03 regression: Retrofit throws HttpException on the 409 before
+     * the success-body guard runs, so the terminal check has to happen in the
+     * catch. Getting this wrong re-POSTs the same bytes forever.
+     */
+    @Test
+    fun `a 409 same-event duplicate is terminal and does not drive a retry`() = runTest {
+        signIn()
+        val http = startServer(duplicate("PHOTO_DUPLICATE_SAME_EVENT"))
+        val id = enqueue(filePath = realJpeg().absolutePath)
+
+        val result = runWorker()
+
+        val stored = requireNotNull(db.uploadQueueDao().getRecordById(id))
+        assertEquals("FAILED", stored.uploadStatus)
+        assertEquals(0, stored.retryCount)
+        assertTrue(result is ListenableWorker.Result.Success)
+        assertEquals(1, http.requestCount)
+    }
+
+    @Test
+    fun `a 409 different-event duplicate is terminal too`() = runTest {
+        signIn()
+        startServer(duplicate("PHOTO_DUPLICATE_DIFFERENT_EVENT"))
+        val id = enqueue(filePath = realJpeg().absolutePath)
+
+        val result = runWorker()
+
+        val stored = requireNotNull(db.uploadQueueDao().getRecordById(id))
+        assertEquals("FAILED", stored.uploadStatus)
+        assertTrue(result is ListenableWorker.Result.Success)
+    }
+
+    @Test
+    fun `a 500 requeues the record and asks WorkManager to come back`() = runTest {
+        signIn()
+        val http = startServer(serverError())
+        val id = enqueue(filePath = realJpeg().absolutePath)
+
+        val result = runWorker()
+
+        val stored = requireNotNull(db.uploadQueueDao().getRecordById(id))
+        // Back to QUEUED, not FAILED: the drain only picks up QUEUED, so a row
+        // left FAILED would never actually be retried.
+        assertEquals("QUEUED", stored.uploadStatus)
+        assertEquals(1, stored.retryCount)
+        assertTrue(result is ListenableWorker.Result.Retry)
+        // Exactly one attempt: the `attempted` filter must stop the requeued row
+        // from being picked straight back up inside the same run.
+        assertEquals(1, http.requestCount)
+    }
+
+    /**
+     * Last rung of the ladder. The record has to stop driving retries, or one
+     * permanently-broken frame keeps the whole queue in backoff forever.
+     */
+    @Test
+    fun `the retry ladder ends at MAX_RETRIES and stops asking for more runs`() = runTest {
+        signIn()
+        startServer(serverError())
+        val id = enqueue(filePath = realJpeg().absolutePath, retryCount = MAX_RETRIES - 1)
+
+        val result = runWorker()
+
+        val stored = requireNotNull(db.uploadQueueDao().getRecordById(id))
+        assertEquals("FAILED", stored.uploadStatus)
+        assertEquals(MAX_RETRIES, stored.retryCount)
+        assertTrue(result is ListenableWorker.Result.Success)
+    }
+
     private companion object {
         const val EVENT = "11111111-1111-1111-1111-111111111111"
+
+        // Mirrors PhotoUploadWorker's private MAX_RETRIES.
+        const val MAX_RETRIES = 5
 
         // Mirrors the name AppDatabase passes to Room.databaseBuilder.
         const val DB_NAME = "quickpitik_db"

@@ -266,7 +266,7 @@ fun LoginScreen(
                     text = "CREATE ACCOUNT",
                     style = Typography.labelMedium,
                     color = Ink,
-                    modifier = Modifier.clickable { 
+                    modifier = Modifier.clickable {
                         if (authState !is AuthState.Loading) {
                             viewModel.resetState()
                             onNavigateToRegister()
@@ -274,6 +274,15 @@ fun LoginScreen(
                     }
                 )
             }
+
+            // Debug-only backend switcher. Renders nothing in a release build.
+            // Sits last so the editorial top of the screen is untouched, and
+            // lives on Login specifically because that is where every physical-
+            // device test starts — and where no WebSocket is open yet, so a
+            // host change takes effect with no restart. See DevServerRow.
+            Spacer(modifier = Modifier.height(24.dp))
+            DevServerRow()
+            Spacer(modifier = Modifier.height(24.dp))
 
             if (authState is AuthState.Loading) {
                 Box(
