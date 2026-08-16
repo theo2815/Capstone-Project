@@ -182,6 +182,10 @@ export function CommandPalette() {
             setActiveIdx(0);
           }}
           onKeyDown={handleInputKeyDown}
+          // The fuzzy scorer runs over every page, queue and photographer on
+          // each keystroke; a pasted wall of text makes that scale badly for
+          // a query no result can ever match.
+          maxLength={200}
           placeholder="Search admin · pages, queues, photographers"
           aria-label="Search admin"
           aria-controls="palette-results"

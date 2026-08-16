@@ -43,7 +43,13 @@ const TONE_CLASS: Record<KickerTone, string> = {
   active: "text-fresh",
 };
 
-const SIZE_CLASS: Record<KickerSize, string> = {
+// Exported because the floor has to reach places a <Kicker> element cannot:
+// the tooltip bubble, the dropdown trigger, and a conditional class string in
+// DropdownItem that is never an element of its own. Size and tracking travel
+// together on purpose — bumping the size while leaving tracking at 0.25em
+// inflates mono-uppercase past its container and re-opens the 375px wrap bug
+// in ui-pitfalls.md (2026-05-06).
+export const KICKER_SIZE_CLASS: Record<KickerSize, string> = {
   sm: "text-[13px] min-[400px]:text-[14px] md:text-[12px] tracking-[0.18em]",
   md: "text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.22em]",
 };
@@ -62,7 +68,7 @@ export function Kicker<C extends ElementType = "span">({
     <Component
       className={cn(
         "font-mono uppercase",
-        SIZE_CLASS[size],
+        KICKER_SIZE_CLASS[size],
         TONE_CLASS[tone],
         tnum && "tnum",
         className,

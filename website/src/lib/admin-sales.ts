@@ -162,7 +162,13 @@ export function useTopPhotographers(limit: number = 10): TopPhotographer[] {
       }
     }
     return Array.from(byPhotographer.values())
-      .sort((a, b) => b.gmv - a.gmv)
+      // Tie-break on id: equal-GMV photographers otherwise fall back to Map
+      // insertion order, which follows whatever order the payout cycles
+      // arrived in, so the leaderboard reshuffled between reloads.
+      .sort(
+        (a, b) =>
+          b.gmv - a.gmv || a.photographerId.localeCompare(b.photographerId),
+      )
       .slice(0, limit);
   }, [serverPayouts, payoutOverrides, limit]);
 }

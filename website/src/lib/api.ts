@@ -176,6 +176,10 @@ const PUBLIC_AUTH_ENDPOINTS = new Set([
   // session. Either way a 401 here must surface as an error on the page, not
   // bounce the user to /login and swallow their confirmation.
   "/auth/confirm-email-change",
+  // Opened from the registration mail, often on a different device than the
+  // one that registered. A signed-out caller must see the page's own error,
+  // not get bounced to /login with the token silently spent.
+  "/auth/verify-email",
   "/auth/logout",
 ]);
 

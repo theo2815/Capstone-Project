@@ -10,6 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 
 // The panel portals to document.body so it escapes ancestor stacking
 // contexts. `stagger-children` + `fade-up` (animation-fill-mode: both) leaves
@@ -167,7 +168,8 @@ export function DropdownTrigger({ children, className }: DropdownTriggerProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-2 font-mono uppercase tracking-[0.25em] text-[10px] text-ink hover:text-fresh transition-colors",
+        "inline-flex items-center gap-2 font-mono uppercase text-ink hover:text-fresh transition-colors",
+        KICKER_SIZE_CLASS.sm,
         className,
       )}
     >
@@ -210,7 +212,7 @@ export function DropdownItem({
       className={cn(
         "flex w-full items-center justify-between gap-3 px-4 py-2.5 transition-colors hover:bg-bone-deep focus:bg-bone-deep focus:outline-none",
         variant === "mono"
-          ? "font-mono uppercase tracking-[0.25em] text-[10px]"
+          ? cn("font-mono uppercase", KICKER_SIZE_CLASS.sm)
           : "font-sans text-sm",
         active ? "text-fresh" : "text-ink",
         className,

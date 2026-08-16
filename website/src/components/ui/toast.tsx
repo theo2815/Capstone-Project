@@ -8,6 +8,7 @@ import {
   type ToastKind,
 } from "@/store/toast-store";
 import { cn } from "@/lib/utils";
+import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 
 const MAX_VISIBLE = 3;
 
@@ -90,12 +91,20 @@ function ToastItem({ toast }: { toast: ToastT }) {
       className={cn(
         "pointer-events-auto w-full rounded-2xl border border-line bg-bone",
         "shadow-[0_18px_50px_-12px_rgba(17,17,17,0.20)]",
-        "px-5 py-4 flex items-start gap-4",
+        // Wraps below `sm`, where the toast is only viewport-minus-32 wide.
+        // Message + two actions + divider + close never fit one row there: the
+        // message column collapsed to ~93px and broke "Saved <event name>."
+        // across three lines even before the mono labels moved up to the 13px
+        // comfort floor. Letting the action group drop to its own line gives
+        // the message the full width instead of a sliver.
+        "px-5 py-4 flex items-start gap-4 flex-wrap sm:flex-nowrap",
       )}
       style={{ animation: "toast-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both" }}
     >
       {/* Left: dot + message */}
-      <div className="flex items-start gap-3 flex-1 min-w-0">
+      {/* min-w forces the wrap above: with `min-w-0` the message shrinks
+          indefinitely instead, so the row never breaks and the text slivers. */}
+      <div className="flex items-start gap-3 flex-1 min-w-[13rem] sm:min-w-0">
         <span
           aria-hidden="true"
           className={cn(
@@ -109,7 +118,7 @@ function ToastItem({ toast }: { toast: ToastT }) {
       </div>
 
       {/* Right: actions + divider + close, vertically centered as a group */}
-      <div className="flex items-center gap-4 self-center shrink-0">
+      <div className="flex items-center gap-4 self-center shrink-0 ml-auto">
         {hasActions && (
           <>
             <div className="flex items-center gap-4">
@@ -117,7 +126,10 @@ function ToastItem({ toast }: { toast: ToastT }) {
                 <Link
                   href={toast.link.href}
                   onClick={() => dismiss(toast.id)}
-                  className="font-mono uppercase tracking-[0.25em] text-[10px] text-fresh hover:text-fresh-deep transition-colors inline-flex items-center gap-1 whitespace-nowrap rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+                  className={cn(
+                    "font-mono uppercase text-fresh hover:text-fresh-deep transition-colors inline-flex items-center gap-1 whitespace-nowrap rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+                    KICKER_SIZE_CLASS.sm,
+                  )}
                 >
                   {toast.link.label}
                   <span aria-hidden="true">→</span>
@@ -130,7 +142,10 @@ function ToastItem({ toast }: { toast: ToastT }) {
                     toast.action?.onClick();
                     dismiss(toast.id);
                   }}
-                  className="font-mono uppercase tracking-[0.25em] text-[10px] text-ink hover:text-fresh transition-colors whitespace-nowrap"
+                  className={cn(
+                    "font-mono uppercase text-ink hover:text-fresh transition-colors whitespace-nowrap",
+                    KICKER_SIZE_CLASS.sm,
+                  )}
                 >
                   {toast.action.label}
                 </button>

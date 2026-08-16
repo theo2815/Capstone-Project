@@ -12,6 +12,9 @@ export const ROUTES = {
   // builds it as `${frontendOrigin}/confirm-email-change?token=…`, so this
   // path is a contract with backend EmailService — don't rename it alone.
   CONFIRM_EMAIL_CHANGE: "/confirm-email-change",
+  // Same contract, different mail: the backend builds this one as
+  // `${frontendOrigin}/verify-email?token=…` in the registration email.
+  VERIFY_EMAIL: "/verify-email",
   ONBOARDING: "/onboarding",
   EVENTS: "/events",
   ORDERS: "/orders",
