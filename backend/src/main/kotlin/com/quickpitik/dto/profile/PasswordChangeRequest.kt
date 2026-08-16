@@ -8,7 +8,8 @@ data class PasswordChangeRequest(
     val currentPassword: String,
 
     @field:NotBlank(message = "newPassword is required")
-    @field:Size(min = 8, max = 128, message = "newPassword must be 8-128 characters")
+    // 72 = bcrypt's truncation point; see PasswordValidator.MAX_BYTES.
+    @field:Size(min = 8, max = 72, message = "newPassword must be 8-72 characters")
     val newPassword: String,
 
     /**

@@ -17,6 +17,14 @@ interface QuickPitikApi {
     @POST("api/v1/auth/refresh")
     fun refreshToken(@Body request: RefreshRequest): Call<ApiResponseEnvelope<AuthResponse>>
 
+    // Best-effort refresh-token revocation on sign-out, matching the website
+    // (`use-auth.ts` logout). Public, so it carries no Authorization header.
+    // Callers must not block sign-out on the result — see AuthViewModel.logout.
+    @POST("api/v1/auth/logout")
+    suspend fun logout(
+        @Body request: LogoutRequest
+    ): ApiResponseEnvelope<Map<String, Boolean>>
+
     // Auth recovery. Both are public (SecurityConfig permits /auth/**) so they
     // carry no Authorization header, and TokenAuthenticator skips /auth/* — a
     // 4xx here can never trigger a refresh or a forced logout.
@@ -37,6 +45,15 @@ interface QuickPitikApi {
         @Path("eventId") eventId: String,
         @Part file: MultipartBody.Part
     ): ApiResponseEnvelope<UploadedPhotoDto>
+
+    // Dedup pre-flight — see PhotoExistsRequest. Read-only; the cost (and the
+    // rate limit) lives on the upload this is trying to avoid.
+    @POST("api/v1/me/photographer/events/{eventId}/photos/exists")
+    suspend fun checkPhotosExist(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: PhotoExistsRequest
+    ): ApiResponseEnvelope<PhotoExistsResponse>
 
     @GET("api/v1/me/photographer/events")
     suspend fun getPhotographerEvents(
@@ -65,6 +82,11 @@ interface QuickPitikApi {
     suspend fun getVerificationStatus(
         @Header("Authorization") token: String
     ): ApiResponseEnvelope<VerificationSubmitResponseDto>
+
+    // Public reference data — no Authorization header. Backend owns the list;
+    // see RegionDto for why neither client hardcodes it any more.
+    @GET("api/v1/regions")
+    suspend fun getRegions(): ApiResponseEnvelope<List<RegionDto>>
 
     @GET("api/v1/me/photographer/brand")
     suspend fun getBrandSettings(
@@ -152,6 +174,12 @@ interface QuickPitikApi {
         @Header("Authorization") token: String,
         @Part file: MultipartBody.Part
     ): ApiResponseEnvelope<MediaUploadResponseDto>
+
+    // Clears the avatar and returns the updated user (avatarUrl null).
+    @DELETE("api/v1/me/avatar")
+    suspend fun deleteAvatar(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<UserDto>
 
     @Multipart
     @POST("api/v1/me/avatar")
@@ -393,6 +421,15 @@ interface QuickPitikApi {
     suspend fun changePassword(
         @Header("Authorization") token: String,
         @Body request: PasswordChangeRequest
+    ): ApiResponseEnvelope<Map<String, String>>
+
+    // Step 1 of 2 — mails a confirmation link to the NEW address and changes
+    // nothing yet. Step 2 (`POST /auth/confirm-email-change`) is web-only; the
+    // backend links the mail to the website origin. See EmailChangeRequest.
+    @PUT("api/v1/me/email")
+    suspend fun requestEmailChange(
+        @Header("Authorization") token: String,
+        @Body request: EmailChangeRequest
     ): ApiResponseEnvelope<Map<String, String>>
 
     @GET("api/v1/me/saved-events")

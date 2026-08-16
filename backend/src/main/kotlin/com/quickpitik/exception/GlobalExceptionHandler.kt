@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.multipart.MaxUploadSizeExceededException
 import org.springframework.web.multipart.MultipartException
+import org.springframework.web.servlet.resource.NoResourceFoundException
 
 @RestControllerAdvice
 @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -41,6 +42,28 @@ class GlobalExceptionHandler {
         ResponseEntity.status(HttpStatus.NOT_FOUND).body(
             ApiResponse.failure(ApiError(code = ex.code, message = ex.message ?: "Not found")),
         )
+
+    /**
+     * A request to a path no controller maps. Spring raises this from the
+     * dispatcher rather than from application code, so without an explicit
+     * handler it fell through to [handleGeneric] and answered `500
+     * INTERNAL_ERROR` — a typo in a client URL looked like a server fault, and
+     * the error log filled with stack traces for requests that were simply
+     * wrong. Found 2026-08-15 by requesting `/photos/upload` (the real path is
+     * `/photos`).
+     *
+     * Logged at debug, not error: an unmatched path is a client mistake, and
+     * anything reachable by a scanner must not be able to fill the log.
+     */
+    @ExceptionHandler(NoResourceFoundException::class)
+    fun handleNoResource(ex: NoResourceFoundException): ResponseEntity<ApiResponse<Nothing>> {
+        log.debug("No handler for {}", ex.resourcePath)
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ApiResponse.failure(
+                ApiError(code = ErrorCodes.NOT_FOUND, message = "Resource not found"),
+            ),
+        )
+    }
 
     @ExceptionHandler(ValidationException::class)
     fun handleValidation(ex: ValidationException): ResponseEntity<ApiResponse<Nothing>> =

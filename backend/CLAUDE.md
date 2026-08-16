@@ -1,6 +1,8 @@
 # CLAUDE.md — Backend (Kotlin + Spring Boot)
 
-**Status:** Phase A — auth scaffold complete (2026-05-05). Broader build deferred until website frontend reaches full lock state. See vault `backend/decisions.md`.
+**Status:** All phases shipped and hardened (last reconciled 2026-08-16). 29 controllers under `controller/`; all four roles locked; `./gradlew test` at 197/197. Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
+
+The live route reference — every endpoint, its auth, and **which clients consume it** — is vault `backend/api-surface.md`. Read that before adding an endpoint or assuming one is missing.
 
 ## Role in the project
 

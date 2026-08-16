@@ -8,6 +8,7 @@ data class ResetPasswordRequest(
     val token: String,
 
     @field:NotBlank
-    @field:Size(min = 8, max = 100, message = "Password must be at least 8 characters")
+    // 72 = bcrypt's truncation point; see PasswordValidator.MAX_BYTES.
+    @field:Size(min = 8, max = 72, message = "Password must be 8-72 characters")
     val newPassword: String,
 )

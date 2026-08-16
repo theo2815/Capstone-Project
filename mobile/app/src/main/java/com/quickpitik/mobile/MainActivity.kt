@@ -173,7 +173,7 @@ class MainActivity : ComponentActivity() {
                         PhotographerDashboardScreen(
                             viewModel = photographerViewModel,
                             onLogout = {
-                                authViewModel.resetState()
+                                authViewModel.logout()
                                 navController.navigate("login") {
                                     popUpTo("dashboard") { inclusive = true }
                                 }
@@ -197,7 +197,7 @@ class MainActivity : ComponentActivity() {
                             onNavigateToSettings = { navController.navigate("settings") },
                             onOpenOrder = { orderId -> navController.navigate("orders?orderId=$orderId") },
                             onLogout = {
-                                authViewModel.resetState()
+                                authViewModel.logout()
                                 cartViewModel.clearCart()
                                 navController.navigate("login") {
                                     popUpTo("events") { inclusive = true }
@@ -229,7 +229,7 @@ class MainActivity : ComponentActivity() {
                                 navController.popBackStack()
                             },
                             onLogout = {
-                                authViewModel.resetState()
+                                authViewModel.logout()
                                 cartViewModel.clearCart()
                                 navController.navigate("login") {
                                     popUpTo("events") { inclusive = true }
@@ -283,7 +283,7 @@ class MainActivity : ComponentActivity() {
                                 navController.popBackStack()
                             },
                             onLogout = {
-                                authViewModel.resetState()
+                                authViewModel.logout()
                                 cartViewModel.clearCart()
                                 navController.navigate("login") {
                                     popUpTo("events") { inclusive = true }

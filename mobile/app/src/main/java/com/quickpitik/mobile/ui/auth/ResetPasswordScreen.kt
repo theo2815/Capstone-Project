@@ -92,7 +92,7 @@ fun ResetPasswordScreen(
                             val tokenErr = if (token.isBlank()) {
                                 "Paste the reset code from your email."
                             } else null
-                            val passErr = validatePassword(password)
+                            val passErr = validateNewPassword(password)
                             val confirmErr = when {
                                 confirmPassword.isEmpty() -> "Please confirm your new password."
                                 password != confirmPassword -> "Passwords don't match."

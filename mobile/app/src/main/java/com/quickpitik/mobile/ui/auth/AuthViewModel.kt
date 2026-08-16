@@ -167,4 +167,29 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     fun resetState() {
         _authState.value = AuthState.Idle
     }
+
+    /**
+     * User-initiated sign-out.
+     *
+     * Until 2026-08-16 the sign-out buttons only called [resetState] and
+     * navigated, so the cached JWT + refresh token survived in SharedPreferences.
+     * Two consequences: the refresh token stayed usable server-side, and
+     * `MainActivity`'s `startDestination` — which reads `getAccessToken()` —
+     * put the next cold start straight back into the signed-in session.
+     *
+     * Order matters. The local session is cleared FIRST so sign-out is instant
+     * and works offline; the revoke is fire-and-forget afterwards on the token
+     * captured beforehand. A network failure must never strand the user signed
+     * in, which is the same trade the website makes in `use-auth.ts`.
+     */
+    fun logout() {
+        val refreshToken = sessionManager.getRefreshToken()
+        sessionManager.clearSession()
+        _authState.value = AuthState.Idle
+
+        if (refreshToken == null) return
+        viewModelScope.launch {
+            runCatching { RetrofitClient.apiService.logout(LogoutRequest(refreshToken)) }
+        }
+    }
 }

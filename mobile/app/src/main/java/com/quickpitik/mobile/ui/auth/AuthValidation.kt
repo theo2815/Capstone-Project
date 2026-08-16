@@ -16,6 +16,21 @@ private val EMAIL_RE = Regex("""^[^\s@]+@[^\s@]+\.[^\s@]+$""")
 const val PASSWORD_MIN = 8
 const val EMAIL_MAX = 254
 
+/**
+ * BCrypt hashes at most 72 bytes and silently discards the rest, so without a
+ * cap two visually different long passwords hash identically and both succeed
+ * at login. Measured in UTF-8 BYTES because that is the actual bcrypt limit —
+ * an ASCII password hits it at 72 characters, a multi-byte one sooner. The
+ * message says "characters" because that is what a user counts; the early trip
+ * on multi-byte input is a safe failure, not a silent collision.
+ *
+ * Enforced by [validateNewPassword] (register / reset / change) and NEVER by
+ * [validatePassword] (login), which must keep accepting whatever an existing
+ * account was created with.
+ * Backend counterpart: `PasswordValidator`. Website: `lib/auth-validation.ts`.
+ */
+const val PASSWORD_MAX_BYTES = 72
+
 fun validateEmail(value: String): String? {
     val trimmed = value.trim()
     if (trimmed.isEmpty()) return "Email is required."
@@ -24,8 +39,22 @@ fun validateEmail(value: String): String? {
     return null
 }
 
+/** Sign-in gate. Length floor only — NEVER cap here, see [PASSWORD_MAX_BYTES]. */
 fun validatePassword(value: String): String? {
     if (value.isEmpty()) return "Password is required."
     if (value.length < PASSWORD_MIN) return "Password must be at least $PASSWORD_MIN characters."
+    return null
+}
+
+/**
+ * Gate for a password being SET — register, reset, change. Adds the bcrypt
+ * ceiling on top of [validatePassword]'s floor. Kept separate precisely so the
+ * cap can never reach the login form, which must go on accepting whatever an
+ * existing account was created with.
+ */
+fun validateNewPassword(value: String): String? {
+    validatePassword(value)?.let { return it }
+    if (value.toByteArray(Charsets.UTF_8).size > PASSWORD_MAX_BYTES)
+        return "Password is limited to $PASSWORD_MAX_BYTES characters."
     return null
 }

@@ -132,6 +132,58 @@ data class RegionPatchRequest(
     val provinceCode: String
 )
 
+/**
+ * Body for `POST /me/photographer/events/{id}/photos/exists` — the dedup
+ * pre-flight. Ask which of these SHA-256s the backend already holds before
+ * spending bandwidth uploading them. Backend caps the list at 500 and rejects
+ * anything that is not 64 hex characters.
+ */
+data class PhotoExistsRequest(
+    val hashes: List<String>
+)
+
+/**
+ * One result per requested hash. [status] is one of:
+ *  - `new`             — not present for this photographer; upload it
+ *  - `same_event`      — already in THIS event; uploading is a no-op, skip
+ *  - `different_event` — in another of the photographer's events; an upload
+ *                        would be rejected 409 ([eventName] names the holder)
+ */
+data class PhotoExistsResult(
+    val hash: String,
+    val status: String,
+    val eventName: String? = null
+)
+
+data class PhotoExistsResponse(
+    val results: List<PhotoExistsResult>
+)
+
+/**
+ * `GET /api/v1/regions` — the canonical PH region + province list. Mirrors
+ * backend dto/reference/RegionDto.
+ *
+ * Until 2026-08-16 this screen rendered a hardcoded 75-line copy while the
+ * website carried a third copy of its own, so a region added backend-side
+ * reached neither client. The backend owns the list; both clients read it.
+ *
+ * Public endpoint, and the response carries `Cache-Control: max-age=1d`.
+ * `shortName`/`group` are sent by the backend and kept here to match the wire
+ * shape even though this screen currently renders only `name`.
+ */
+data class RegionDto(
+    val code: String,
+    val name: String,
+    val shortName: String,
+    val group: String,
+    val provinces: List<ProvinceDto>
+)
+
+data class ProvinceDto(
+    val code: String,
+    val name: String
+)
+
 data class CreateSocialRequest(
     val platform: String,
     val url: String

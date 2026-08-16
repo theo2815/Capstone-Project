@@ -337,6 +337,24 @@ class AdminPayoutService(
      * cycle's payout method is the photographer's primary account method, or
      * GCASH as a safe default when no account is set — the admin still sees
      * an empty payoutAccount snapshot in the queue and can hold for setup.
+     *
+     * **Known race, accepted (documented 2026-08-16).** The aggregate below and
+     * the per-row upsert are two statements, so a refund committing between
+     * them lands in neither: the summed amount is already stale and the cycle
+     * is written from it, with nothing recording the discrepancy.
+     *
+     * Left as-is deliberately. This path is an optional backfill superseded by
+     * the request-based flow (`PayoutRequestService`, 2026-05-19) — the normal
+     * way a cycle is created is a photographer asking for one, which reads the
+     * balance inside a single transaction. Raising this method to SERIALIZABLE
+     * (or locking the transaction window) would add contention to the whole
+     * payout path to protect a route that runs rarely and by hand.
+     *
+     * The mitigation is operational, not structural: re-running for the same
+     * week refreshes any still-pending_review row in place, so a mis-summed
+     * cycle self-corrects on the next run as long as no admin has decided it
+     * yet. If this path ever becomes automatic (a cron), revisit — an
+     * unattended generator has no human to notice the discrepancy.
      */
     fun generateForWeek(weekOf: LocalDate): GenerateCyclesResultDto {
         if (weekOf.dayOfWeek != java.time.DayOfWeek.MONDAY) {

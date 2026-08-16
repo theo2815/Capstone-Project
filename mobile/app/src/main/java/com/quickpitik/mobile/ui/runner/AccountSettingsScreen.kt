@@ -49,11 +49,20 @@ fun AccountSettingsScreen(
 
     val pwdSuccess by viewModel.passwordUpdateSuccess.collectAsState()
     val pwdError by viewModel.passwordUpdateError.collectAsState()
+    val pwdSessionKept by viewModel.passwordSessionKept.collectAsState()
+
+    val emailChangeSubmitting by viewModel.emailChangeSubmitting.collectAsState()
+    val emailChangeMessage by viewModel.emailChangeMessage.collectAsState()
+    val emailChangeError by viewModel.emailChangeError.collectAsState()
 
     var nameInput by remember { mutableStateOf(name) }
     var currentPassword by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
+
+    var emailFormOpen by remember { mutableStateOf(false) }
+    var newEmail by remember { mutableStateOf("") }
+    var emailPassword by remember { mutableStateOf("") }
 
     var passwordMatchError by remember { mutableStateOf<String?>(null) }
 
@@ -68,12 +77,26 @@ fun AccountSettingsScreen(
         }
     }
 
+    // Clears the inputs but deliberately does NOT call resetPasswordState():
+    // that flipped `pwdSuccess` back to false in the same frame, so the
+    // confirmation text below rendered for about one frame and was never
+    // readable. The flag is cleared when the user next edits a password field.
     LaunchedEffect(pwdSuccess) {
         if (pwdSuccess) {
             currentPassword = ""
             newPassword = ""
             confirmPassword = ""
-            viewModel.resetPasswordState()
+        }
+    }
+
+    // The email form closes on success; the backend's "check your new inbox"
+    // message stays on the card, because that is the instruction the runner
+    // still has to act on.
+    LaunchedEffect(emailChangeMessage) {
+        if (emailChangeMessage != null) {
+            emailFormOpen = false
+            newEmail = ""
+            emailPassword = ""
         }
     }
 
@@ -245,6 +268,22 @@ fun AccountSettingsScreen(
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
+                                // Only offered when there is something to
+                                // remove. Ghost, not Fresh — the Change button
+                                // above already owns the one accent here.
+                                if (!avatarUrl.isNullOrEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    TextButton(
+                                        onClick = { viewModel.removeAvatar() },
+                                        enabled = !avatarUploading
+                                    ) {
+                                        Text(
+                                            text = "REMOVE PHOTO",
+                                            color = Slate,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
                                 if (avatarError != null) {
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
@@ -258,7 +297,11 @@ fun AccountSettingsScreen(
                     }
                 }
 
-                // Section 3: Email Card (Read-only)
+                // Section 3: Sign-in email — request a change (step 1 of 2).
+                // The address shown NEVER updates here: the backend only mails a
+                // confirmation link, and the swap happens when that link is
+                // opened from the new inbox (web-only route). Copy has to keep
+                // that promise or a runner will think they're already switched.
                 item {
                     Column(
                         modifier = Modifier
@@ -274,7 +317,8 @@ fun AccountSettingsScreen(
                             color = Ink
                         )
                         Text(
-                            text = "Your account email address is locked for security.",
+                            text = "We'll email a confirmation link to the new address. " +
+                                "Your sign-in email stays the same until you open it.",
                             style = Typography.bodySmall,
                             color = Slate
                         )
@@ -290,6 +334,107 @@ fun AccountSettingsScreen(
                                 style = Typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Slate
+                            )
+                        }
+
+                        if (!emailFormOpen) {
+                            OutlinedButton(
+                                onClick = { emailFormOpen = true },
+                                border = BorderStroke(1.dp, Ink),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Text("CHANGE EMAIL", fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            OutlinedTextField(
+                                value = newEmail,
+                                onValueChange = {
+                                    newEmail = it
+                                    viewModel.resetEmailChangeState()
+                                },
+                                label = { Text("New Email", color = Slate) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Fresh,
+                                    unfocusedBorderColor = SlateSoft,
+                                    focusedTextColor = Ink,
+                                    unfocusedTextColor = Ink
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = emailPassword,
+                                onValueChange = {
+                                    emailPassword = it
+                                    viewModel.resetEmailChangeState()
+                                },
+                                label = { Text("Current Password", color = Slate) },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Fresh,
+                                    unfocusedBorderColor = SlateSoft,
+                                    focusedTextColor = Ink,
+                                    unfocusedTextColor = Ink
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            if (emailChangeError != null) {
+                                Text(
+                                    text = emailChangeError!!,
+                                    color = ErrorRed,
+                                    style = Typography.bodySmall
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        emailFormOpen = false
+                                        newEmail = ""
+                                        emailPassword = ""
+                                        viewModel.resetEmailChangeState()
+                                    }
+                                ) {
+                                    Text("CANCEL", color = Slate, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.requestEmailChange(newEmail, emailPassword)
+                                    },
+                                    enabled = !emailChangeSubmitting &&
+                                        newEmail.isNotEmpty() && emailPassword.isNotEmpty(),
+                                    border = BorderStroke(1.dp, Ink),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = if (emailChangeSubmitting) "SENDING…" else "SEND LINK",
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+
+                        // Deliberately not phrased as success — the address has
+                        // not moved yet. Kept visible after the form closes so
+                        // the runner still sees where to look.
+                        if (emailChangeMessage != null) {
+                            Text(
+                                text = emailChangeMessage!!,
+                                color = Ink,
+                                style = Typography.bodySmall,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
@@ -313,7 +458,10 @@ fun AccountSettingsScreen(
 
                         OutlinedTextField(
                             value = currentPassword,
-                            onValueChange = { currentPassword = it },
+                            onValueChange = {
+                                currentPassword = it
+                                viewModel.resetPasswordState()
+                            },
                             label = { Text("Current Password", color = Slate) },
                             singleLine = true,
                             visualTransformation = PasswordVisualTransformation(),
@@ -329,9 +477,10 @@ fun AccountSettingsScreen(
 
                         OutlinedTextField(
                             value = newPassword,
-                            onValueChange = { 
+                            onValueChange = {
                                 newPassword = it
                                 passwordMatchError = null
+                                viewModel.resetPasswordState()
                             },
                             label = { Text("New Password", color = Slate) },
                             singleLine = true,
@@ -348,9 +497,10 @@ fun AccountSettingsScreen(
 
                         OutlinedTextField(
                             value = confirmPassword,
-                            onValueChange = { 
+                            onValueChange = {
                                 confirmPassword = it
                                 passwordMatchError = null
+                                viewModel.resetPasswordState()
                             },
                             label = { Text("Confirm New Password", color = Slate) },
                             singleLine = true,
@@ -376,7 +526,11 @@ fun AccountSettingsScreen(
 
                         if (pwdSuccess) {
                             Text(
-                                text = "Password changed successfully!",
+                                text = if (pwdSessionKept) {
+                                    "Password changed. Other devices were signed out."
+                                } else {
+                                    "Password changed. You'll be signed out on this device shortly."
+                                },
                                 color = Fresh,
                                 style = Typography.bodySmall,
                                 fontWeight = FontWeight.Bold

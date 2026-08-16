@@ -267,6 +267,19 @@ function SelfieTile({
         </span>
       )}
 
+      {/* Never checked against ai-api, so it may not match once face search is
+          live. Quiet ink scrim rather than an accent — `fresh` is spent on the
+          Primary pill and the design system allows one per viewport. Absent
+          once the selfie passes, so this disappears entirely when ai-api is on. */}
+      {selfie.qualityTestStatus !== "passed" && (
+        <span
+          title="Uploaded before face matching was switched on — re-upload if search misses you."
+          className="absolute top-2 right-2 px-2 py-1 rounded-full bg-ink/70 backdrop-blur text-bone font-mono uppercase tracking-[0.2em] text-[9px]"
+        >
+          Not checked
+        </span>
+      )}
+
       <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
         {!selfie.isPrimary ? (
           <button

@@ -21,6 +21,7 @@ import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.TetherEvents
 import com.quickpitik.mobile.data.local.UploadRecord
+import com.quickpitik.mobile.data.remote.PhotoExistsRequest
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerMessageFrame
 import com.quickpitik.mobile.data.remote.QpWebSocket
@@ -206,6 +207,13 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     private val _brandSettings = MutableStateFlow<com.quickpitik.mobile.data.remote.BrandSettingsResponseDto?>(null)
     val brandSettings: StateFlow<com.quickpitik.mobile.data.remote.BrandSettingsResponseDto?> = _brandSettings
+
+    // Backend-owned PH region/province list (GET /regions). Empty until the
+    // fetch lands; the region slab shows "Loading regions…" meanwhile rather
+    // than an empty picker. A failed fetch leaves it empty and the photographer
+    // keeps whatever region is already saved — nothing is silently cleared.
+    private val _regions = MutableStateFlow<List<com.quickpitik.mobile.data.remote.RegionDto>>(emptyList())
+    val regions: StateFlow<List<com.quickpitik.mobile.data.remote.RegionDto>> = _regions
 
     private val _payoutAccounts = MutableStateFlow<List<com.quickpitik.mobile.data.remote.PayoutAccountDto>>(emptyList())
     val payoutAccounts: StateFlow<List<com.quickpitik.mobile.data.remote.PayoutAccountDto>> = _payoutAccounts
@@ -813,6 +821,20 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             } catch (e: Exception) {
                 // Fail silently
             }
+            // Reference data, not per-photographer — fetched here because the
+            // region slab lives on this screen. Skipped once loaded so
+            // re-entering Settings doesn't re-request a list that changes
+            // roughly never (backend caches it for a day).
+            if (_regions.value.isEmpty()) {
+                try {
+                    val regionsResponse = RetrofitClient.apiService.getRegions()
+                    if (regionsResponse.success && regionsResponse.data != null) {
+                        _regions.value = regionsResponse.data
+                    }
+                } catch (e: Exception) {
+                    // Fail silently — the slab keeps the saved region visible.
+                }
+            }
         }
     }
 
@@ -984,6 +1006,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
         val photographerId = sessionManager.getUserEmail() ?: "unknown"
 
+        // recordId → SHA-256, filled as frames land. Consumed once at the end
+        // by the dedup pre-flight below.
+        val importedHashes = mutableMapOf<Long, String>()
+
         browseJob?.cancel()
         disconnectWatcherJob?.cancel()
 
@@ -1036,7 +1062,12 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     }
                 },
                 onPulled = { photo, writeTo ->
-                    persistCapturedJpeg(photo.filename, activeEvent.id, photographerId, writeTo)
+                    persistCapturedJpeg(
+                        photo.filename,
+                        activeEvent.id,
+                        photographerId,
+                        writeTo,
+                    ) { recordId, hash -> importedHashes[recordId] = hash }
                 },
             )
             // Tear down the watcher (whether we finished cleanly or the watcher
@@ -1044,11 +1075,71 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             disconnectWatcherJob?.cancel()
             disconnectWatcherJob = null
 
+            // Drop anything the backend already holds BEFORE the worker starts,
+            // so duplicate bytes never go over the wire.
+            dropAlreadyUploaded(activeEvent.id, importedHashes)
+
             // Kick the upload worker if anything actually queued.
             val finalState = _cardBrowseState.value
             if (finalState is CardBrowseState.ImportDone && finalState.succeededHandles.isNotEmpty()) {
                 withContext(Dispatchers.Main) { runSyncEngine() }
             }
+        }
+    }
+
+    /**
+     * Dedup pre-flight (backend Phase 2, `POST …/photos/exists`). Asks which of
+     * the just-imported hashes the backend already holds and de-queues the ones
+     * already stored against THIS event, so their bytes are never uploaded.
+     *
+     * Mobile already dedupes twice locally — in-session PTP handles, and a
+     * Room-persistent per-event filename check. This closes the case neither
+     * catches: the same bytes arriving under a different filename, or a card
+     * re-imported after the app's data was cleared. The website has run this
+     * pre-flight since 2026-06-02; mobile was the only client without it.
+     *
+     * `different_event` is deliberately left queued. That upload will 409, and
+     * `PhotoUploadWorker` already treats `PHOTO_DUPLICATE_DIFFERENT_EVENT` as
+     * terminal — the photographer should see it failed rather than have the
+     * frame silently vanish, because uploading it to the wrong event is a real
+     * mistake worth surfacing.
+     *
+     * Best-effort: any failure leaves everything queued, which is exactly the
+     * behaviour before this existed.
+     */
+    private suspend fun dropAlreadyUploaded(eventId: String, hashes: Map<Long, String>) {
+        if (hashes.isEmpty()) return
+        val token = sessionManager.getAccessToken() ?: return
+        try {
+            // Backend caps the list at 500 per request.
+            val skipped = hashes.entries.chunked(500).flatMap { chunk ->
+                val response = RetrofitClient.apiService.checkPhotosExist(
+                    "Bearer $token",
+                    eventId,
+                    PhotoExistsRequest(hashes = chunk.map { it.value }),
+                )
+                val sameEvent = response.data?.results
+                    .orEmpty()
+                    .filter { it.status == "same_event" }
+                    .map { it.hash }
+                    .toSet()
+                chunk.filter { it.value in sameEvent }.map { it.key }
+            }
+            if (skipped.isEmpty()) return
+            val dao = database.uploadQueueDao()
+            for (recordId in skipped) {
+                // Delete the cached file too — nothing will read it now.
+                dao.getRecordById(recordId)?.let { runCatching { File(it.filePath).delete() } }
+                dao.deleteRecordById(recordId)
+            }
+            android.util.Log.i(
+                "QP/UPLOAD-PERF",
+                "dedup pre-flight skipped=${skipped.size} of ${hashes.size}",
+            )
+        } catch (e: Exception) {
+            // Offline or a backend hiccup — keep everything queued. The upload
+            // path stays correct without this; it is only an optimisation.
+            android.util.Log.w("QP/UPLOAD-PERF", "dedup pre-flight failed: ${e.message}")
         }
     }
 
@@ -1065,14 +1156,23 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         eventId: String,
         photographerId: String,
         writeTo: (OutputStream) -> Unit,
+        // Receives (queued record id, SHA-256 of the bytes) for each frame that
+        // lands. Card import collects these to run one dedup pre-flight for the
+        // whole batch; the live shutter path passes null (one frame at a time
+        // is not a batch, and it already dedupes on handle).
+        hashSink: ((Long, String) -> Unit)? = null,
     ): Boolean {
         val persistStart = System.currentTimeMillis()
         val unique = "dslr_import_${System.currentTimeMillis()}_$originalFilename"
         val file = File(getApplication<Application>().cacheDir, unique)
         return try {
             // The PTP read happens inside here, streaming straight to disk, so
-            // a frame never exists whole in memory.
-            file.outputStream().buffered().use { writeTo(it) }
+            // a frame never exists whole in memory. The digest rides the same
+            // stream, so hashing costs no extra pass over the bytes.
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            file.outputStream().buffered().use { out ->
+                writeTo(java.security.DigestOutputStream(out, digest))
+            }
             // An empty file means the camera handed over nothing (an object
             // still being written to the card, typically). Leave no orphan and
             // report failure so the caller retries the handle.
@@ -1080,7 +1180,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 file.delete()
                 return false
             }
-            database.uploadQueueDao().insertRecord(
+            val recordId = database.uploadQueueDao().insertRecord(
                 UploadRecord(
                     filePath = file.absolutePath,
                     eventId = eventId,
@@ -1089,6 +1189,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     uploadStatus = "QUEUED",
                 )
             )
+            hashSink?.invoke(recordId, digest.digest().joinToString("") { "%02x".format(it) })
             val persistMs = System.currentTimeMillis() - persistStart
             android.util.Log.i(
                 "QP/UPLOAD-PERF",

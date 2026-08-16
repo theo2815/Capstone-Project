@@ -34,6 +34,7 @@ import {
 } from "@/lib/admin-photographer-view";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { formatRegionLabel } from "@/lib/ph-regions";
+import { useRegions } from "@/hooks/use-regions";
 
 // Verifications queue body — extracted from /admin/verifications/page.tsx so
 // /admin/inbox can render the same three slabs (Open queue · Incomplete ·
@@ -681,6 +682,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
   const { user: sessionUser } = useAuth();
   const liveSettings = usePhotographerSettingsStore();
   const effective = useEffectivePhotographerSettings(row.userId);
+  const { regions } = useRegions();
 
   const isSelf = sessionUser?.id === row.userId;
   const liveSnapshot: PhotographerSettingsSnapshot | null = effective
@@ -707,7 +709,11 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
 
   const completeness = computeCompleteness(liveSnapshot);
   const resolvedRegion = effective?.region
-    ? formatRegionLabel(effective.region.regionCode, effective.region.provinceCode)
+    ? formatRegionLabel(
+        regions,
+        effective.region.regionCode,
+        effective.region.provinceCode,
+      )
     : null;
   const regionLine = resolvedRegion ?? row.region ?? "Not set";
   const publicHandle = effective?.handle?.trim() || row.handle || "";

@@ -57,12 +57,13 @@ import {
   validateImageFile,
 } from "@/lib/image-utils";
 import {
-  PH_REGIONS,
   REGION_GROUP_LABEL,
   formatRegionLabel,
   getRegion,
+  type PHRegion,
   type RegionGroup,
 } from "@/lib/ph-regions";
+import { useRegions } from "@/hooks/use-regions";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { validateHandle } from "@/lib/reserved-handles";
 import {
@@ -727,12 +728,18 @@ function SlabStatusChip({ ready }: { ready: boolean }) {
 // the submit POST and emit a server-rendered row on the admin's next poll;
 // in mock mode, we have to bridge the two stores ourselves. Returns null
 // when there's no authenticated session (defensive — caller bails).
-function buildAdminSubmissionRow(): AdminUserRow | null {
+function buildAdminSubmissionRow(
+  regions: readonly PHRegion[],
+): AdminUserRow | null {
   const sessionUser = useAuthStore.getState().user;
   if (!sessionUser) return null;
   const settings = usePhotographerSettingsStore.getState();
   const regionLabel = settings.region
-    ? formatRegionLabel(settings.region.regionCode, settings.region.provinceCode)
+    ? formatRegionLabel(
+        regions,
+        settings.region.regionCode,
+        settings.region.provinceCode,
+      )
     : null;
   return {
     userId: sessionUser.id,
@@ -763,8 +770,13 @@ function buildAdminSubmissionRow(): AdminUserRow | null {
   };
 }
 
-function mirrorSubmissionToAdminStore(): void {
-  const row = buildAdminSubmissionRow();
+// `regions` comes from useRegions() at the component boundary — these two are
+// plain functions (they read Zustand via getState()), so the list has to be
+// passed in rather than hooked. The label is only a fallback for the admin
+// queue, which resolves its own via formatRegionLabel; an empty list here just
+// leaves it null.
+function mirrorSubmissionToAdminStore(regions: readonly PHRegion[]): void {
+  const row = buildAdminSubmissionRow(regions);
   if (!row) return;
   useAdminUserStore.getState().upsertSubmission(row);
 }
@@ -777,6 +789,7 @@ function mirrorSubmissionToAdminStore(): void {
 // Returns whether the BE accepted, so callers (the nudge modal) can decide
 // to close their own UI or stay open for a retry.
 async function submitForReview(opts: {
+  regions: readonly PHRegion[];
   setStatus: (s: VerificationStatus) => void;
   showToast: (t: { kind: "info" | "success" | "error"; message: string }) => void;
 }): Promise<{ submitted: boolean }> {
@@ -784,7 +797,7 @@ async function submitForReview(opts: {
     const response = await submitVerification();
     if (response.status === "pending") {
       opts.setStatus("pending");
-      mirrorSubmissionToAdminStore();
+      mirrorSubmissionToAdminStore(opts.regions);
       opts.showToast({
         kind: "info",
         message: "Submitted for review. We'll let you know.",
@@ -911,6 +924,7 @@ export default function SettingsPage() {
 // state so they re-submit when fixed.
 function PendingEditWatcher() {
   const { editing } = useEditMode();
+  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -946,8 +960,9 @@ function PendingEditWatcher() {
       setStatus("incomplete");
       return;
     }
-    mirrorSubmissionToAdminStore();
+    mirrorSubmissionToAdminStore(regions);
   }, [
+    regions,
     status,
     complete,
     editing,
@@ -974,6 +989,7 @@ function PendingEditWatcher() {
 // the nudge resets so it can fire again on next completion).
 function ReadyToSubmitNudge() {
   const { editing } = useEditMode();
+  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -1020,7 +1036,7 @@ function ReadyToSubmitNudge() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await submitForReview({ setStatus, showToast });
+      await submitForReview({ regions, setStatus, showToast });
     } finally {
       setSubmitting(false);
       // Close the modal regardless of outcome — the toast surfaces success
@@ -1144,6 +1160,7 @@ function useAllRequiredFilled(): boolean {
 
 function VerificationStatusPanel() {
   const { editing, beginEdit } = useEditMode();
+  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -1161,7 +1178,7 @@ function VerificationStatusPanel() {
       // `/admin/verifications`. The photographer sits in `pending` until a
       // human reviews them. Phase 1 wires the real BE call: the helper
       // flips local state only after the BE confirms.
-      await submitForReview({ setStatus, showToast });
+      await submitForReview({ regions, setStatus, showToast });
     } finally {
       setSubmitting(false);
     }
@@ -2229,25 +2246,33 @@ function RegionSlab() {
   const { editing } = useEditMode();
   const region = usePhotographerSettingsStore((s) => s.region);
   const setRegion = usePhotographerSettingsStore((s) => s.setRegion);
+  const { regions, isLoading: regionsLoading } = useRegions();
 
-  const selectedRegion = region ? getRegion(region.regionCode) : undefined;
+  const selectedRegion = region ? getRegion(regions, region.regionCode) : undefined;
   const selectedProvince =
     region && selectedRegion
       ? selectedRegion.provinces.find((p) => p.code === region.provinceCode)
       : undefined;
 
   // A persisted region/province code can fail to resolve when the backend
-  // renames or removes one (Phase B+ — the mock list never changes). Surface
-  // the gap so the user knows to re-pick instead of silently rendering
-  // "Pick a region" as if nothing was set.
-  const staleRegion = !!region && !selectedRegion;
+  // renames or removes one. Surface the gap so the user knows to re-pick
+  // instead of silently rendering "Pick a region" as if nothing was set.
+  //
+  // Gated on !regionsLoading since 2026-08-16: the list is fetched now, so
+  // during the first paint `regions` is empty and EVERY saved code would
+  // otherwise look stale and flash a bogus warning.
+  const staleRegion = !regionsLoading && !!region && !selectedRegion;
   const staleProvince =
-    !!region && !!selectedRegion && !!region.provinceCode && !selectedProvince;
+    !regionsLoading &&
+    !!region &&
+    !!selectedRegion &&
+    !!region.provinceCode &&
+    !selectedProvince;
 
   function handlePickRegion(regionCode: string) {
     if (region?.regionCode === regionCode) return;
     // Reset province when region changes — the user must re-pick.
-    const next = getRegion(regionCode);
+    const next = getRegion(regions, regionCode);
     if (!next) return;
     setRegion({ regionCode, provinceCode: "" });
   }
@@ -2304,7 +2329,8 @@ function RegionSlab() {
                         selectedRegion ? "text-ink" : "text-slate-soft",
                       )}
                     >
-                      {selectedRegion?.name ?? "Pick a region"}
+                      {selectedRegion?.name ??
+                        (regionsLoading ? "Loading regions…" : "Pick a region")}
                     </span>
                     <span aria-hidden="true" className="text-slate shrink-0">
                       ▾
@@ -2317,7 +2343,7 @@ function RegionSlab() {
                     <Kicker as="p" tone="soft" className="px-4 py-2">
                       {REGION_GROUP_LABEL[group]}
                     </Kicker>
-                    {PH_REGIONS.filter((r) => r.group === group).map((r) => (
+                    {regions.filter((r) => r.group === group).map((r) => (
                       <DropdownItem
                         key={r.code}
                         onClick={() => handlePickRegion(r.code)}

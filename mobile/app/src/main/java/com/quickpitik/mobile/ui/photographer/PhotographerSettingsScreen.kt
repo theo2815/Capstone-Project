@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PayoutAccountDto
+import com.quickpitik.mobile.data.remote.RegionDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SocialLinkDto
 import com.quickpitik.mobile.ui.theme.BadgeShape
@@ -81,87 +82,11 @@ import com.quickpitik.mobile.ui.theme.Typography
 import com.quickpitik.mobile.ui.theme.WarningOrange
 
 // ─── Reference data ──────────────────────────────────────────────────────────
-// PH regions/provinces is pre-existing inline data (separate cleanup task in
-// mobile/tasks.md "Now" — backend-owned reference data). Keeping the structure
-// surgical to today's redesign.
-
-data class PHProvince(val code: String, val name: String)
-data class PHRegion(val code: String, val name: String, val provinces: List<PHProvince>)
-
-val PH_REGIONS = listOf(
-    PHRegion("ncr", "National Capital Region (NCR)", listOf(PHProvince("metro-manila", "Metro Manila"))),
-    PHRegion("car", "Cordillera Administrative Region (CAR)", listOf(
-        PHProvince("abra", "Abra"), PHProvince("apayao", "Apayao"), PHProvince("benguet", "Benguet"),
-        PHProvince("ifugao", "Ifugao"), PHProvince("kalinga", "Kalinga"), PHProvince("mountain-province", "Mountain Province"),
-    )),
-    PHRegion("region-1", "Region I (Ilocos Region)", listOf(
-        PHProvince("ilocos-norte", "Ilocos Norte"), PHProvince("ilocos-sur", "Ilocos Sur"),
-        PHProvince("la-union", "La Union"), PHProvince("pangasinan", "Pangasinan"),
-    )),
-    PHRegion("region-2", "Region II (Cagayan Valley)", listOf(
-        PHProvince("batanes", "Batanes"), PHProvince("cagayan", "Cagayan"),
-        PHProvince("isabela", "Isabela"), PHProvince("nueva-vizcaya", "Nueva Vizcaya"), PHProvince("quirino", "Quirino"),
-    )),
-    PHRegion("region-3", "Region III (Central Luzon)", listOf(
-        PHProvince("aurora", "Aurora"), PHProvince("bataan", "Bataan"), PHProvince("bulacan", "Bulacan"),
-        PHProvince("nueva-ecija", "Nueva Ecija"), PHProvince("pampanga", "Pampanga"),
-        PHProvince("tarlac", "Tarlac"), PHProvince("zambales", "Zambales"),
-    )),
-    PHRegion("region-4a", "Region IV-A (CALABARZON)", listOf(
-        PHProvince("batangas", "Batangas"), PHProvince("cavite", "Cavite"),
-        PHProvince("laguna", "Laguna"), PHProvince("quezon", "Quezon"), PHProvince("rizal", "Rizal"),
-    )),
-    PHRegion("region-4b", "Region IV-B (MIMAROPA)", listOf(
-        PHProvince("marinduque", "Marinduque"), PHProvince("occidental-mindoro", "Occidental Mindoro"),
-        PHProvince("oriental-mindoro", "Oriental Mindoro"), PHProvince("palawan", "Palawan"), PHProvince("romblon", "Romblon"),
-    )),
-    PHRegion("region-5", "Region V (Bicol Region)", listOf(
-        PHProvince("albay", "Albay"), PHProvince("camarines-norte", "Camarines Norte"),
-        PHProvince("camarines-sur", "Camarines Sur"), PHProvince("catanduanes", "Catanduanes"),
-        PHProvince("masbate", "Masbate"), PHProvince("sorsogon", "Sorsogon"),
-    )),
-    PHRegion("region-6", "Region VI (Western Visayas)", listOf(
-        PHProvince("aklan", "Aklan"), PHProvince("antique", "Antique"), PHProvince("capiz", "Capiz"),
-        PHProvince("guimaras", "Guimaras"), PHProvince("iloilo", "Iloilo"), PHProvince("negros-occidental", "Negros Occidental"),
-    )),
-    PHRegion("region-7", "Region VII (Central Visayas)", listOf(
-        PHProvince("bohol", "Bohol"), PHProvince("cebu", "Cebu"),
-        PHProvince("negros-oriental", "Negros Oriental"), PHProvince("siquijor", "Siquijor"),
-    )),
-    PHRegion("region-8", "Region VIII (Eastern Visayas)", listOf(
-        PHProvince("biliran", "Biliran"), PHProvince("leyte", "Leyte"), PHProvince("northern-samar", "Northern Samar"),
-        PHProvince("samar", "Samar"), PHProvince("southern-leyte", "Southern Leyte"), PHProvince("eastern-samar", "Eastern Samar"),
-    )),
-    PHRegion("region-9", "Region IX (Zamboanga Peninsula)", listOf(
-        PHProvince("zamboanga-del-norte", "Zamboanga del Norte"),
-        PHProvince("zamboanga-del-sur", "Zamboanga del Sur"),
-        PHProvince("zamboanga-sibugay", "Zamboanga Sibugay"),
-    )),
-    PHRegion("region-10", "Region X (Northern Mindanao)", listOf(
-        PHProvince("bukidnon", "Bukidnon"), PHProvince("camiguin", "Camiguin"),
-        PHProvince("lanao-del-norte", "Lanao del Norte"), PHProvince("misamis-occidental", "Misamis Occidental"),
-        PHProvince("misamis-oriental", "Misamis Oriental"),
-    )),
-    PHRegion("region-11", "Region XI (Davao Region)", listOf(
-        PHProvince("davao-de-oro", "Davao de Oro"), PHProvince("davao-del-norte", "Davao del Norte"),
-        PHProvince("davao-del-sur", "Davao del Sur"), PHProvince("davao-occidental", "Davao Occidental"),
-        PHProvince("davao-oriental", "Davao Oriental"),
-    )),
-    PHRegion("region-12", "Region XII (SOCCSKSARGEN)", listOf(
-        PHProvince("cotabato", "Cotabato"), PHProvince("sarangani", "Sarangani"),
-        PHProvince("south-cotabato", "South Cotabato"), PHProvince("sultan-kudarat", "Sultan Kudarat"),
-    )),
-    PHRegion("region-13", "Region XIII (Caraga)", listOf(
-        PHProvince("agusan-del-norte", "Agusan del Norte"), PHProvince("agusan-del-sur", "Agusan del Sur"),
-        PHProvince("dinagat-islands", "Dinagat Islands"), PHProvince("surigao-del-norte", "Surigao del Norte"),
-        PHProvince("surigao-del-sur", "Surigao del Sur"),
-    )),
-    PHRegion("barmm", "Bangsamoro Autonomous Region in Muslim Mindanao (BARMM)", listOf(
-        PHProvince("basilan", "Basilan"), PHProvince("lanao-del-sur", "Lanao del Sur"),
-        PHProvince("maguindanao-del-norte", "Maguindanao del Norte"), PHProvince("maguindanao-del-sur", "Maguindanao del Sur"),
-        PHProvince("sulu", "Sulu"), PHProvince("tawi-tawi", "Tawi-Tawi"),
-    )),
-)
+// PH regions/provinces come from the backend (`GET /api/v1/regions`), not from
+// this file. A hardcoded 75-line copy lived here until 2026-08-16 while the
+// website carried a third copy of its own, so a region added backend-side
+// reached neither client. The list arrives via PhotographerDashboardViewModel
+// .regions as List<RegionDto> — see that DTO for the wire shape.
 
 // ─── Platform + payout constants (website parity) ────────────────────────────
 
@@ -279,6 +204,7 @@ fun PhotographerSettingsScreen(
     val brandSettings by viewModel.brandSettings.collectAsState()
     val payoutAccounts by viewModel.payoutAccounts.collectAsState()
     val socials by viewModel.socials.collectAsState()
+    val regions by viewModel.regions.collectAsState()
     val isSaving by viewModel.isSavingSettings.collectAsState()
     val actionMessage by viewModel.settingsActionState.collectAsState()
 
@@ -429,6 +355,7 @@ fun PhotographerSettingsScreen(
         item("region") {
             HairlineDivider()
             RegionSlab(
+                regions = regions,
                 regionCode = regionCode,
                 provinceCode = provinceCode,
                 onRegionChange = {
@@ -819,12 +746,13 @@ private fun HandleSlab(value: String, onChange: (String) -> Unit) {
 
 @Composable
 private fun RegionSlab(
+    regions: List<RegionDto>,
     regionCode: String,
     provinceCode: String,
     onRegionChange: (String) -> Unit,
     onProvinceChange: (String) -> Unit,
 ) {
-    val selectedRegion = PH_REGIONS.firstOrNull { it.code == regionCode }
+    val selectedRegion = regions.firstOrNull { it.code == regionCode }
     val selectedProvince = selectedRegion?.provinces?.firstOrNull { it.code == provinceCode }
     var regionMenuExpanded by remember { mutableStateOf(false) }
     var provinceMenuExpanded by remember { mutableStateOf(false) }
@@ -836,12 +764,15 @@ private fun RegionSlab(
         DropdownField(
             label = "Region",
             valueLabel = selectedRegion?.name.orEmpty(),
-            placeholder = "Pick a region",
+            // The saved code can't resolve to a name until the list arrives,
+            // so say it's loading rather than "Pick a region" — which would
+            // read as "nothing is set" on a photographer who has set one.
+            placeholder = if (regions.isEmpty()) "Loading regions…" else "Pick a region",
             expanded = regionMenuExpanded,
             onExpand = { regionMenuExpanded = true },
             onCollapse = { regionMenuExpanded = false },
         ) {
-            PH_REGIONS.forEach { region ->
+            regions.forEach { region ->
                 DropdownMenuItem(
                     text = { Text(region.name, color = Ink, style = Typography.bodyMedium) },
                     onClick = {

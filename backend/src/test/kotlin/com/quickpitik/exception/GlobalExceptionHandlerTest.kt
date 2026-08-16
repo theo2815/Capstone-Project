@@ -3,9 +3,11 @@ package com.quickpitik.exception
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.service.ai.AiApiException
 import org.junit.jupiter.api.Test
+import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.mock.http.MockHttpInputMessage
+import org.springframework.web.servlet.resource.NoResourceFoundException
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 
@@ -107,5 +109,31 @@ class GlobalExceptionHandlerTest {
 
         val outage = AiApiException(HttpStatus.SERVICE_UNAVAILABLE, "ImageValidationError", "boom")
         assertEquals(ErrorCodes.AI_API_UNAVAILABLE, handler.handleAiApi(outage).body?.errors?.first()?.code)
+    }
+
+    // An unmatched path used to fall through to the catch-all and answer 500
+    // INTERNAL_ERROR, so a client typo looked like a server fault. Found
+    // 2026-08-15 by requesting `/photos/upload` (the real path is `/photos`).
+    @Test
+    fun `an unmatched route is a 404, not a 500`() {
+        val response = handler.handleNoResource(
+            NoResourceFoundException(HttpMethod.GET, "/api/v1/photos/upload"),
+        )
+
+        assertEquals(HttpStatus.NOT_FOUND, response.statusCode)
+        assertEquals(ErrorCodes.NOT_FOUND, response.body?.errors?.first()?.code)
+    }
+
+    @Test
+    fun `the unmatched-route envelope does not echo the requested path`() {
+        // The path is attacker-controlled; reflecting it invites probing and
+        // response-splitting noise in whatever renders the message.
+        val response = handler.handleNoResource(
+            NoResourceFoundException(HttpMethod.GET, "/api/v1/<script>alert(1)</script>"),
+        )
+
+        val message = response.body?.errors?.first()?.message
+        assertEquals("Resource not found", message)
+        assertFalse(message!!.contains("script"))
     }
 }

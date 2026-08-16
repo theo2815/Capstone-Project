@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ROUTES } from "@/lib/constants";
 import { api } from "@/lib/api";
-import { splitApiFieldErrors, validatePassword } from "@/lib/auth-validation";
+import { splitApiFieldErrors, validateNewPassword } from "@/lib/auth-validation";
 import { FieldError } from "@/components/ui/field-error";
 
 type Status = "request" | "sent";
@@ -29,7 +29,7 @@ export function ResetPasswordForm() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    const passErr = validatePassword(password);
+    const passErr = validateNewPassword(password);
     const confirmErr = !confirmPassword
       ? "Please confirm your new password."
       : password !== confirmPassword

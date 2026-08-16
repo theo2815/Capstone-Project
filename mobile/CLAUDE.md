@@ -2,7 +2,7 @@
 
 **Status:** MVVM Architecture, Room Local SQLite Caching, Retrofit Network Syncing, Session Management, DSLR Background Uploads, Mobile Marketplace Flow, and Runner Profile, Selfie Library, & Account Settings **100% Operational & Compiled.**
 
-> **Standing directive for all mobile work → read [Build Mandate](#-build-mandate--website-parity-protocol-read-first) FIRST.** Replicate the exact website flows (runner + photographer) and connect to the already-working backend. Do not change the backend or website. Tether auto-upload ships last.
+> **Standing directive for all mobile work → read [Build Mandate](#-build-mandate--website-parity-protocol-read-first) FIRST.** Replicate the exact website flows (runner + photographer) and connect to the already-working backend. Do not change the backend or website *on mobile's own initiative* — see rule 2 for the one carve-out. Tether auto-upload ships last.
 
 ---
 
@@ -16,6 +16,16 @@ This is the standing directive for every mobile task. It **overrides** any defau
 
 1. **Replicate the website flow exactly — both roles.** Every runner and photographer surface in `website/` must have a faithful mobile equivalent: same steps, same states, same order of actions, same validation rules, same intent of copy. The source of truth for "what the flow is" = the website (`website/src/app/`, `website/src/components/`) and the backend contract it calls.
 2. **Backend + website are FROZEN — connect, don't change.** The Spring Boot backend and the Next.js website already work. Mobile only wires Retrofit to **existing** endpoints. **Never edit the backend or the website to make mobile easier.** If mobile needs something the backend doesn't already expose (a missing field, a missing endpoint, a shape mismatch), **STOP and report the exact gap to the user.** Do not invent a workaround, a mock, a local-only field, or a new feature flag — and do not modify the backend yourself.
+
+   **Carve-out — user-directed cross-module reconciliation (added 2026-08-16).** The freeze binds *mobile's own initiative*. It does **not** bind a session the user has explicitly scoped as a cross-module reconciliation across backend + website + mobile. In that mode all three are in scope and edits may land in any of them.
+
+   The distinction that matters:
+   - ❌ Still forbidden: mobile hits a gap mid-parity-task and patches the backend to unblock itself. That is what rule 2 exists to stop. Stop and report, as before.
+   - ✅ Permitted: the user asks for the three modules to be reconciled, a divergence is found, and the fix is applied wherever it actually belongs — including backend or website.
+
+   Two conditions hold even inside the carve-out: the user must have scoped the session that way (an agent may not declare it for itself), and a change spanning modules updates the integration docs in the same commit, per root `CLAUDE.md` § Cross-module changes.
+
+   Rationale: the freeze was written while mobile was chasing parity and the other two were ahead. Mobile has since reached parity, so the remaining drift is *mutual* — some of it only fixable backend- or website-side. Left unamended, this rule would have the next mobile session revert reconciliation work as a mandate violation.
 3. **Parity is priority #1.** Build runner + photographer website-flow parity before any net-new, mobile-only capability. `/admin/*` is OUT of scope (web-only ops console). `/onboarding` is N/A (role is chosen at register).
 4. **The USB-C tethered-camera auto-upload is the FINAL milestone — build it LAST.** The photographer MVP — connect a camera over USB-C, auto-upload every shot to the backend, and have it appear in **both** the mobile app and the website — is deferred until website-flow parity (rules 1–3) is complete. Do not start it early. It is the last thing built, not the first.
 
@@ -24,7 +34,7 @@ This is the standing directive for every mobile task. It **overrides** any defau
 1. **Find the website flow.** Read the matching `website/src/app/...` page + its components and trace every step, state, and API call.
 2. **Find the backend contract.** Read the controller + DTOs the website calls. Match field names and request/response shapes **exactly** in the mobile DTOs (the envelope is `ApiResponseEnvelope<T>`).
 3. **Replicate in Compose** following the existing mobile MVVM layering: DTO → `QuickPitikApi` → Repository (contract + impl) → ViewModel (StateFlow + sealed UI-state) → Screen. Reuse the existing mobile design tokens (`com.quickpitik.mobile.ui.theme.*` — Bone / Ink / Fresh / Slate / Line / etc.); match the app's current look — **do not introduce a new design system.** Functional-first; polish is a later pass.
-4. **Confirm the boundary held.** No backend or website edits. If a gap forced a stop, it was *reported to the user*, not patched locally.
+4. **Confirm the boundary held.** No backend or website edits. If a gap forced a stop, it was *reported to the user*, not patched locally. (In a user-scoped cross-module reconciliation session, rule 2's carve-out applies instead — the boundary is the session's scope, not the module's.)
 5. **Compile-check** with `.\gradlew.bat compileDebugKotlin` before declaring a task done. Runtime verification needs a device/emulator — if you could not actually run it, **say so explicitly**; a clean compile is necessary but not sufficient.
 
 ### For sub-agents (IMPORTANT)

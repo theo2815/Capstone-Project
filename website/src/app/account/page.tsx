@@ -31,7 +31,7 @@ import {
   PASSWORD_MIN,
   validateEmail,
   validateName,
-  validatePassword,
+  validateNewPassword,
 } from "@/lib/auth-validation";
 import { ROUTES } from "@/lib/constants";
 import type { User } from "@/types/user";
@@ -386,7 +386,7 @@ function PasswordSlab({ number }: { number: string }) {
     e.preventDefault();
     const nextErrors: PasswordErrors = {
       current: current ? null : "Current password is required.",
-      next: validatePassword(next),
+      next: validateNewPassword(next),
       confirm: !confirm
         ? "Confirm the new password."
         : next && next !== confirm

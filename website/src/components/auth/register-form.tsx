@@ -19,7 +19,7 @@ import {
   splitApiFieldErrors,
   validateEmail,
   validateName,
-  validatePassword,
+  validateNewPassword,
 } from "@/lib/auth-validation";
 
 interface RoleOption {
@@ -90,7 +90,7 @@ export function RegisterForm() {
     const next: FieldErrors = {
       name: validateName(name),
       email: validateEmail(email),
-      password: validatePassword(password),
+      password: validateNewPassword(password),
     };
     setErrors(next);
     setSubmitError(null);

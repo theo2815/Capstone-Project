@@ -15,7 +15,9 @@ data class RegisterRequest(
     val email: String,
 
     @field:NotBlank
-    @field:Size(min = 8, max = 100, message = "Password must be at least 8 characters")
+    // 72 = bcrypt's truncation point; see PasswordValidator.MAX_BYTES, which
+    // enforces the same ceiling in bytes for multi-byte input.
+    @field:Size(min = 8, max = 72, message = "Password must be 8-72 characters")
     val password: String,
 
     val role: Role,

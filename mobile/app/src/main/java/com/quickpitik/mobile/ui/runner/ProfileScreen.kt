@@ -518,14 +518,23 @@ fun SelfieCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Quality Score Badge — slate scrim, not pure black
+                // Quality badge — slate scrim, not pure black. Reads
+                // qualityTestStatus, not qualityScore: with AI_API_ENABLED=false
+                // the gate is skipped and every score is 0, so the old
+                // "Q 0%" label was meaningless on every tile. "Not checked"
+                // says the true thing — this selfie has never been tested.
+                val passed = selfie.qualityTestStatus == "passed"
                 Box(
                     modifier = Modifier
                         .background(Ink.copy(alpha = 0.7f), BadgeShape)
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = "Q ${(selfie.qualityScore * 100).toInt()}%",
+                        text = if (passed) {
+                            "Q ${(selfie.qualityScore * 100).toInt()}%"
+                        } else {
+                            "Not checked"
+                        },
                         style = Typography.labelSmall,
                         color = Color.White,
                     )

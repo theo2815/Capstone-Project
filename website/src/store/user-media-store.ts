@@ -18,7 +18,16 @@ export interface SelfieRef {
   dataUrl: string;
   uploadedAt: string;
   isPrimary: boolean;
-  qualityScore: number; // 0–1, mocked client-side until ai-api wires up
+  // 0–1, and 0 for EVERY selfie while the backend runs AI_API_ENABLED=false —
+  // the quality gate is skipped, not failed. Read `qualityTestStatus` before
+  // treating this number as meaningful.
+  qualityScore: number;
+  // "untested" | "passed" (backend V26). "untested" = stored while ai-api was
+  // off, so it has never been checked and may not match once search goes live.
+  // "rejected" is unreachable: the gate throws before the row is saved, so a
+  // rejected selfie is never persisted — the FE reads that off the 4xx envelope
+  // at upload time instead. Optional so an older backend response still parses.
+  qualityTestStatus?: "untested" | "passed";
 }
 
 interface UserMediaState {

@@ -61,7 +61,6 @@ export function AdminPayoutRow({
   onHold,
   onMarkPaid,
 }: AdminPayoutRowProps) {
-  const weekEnd = addDays(cycle.weekOf, 6);
   const subjectLabel = cycle.brandName ?? cycle.photographerName;
 
   function handleArticleKeyDown(e: React.KeyboardEvent<HTMLElement>) {
@@ -108,8 +107,9 @@ export function AdminPayoutRow({
           <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-2 tnum">
             {cycle.id}
             <span className="text-slate-soft"> · </span>
-            {formatLongDate(cycle.weekOf, true)} →{" "}
-            {formatLongDate(weekEnd, true)}
+            {/* Request time, matching the photographer's own view — see the
+                note on PayoutSubtitle in payouts-queue.tsx. */}
+            {formatLongDate(cycle.submittedAt)}
             <span className="text-slate-soft"> · </span>
             {cycle.itemCount} {cycle.itemCount === 1 ? "sale" : "sales"}
           </p>
@@ -222,10 +222,4 @@ function RowActions({
       )}
     </div>
   );
-}
-
-function addDays(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
 }

@@ -32,6 +32,14 @@ data class RefreshRequest(
     val refreshToken: String
 )
 
+// Body for POST /auth/logout. Mirrors backend dto/auth/LogoutRequest, whose
+// field is nullable — the endpoint is a no-op rather than an error when the
+// token is absent. Revoking server-side is what stops a signed-out phone's
+// refresh token from staying usable; the local session is cleared regardless.
+data class LogoutRequest(
+    val refreshToken: String?
+)
+
 // Body for POST /auth/forgot-password. Mirrors backend
 // dto/auth/ForgotPasswordRequest. The endpoint is anti-enumeration silent —
 // it answers with the same generic message whether or not the email exists,

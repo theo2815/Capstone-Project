@@ -210,8 +210,11 @@ export interface PhotographerPayout {
   id: string;
   /** @deprecated ISO Monday, an artifact of the scheduled-weekly model that
    *  the request-based flow replaced on 2026-05-19. There are no weekly cycles
-   *  any more, so "Week of {weekOf}" mislabels a payout. Still populated by the
-   *  BE because mobile reads it; render `requestedAt` instead. */
+   *  any more, so "Week of {weekOf}" mislabels a payout — render `requestedAt`.
+   *
+   *  The BE keeps populating it for THIS app's admin payout queue, which is the
+   *  last consumer. The previous note here blamed mobile; that was wrong —
+   *  mobile parses the field but never renders it (verified 2026-08-16). */
   weekOf: string;
   /** ISO timestamp of when the photographer asked to be paid. The honest label
    *  for a request-based payout. */

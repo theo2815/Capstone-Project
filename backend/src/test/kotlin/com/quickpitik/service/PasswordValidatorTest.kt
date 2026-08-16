@@ -55,4 +55,37 @@ class PasswordValidatorTest {
 
         assertEquals("newPassword", ex.field)
     }
+
+    // bcrypt hashes at most 72 bytes and discards the rest, so without a cap
+    // two different long passwords hash the same and both authenticate.
+    // Added 2026-08-16 as one leg of a three-module change — the website and
+    // mobile forms reject over-long input first (validateNewPassword).
+
+    @Test
+    fun `a password at the bcrypt limit still passes`() {
+        PasswordValidator.validate("a".repeat(71) + "z", "newPassword")
+    }
+
+    @Test
+    fun `a password past the bcrypt limit is rejected`() {
+        val ex = assertFailsWith<ValidationException> {
+            PasswordValidator.validate("a".repeat(72) + "z", "newPassword")
+        }
+
+        assertEquals(ErrorCodes.WEAK_PASSWORD, ex.code)
+        assertEquals("newPassword", ex.field)
+    }
+
+    @Test
+    fun `the limit is counted in bytes, not characters`() {
+        // Two alternating two-byte characters, so neither the repeated-character
+        // nor the sequential-run rule fires and the length rule is what's under
+        // test. 40 chars = 80 bytes: a naive character count would allow it,
+        // but bcrypt would still truncate.
+        assertFailsWith<ValidationException> {
+            PasswordValidator.validate("éà".repeat(20), "newPassword")
+        }
+        // 36 chars = 72 bytes exactly, which fits.
+        PasswordValidator.validate("éà".repeat(18), "newPassword")
+    }
 }

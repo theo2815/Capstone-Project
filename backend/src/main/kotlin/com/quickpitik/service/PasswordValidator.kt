@@ -16,12 +16,37 @@ import com.quickpitik.exception.ValidationException
  * strings. Everything the client forms accept today still passes unless it is
  * genuinely guessable.
  *
+ * The one exception is [MAX_BYTES], added 2026-08-16 — and it *was* shipped as
+ * the coordinated three-way release this doc warned would be needed, so both
+ * clients reject an over-long password before it ever reaches here.
+ *
  * Stateless object rather than an injected bean — same shape as
  * `service/image/ExifOrientation.kt`. There is nothing to inject.
  */
 object PasswordValidator {
 
+    /**
+     * BCrypt hashes at most 72 bytes and silently discards the rest, so without
+     * this cap two visually different long passwords produce the same hash and
+     * both succeed at login. `@Size(max = 128)` on the DTOs sits above the
+     * truncation point and so never caught it.
+     *
+     * Counted in UTF-8 bytes because that is bcrypt's actual unit — ASCII trips
+     * at 72 characters, multi-byte input sooner.
+     *
+     * Only reachable from register / reset / change, which is what makes this
+     * safe to add to a live system: login never calls this validator, so an
+     * account created with a longer password still authenticates exactly as
+     * before (bcrypt truncates the submitted string identically). Clients gate
+     * the same rule first — website `validateNewPassword`, mobile
+     * `validateNewPassword`.
+     */
+    private const val MAX_BYTES = 72
+
     fun validate(password: String, field: String) {
+        if (password.toByteArray(Charsets.UTF_8).size > MAX_BYTES) {
+            reject(field, "Password is limited to $MAX_BYTES characters.")
+        }
         val normalized = password.lowercase()
         if (normalized in COMMON_PASSWORDS) {
             reject(field, "That password is too common — pick something harder to guess.")

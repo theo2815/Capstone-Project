@@ -665,13 +665,18 @@ function PayoutSlab({
   );
 }
 
+// `submittedAt` is the photographer's request time (BE maps it from
+// `cycle.createdAt`, the same source as the photographer-side `requestedAt`),
+// so admin and photographer now read the same date for the same payout. The
+// old `weekOf → +6d` range described scheduled weekly cycles, which the
+// request-based flow replaced on 2026-05-19 — it was the last live consumer of
+// the deprecated `weekOf`. No `dateOnly` flag: this is a full ISO timestamp.
 function PayoutSubtitle({ cycle }: { cycle: AdminPayoutCycle }) {
-  const weekEnd = addDays(cycle.weekOf, 6);
   return (
     <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
       {cycle.handle ? `@${cycle.handle}` : "—"}
       <span className="text-slate-soft"> · </span>
-      {formatLongDate(cycle.weekOf, true)} → {formatLongDate(weekEnd, true)}
+      {formatLongDate(cycle.submittedAt)}
       <span className="text-slate-soft"> · </span>
       {formatPrice(cycle.amount)}
     </p>
@@ -873,10 +878,4 @@ function FieldRow({
       </dd>
     </div>
   );
-}
-
-function addDays(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
 }

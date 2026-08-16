@@ -1,10 +1,16 @@
-// Philippine regions + provinces — frontend mock.
+// Philippine regions + provinces — types and lookups.
 //
-// TODO(backend): replace this module with `GET /api/regions` returning the
-// same shape. Backend owns the canonical list and any future updates (e.g.,
-// new provinces, renames). The frontend should never edit this list — it
-// only consumes what the API returns. Keep the type signatures stable so
-// the swap is a one-line import change.
+// The DATA lives in the backend (`GET /api/v1/regions`, `RegionsService`), not
+// here. This module used to carry a hardcoded ~220-line copy marked
+// `TODO(backend)`; the mobile app carried a third copy of its own, so the same
+// list existed in three places and a backend change reached neither client.
+// Resolved 2026-08-16 — read the list with `useRegions()` and pass it to the
+// lookups below.
+//
+// The types stay here because they describe the wire shape (identical to
+// backend `RegionDto`/`ProvinceDto` and to the `ApiRegion` alias in
+// `api-photographer-settings.ts`). `REGION_GROUP_LABEL` stays because it is UI
+// copy, not data — the backend sends `group` as a bare key.
 
 export type RegionGroup = "luzon" | "visayas" | "mindanao";
 
@@ -26,254 +32,42 @@ export interface PHRegion {
   provinces: PHProvince[];
 }
 
-export const PH_REGIONS: ReadonlyArray<PHRegion> = [
-  // ─── Luzon ─────────────────────────────────────────────────────────────
-  {
-    code: "ncr",
-    name: "National Capital Region (NCR)",
-    shortName: "NCR",
-    group: "luzon",
-    provinces: [{ code: "metro-manila", name: "Metro Manila" }],
-  },
-  {
-    code: "car",
-    name: "Cordillera Administrative Region (CAR)",
-    shortName: "CAR",
-    group: "luzon",
-    provinces: [
-      { code: "abra", name: "Abra" },
-      { code: "apayao", name: "Apayao" },
-      { code: "benguet", name: "Benguet" },
-      { code: "ifugao", name: "Ifugao" },
-      { code: "kalinga", name: "Kalinga" },
-      { code: "mountain-province", name: "Mountain Province" },
-    ],
-  },
-  {
-    code: "region-1",
-    name: "Region I (Ilocos Region)",
-    shortName: "Ilocos Region",
-    group: "luzon",
-    provinces: [
-      { code: "ilocos-norte", name: "Ilocos Norte" },
-      { code: "ilocos-sur", name: "Ilocos Sur" },
-      { code: "la-union", name: "La Union" },
-      { code: "pangasinan", name: "Pangasinan" },
-    ],
-  },
-  {
-    code: "region-2",
-    name: "Region II (Cagayan Valley)",
-    shortName: "Cagayan Valley",
-    group: "luzon",
-    provinces: [
-      { code: "batanes", name: "Batanes" },
-      { code: "cagayan", name: "Cagayan" },
-      { code: "isabela", name: "Isabela" },
-      { code: "nueva-vizcaya", name: "Nueva Vizcaya" },
-      { code: "quirino", name: "Quirino" },
-    ],
-  },
-  {
-    code: "region-3",
-    name: "Region III (Central Luzon)",
-    shortName: "Central Luzon",
-    group: "luzon",
-    provinces: [
-      { code: "aurora", name: "Aurora" },
-      { code: "bataan", name: "Bataan" },
-      { code: "bulacan", name: "Bulacan" },
-      { code: "nueva-ecija", name: "Nueva Ecija" },
-      { code: "pampanga", name: "Pampanga" },
-      { code: "tarlac", name: "Tarlac" },
-      { code: "zambales", name: "Zambales" },
-    ],
-  },
-  {
-    code: "region-4a",
-    name: "Region IV-A (CALABARZON)",
-    shortName: "CALABARZON",
-    group: "luzon",
-    provinces: [
-      { code: "batangas", name: "Batangas" },
-      { code: "cavite", name: "Cavite" },
-      { code: "laguna", name: "Laguna" },
-      { code: "quezon", name: "Quezon" },
-      { code: "rizal", name: "Rizal" },
-    ],
-  },
-  {
-    code: "region-4b",
-    name: "Region IV-B (MIMAROPA)",
-    shortName: "MIMAROPA",
-    group: "luzon",
-    provinces: [
-      { code: "marinduque", name: "Marinduque" },
-      { code: "occidental-mindoro", name: "Occidental Mindoro" },
-      { code: "oriental-mindoro", name: "Oriental Mindoro" },
-      { code: "palawan", name: "Palawan" },
-      { code: "romblon", name: "Romblon" },
-    ],
-  },
-  {
-    code: "region-5",
-    name: "Region V (Bicol Region)",
-    shortName: "Bicol Region",
-    group: "luzon",
-    provinces: [
-      { code: "albay", name: "Albay" },
-      { code: "camarines-norte", name: "Camarines Norte" },
-      { code: "camarines-sur", name: "Camarines Sur" },
-      { code: "catanduanes", name: "Catanduanes" },
-      { code: "masbate", name: "Masbate" },
-      { code: "sorsogon", name: "Sorsogon" },
-    ],
-  },
-
-  // ─── Visayas ───────────────────────────────────────────────────────────
-  {
-    code: "region-6",
-    name: "Region VI (Western Visayas)",
-    shortName: "Western Visayas",
-    group: "visayas",
-    provinces: [
-      { code: "aklan", name: "Aklan" },
-      { code: "antique", name: "Antique" },
-      { code: "capiz", name: "Capiz" },
-      { code: "guimaras", name: "Guimaras" },
-      { code: "iloilo", name: "Iloilo" },
-      { code: "negros-occidental", name: "Negros Occidental" },
-    ],
-  },
-  {
-    code: "region-7",
-    name: "Region VII (Central Visayas)",
-    shortName: "Central Visayas",
-    group: "visayas",
-    provinces: [
-      { code: "bohol", name: "Bohol" },
-      { code: "cebu", name: "Cebu" },
-      { code: "negros-oriental", name: "Negros Oriental" },
-      { code: "siquijor", name: "Siquijor" },
-    ],
-  },
-  {
-    code: "region-8",
-    name: "Region VIII (Eastern Visayas)",
-    shortName: "Eastern Visayas",
-    group: "visayas",
-    provinces: [
-      { code: "biliran", name: "Biliran" },
-      { code: "leyte", name: "Leyte" },
-      { code: "northern-samar", name: "Northern Samar" },
-      { code: "samar", name: "Samar" },
-      { code: "southern-leyte", name: "Southern Leyte" },
-      { code: "eastern-samar", name: "Eastern Samar" },
-    ],
-  },
-
-  // ─── Mindanao ──────────────────────────────────────────────────────────
-  {
-    code: "region-9",
-    name: "Region IX (Zamboanga Peninsula)",
-    shortName: "Zamboanga Peninsula",
-    group: "mindanao",
-    provinces: [
-      { code: "zamboanga-del-norte", name: "Zamboanga del Norte" },
-      { code: "zamboanga-del-sur", name: "Zamboanga del Sur" },
-      { code: "zamboanga-sibugay", name: "Zamboanga Sibugay" },
-    ],
-  },
-  {
-    code: "region-10",
-    name: "Region X (Northern Mindanao)",
-    shortName: "Northern Mindanao",
-    group: "mindanao",
-    provinces: [
-      { code: "bukidnon", name: "Bukidnon" },
-      { code: "camiguin", name: "Camiguin" },
-      { code: "lanao-del-norte", name: "Lanao del Norte" },
-      { code: "misamis-occidental", name: "Misamis Occidental" },
-      { code: "misamis-oriental", name: "Misamis Oriental" },
-    ],
-  },
-  {
-    code: "region-11",
-    name: "Region XI (Davao Region)",
-    shortName: "Davao Region",
-    group: "mindanao",
-    provinces: [
-      { code: "davao-de-oro", name: "Davao de Oro" },
-      { code: "davao-del-norte", name: "Davao del Norte" },
-      { code: "davao-del-sur", name: "Davao del Sur" },
-      { code: "davao-occidental", name: "Davao Occidental" },
-      { code: "davao-oriental", name: "Davao Oriental" },
-    ],
-  },
-  {
-    code: "region-12",
-    name: "Region XII (SOCCSKSARGEN)",
-    shortName: "SOCCSKSARGEN",
-    group: "mindanao",
-    provinces: [
-      { code: "cotabato", name: "Cotabato" },
-      { code: "sarangani", name: "Sarangani" },
-      { code: "south-cotabato", name: "South Cotabato" },
-      { code: "sultan-kudarat", name: "Sultan Kudarat" },
-    ],
-  },
-  {
-    code: "region-13",
-    name: "Region XIII (Caraga)",
-    shortName: "Caraga",
-    group: "mindanao",
-    provinces: [
-      { code: "agusan-del-norte", name: "Agusan del Norte" },
-      { code: "agusan-del-sur", name: "Agusan del Sur" },
-      { code: "dinagat-islands", name: "Dinagat Islands" },
-      { code: "surigao-del-norte", name: "Surigao del Norte" },
-      { code: "surigao-del-sur", name: "Surigao del Sur" },
-    ],
-  },
-  {
-    code: "barmm",
-    name: "Bangsamoro Autonomous Region in Muslim Mindanao (BARMM)",
-    shortName: "BARMM",
-    group: "mindanao",
-    provinces: [
-      { code: "basilan", name: "Basilan" },
-      { code: "lanao-del-sur", name: "Lanao del Sur" },
-      { code: "maguindanao-del-norte", name: "Maguindanao del Norte" },
-      { code: "maguindanao-del-sur", name: "Maguindanao del Sur" },
-      { code: "sulu", name: "Sulu" },
-      { code: "tawi-tawi", name: "Tawi-Tawi" },
-    ],
-  },
-];
-
 export const REGION_GROUP_LABEL: Record<RegionGroup, string> = {
   luzon: "Luzon",
   visayas: "Visayas",
   mindanao: "Mindanao",
 };
 
-export function getRegion(code: string): PHRegion | undefined {
-  return PH_REGIONS.find((r) => r.code === code);
+// All three lookups take the region list explicitly rather than closing over a
+// module-level array, so the caller decides where the data came from. Callers
+// pass `useRegions().regions` — the backend list. Returning undefined/null
+// while that list is still loading is the same "unknown code" path these
+// helpers already had, so callers need no new branch.
+
+export function getRegion(
+  regions: readonly PHRegion[],
+  code: string,
+): PHRegion | undefined {
+  return regions.find((r) => r.code === code);
 }
 
 export function getProvince(
+  regions: readonly PHRegion[],
   regionCode: string,
   provinceCode: string,
 ): PHProvince | undefined {
-  return getRegion(regionCode)?.provinces.find((p) => p.code === provinceCode);
+  return getRegion(regions, regionCode)?.provinces.find(
+    (p) => p.code === provinceCode,
+  );
 }
 
 /** "Cebu · Region VII" — short two-tier label for compact display. */
 export function formatRegionLabel(
+  regions: readonly PHRegion[],
   regionCode: string,
   provinceCode: string,
 ): string | null {
-  const region = getRegion(regionCode);
+  const region = getRegion(regions, regionCode);
   const province = region?.provinces.find((p) => p.code === provinceCode);
   if (!region || !province) return null;
   return `${province.name} · ${region.shortName}`;

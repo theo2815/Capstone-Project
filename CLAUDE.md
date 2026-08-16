@@ -21,12 +21,14 @@ QuickPitik delivers: real-time camera tethering, desktop-only AI blur culling (B
 
 ## Monorepo Layout
 
+Status column last reconciled against code **2026-08-16**. The vault's `VAULT-INDEX.md` is the live dashboard; this table is the orientation summary.
+
 | Product | Stack | Status | Module CLAUDE.md |
 |---------|-------|--------|------------------|
-| `ai-api/` | FastAPI + Celery (Python 3.11+) | Phases 1–6 complete; hardening in progress | `ai-api/CLAUDE.md` |
-| `backend/` | Spring Boot (Kotlin) | Phase A auth complete (2026-05-05); Phase B–G deferred until website lock | `backend/CLAUDE.md` |
-| `website/` | Next.js on Vercel | UI scaffolding in progress | `website/CLAUDE.md` (stub) |
-| `mobile/` | Kotlin (Android first) | Not started | `mobile/CLAUDE.md` (stub) |
+| `ai-api/` | FastAPI + Celery (Python 3.11+) | Phases 1–6 complete; hardening in progress. Suite 304/304 | `ai-api/CLAUDE.md` |
+| `backend/` | Spring Boot (Kotlin) | **All phases shipped + hardened.** 29 controllers; all four roles locked. Suite 197/197 | `backend/CLAUDE.md` |
+| `website/` | Next.js on Vercel | **All four roles feature-complete** and wired to the live backend (no mock fallback) | `website/CLAUDE.md` |
+| `mobile/` | Kotlin (Android first) | **Runner + photographer parity reached.** Compile + APK green; UI runtime largely unverified. Hardware verification is what remains | `mobile/CLAUDE.md` |
 | `desktop/` | Electron | Already built (lives at `C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos`) | `desktop/CLAUDE.md` (stub) |
 
 Repository-level docs are in `docs/`:

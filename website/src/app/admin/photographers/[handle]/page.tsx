@@ -25,6 +25,7 @@ import type { CoverSource } from "@/lib/photographer-registry";
 import type { PhotographerSettingsSnapshot } from "@/lib/admin-user-registry";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { formatRegionLabel } from "@/lib/ph-regions";
+import { useRegions } from "@/hooks/use-regions";
 
 const COMPLETENESS_FIELDS: ReadonlyArray<{
   key: keyof PhotographerSettingsSnapshot;
@@ -373,8 +374,9 @@ function AboutSlab({
   email: string;
   brandColor?: EffectivePhotographerSettings["brandColor"];
 }) {
+  const { regions } = useRegions();
   const resolvedRegion = regionCodes
-    ? formatRegionLabel(regionCodes.regionCode, regionCodes.provinceCode)
+    ? formatRegionLabel(regions, regionCodes.regionCode, regionCodes.provinceCode)
     : null;
   const regionLine = resolvedRegion ?? region ?? "—";
   return (
