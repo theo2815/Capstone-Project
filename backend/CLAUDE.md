@@ -116,6 +116,9 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `ADMIN_BOOTSTRAP_NAME` | `QuickPitik Admin` | — |
 | `SERVER_PORT` | `8080` | — |
 | `AI_API_ENABLED` | `false` | Set `true` when ai-api is wired and you want face/bib indexing on upload + selfie quality gate + runner face-search. When `false`, every server-side ai-api call is skipped — photographer upload + selfie upload still work, face-search returns 503. See vault `backend/decisions.md` 2026-05-18 master-switch ADR. |
+| `AUTH_LOCKOUT_MAX_ATTEMPTS` | `5` | Consecutive failed logins before an account locks (V29). Raise it if a demo needs more headroom — there is no separate on/off switch. |
+| `AUTH_LOCKOUT_DURATION` | `PT15M` | How long a lock holds. Auto-clears; a successful login also resets it. Unlike the rate-limit buckets this is **always on**, independent of `RATE_LIMIT_ENABLED`. |
+| `API_DOCS_ENABLED` | `true` | Serves `/swagger-ui.html` + `/v3/api-docs`. **Set `false` in production** — a full route inventory is free reconnaissance. |
 
 `BootstrapAdminRunner` creates the admin on first boot if no `ADMIN` exists yet. Subsequent boots are no-ops.
 
@@ -172,9 +175,20 @@ All responses come wrapped in `{ success, data, errors? }`. Match the website `A
 | `/api/v1/auth/refresh` | POST | Public | `{ refreshToken }` |
 | `/api/v1/auth/forgot-password` | POST | Public | `{ email }` |
 | `/api/v1/auth/reset-password` | POST | Public | `{ token, newPassword }` |
+| `/api/v1/auth/verify-email` | POST | Public | `{ token }` |
+| `/api/v1/auth/resend-verification` | POST | Bearer JWT | — |
 | `/api/v1/auth/me` | GET | Bearer JWT | — |
 
-`AuthResponse`: `{ accessToken, refreshToken, user: { id, email, name, role, avatarUrl?, createdAt } }`.
+`AuthResponse`: `{ accessToken, refreshToken, user: { id, email, name, role, avatarUrl?, emailVerified, createdAt } }`.
+
+**Email verification is advisory** (V30). Registering mails a link (`AFTER_COMMIT`, `@Async`) and
+stamps `users.email_verified_at` when redeemed, but **nothing gates on it** — both clients sign the
+user in the moment `/auth/register` returns, so enforcing it is a cross-module decision. In dev the
+link is logged as `[EMAIL STUB] verification for … — link: …` rather than sent.
+
+**Login can answer `429 ACCOUNT_LOCKED`** with `Retry-After` after `AUTH_LOCKOUT_MAX_ATTEMPTS`
+consecutive failures. To clear one by hand:
+`UPDATE users SET locked_until = NULL, failed_login_attempts = 0 WHERE email = '…';`
 
 Roles are UPPERCASE in JSON: `"ADMIN" | "PHOTOGRAPHER" | "RUNNER"`. `ADMIN` is not creatable via `/auth/register` — only via `BootstrapAdminRunner` on first boot, or admin-promotion endpoints (Phase G).
 
