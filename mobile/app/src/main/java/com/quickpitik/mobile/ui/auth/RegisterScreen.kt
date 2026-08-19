@@ -34,7 +34,10 @@ fun RegisterScreen(
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
+    var validationError by remember { mutableStateOf<String?>(null) }
     var isPhotographer by remember { mutableStateOf(false) }
 
     val authState by viewModel.authState.collectAsState()
@@ -274,7 +277,10 @@ fun RegisterScreen(
                     )
                     TextField(
                         value = password,
-                        onValueChange = { password = it },
+                        onValueChange = { 
+                            password = it 
+                            if (validationError != null) validationError = null
+                        },
                         enabled = authState !is AuthState.Loading,
                         placeholder = { Text("••••••••", color = SlateSoft) },
                         singleLine = true,
@@ -301,13 +307,54 @@ fun RegisterScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
+
+                // Re-enter Password Input
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "RE-ENTER PASSWORD",
+                        style = Typography.labelMedium,
+                        color = Slate
+                    )
+                    TextField(
+                        value = confirmPassword,
+                        onValueChange = { 
+                            confirmPassword = it 
+                            if (validationError != null) validationError = null
+                        },
+                        enabled = authState !is AuthState.Loading,
+                        placeholder = { Text("••••••••", color = SlateSoft) },
+                        singleLine = true,
+                        visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            Text(
+                                text = if (confirmPasswordVisible) "HIDE" else "SHOW",
+                                color = Slate,
+                                style = Typography.labelMedium,
+                                modifier = Modifier
+                                    .clickable { confirmPasswordVisible = !confirmPasswordVisible }
+                                    .padding(end = 12.dp)
+                            )
+                        },
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Fresh,
+                            unfocusedIndicatorColor = Line,
+                            focusedTextColor = Ink,
+                            unfocusedTextColor = InkSoft
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Dynamic Error Message Text
-            if (authState is AuthState.Error) {
+            // Dynamic Error Message Text (Client validation or Server Error)
+            val displayedError = validationError ?: (authState as? AuthState.Error)?.message
+            if (displayedError != null) {
                 Text(
-                    text = (authState as AuthState.Error).message,
+                    text = displayedError,
                     color = Color.Red,
                     style = Typography.bodyMedium,
                     modifier = Modifier.fillMaxWidth()
@@ -317,7 +364,20 @@ fun RegisterScreen(
 
             // CTA Button
             Button(
-                onClick = { viewModel.register(name.trim(), email.trim(), password, isPhotographer) },
+                onClick = { 
+                    when {
+                        password != confirmPassword -> {
+                            validationError = "Passwords do not match"
+                        }
+                        password.length < 8 -> {
+                            validationError = "Password must be at least 8 characters"
+                        }
+                        else -> {
+                            validationError = null
+                            viewModel.register(name.trim(), email.trim(), password, isPhotographer)
+                        }
+                    }
+                },
                 enabled = authState !is AuthState.Loading,
                 shape = RoundedCornerShape(percent = 100),
                 colors = ButtonDefaults.buttonColors(
