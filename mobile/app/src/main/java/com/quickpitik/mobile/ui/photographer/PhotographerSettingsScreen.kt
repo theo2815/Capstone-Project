@@ -491,7 +491,9 @@ fun PhotographerSettingsScreen(
 
 @Composable
 private fun HairlineDivider() {
-    Divider(thickness = 1.dp, color = Line)
+    Column(modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)) {
+        Divider(thickness = 1.dp, color = Line)
+    }
 }
 
 // ─── Slab: Verification ──────────────────────────────────────────────────────
