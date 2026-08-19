@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This is a modular AI API built with FastAPI (Python 3.11+) for computer vision tasks: **Blur Detection**, **Face Recognition**, and **Bib Number Recognition**. Optional C++ acceleration via pybind11.
+This is a modular AI API built with FastAPI (Python 3.11+) for computer vision tasks: **Blur Detection**, **Face Recognition**, and **Bib Number Recognition**. Optional C++ acceleration via pybind11 — dev-only: **no deployment image compiles the extension** (`.dockerignore` drops `*.pyd`; the Python fallbacks are the production path).
 
 All three ML pipelines are trained, integrated, and wired into the API:
 
@@ -82,7 +82,7 @@ except ImportError:
     _HAS_CPP = False
 ```
 
-Then branch on `_HAS_CPP`. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_quickpitik_cpp` (see `src/cpp/bindings.cpp`): `cosine_similarity`, `batch_cosine_topk`, `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports `TopKResult` and `BlurMetrics` result structs.
+Then branch on `_HAS_CPP`. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_quickpitik_cpp` (see `src/cpp/bindings.cpp`): `cosine_similarity`, `batch_cosine_topk`, `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports `TopKResult` and `BlurMetrics` result structs. Note (2026-08-14): `classify_preprocess` is deliberately **no longer called** — the classifier's C++ preprocess branch was removed so the anti-aliased Python path always applies; the live consumers are the blur-detector metrics and `batch_cosine_topk` in the face matcher, and only dev machines that built the extension ever hit them.
 
 ### Database Access
 
@@ -241,9 +241,11 @@ Pipeline: InsightFace (RetinaFace detection + ArcFace embedding, 512-dim) → pg
 - `GET  /api/v1/faces/persons` — Paginated list of enrolled persons (`offset`, `limit`, `event_id`)
 - `GET  /api/v1/faces/persons/{id}` — Fetch one person (tenant-isolated)
 - `DELETE /api/v1/faces/persons/{id}` — GDPR erasure — cascades to embeddings
-- `POST /api/v1/faces/search/batch` — Async batch; `operation=detect|search`
+- `POST /api/v1/faces/search/batch` — Async batch; `operation=detect|search` (`event_id` required when `operation=search`)
 - `POST /api/v1/faces/enroll/batch` — Async bulk enroll under one person (`event_id` required)
-- `POST /api/v1/faces/search/mega` — Async mega-batch
+- `POST /api/v1/faces/search/mega` — Async mega-batch (`event_id` required when `operation=search`)
+- `POST /api/v1/faces/enroll/mega` — Async mega enroll — one person per image, all faces, per-image `ref` echo (2026-06-02; feeds the Spring Boot batch drain)
+- `DELETE /api/v1/faces/persons?event_id=…` — Event-scoped bulk erasure (2026-06-02; backend event-delete cascade + orphan reaper)
 
 ### Bib Number Recognition
 

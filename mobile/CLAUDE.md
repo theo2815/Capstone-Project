@@ -168,10 +168,9 @@ graph TD
 
 ## 🎯 Next Steps for Development
 
-**Priority order is governed by the [Build Mandate](#-build-mandate--website-parity-protocol-read-first) — parity first, tether last.** The authoritative, always-current list lives in vault `mobile/tasks.md`. Summary:
+**Priority order is governed by the [Build Mandate](#-build-mandate--website-parity-protocol-read-first) — parity first, tether last.** The authoritative, always-current list lives in vault `mobile/tasks.md`. Summary (refreshed 2026-08-19):
 
-1. **Website-flow parity (priority #1):** finish replicating every remaining runner + photographer website surface (auth recovery screens, marketing/explainer pages, any settings/profile gaps) — exact flow, connect to existing backend only. `/admin/*` excluded.
-2. **Unit Test Room & WorkManager:** instrumented tests for `UploadRecord` inserts, `UploadQueueDao` queries, and `PhotoUploadWorker` sync.
-3. **FINAL milestone (build LAST):** USB-C tethered-camera auto-upload — auto-upload every shot to the backend, display in **both** mobile and website. Deferred until parity is complete (Build Mandate rule 4).
+1. **Emulator/device verification (in progress):** parity closed 2026-08-14 and the Room/WorkManager tests shipped (18/18, Robolectric — no device needed); current work is runtime verification — emulator login retest, photographer-byline device pass, foreground-service checks.
+2. **FINAL milestone:** USB-C tethered-camera auto-upload **runtime verification on the Canon R6** — the wiring is done (shutter watch on the Capture tab since 2026-08-14); what remains is the on-camera protocol in vault `_journal/2026-08-14-mobile-live-auto-upload-wiring`.
 
-> Done since the last revision (verified 2026-05-25): AI face-search trigger (live camera + stored-selfie), order refund flow, account parity, photographer public-profile + event-share pages. See vault `mobile/tasks.md`.
+> Done since the last revision: full website parity + WebSocket layer + session resilience (2026-08-14), runtime-settable backend URL + worker tests (2026-08-16), emulator base-URL fix + settings/signup polish (2026-08-19). See vault `mobile/tasks.md`.

@@ -21,15 +21,15 @@ QuickPitik delivers: real-time camera tethering, desktop-only AI blur culling (B
 
 ## Monorepo Layout
 
-Status column last reconciled against code **2026-08-16**. The vault's `VAULT-INDEX.md` is the live dashboard; this table is the orientation summary.
+Status column last reconciled against code **2026-08-19**. The vault's `VAULT-INDEX.md` is the live dashboard; this table is the orientation summary.
 
 | Product | Stack | Status | Module CLAUDE.md |
 |---------|-------|--------|------------------|
 | `ai-api/` | FastAPI + Celery (Python 3.11+) | Phases 1–6 complete; hardening in progress. Suite 304/304 | `ai-api/CLAUDE.md` |
-| `backend/` | Spring Boot (Kotlin) | **All phases shipped + hardened.** 29 controllers; all four roles locked. Suite 197/197 | `backend/CLAUDE.md` |
+| `backend/` | Spring Boot (Kotlin) | **All phases shipped + hardened.** 30 controllers; all four roles locked. Suite 228 unit + 15 integration | `backend/CLAUDE.md` |
 | `website/` | Next.js on Vercel | **All four roles feature-complete** and wired to the live backend (no mock fallback) | `website/CLAUDE.md` |
-| `mobile/` | Kotlin (Android first) | **Runner + photographer parity reached.** Compile + APK green; UI runtime largely unverified. Hardware verification is what remains | `mobile/CLAUDE.md` |
-| `desktop/` | Electron | Already built (lives at `C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos`) | `desktop/CLAUDE.md` (stub) |
+| `mobile/` | Kotlin (Android first) | **Parity reached; emulator/device verification in progress** (tests 18/18). Hardware tether verification is the final milestone | `mobile/CLAUDE.md` |
+| `desktop/` | Electron | Already built — v1.0.5, maintenance mode (lives at `C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos`) | `desktop/CLAUDE.md` (stub) |
 
 Repository-level docs are in `docs/`:
 - `docs/project-vision.md` — authoritative vision, user journeys, feature matrix
@@ -266,13 +266,19 @@ Do not skip this ritual. Do not start editing code, planning, or searching the r
 QuickPitik Vault/
 ├── CLAUDE.md            (vault rules + session ritual — READ FIRST)
 ├── VAULT-INDEX.md       (status dashboard + module map)
+├── ROLE-STATUS.md       (per-surface FE+BE completion tracker)
 ├── _templates/          (decision-log, daily-note, feature-doc)
-├── _project/            (cross-cutting: vision/, architecture/, decisions.md)
+├── _journal/            (dated session narratives — no length cap)
+├── _archive/            (superseded files, kept with stubs)
+├── _project/            (cross-cutting: vision/, architecture/, decisions.md, team.md)
 ├── ai-api/   { index, tasks, decisions, notes/ }
-├── backend/  { index, tasks, decisions, notes/ }
-├── website/  { index, tasks, decisions }
-├── mobile/   { index, tasks, decisions }
-└── desktop/  { index, tasks, decisions }
+├── backend/  { index, tasks, decisions, api-surface, notes/ }
+├── website/  { index, tasks, decisions, surfaces, primitives, data-layer, mocks-and-stubs, notes/ }
+├── mobile/   { index, tasks, decisions, notes/ }
+├── desktop/  { index, tasks, decisions, notes/ }
+├── Claude Skills/       (Frontend Design · Mobile Design · Document Skill)
+├── Documentation for capstone paper/   (SRS/SDD workspace — Document Skill governs)
+└── .githooks/           (pre-commit enforcing the vault's length caps)
 ```
 
 **Vault vs. repo docs:**

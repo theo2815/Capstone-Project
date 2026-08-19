@@ -1,6 +1,6 @@
 # CLAUDE.md — Backend (Kotlin + Spring Boot)
 
-**Status:** All phases shipped and hardened (last reconciled 2026-08-16). 29 controllers under `controller/`; all four roles locked; `./gradlew test` at 197/197. Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
+**Status:** All phases shipped and hardened (last reconciled 2026-08-19). 30 controllers under `controller/`; all four roles locked; suite at 228 unit + 15 integration (`./gradlew test` is Docker-free; `integrationTest` needs Docker). Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
 
 The live route reference — every endpoint, its auth, and **which clients consume it** — is vault `backend/api-surface.md`. Read that before adding an endpoint or assuming one is missing.
 
@@ -198,7 +198,7 @@ Roles are UPPERCASE in JSON: `"ADMIN" | "PHOTOGRAPHER" | "RUNNER"`. `ADMIN` is n
 - **Reset tokens** same generation, 15-min expiry, one-shot use.
 - **Access tokens** are JWTs (HS256) carrying `sub=userId`, `email`, `role` claims. 15-min TTL.
 - **Forgot-password** is intentionally silent if the email doesn't exist (anti-enumeration). The endpoint always returns the same generic message.
-- **Email stub**: `EmailService` logs the reset link to stdout. Replace with Resend/SES/SendGrid in a future iteration (icebox).
+- **Email is real (Resend)**: `EmailService` sends via `service/email/ResendClient` (`RESEND_API_KEY`; a dev placeholder key is detected and logged instead of sent). Covers password reset, order receipts, change-email (V28), and advisory verification (V30) mails. Every mailed link's origin is the **first** `CORS_ALLOWED_ORIGINS` entry. (The stdout-stub description here was stale — the rewrite landed 2026-05-20; corrected 2026-08-19.)
 - **Response envelope**: `ResponseEnvelopeAdvice` (in `common/`) wraps every controller return value in `ApiResponse.success(...)`. `GlobalExceptionHandler` returns `ResponseEntity<ApiResponse<Nothing>>` directly (already wrapped) so the advice doesn't double-wrap.
 
 ## Working notes live in Obsidian

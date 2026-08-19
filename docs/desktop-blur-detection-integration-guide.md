@@ -122,7 +122,7 @@ POST /api/v1/blur/detect
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `file` | file | yes | -- | Image file (JPEG, PNG, WebP) up to 10 MB |
+| `file` | file | yes | -- | Image file (JPEG, PNG, WebP) up to 25 MB (`MAX_FILE_SIZE`, raised 2026-08-14) |
 | `threshold` | float | no | `100.0` | Blur threshold (1.0 - 10000.0). Lower = stricter |
 | `include_metrics` | bool | no | `true` | Include Laplacian variance and FFT metrics |
 
@@ -173,7 +173,7 @@ POST /api/v1/blur/classify
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `file` | file | yes | -- | Image file (JPEG, PNG, WebP) up to 10 MB |
+| `file` | file | yes | -- | Image file (JPEG, PNG, WebP) up to 25 MB (`MAX_FILE_SIZE`, raised 2026-08-14) |
 | `blur_type` | string | no | -- | Target a specific blur type (see below) |
 
 #### Mode A: Full Classification (no `blur_type` param)

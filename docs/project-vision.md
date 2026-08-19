@@ -343,18 +343,20 @@ See `ai-api/docs/integration-architecture.md` and `ai-api/docs/integration-contr
 
 ## Current Development Status
 
+> Live status home: root `CLAUDE.md` module table + `docs/IMPLEMENTATION_PLAN.md` (vault `VAULT-INDEX.md` is the day-to-day dashboard). Snapshot below refreshed 2026-08-19 — the previous revision still said three shipped products were "Not started".
+
 | Component | Status | Notes |
 |-----------|--------|-------|
-| **ai-api** | Phases 1-6 complete | Blur, face, bib, batch processing, C++ acceleration all built. Production hardening pending. |
-| **Desktop App** | Built | Electron app for photographers. Own backend + database. |
-| **Backend** | Not started | Spring Boot. Will handle users, events, payments, marketplace. |
-| **Mobile App** | Not started | Kotlin (Android first, iOS planned). Camera tethering + runner search. |
-| **Website** | Not started | Next.js on Vercel. Runner search + photographer dashboard. |
+| **ai-api** | Phases 1-6 complete + hardened | Blur, face, bib, batch; prod compose hardened 2026-08-14 (suite 304/304). Public deployment pending. |
+| **Desktop App** | Built — v1.0.5, maintenance mode | Electron app for photographers. Own backend + database. Blur pipeline migrated to ai-api `/blur/classify/stream`. |
+| **Backend** | Shipped + hardened | Spring Boot (Kotlin) — 30 controllers, all four roles locked, suite 228 unit + 15 integration. |
+| **Mobile App** | Parity reached; device verification in progress | Kotlin/Compose. Hardware tether verification (Canon R6) is the final milestone. |
+| **Website** | Four roles feature-complete | Next.js (Vercel target); wired to the live backend, no mock fallback. |
 
 **Next priorities:**
-1. Finish ai-api production hardening (Phase 7) — event isolation, confidence thresholds
-2. Build backend (Spring Boot) — user auth, events, participant management, marketplace
-3. Build mobile app and website in parallel
+1. Mobile emulator/device verification → hardware tether verification on the R6
+2. ai-api public deployment + desktop restricted-key issuance
+3. Real-event beta (one Cebu marathon) → payments launch
 
 ---
 
@@ -362,11 +364,11 @@ See `ai-api/docs/integration-architecture.md` and `ai-api/docs/integration-contr
 
 | Document | Location | Content |
 |----------|----------|---------|
+| Implementation plan | `docs/IMPLEMENTATION_PLAN.md` | Phase history + live roadmap |
 | ai-api Architecture | `ai-api/docs/architecture.md` | 4-layer design, model registry, async patterns |
 | ai-api API Reference | `ai-api/docs/api-reference.md` | All endpoints, request/response examples |
 | Integration Architecture | `ai-api/docs/integration-architecture.md` | Responsibility boundary: ai-api vs backends vs desktop |
 | Integration Contracts | `ai-api/docs/integration-contracts.md` | Exact API usage patterns per backend, code examples |
-| Feature Analysis | `ai-api/docs/feature-analysis-report.md` | Production readiness audit — issues to fix before launch |
 
 ---
 
