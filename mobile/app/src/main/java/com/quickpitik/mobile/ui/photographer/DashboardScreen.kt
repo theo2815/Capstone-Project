@@ -142,26 +142,23 @@ fun PhotographerDashboardScreen(
                 viewModel = viewModel,
                 onBack = { shareEvent = null }
             )
-            return@MaterialTheme
-        }
-        if (showProfilePreview) {
+        } else if (showProfilePreview) {
             PhotographerPublicProfileScreen(
                 handle = brandSettings?.handle,
                 viewModel = publicPhotographerViewModel,
                 onBack = { showProfilePreview = false }
             )
-            return@MaterialTheme
-        }
-        if (showNotifDialog) {
-            NotificationsInboxDialog(
-                messages = messages,
-                onDismiss = { showNotifDialog = false },
-                onMarkRead = { id -> viewModel.markMessageAsRead(id) },
-                onMarkAllRead = { viewModel.markAllMessagesAsRead() },
-                onRemove = { id -> viewModel.removeMessage(id) },
-            )
-        }
-        Scaffold(
+        } else {
+            if (showNotifDialog) {
+                NotificationsInboxDialog(
+                    messages = messages,
+                    onDismiss = { showNotifDialog = false },
+                    onMarkRead = { id -> viewModel.markMessageAsRead(id) },
+                    onMarkAllRead = { viewModel.markAllMessagesAsRead() },
+                    onRemove = { id -> viewModel.removeMessage(id) },
+                )
+            }
+            Scaffold(
             topBar = {
                 PhotographerTopBar(
                     avatarUrl = resolvedAvatarUrl,
@@ -256,6 +253,7 @@ fun PhotographerDashboardScreen(
             }
         }
     }
+}
 }
 
 /**

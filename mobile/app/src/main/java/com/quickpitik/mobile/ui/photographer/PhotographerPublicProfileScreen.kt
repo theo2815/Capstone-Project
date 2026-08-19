@@ -82,10 +82,8 @@ fun PhotographerPublicProfileScreen(
             // runner can never land here handle-less.
             if (resolvedHandle == null) {
                 EmptyStateCard("Set your public handle in the Settings tab to preview your profile.")
-                return@Column
-            }
-
-            when (val state = profileState) {
+            } else {
+                when (val state = profileState) {
                 is PublicProfileState.Loading -> {
                     Box(modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = Fresh)
@@ -131,6 +129,7 @@ fun PhotographerPublicProfileScreen(
             }
         }
     }
+}
 }
 
 @Composable
