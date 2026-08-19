@@ -1551,6 +1551,19 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 _settingsActionState.value = "Success: Settings updated successfully!"
                 fetchVerificationStatus()
                 fetchSettings()
+            } catch (e: retrofit2.HttpException) {
+                val rawJson = e.response()?.errorBody()?.string().orEmpty()
+                val parsedMsg = try {
+                    val jsonObj = org.json.JSONObject(rawJson)
+                    val err = jsonObj.optString("error", "")
+                    val msg = jsonObj.optString("message", "")
+                    err.ifBlank { msg }
+                } catch (_: Exception) {
+                    ""
+                }
+                _settingsActionState.value = "Error: " + (parsedMsg.ifBlank {
+                    if (e.code() == 409) "That handle is already taken by another user." else (e.localizedMessage ?: "Connection error.")
+                })
             } catch (e: Exception) {
                 _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
             } finally {
