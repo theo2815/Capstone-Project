@@ -295,6 +295,7 @@ fun PhotographerSettingsScreen(
     var payoutSheetMode by remember { mutableStateOf<PayoutSheetMode?>(null) }
     var socialRowToDelete by remember { mutableStateOf<SocialLinkDto?>(null) }
     var payoutRowToDelete by remember { mutableStateOf<PayoutAccountDto?>(null) }
+    var hasAttemptedSubmit by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -309,8 +310,18 @@ fun PhotographerSettingsScreen(
         item("verification") {
             VerificationSlab(
                 state = verificationState,
+                brandSettings = brandSettings,
+                socials = socials,
+                payoutAccounts = payoutAccounts,
+                handle = handle,
+                regionCode = regionCode,
+                brandName = brandName,
+                bio = bio,
+                avatarUri = avatarUri,
+                coverUri = coverUri,
                 onSubmit = { viewModel.submitVerification() },
                 onWithdraw = { viewModel.withdrawVerification() },
+                onAttemptSubmit = { hasAttemptedSubmit = true },
             )
         }
         item("publicProfile") {
@@ -334,6 +345,7 @@ fun PhotographerSettingsScreen(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                     )
                 },
+                showValidation = hasAttemptedSubmit,
             )
         }
         item("watermark") {
@@ -346,11 +358,16 @@ fun PhotographerSettingsScreen(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                     )
                 },
+                showValidation = hasAttemptedSubmit,
             )
         }
         item("handle") {
             HairlineDivider()
-            HandleSlab(value = handle, onChange = { handle = it })
+            HandleSlab(
+                value = handle,
+                onChange = { handle = it },
+                showValidation = hasAttemptedSubmit,
+            )
         }
         item("region") {
             HairlineDivider()
@@ -363,6 +380,7 @@ fun PhotographerSettingsScreen(
                     provinceCode = ""
                 },
                 onProvinceChange = { provinceCode = it },
+                showValidation = hasAttemptedSubmit,
             )
         }
         item("socials") {
@@ -372,6 +390,7 @@ fun PhotographerSettingsScreen(
                 onAdd = { socialSheetMode = SocialSheetMode.Add },
                 onEdit = { socialSheetMode = SocialSheetMode.Edit(it) },
                 onAskDelete = { socialRowToDelete = it },
+                showValidation = hasAttemptedSubmit,
             )
         }
         item("payouts") {
@@ -382,6 +401,7 @@ fun PhotographerSettingsScreen(
                 onEdit = { payoutSheetMode = PayoutSheetMode.Edit(it) },
                 onAskDelete = { payoutRowToDelete = it },
                 onSetPrimary = { viewModel.setPrimaryPayoutAccount(it.id) },
+                showValidation = hasAttemptedSubmit,
             )
         }
         item("actions") {
@@ -501,8 +521,18 @@ private fun HairlineDivider() {
 @Composable
 private fun VerificationSlab(
     state: VerificationUiState,
+    brandSettings: com.quickpitik.mobile.data.remote.BrandSettingsResponseDto?,
+    socials: List<SocialLinkDto>,
+    payoutAccounts: List<PayoutAccountDto>,
+    handle: String,
+    regionCode: String,
+    brandName: String,
+    bio: String,
+    avatarUri: String?,
+    coverUri: String?,
     onSubmit: () -> Unit,
     onWithdraw: () -> Unit,
+    onAttemptSubmit: () -> Unit,
 ) {
     Column {
         Kicker(text = "Verification", color = SlateSoft)
@@ -527,16 +557,50 @@ private fun VerificationSlab(
                     "approved" -> "Your profile is public and discoverable by runners."
                     "pending" -> "Sit tight — an admin will review within 1–2 days."
                     "rejected" -> data.suspensionReason ?: "Update your profile and resubmit."
-                    else -> "Fill the slabs below, then submit for review."
+                    else -> "Fill all sections below to enable submission for review."
                 }
                 Text(text = body, color = Slate, style = Typography.bodyMedium)
 
-                if (!data.missing.isNullOrEmpty() && status != "approved") {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Missing: ${data.missing.joinToString(" · ")}",
-                        color = SlateSoft,
-                        style = Typography.bodySmall,
+                val localMissing = buildList {
+                    if (brandSettings?.avatarUrl.isNullOrBlank() && avatarUri == null) add("Avatar")
+                    if (brandName.isBlank()) add("Brand name")
+                    if (bio.isBlank()) add("Bio")
+                    if (handle.isBlank()) add("Public handle")
+                    if (regionCode.isBlank()) add("Region")
+                    if (socials.isEmpty()) add("Social link")
+                    if (payoutAccounts.isEmpty()) add("Payout method")
+                }
+                val allMissing = (data.missing.orEmpty() + localMissing)
+                    .filterNot { it.contains("cover", ignoreCase = true) }
+                    .distinct()
+                val isComplete = allMissing.isEmpty()
+
+                var showIncompleteDialog by remember { mutableStateOf(false) }
+
+                if (showIncompleteDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showIncompleteDialog = false },
+                        containerColor = Bone,
+                        title = {
+                            Text(
+                                text = "Incomplete Profile Setup",
+                                color = Ink,
+                                style = Typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = "Please fill in all empty sections below before submitting your profile for review.",
+                                color = Slate,
+                                style = Typography.bodyMedium
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showIncompleteDialog = false }) {
+                                Text("GOT IT", color = Ink, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     )
                 }
 
@@ -550,7 +614,14 @@ private fun VerificationSlab(
                     "approved" -> Unit
                     else -> GhostCta(
                         text = "Submit for review",
-                        onClick = onSubmit,
+                        onClick = {
+                            onAttemptSubmit()
+                            if (isComplete) {
+                                onSubmit()
+                            } else {
+                                showIncompleteDialog = true
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -573,9 +644,16 @@ private fun PublicProfileSlab(
     onBioChange: (String) -> Unit,
     onPickAvatar: () -> Unit,
     onPickCover: () -> Unit,
+    showValidation: Boolean = false,
 ) {
+    val isMissing = (avatarRemoteUrl.isNullOrBlank() && avatarStagedUri == null) ||
+            brandName.isBlank() || bio.isBlank()
+    val isError = showValidation && isMissing
     Column {
-        Kicker(text = "Public profile", color = SlateSoft)
+        Kicker(
+            text = if (isError) "Public profile  ·  FILL THIS SECTION" else "Public profile",
+            color = if (isError) ErrorRed else SlateSoft
+        )
         Spacer(modifier = Modifier.height(12.dp))
 
         // Cover banner — tap to replace
@@ -597,7 +675,7 @@ private fun PublicProfileSlab(
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
-                Text(text = "TAP TO ADD COVER", color = SlateSoft, style = Typography.labelMedium)
+                Text(text = "TAP TO ADD COVER (OPTIONAL)", color = SlateSoft, style = Typography.labelMedium)
             }
         }
 
@@ -670,9 +748,15 @@ private fun WatermarkSlab(
     remoteUrl: String?,
     stagedUri: String?,
     onPick: () -> Unit,
+    showValidation: Boolean = false,
 ) {
+    val isMissing = remoteUrl.isNullOrBlank() && stagedUri == null
+    val isError = showValidation && isMissing
     Column {
-        Kicker(text = "Watermark", color = SlateSoft)
+        Kicker(
+            text = if (isError) "Watermark  ·  FILL THIS SECTION" else "Watermark",
+            color = if (isError) ErrorRed else SlateSoft
+        )
         Spacer(modifier = Modifier.height(12.dp))
         QpCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -724,9 +808,18 @@ private fun WatermarkSlab(
 // ─── Slab: Handle ────────────────────────────────────────────────────────────
 
 @Composable
-private fun HandleSlab(value: String, onChange: (String) -> Unit) {
+private fun HandleSlab(
+    value: String,
+    onChange: (String) -> Unit,
+    showValidation: Boolean = false,
+) {
+    val isMissing = value.isBlank()
+    val isError = showValidation && isMissing
     Column {
-        Kicker(text = "Public handle", color = SlateSoft)
+        Kicker(
+            text = if (isError) "Public handle  ·  FILL THIS SECTION" else "Public handle",
+            color = if (isError) ErrorRed else SlateSoft
+        )
         Spacer(modifier = Modifier.height(12.dp))
         QpFormField(
             label = "@your-handle",
@@ -753,14 +846,20 @@ private fun RegionSlab(
     provinceCode: String,
     onRegionChange: (String) -> Unit,
     onProvinceChange: (String) -> Unit,
+    showValidation: Boolean = false,
 ) {
     val selectedRegion = regions.firstOrNull { it.code == regionCode }
     val selectedProvince = selectedRegion?.provinces?.firstOrNull { it.code == provinceCode }
     var regionMenuExpanded by remember { mutableStateOf(false) }
     var provinceMenuExpanded by remember { mutableStateOf(false) }
+    val isMissing = regionCode.isBlank()
+    val isError = showValidation && isMissing
 
     Column {
-        Kicker(text = "Region", color = SlateSoft)
+        Kicker(
+            text = if (isError) "Region  ·  FILL THIS SECTION" else "Region",
+            color = if (isError) ErrorRed else SlateSoft
+        )
         Spacer(modifier = Modifier.height(12.dp))
 
         DropdownField(
@@ -817,14 +916,20 @@ private fun SocialsSlab(
     onAdd: () -> Unit,
     onEdit: (SocialLinkDto) -> Unit,
     onAskDelete: (SocialLinkDto) -> Unit,
+    showValidation: Boolean = false,
 ) {
+    val isMissing = socials.isEmpty()
+    val isError = showValidation && isMissing
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Kicker(text = "Socials · ${socials.size} of ${SOCIAL_PLATFORMS.size}", color = SlateSoft)
+            Kicker(
+                text = if (isError) "Socials  ·  FILL THIS SECTION" else "Socials · ${socials.size} of ${SOCIAL_PLATFORMS.size}",
+                color = if (isError) ErrorRed else SlateSoft
+            )
         }
         Spacer(modifier = Modifier.height(12.dp))
         if (socials.isEmpty()) {
@@ -910,9 +1015,15 @@ private fun PayoutsSlab(
     onEdit: (PayoutAccountDto) -> Unit,
     onAskDelete: (PayoutAccountDto) -> Unit,
     onSetPrimary: (PayoutAccountDto) -> Unit,
+    showValidation: Boolean = false,
 ) {
+    val isMissing = payouts.isEmpty()
+    val isError = showValidation && isMissing
     Column {
-        Kicker(text = "Payouts · ${payouts.size} of ${PAYOUT_METHODS.size}", color = SlateSoft)
+        Kicker(
+            text = if (isError) "Payouts  ·  FILL THIS SECTION" else "Payouts · ${payouts.size} of ${PAYOUT_METHODS.size}",
+            color = if (isError) ErrorRed else SlateSoft
+        )
         Spacer(modifier = Modifier.height(12.dp))
         if (payouts.isEmpty()) {
             Text(
