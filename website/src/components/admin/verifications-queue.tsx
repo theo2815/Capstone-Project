@@ -4,6 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import {
+  BTN_DANGER,
+  BTN_PRIMARY,
+  BTN_SECONDARY,
+  BTN_SIZE,
+} from "@/components/ui/button-styles";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
@@ -310,7 +316,7 @@ export function VerificationsQueue() {
   return (
     <>
       {(showFirstLoad || showError) && (
-        <div className="rounded-2xl border border-line bg-bone-deep/40 px-5 py-4 font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+        <div className="rounded-2xl border border-line bg-bone-deep/40 px-5 py-4 font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
           {showFirstLoad
             ? "Loading admin queue…"
             : (
@@ -506,14 +512,14 @@ export function VerificationsQueue() {
               <button
                 type="button"
                 onClick={() => setDrawerRejectOpen(true)}
-                className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
+                className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
               >
                 Reject…
               </button>
               <button
                 type="button"
                 onClick={handleDrawerApprove}
-                className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone bg-ink hover:bg-fresh hover:text-bone transition-colors rounded-full px-5 py-2"
+                className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
               >
                 Approve
               </button>
@@ -1026,7 +1032,7 @@ function PayoutsSection({
             <p className="font-display text-base text-ink truncate">
               {PAYOUT_METHOD_LABEL[p.method]}
               {p.isPrimary && (
-                <span className="ml-2 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh tnum">
+                <span className="ml-2 font-mono uppercase tracking-[0.18em] text-[12px] text-fresh tnum">
                   Primary
                 </span>
               )}
@@ -1091,21 +1097,21 @@ function VerificationsBulkBar({
       className="fixed inset-x-4 bottom-4 lg:left-auto lg:right-8 lg:bottom-6 lg:max-w-xl z-40 rounded-2xl border border-ink bg-bone shadow-2xl px-4 md:px-6 py-4 animate-[fade-up_0.2s_ease-out_both]"
     >
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+        <p className="kicker">
           <span className="tnum">{count}</span> selected
         </p>
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={onApprove}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] bg-fresh text-bone hover:bg-fresh-deep transition-colors rounded-full px-4 py-2"
+            className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
           >
             Approve {count}
           </button>
           <button
             type="button"
             onClick={onReject}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-2"
+            className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}
           >
             Reject {count}…
           </button>

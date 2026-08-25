@@ -129,7 +129,7 @@ export function ForgotPasswordForm() {
         <div className="flex flex-col gap-2">
           <label
             htmlFor="email"
-            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
+            className="kicker"
           >
             Email
           </label>

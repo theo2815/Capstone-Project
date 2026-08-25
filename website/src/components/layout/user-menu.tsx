@@ -130,7 +130,7 @@ export function UserMenu({ user }: UserMenuProps) {
         onClick={() => setIsOpen((o) => !o)}
         className={cn(
           "size-9 rounded-full overflow-hidden",
-          !avatar && "bg-fresh text-bone hover:bg-fresh-deep",
+          !avatar && "bg-fresh text-surface hover:bg-fresh-deep",
           avatar && "bg-bone-deep",
           "font-mono uppercase tracking-[0.05em] text-[11px] font-semibold",
           "flex items-center justify-center",

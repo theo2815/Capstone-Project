@@ -113,7 +113,7 @@ export function LoginForm() {
         <FieldBlock>
           <label
             htmlFor="email"
-            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
+            className="kicker"
           >
             Email
           </label>
@@ -137,7 +137,7 @@ export function LoginForm() {
         <FieldBlock>
           <label
             htmlFor="password"
-            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
+            className="kicker"
           >
             Password
           </label>

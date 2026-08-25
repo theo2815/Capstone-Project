@@ -94,7 +94,7 @@ function BillingGlance() {
       trailing={
         <Link
           href={ROUTES.DASHBOARD_BILLING}
-          className="hover:text-ink transition-colors inline-flex items-center gap-1.5 group"
+          className="text-ink hover:text-fresh transition-colors inline-flex items-center gap-1.5 group"
         >
           Open billing
           <span
@@ -251,7 +251,7 @@ function NextUpGlance() {
       trailing={
         <Link
           href={ROUTES.DASHBOARD_EVENTS}
-          className="hover:text-ink transition-colors inline-flex items-center gap-1.5 group"
+          className="text-ink hover:text-fresh transition-colors inline-flex items-center gap-1.5 group"
         >
           All events
           <span
@@ -311,7 +311,7 @@ function FeaturedEventRow({ event }: { event: PhotographerEventSummary }) {
   return (
     <Link
       href={`${ROUTES.UPLOAD}/${event.id}`}
-      className="group block py-5 md:py-6 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+      className="group block py-5 md:py-6 px-3 -mx-3 rounded-lg hover:bg-bone-deep/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
     >
       <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
         <div className="flex-1 min-w-0">
@@ -320,7 +320,7 @@ function FeaturedEventRow({ event }: { event: PhotographerEventSummary }) {
             <span className="text-slate-soft">·</span>
             <StateChip state={event.state} />
           </p>
-          <h3 className="font-display text-lg md:text-xl font-bold tracking-tight text-ink mt-2 truncate group-hover:text-ink-soft transition-colors">
+          <h3 className="font-display text-lg md:text-xl font-bold tracking-tight text-ink mt-2 truncate group-hover:text-fresh transition-colors">
             {event.name}
           </h3>
         </div>

@@ -26,7 +26,7 @@ export function KeyboardHintPill() {
       >
         ⌨
       </span>
-      <kbd className="font-mono text-[11px] text-ink rounded border border-line bg-bone-deep px-1.5 py-0.5">
+      <kbd className="font-mono text-[12px] text-ink rounded border border-line bg-bone-deep px-1.5 py-0.5">
         ?
       </kbd>
     </button>

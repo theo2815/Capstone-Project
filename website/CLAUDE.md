@@ -2,7 +2,7 @@
 
 **Status:** All four roles (Guest · Runner · Photographer · Admin) feature-complete; last reconciled 2026-08-16. Wired to the live Spring Boot backend throughout — **there is no mock fallback and no `NEXT_PUBLIC_BACKEND_LIVE` gate** (that flag was never wired and is dead code; see vault `website/decisions.md` 2026-05-18). Per-surface truth lives in vault `ROLE-STATUS.md`.
 
-Baselines to hold: `npx tsc --noEmit` clean · `npm run lint` 0 errors / **295** warnings · `npm run build` succeeds. (Measured 2026-08-19 on a clean tree; the Readability Bucket 3 pass on 2026-08-16 took the stash-measured 300 down to 295. If your count differs, re-measure on a clean tree before assuming you added warnings.)
+Baselines to hold: `npx tsc --noEmit` clean · `npm run lint` 0 errors / **143** warnings · `npm run build` succeeds. (Measured 2026-08-25 after the Finish Line clarity pass — the admin sub-12px sweep took 200 down to 143. If your count differs, re-measure on a clean tree before assuming you added warnings.)
 
 ## Role in the project
 
@@ -34,12 +34,13 @@ See root `CLAUDE.md` for monorepo-wide rules and `docs/project-vision.md` for th
 
 Before reporting any UI task complete — including bug fixes, new features, refactors, or token migrations — verify in a real browser:
 
-1. **Mobile-first.** Open the route at 375 px and walk through the feature end-to-end. Quiet Studio is mobile-first; if it doesn't sing on a phone, it doesn't ship.
+1. **Mobile-first.** Open the route at 375 px and walk through the feature end-to-end. Finish Line is mobile-first; if it doesn't sing on a phone, it doesn't ship.
 2. **Two more breakpoints.** Confirm `md` (≥768) and `lg` (≥1024) don't break.
 3. **Sibling regression scan.** Open at least one *other* page in the same module that uses any component you touched. Touched `PhotoPreviewCard`? Open `/events/[slug]?browse=1`, the cart-modal flow, AND `/orders`. Touched `SiteHeader` or `AvatarDisc`? Spot-check every page that mounts them.
-4. **Quiet Studio audit** (rules live in `QuickPitik Vault/website/notes/design-system.md`):
+4. **Finish Line audit** (rules live in `QuickPitik Vault/website/notes/design-system.md` — rewritten 2026-08-25):
    - One `fresh` element per viewport (excluding tiny dots/indicators).
-   - Display headlines normal case; mono kickers uppercase.
+   - Anton uppercase only via `.font-hero` (never in admin/dashboard — those headline in Archivo extrabold); mono kickers uppercase at the `<Kicker>`/`.kicker` floor.
+   - Buttons come from `src/components/ui/button-styles.ts` (`BTN_PRIMARY/SECONDARY/DANGER/GHOST` + `BTN_SIZE`); text on green/ink/error fills is `text-surface`, never `text-bone`; disabled = `opacity-50 cursor-not-allowed`.
    - Every numeric carries `tnum`.
    - No legacy tokens (`charcoal`, `primary`, `teal`, `steel-blue`, `cool-gray`, `warm-white`) on redesigned pages.
 5. **Modals/dialogs/lightboxes** render via `createPortal(content, document.body)`. See `notes/ui-pitfalls.md` for the containing-block trap that motivates this.

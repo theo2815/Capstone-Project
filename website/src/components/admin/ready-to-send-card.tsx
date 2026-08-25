@@ -71,7 +71,7 @@ export function ReadyToSendCard({ cycle }: { cycle: AdminPayoutCycle }) {
               href={methodEntry.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2 inline-flex items-center gap-2"
+              className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2 inline-flex items-center gap-2"
             >
               {methodEntry.label}
               <span aria-hidden="true">↗</span>
@@ -110,7 +110,7 @@ function CopyButton({ value }: { value: string }) {
     <button
       type="button"
       onClick={handleCopy}
-      className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-ink hover:bg-ink hover:text-bone transition-colors rounded-full px-5 py-2"
+      className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-ink hover:bg-ink hover:text-surface transition-colors rounded-full px-5 py-2"
     >
       {copied ? "Copied!" : "Copy number"}
     </button>

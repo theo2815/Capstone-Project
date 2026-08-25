@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { CollapsibleReviewSlab } from "@/components/admin/admin-collapse";
 import { AvatarDisc } from "@/components/account/avatar-disc";
+import { Kicker } from "@/components/ui/kicker";
 import { AdminActionAside } from "@/components/admin/admin-action-aside";
 import { AdminDecisionsTimeline } from "@/components/admin/admin-decisions-timeline";
 import {
@@ -201,11 +202,11 @@ function Hero({
           avatarOverride={avatarUrl ? { dataUrl: avatarUrl } : null}
         />
         <div className="flex-1 min-w-0">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+          <Kicker as="p">
             Photographer
-          </p>
+          </Kicker>
           <div className="mt-2 flex items-baseline gap-3 flex-wrap">
-            <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink leading-[1.05] flex items-baseline gap-2.5">
+            <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink leading-[1.05] flex items-baseline gap-2.5">
               {brandHex && (
                 <span
                   aria-hidden
@@ -597,9 +598,9 @@ function PayoutsSlab({
                 <p className="font-display text-base text-ink truncate">
                   {PAYOUT_METHOD_LABEL[p.method]}
                   {p.isPrimary && (
-                    <span className="ml-2 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh tnum">
+                    <Kicker tone="active" tnum className="ml-2">
                       Primary
-                    </span>
+                    </Kicker>
                   )}
                 </p>
                 <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">

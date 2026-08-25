@@ -269,7 +269,7 @@ function SelfieTile({
       />
 
       {selfie.isPrimary && (
-        <span className="absolute top-2 left-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-fresh text-bone font-mono uppercase tracking-[0.2em] text-[9px]">
+        <span className="absolute top-2 left-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-fresh text-surface font-mono uppercase tracking-[0.2em] text-[9px]">
           <span aria-hidden="true" className="size-1 rounded-full bg-bone" />
           Primary
         </span>

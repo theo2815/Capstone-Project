@@ -8,6 +8,14 @@ import { AdminResolveDisputeModal } from "./admin-resolve-dispute-modal";
 import { AdminRefundConfirmModal } from "./admin-refund-confirm-modal";
 import { AdminDenyDisputeModal } from "./admin-deny-dispute-modal";
 import { AdminEscalateModal } from "./admin-escalate-modal";
+import { Kicker } from "@/components/ui/kicker";
+import {
+  BTN_DANGER,
+  BTN_GHOST,
+  BTN_PRIMARY,
+  BTN_SECONDARY,
+  BTN_SIZE,
+} from "@/components/ui/button-styles";
 
 interface AdminDisputeActionAsideProps {
   dispute: Dispute;
@@ -28,7 +36,8 @@ interface PendingResolve {
 // with state intact (lift state to this aside, not the modal).
 //
 // One-fresh-per-viewport: only Resolve is bg-fresh in its rest state on
-// the dispute detail page.
+// the dispute detail page. Deny carries the shared BTN_DANGER recipe so the
+// destructive branch reads as consequential before its modal opens.
 export function AdminDisputeActionAside({
   dispute,
   runnerHandle,
@@ -103,9 +112,9 @@ export function AdminDisputeActionAside({
       aria-label="Admin actions"
       className="lg:sticky lg:top-24 mt-12 lg:mt-0 rounded-2xl border border-line bg-bone p-5 md:p-6"
     >
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      <Kicker as="p" tone="soft">
         Admin actions
-      </p>
+      </Kicker>
       <div className="mt-5 space-y-3">
         {isOpen && (
           <>
@@ -119,7 +128,7 @@ export function AdminDisputeActionAside({
             <button
               type="button"
               onClick={() => setDenyOpen(true)}
-              className={secondaryBtn}
+              className={dangerBtn}
             >
               Deny…
             </button>
@@ -181,11 +190,7 @@ export function AdminDisputeActionAside({
   );
 }
 
-const primaryFreshBtn =
-  "w-full font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] bg-fresh text-bone hover:bg-fresh-deep transition-colors rounded-full px-5 py-2.5";
-
-const secondaryBtn =
-  "w-full font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2.5";
-
-const tertiaryBtn =
-  "w-full font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-5 py-2.5";
+const primaryFreshBtn = `${BTN_PRIMARY} ${BTN_SIZE.sm} w-full`;
+const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm} w-full`;
+const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} w-full`;
+const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm} w-full`;

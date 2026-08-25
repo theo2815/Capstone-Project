@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState, type ReactNode } from "react";
+import { Kicker } from "@/components/ui/kicker";
 
 // Local collapse primitives used by /admin/photographers/[handle] and the
 // inbox verifications drawer so admin can scan a long review surface
@@ -112,9 +113,9 @@ export function CollapsibleReviewSection({
           open ? "mb-3" : ""
         }`}
       >
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <Kicker as="p" tone="soft">
           {kicker}
-        </p>
+        </Kicker>
         <span aria-hidden className={TOGGLE_CLS}>
           {open ? "Hide ↑" : "Show ↓"}
         </span>

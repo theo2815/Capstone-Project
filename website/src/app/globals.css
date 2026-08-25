@@ -194,6 +194,25 @@
   }
 }
 
+/* ── Global keyboard focus ──
+   Lives in @layer base so any hand-written `focus:outline-none focus-visible:ring-*`
+   utility chain still wins; everything without one gets this brand outline. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--fresh);
+    outline-offset: 2px;
+  }
+}
+
+/* ── Invalid-field border ──
+   Unlayered on purpose: must beat `border-line` utility classes. Forms already
+   set aria-invalid; this makes the state visible without per-site branches. */
+input[aria-invalid="true"],
+textarea[aria-invalid="true"],
+select[aria-invalid="true"] {
+  border-color: var(--error);
+}
+
 html {
   -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;

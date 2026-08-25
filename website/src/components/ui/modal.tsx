@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { X } from "lucide-react";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { Kicker } from "@/components/ui/kicker";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,11 @@ interface ModalProps {
    * (2026-05-06 stacked-modal entry).
    */
   escDisabled?: boolean;
+  /**
+   * Hides the default ✕ close button. Pass when the modal body renders its
+   * own close affordance, or when dismissal must be gated (mid-payment).
+   */
+  hideClose?: boolean;
 }
 
 // Portals to document.body so the modal escapes any transform-context
@@ -31,8 +37,10 @@ export function Modal({
   children,
   className,
   escDisabled = false,
+  hideClose = false,
 }: ModalProps) {
   const [mounted, setMounted] = useState(false);
+  const titleId = useId();
   useScrollLock(isOpen);
 
   useEffect(() => {
@@ -62,6 +70,7 @@ export function Modal({
       <div
         role="dialog"
         aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
         className={cn(
           "relative z-10 w-full max-w-lg rounded-2xl border border-line bg-bone p-6 md:p-8 shadow-2xl",
           "max-h-[calc(100vh-3rem)] overflow-y-auto",
@@ -69,8 +78,18 @@ export function Modal({
           className,
         )}
       >
+        {!hideClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="absolute right-2 top-2 z-10 flex size-11 items-center justify-center rounded-full text-slate transition-colors hover:bg-bone-deep hover:text-ink"
+          >
+            <X className="size-4" aria-hidden="true" />
+          </button>
+        )}
         {title && (
-          <Kicker as="h2" size="md" className="mb-6">
+          <Kicker as="h2" id={titleId} size="md" className="mb-6 pr-10">
             {title}
           </Kicker>
         )}

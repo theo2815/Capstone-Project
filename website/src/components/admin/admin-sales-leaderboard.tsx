@@ -103,10 +103,10 @@ function PhotographerRow({
             <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
               {label}
             </p>
-            <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft tnum mt-1">
+            <Kicker as="p" tone="soft" tnum className="mt-1">
               {row.photosSold.toLocaleString()} photos · {row.cycles}{" "}
               {row.cycles === 1 ? "payout" : "payouts"}
-            </p>
+            </Kicker>
           </div>
         </div>
         <p className="font-mono tnum font-medium text-ink text-base md:text-lg shrink-0">
@@ -134,13 +134,13 @@ function EventRow({ rank, row }: { rank: number; row: SalesEventRow }) {
               <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
                 {row.name}
               </p>
-              <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft border border-line rounded-full px-2 py-0.5">
+              <Kicker tone="soft" className="border border-line rounded-full px-2 py-0.5">
                 Implied
-              </span>
+              </Kicker>
             </div>
-            <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft tnum mt-1">
+            <Kicker as="p" tone="soft" tnum className="mt-1">
               {formatLongDate(row.date, true)} · {row.photoCount.toLocaleString()} photos
-            </p>
+            </Kicker>
           </div>
         </div>
         <p className="font-mono tnum font-medium text-ink text-base md:text-lg shrink-0">

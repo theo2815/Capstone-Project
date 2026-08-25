@@ -161,8 +161,8 @@ export function RegisterForm() {
                 "group text-left p-4 rounded-2xl border transition-colors duration-200",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
                 active
-                  ? "border-ink bg-bone-deep"
-                  : "border-line bg-bone hover:border-slate-soft",
+                  ? "border-ink ring-1 ring-ink bg-fresh-tint/40"
+                  : "border-line bg-bone hover:border-slate-soft hover:bg-bone-deep/50",
               )}
             >
               <div className="flex items-center justify-between">
@@ -192,7 +192,7 @@ export function RegisterForm() {
         <FieldBlock>
           <label
             htmlFor="name"
-            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
+            className="kicker"
           >
             Full name
           </label>
@@ -216,7 +216,7 @@ export function RegisterForm() {
         <FieldBlock>
           <label
             htmlFor="email"
-            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
+            className="kicker"
           >
             Email
           </label>
@@ -240,7 +240,7 @@ export function RegisterForm() {
         <FieldBlock>
           <label
             htmlFor="password"
-            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
+            className="kicker"
           >
             Password
             <span className="ml-2 text-slate-soft normal-case tracking-normal">

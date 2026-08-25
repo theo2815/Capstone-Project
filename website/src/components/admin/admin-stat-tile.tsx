@@ -36,7 +36,7 @@ export function AdminStatTile({
     <>
       <p
         className={cn(
-          "font-mono uppercase tracking-[0.3em] text-[10px]",
+          "font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px]",
           isMuted ? "text-slate-soft" : "text-slate-soft",
         )}
       >

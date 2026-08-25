@@ -16,8 +16,10 @@ const TONE_COLORS = [
 
 // Single mosaic tile used by every browse-style photo grid (runner browse +
 // per-photographer event gallery). Span comes from the photo (`wide` →
-// row-span-1, `default` → row-span-2). Owns its own +cart / buy → buttons that
-// fade in on hover; tile click opens the parent's preview via `onOpen`.
+// row-span-1, `default` → row-span-2). Owns its own always-visible Cart / Buy
+// pills (Buy is the heavier ink pill — fresh is reserved for the in-cart
+// state so a full grid doesn't flood the accent); tile click opens the
+// parent's preview via `onOpen`.
 export function PhotoMosaicTile({
   event,
   photo,
@@ -79,8 +81,6 @@ export function PhotoMosaicTile({
     startExpressCheckout();
     addItem(cartPayload);
   };
-
-  const fadeRule = "opacity-100 md:opacity-60 md:group-hover:opacity-100";
 
   return (
     <div
@@ -148,35 +148,31 @@ export function PhotoMosaicTile({
               : `Add ${photo.bib ?? "untagged photo"} to cart`
           }
           className={cn(
-            "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full font-mono uppercase tracking-[0.2em] text-[9px] whitespace-nowrap",
+            "inline-flex items-center gap-1 px-3 py-1.5 rounded-full font-display font-bold text-[12px] whitespace-nowrap",
             "shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)]",
-            "transition-all duration-200",
+            "transition-colors duration-200",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
             inCart
-              ? "bg-fresh text-bone hover:bg-fresh-deep"
-              : cn(
-                  "bg-bone/90 backdrop-blur-sm text-ink hover:bg-bone hover:scale-105",
-                  fadeRule,
-                ),
+              ? "bg-fresh text-surface hover:bg-fresh-deep"
+              : "bg-surface/95 backdrop-blur-sm text-ink border border-line-strong hover:bg-surface hover:border-ink",
           )}
         >
           <span aria-hidden="true">{inCart ? "✓" : "+"}</span>
-          <span>cart</span>
+          <span>Cart</span>
         </button>
         <button
           type="button"
           onClick={handleBuyNow}
           aria-label={`Buy ${photo.bib ?? "untagged photo"} now for ₱${photo.price}`}
           className={cn(
-            "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full font-mono uppercase tracking-[0.2em] text-[9px] whitespace-nowrap",
+            "inline-flex items-center gap-1 px-3 py-1.5 rounded-full font-display font-bold text-[12px] whitespace-nowrap",
             "shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)]",
-            "transition-all duration-200",
+            "transition-colors duration-200",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
-            "bg-bone/90 backdrop-blur-sm text-ink hover:bg-fresh hover:text-bone hover:scale-105",
-            fadeRule,
+            "bg-ink/85 backdrop-blur-sm text-surface hover:bg-fresh",
           )}
         >
-          <span>buy</span>
+          <span>Buy</span>
           <span aria-hidden="true">→</span>
         </button>
       </div>

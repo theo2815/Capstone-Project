@@ -22,7 +22,10 @@ export function SiteHeader({
 }: SiteHeaderProps) {
   const pathname = usePathname();
   const { user, isAuthenticated, isLoading } = useAuth();
-  const isEventsActive = pathname === ROUTES.EVENTS;
+  // Prefix match so /events/[slug] (where users spend the most time) still
+  // shows the "you are here" state.
+  const isEventsActive =
+    pathname === ROUTES.EVENTS || pathname.startsWith(ROUTES.EVENTS + "/");
 
   return (
     // Height is pinned to --site-header-h rather than falling out of the
@@ -34,7 +37,7 @@ export function SiteHeader({
       <div className="px-6 md:px-10 h-full flex items-center justify-between max-w-7xl mx-auto">
         <Link
           href={ROUTES.HOME}
-          className="flex items-center gap-2 text-ink"
+          className="flex items-center gap-2 text-ink transition-opacity hover:opacity-75"
           aria-label="Back to QuickPitik home"
         >
           <svg
@@ -62,7 +65,7 @@ export function SiteHeader({
             aria-current={isEventsActive ? "page" : undefined}
             className={cn(
               "relative inline-flex items-center gap-2 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors",
-              isEventsActive ? "text-ink" : "text-slate hover:text-ink",
+              isEventsActive ? "text-ink" : "nav-link text-slate hover:text-ink",
             )}
           >
             {isEventsActive && (
@@ -93,7 +96,7 @@ export function SiteHeader({
           ) : rightLink ? (
             <Link
               href={rightLink.href}
-              className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink hover:text-fresh transition-colors"
+              className="nav-link font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink hover:text-fresh transition-colors"
             >
               {rightLink.label}
             </Link>

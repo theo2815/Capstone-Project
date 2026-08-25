@@ -73,7 +73,7 @@ export function LoadMoreButton({
               "font-sans text-sm font-medium tracking-tight",
               "transition-colors hover:bg-line/60",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
-              "disabled:cursor-not-allowed disabled:opacity-60",
+              "disabled:cursor-not-allowed disabled:opacity-50",
             )}
             aria-label={isLoading ? "Loading more" : buttonLabel}
           >

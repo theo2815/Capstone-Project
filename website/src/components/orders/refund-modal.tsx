@@ -361,7 +361,7 @@ function RefundRequestModal({
             type="button"
             onClick={onClose}
             disabled={isSubmitting}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors disabled:opacity-40"
+            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
@@ -369,7 +369,7 @@ function RefundRequestModal({
             type="button"
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] border border-line rounded-full px-6 py-3 text-ink hover:bg-ink hover:text-bone transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink"
+            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] border border-line rounded-full px-6 py-3 text-ink hover:bg-ink hover:text-bone transition-colors disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink"
           >
             {isSubmitting ? "Sending…" : "Send request"}
           </button>

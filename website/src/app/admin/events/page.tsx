@@ -5,6 +5,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Slab } from "@/components/profile-shell";
 import { AdminEventCard } from "@/components/admin/admin-event-card";
 import { AdminEventFormModal } from "@/components/admin/admin-event-form-modal";
+import { Kicker } from "@/components/ui/kicker";
+import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { cn } from "@/lib/utils";
 import { useEventCatalog } from "@/lib/event-catalog";
 import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
 import { useAdminEvents } from "@/hooks/use-admin-data";
@@ -253,19 +256,19 @@ function Header({
     <header className="pb-8 md:pb-12 border-b border-line">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+          <Kicker as="p">
             Events ·{" "}
             <span className="tnum">{total.toLocaleString()}</span> on platform ·{" "}
             <span className="tnum">{liveCount}</span> live
-          </p>
-          <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+          </Kicker>
+          <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
             Events.
           </h1>
         </div>
         <button
           type="button"
           onClick={onCreate}
-          className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] bg-fresh text-bone hover:bg-fresh-deep transition-colors rounded-full px-5 py-2.5"
+          className={cn(BTN_PRIMARY, BTN_SIZE.sm, "shrink-0")}
         >
           + New event
         </button>

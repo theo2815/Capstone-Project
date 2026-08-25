@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { Slab } from "@/components/profile-shell";
+import { Kicker } from "@/components/ui/kicker";
 import { useAdminDisputeView } from "@/lib/admin-dispute-view";
 import { AdminDisputeActionAside } from "@/components/admin/admin-dispute-action-aside";
 import { AdminDisputeActivityList } from "@/components/admin/admin-dispute-activity-list";
@@ -236,10 +237,10 @@ function Hero({
       />
       <div className="mt-6 md:mt-8 flex items-start justify-between gap-6 flex-wrap">
         <div className="min-w-0">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+          <Kicker as="p">
             Dispute · <span className="tnum">{disputeId}</span>
-          </p>
-          <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+          </Kicker>
+          <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
             @{runnerHandle}
             <span className="text-slate-soft"> vs </span>
             @{photographerHandle}

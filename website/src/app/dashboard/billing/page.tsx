@@ -9,6 +9,7 @@ import { TrackPayoutReportModal } from "@/components/dashboard/track-payout-repo
 import { RequestPayoutModal } from "@/components/dashboard/request-payout-modal";
 import { WithdrawPayoutModal } from "@/components/dashboard/withdraw-payout-modal";
 import { Kicker } from "@/components/ui/kicker";
+import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -328,7 +329,7 @@ function RequestPayoutHero({
           type="button"
           onClick={onRequest}
           disabled={!eligible || !primary}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone bg-fresh hover:bg-fresh-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors rounded-full px-6 py-3"
+          className={`${BTN_PRIMARY} ${BTN_SIZE.md}`}
         >
           Request payout
         </button>

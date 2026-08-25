@@ -656,7 +656,7 @@ function EditModePill() {
             type="button"
             onClick={cancelEdit}
             disabled={saving}
-            className="font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-5 rounded-full shadow-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            className="font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-5 rounded-full shadow-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Cancel
           </button>
@@ -664,7 +664,7 @@ function EditModePill() {
             type="button"
             onClick={() => void saveEdit()}
             disabled={saving}
-            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? "Saving…" : "Save changes"}
             {!saving && <span aria-hidden="true">→</span>}
@@ -1074,7 +1074,7 @@ function ReadyToSubmitNudge() {
             type="button"
             onClick={handleSubmit}
             disabled={submitting}
-            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submitting ? "Submitting…" : "Submit for review"}
             <span aria-hidden="true">→</span>
@@ -1282,7 +1282,7 @@ function VerificationStatusPanel() {
           type="button"
           onClick={handleSubmit}
           disabled={!complete || submitting || editing}
-          className="inline-flex items-center gap-2 font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="inline-flex items-center gap-2 font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {editing
             ? "Save your changes first"
@@ -2206,7 +2206,7 @@ function HandleSlab() {
               type="button"
               onClick={copy}
               disabled={!valid}
-              className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
+              className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
             >
               Copy link
             </button>
@@ -3214,7 +3214,7 @@ function PayoutForm({
         <button
           type="submit"
           disabled={!canSave}
-          className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+          className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
         >
           {submitLabel}
           <span aria-hidden="true">→</span>

@@ -218,7 +218,7 @@ export function CheckoutModal({
             onClick={onClose}
             disabled={step === "processing"}
             aria-label="Close checkout"
-            className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh disabled:opacity-40 disabled:hover:bg-transparent"
+            className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
           >
             <svg
               viewBox="0 0 16 16"
@@ -590,7 +590,7 @@ function SuccessStep({
       <div className="rounded-2xl bg-bone-deep border border-line p-6">
         <div className="flex items-start gap-4">
           <span
-            className="size-10 rounded-full bg-fresh text-bone shrink-0 inline-flex items-center justify-center"
+            className="size-10 rounded-full bg-fresh text-surface shrink-0 inline-flex items-center justify-center"
             aria-hidden="true"
           >
             <svg viewBox="0 0 16 16" className="size-4" fill="none">

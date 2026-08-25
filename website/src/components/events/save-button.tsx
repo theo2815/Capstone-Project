@@ -129,7 +129,7 @@ export function SaveButton({
         className={cn(
           "group inline-flex items-center gap-2 font-mono uppercase tracking-[0.3em] text-[10px] transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
           disabled
-            ? "text-slate"
+            ? "text-slate opacity-50 cursor-not-allowed"
             : isSaved
               ? "text-fresh hover:text-fresh-deep"
               : "text-slate hover:text-ink",
@@ -142,10 +142,11 @@ export function SaveButton({
     );
   }
 
-  // Card variant. When `disabled`, the button keeps the unsaved visual
-  // (no fresh fill, no hover-deepen) so the bookmark looks live but the
-  // tooltip clarifies the action belongs to runners. The button stays
-  // focusable for keyboard users; aria-disabled signals the no-op to AT.
+  // Card variant. When `disabled`, the bookmark dims to half opacity with a
+  // not-allowed cursor so touch users see the no-op too (the tooltip only
+  // reaches hover); the tooltip still explains the action belongs to runners.
+  // The button stays focusable for keyboard users; aria-disabled signals the
+  // no-op to AT.
   const tooltipLabel = disabled
     ? "Runners only"
     : isSaved
@@ -173,9 +174,9 @@ export function SaveButton({
         className={cn(
           "size-9 rounded-full inline-flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone shadow-[0_4px_12px_-4px_rgba(17,17,17,0.18)]",
           disabled
-            ? "bg-bone/90 backdrop-blur text-ink"
+            ? "bg-bone/90 backdrop-blur text-ink opacity-50 cursor-not-allowed"
             : isSaved
-              ? "bg-fresh text-bone hover:bg-fresh-deep"
+              ? "bg-fresh text-surface hover:bg-fresh-deep"
               : "bg-bone/90 backdrop-blur text-ink hover:bg-bone",
         )}
       >

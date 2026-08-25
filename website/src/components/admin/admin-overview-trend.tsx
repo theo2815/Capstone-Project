@@ -86,7 +86,7 @@ function ToggleButton({
       className={cn(
         "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full px-4 py-1.5 transition-colors",
         active
-          ? "bg-fresh text-bone"
+          ? "bg-fresh text-surface"
           : "border border-line text-slate hover:text-ink hover:border-ink",
       )}
     >

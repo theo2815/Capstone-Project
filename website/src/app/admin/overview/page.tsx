@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { Slab } from "@/components/profile-shell";
+import { Kicker } from "@/components/ui/kicker";
 import { AdminStatTile } from "@/components/admin/admin-stat-tile";
 import { AdminOverviewTrend } from "@/components/admin/admin-overview-trend";
 import { AdminDecisionsTimeline } from "@/components/admin/admin-decisions-timeline";
@@ -216,10 +217,10 @@ export default function AdminOverviewPage() {
 function Header() {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <Kicker as="p">
         Overview · Weekly review
-      </p>
-      <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+      </Kicker>
+      <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         The week.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">

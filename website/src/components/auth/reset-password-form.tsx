@@ -164,7 +164,7 @@ export function ResetPasswordForm() {
         <div className="flex flex-col gap-2">
           <label
             htmlFor="password"
-            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
+            className="kicker"
           >
             New password
             <span className="ml-2 text-slate-soft normal-case tracking-normal">
@@ -196,7 +196,7 @@ export function ResetPasswordForm() {
         <div className="flex flex-col gap-2">
           <label
             htmlFor="confirm-password"
-            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
+            className="kicker"
           >
             Confirm new password
           </label>

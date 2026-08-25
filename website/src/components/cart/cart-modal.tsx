@@ -281,7 +281,7 @@ export function CartModal({
             onClick={onClose}
             disabled={isClosing}
             aria-label="Close cart"
-            className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh disabled:opacity-40"
+            className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg
               viewBox="0 0 16 16"

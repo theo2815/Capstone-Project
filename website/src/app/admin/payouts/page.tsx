@@ -6,6 +6,7 @@ import {
   usePendingPayoutsTotal,
 } from "@/components/admin/payouts-queue";
 import { PayoutReportsSection } from "@/components/admin/payout-reports-section";
+import { Kicker } from "@/components/ui/kicker";
 import { formatPrice } from "@/lib/utils";
 
 // /admin/payouts hosts the payouts queue (pending → approved → held → paid)
@@ -36,11 +37,11 @@ function Header({
 }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <Kicker as="p">
         Payouts · <span className="tnum">{pendingCount}</span> awaiting review
         · <span className="tnum">{formatPrice(totalPending)}</span> total
-      </p>
-      <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+      </Kicker>
+      <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Payouts.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">

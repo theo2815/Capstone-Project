@@ -62,7 +62,7 @@ function CardShell({
   return (
     <Link
       href={href}
-      className="group flex flex-col h-full border border-line rounded-2xl p-5 md:p-6 bg-surface shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-lift)] hover:border-fresh/40 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+      className="group flex flex-col h-full border border-line rounded-2xl p-5 md:p-6 bg-surface shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-lift)] hover:border-fresh/40 hover:-translate-y-1 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
     >
       {children}
     </Link>
@@ -91,7 +91,7 @@ function CardCaption({
         aria-hidden="true"
         className={
           "transition-transform group-hover:translate-x-0.5 shrink-0 " +
-          (arrowFresh ? "text-fresh" : "text-slate-soft")
+          (arrowFresh ? "text-fresh" : "text-ink")
         }
       >
         →

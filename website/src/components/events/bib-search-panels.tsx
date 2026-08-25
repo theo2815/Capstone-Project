@@ -321,7 +321,7 @@ function SelfieActionCard({
       className={cn(
         "group flex items-center gap-4 rounded-xl px-5 py-4 transition-colors",
         isPrimary
-          ? "bg-fresh text-bone hover:bg-fresh-deep cursor-pointer"
+          ? "bg-fresh text-surface hover:bg-fresh-deep cursor-pointer"
           : "border border-line bg-bone hover:bg-bone-deep text-ink cursor-pointer",
         disabled && "opacity-60 cursor-wait",
       )}
@@ -398,7 +398,7 @@ function SelfieLibraryCard({
         className={cn(
           "w-full flex items-center gap-4 rounded-xl px-5 py-4 transition-colors text-left",
           isPrimary
-            ? "bg-fresh text-bone hover:bg-fresh-deep"
+            ? "bg-fresh text-surface hover:bg-fresh-deep"
             : "border border-line bg-bone hover:bg-bone-deep text-ink",
           disabled && "opacity-60 cursor-wait",
         )}
@@ -462,7 +462,7 @@ function SelfieLibraryCard({
                     draggable={false}
                   />
                   {s.isPrimary && (
-                    <span className="absolute top-1.5 left-1.5 font-mono uppercase tracking-[0.18em] text-[8px] bg-fresh text-bone px-1.5 py-0.5 rounded-full">
+                    <span className="absolute top-1.5 left-1.5 font-mono uppercase tracking-[0.18em] text-[8px] bg-fresh text-surface px-1.5 py-0.5 rounded-full">
                       Primary
                     </span>
                   )}

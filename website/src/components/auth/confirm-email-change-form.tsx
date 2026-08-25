@@ -150,7 +150,7 @@ export function ConfirmEmailChangeForm() {
         type="button"
         onClick={handleConfirm}
         disabled={status === "confirming"}
-        className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {status === "confirming" ? "Confirming…" : "Confirm new email →"}
       </button>

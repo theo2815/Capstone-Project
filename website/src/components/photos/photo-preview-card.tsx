@@ -149,7 +149,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           type="button"
           onClick={onPrev}
           aria-label="Previous photo"
-          className="hidden md:flex absolute left-4 lg:left-8 top-1/2 -translate-y-1/2 z-10 size-12 rounded-full bg-bone/10 hover:bg-bone/20 backdrop-blur-sm text-bone items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
+          className="hidden md:flex absolute left-4 lg:left-8 top-1/2 -translate-y-1/2 z-10 size-12 rounded-full bg-surface/90 hover:bg-surface text-ink shadow-[0_4px_16px_-4px_rgba(0,0,0,0.4)] items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
         >
           <svg
             viewBox="0 0 24 24"
@@ -172,7 +172,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           type="button"
           onClick={onNext}
           aria-label="Next photo"
-          className="hidden md:flex absolute right-4 lg:right-8 top-1/2 -translate-y-1/2 z-10 size-12 rounded-full bg-bone/10 hover:bg-bone/20 backdrop-blur-sm text-bone items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
+          className="hidden md:flex absolute right-4 lg:right-8 top-1/2 -translate-y-1/2 z-10 size-12 rounded-full bg-surface/90 hover:bg-surface text-ink shadow-[0_4px_16px_-4px_rgba(0,0,0,0.4)] items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
         >
           <svg
             viewBox="0 0 24 24"
@@ -205,10 +205,10 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
         style={{ animation: "fade-up 0.4s ease-out both" }}
       >
         <div className="flex items-center justify-between gap-3 px-5 md:px-7 py-4 border-b border-line">
-          <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate truncate">
+          <p className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate truncate">
             <span className="text-ink">{eventName}</span>
           </p>
-          <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum hidden sm:block whitespace-nowrap">
+          <p className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum hidden sm:block whitespace-nowrap">
             <span className="text-ink">{index}</span> / {total}
           </p>
           <button
@@ -300,9 +300,9 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           )}
 
           {props.mode !== "owned" && props.mode !== "review" && props.inCart && (
-            <div className="absolute top-4 right-4 inline-flex items-center gap-2 bg-fresh text-bone rounded-full px-3 py-1 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] z-10">
+            <div className="absolute top-4 right-4 inline-flex items-center gap-2 bg-fresh text-surface rounded-full px-3 py-1 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] z-10">
               <span
-                className="size-1.5 rounded-full bg-bone"
+                className="size-1.5 rounded-full bg-surface"
                 aria-hidden="true"
               />
               In cart
@@ -320,7 +320,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           )}
           {props.mode === "owned" ? (
             <>
-              <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-3 sm:mb-4 text-center">
+              <p className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-3 sm:mb-4 text-center">
                 Yours to keep
               </p>
               <button
@@ -333,13 +333,13 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               </button>
             </>
           ) : props.mode === "review" ? (
-            <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft text-center">
+            <p className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft text-center">
               {props.footerLabel ?? "Admin · Review only"}
             </p>
           ) : (
             <>
               {!props.inCart && (
-                <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-3 sm:mb-4 text-center">
+                <p className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-3 sm:mb-4 text-center">
                   Pay once, download forever
                 </p>
               )}
@@ -350,7 +350,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                   aria-pressed={props.inCart}
                   className={cn(
                     "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
-                    "border border-line bg-bone hover:bg-bone-deep text-ink",
+                    "border border-ink bg-bone text-ink hover:bg-ink hover:text-surface",
                   )}
                 >
                   {props.inCart ? "− Remove" : "+ Add to cart"}
@@ -371,7 +371,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                 </button>
               </div>
               {props.inCart && (
-                <p className="mt-3 sm:mt-4 font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-fresh text-center">
+                <p className="mt-3 sm:mt-4 font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-fresh text-center">
                   <span aria-hidden="true">✓</span> In cart
                   {props.onViewCart && (
                     <>
@@ -403,11 +403,11 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               onClick={onPrev}
               disabled={!onPrev}
               aria-label="Previous photo"
-              className="flex-1 inline-flex items-center justify-center gap-2 font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink py-2 disabled:opacity-30 disabled:hover:text-slate transition-colors"
+              className="flex-1 inline-flex items-center justify-center gap-2 rounded-full border border-line font-sans text-sm font-medium text-ink hover:bg-bone-deep min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
             >
               <span aria-hidden="true">←</span> Prev
             </button>
-            <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum whitespace-nowrap">
+            <span className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum whitespace-nowrap">
               <span className="text-ink">{index}</span> / {total}
             </span>
             <button
@@ -415,7 +415,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               onClick={onNext}
               disabled={!onNext}
               aria-label="Next photo"
-              className="flex-1 inline-flex items-center justify-center gap-2 font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink py-2 disabled:opacity-30 disabled:hover:text-slate transition-colors"
+              className="flex-1 inline-flex items-center justify-center gap-2 rounded-full border border-line font-sans text-sm font-medium text-ink hover:bg-bone-deep min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
             >
               Next <span aria-hidden="true">→</span>
             </button>

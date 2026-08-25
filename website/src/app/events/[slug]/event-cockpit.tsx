@@ -10,6 +10,7 @@ import {
 import Link from "next/link";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
+import { cn } from "@/lib/utils";
 import type { EventDetail } from "@/types/event";
 import { type MockPhoto } from "@/types/photo";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
@@ -518,16 +519,15 @@ function BrowseMode({
 
       <div className="sticky top-[var(--site-header-h)] z-20 bg-bone/90 backdrop-blur-md border-y border-line">
         <div className="max-w-7xl mx-auto px-6 md:px-10 py-3 flex items-center gap-3">
-          <Kicker
-            as="button"
+          <button
             type="button"
             onClick={() => setSearchOpen(true)}
             aria-haspopup="dialog"
-            className="flex-1 min-w-0 inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full border border-line bg-bone-deep/60 hover:bg-bone-deep hover:border-slate transition-colors text-left text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            className="flex-1 min-w-0 inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full border border-line-strong bg-surface shadow-[var(--shadow-card)] hover:border-ink transition-colors text-left font-sans text-sm font-medium text-slate hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             <svg
               viewBox="0 0 16 16"
-              className="size-3.5 text-slate shrink-0"
+              className="size-4 text-slate shrink-0"
               fill="none"
               aria-hidden="true"
             >
@@ -539,34 +539,32 @@ function BrowseMode({
                 strokeLinecap="round"
               />
             </svg>
-            <span className="truncate">
+            <span className={cn("truncate", isAnyFilter && "text-ink font-bold")}>
               {isBibFilter
                 ? `Search · ${bibFilter}`
                 : isFaceMode
                   ? "Search · selfie"
                   : "Find your photos"}
             </span>
-          </Kicker>
+          </button>
           {isBibFilter ? (
-            <Kicker
-              as="button"
+            <button
               type="button"
               onClick={onClearBib}
-              className="shrink-0 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+              className="shrink-0 inline-flex items-center gap-2 rounded-full border border-line px-3.5 py-2 font-sans text-sm font-medium text-ink hover:border-ink hover:bg-bone-deep transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
             >
               <span>Clear filter</span>
               <span aria-hidden="true">✕</span>
-            </Kicker>
+            </button>
           ) : isFaceMode ? (
-            <Kicker
-              as="button"
+            <button
               type="button"
               onClick={onClearFace}
-              className="shrink-0 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+              className="shrink-0 inline-flex items-center gap-2 rounded-full border border-line px-3.5 py-2 font-sans text-sm font-medium text-ink hover:border-ink hover:bg-bone-deep transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
             >
               <span>Clear filter</span>
               <span aria-hidden="true">✕</span>
-            </Kicker>
+            </button>
           ) : (
             <Kicker tone="soft" className="shrink-0 hidden sm:inline">
               <span className="tnum text-ink">{total || visible.length}</span>{" "}
@@ -593,7 +591,7 @@ function BrowseMode({
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }
                 }}
-                className="font-mono uppercase tracking-[0.25em] text-[12px] text-fresh hover:text-fresh-deep"
+                className="font-mono uppercase tracking-[0.25em] text-[12px] text-fresh hover:text-fresh-deep underline decoration-fresh/40 underline-offset-4 hover:decoration-fresh-deep"
               >
                 <span className="tnum">{live.newCount}</span> new photo
                 {live.newCount === 1 ? "" : "s"} · jump to top ↑

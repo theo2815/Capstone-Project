@@ -145,7 +145,7 @@ function EventSearchInput({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={ariaLabel}
-        className="block w-full pl-7 pr-2 py-1.5 bg-transparent border-0 outline-none font-mono text-sm tracking-wide placeholder:text-slate-soft text-ink"
+        className="block w-full pl-7 pr-2 py-1.5 bg-transparent border-b border-line focus:border-fresh transition-colors outline-none font-mono text-sm tracking-wide placeholder:text-slate-soft text-ink"
       />
     </div>
   );

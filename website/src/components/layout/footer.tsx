@@ -16,7 +16,7 @@ export function Footer() {
           <div className="col-span-2 md:col-span-1">
             <Link
               href={ROUTES.HOME}
-              className="inline-flex items-center gap-2.5 text-ink"
+              className="inline-flex items-center gap-2.5 text-ink transition-opacity hover:opacity-75"
               aria-label="QuickPitik home"
             >
               <svg className="size-7" viewBox="0 0 28 28" fill="none" aria-hidden="true">
@@ -47,7 +47,7 @@ export function Footer() {
             <li>
               <a
                 href="mailto:support@quickpitik.ph"
-                className="font-sans text-sm text-ink-soft hover:text-fresh transition-colors"
+                className="nav-link font-sans text-sm text-ink-soft hover:text-fresh transition-colors"
               >
                 support@quickpitik.ph
               </a>
@@ -77,9 +77,7 @@ function FooterColumn({
 }) {
   return (
     <div>
-      <h3 className="font-mono uppercase tracking-[0.22em] text-[12px] text-slate">
-        {title}
-      </h3>
+      <h3 className="kicker">{title}</h3>
       <ul className="mt-4 space-y-3">{children}</ul>
     </div>
   );
@@ -96,7 +94,7 @@ function FooterLink({
     <li>
       <Link
         href={href}
-        className="font-sans text-sm text-ink-soft hover:text-fresh transition-colors"
+        className="nav-link font-sans text-sm text-ink-soft hover:text-fresh transition-colors"
       >
         {children}
       </Link>

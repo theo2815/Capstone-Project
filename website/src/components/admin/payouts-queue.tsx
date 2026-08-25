@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Kicker } from "@/components/ui/kicker";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminPayoutRow } from "@/components/admin/admin-payout-row";
 import { AdminPayoutBulkBar } from "@/components/admin/admin-payout-bulk-bar";
@@ -717,7 +718,7 @@ function PayoutDrawerActions({
         <button
           type="button"
           onClick={onMarkPaid}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
         >
           Mark paid…
         </button>
@@ -726,7 +727,7 @@ function PayoutDrawerActions({
         <button
           type="button"
           onClick={onApprove}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
         >
           Approve
         </button>
@@ -746,9 +747,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
     <div className="space-y-10">
       {isReadyToSend && <ReadyToSendCard cycle={cycle} />}
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        <Kicker as="p" tone="soft" className="mb-3">
           Payout
-        </p>
+        </Kicker>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
           <FieldRow label="Payout id" value={cycle.id} mono />
           {/* No "Week of" row: payouts are request-based, so there is no week
@@ -779,9 +780,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
       </section>
 
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        <Kicker as="p" tone="soft" className="mb-3">
           Photographer
-        </p>
+        </Kicker>
         <div className="space-y-3">
           <div className="rounded-2xl border border-line bg-bone-deep p-4">
             <p className="font-display text-lg text-ink">
@@ -799,9 +800,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
 
       {cycle.status === "held" && cycle.holdReason && (
         <section>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+          <Kicker as="p" tone="soft" className="mb-3">
             Hold reason
-          </p>
+          </Kicker>
           <div className="rounded-xl border border-line bg-bone-deep p-4">
             <p className="font-sans text-sm text-ink-soft">
               {cycle.holdReason}
@@ -817,9 +818,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
 
       {cycle.status === "paid" && (
         <section>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+          <Kicker as="p" tone="soft" className="mb-3">
             Payment
-          </p>
+          </Kicker>
           <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
             {cycle.paymentReference && (
               <FieldRow
@@ -841,9 +842,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
 
       {cycle.status === "approved" && cycle.reviewedAt && (
         <section>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+          <Kicker as="p" tone="soft" className="mb-3">
             Approval
-          </p>
+          </Kicker>
           <p className="font-sans text-sm text-ink-soft tnum">
             Approved {formatLongDate(cycle.reviewedAt)} — awaiting payment.
           </p>

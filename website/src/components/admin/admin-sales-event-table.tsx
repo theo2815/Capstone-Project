@@ -133,13 +133,13 @@ function EventTableRow({ row }: { row: SalesEventRow }) {
               <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
                 {row.name}
               </p>
-              <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft border border-line rounded-full px-2 py-0.5">
+              <Kicker tone="soft" className="border border-line rounded-full px-2 py-0.5">
                 Implied
-              </span>
+              </Kicker>
             </div>
-            <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft tnum mt-1">
+            <Kicker as="p" tone="soft" tnum className="mt-1">
               {row.city} · {capitalize(row.state)} · {row.photoCount.toLocaleString()} photos
-            </p>
+            </Kicker>
           </div>
 
           <DataCell label="Date" value={formatLongDate(row.date, true)} mono />

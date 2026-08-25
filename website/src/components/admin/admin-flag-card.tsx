@@ -14,6 +14,12 @@ import { AdminStatusPill, type AdminStatusPillTone } from "./admin-status-pill";
 import { AdminFlagHideModal } from "./admin-flag-hide-modal";
 import { AdminEscalateModal } from "./admin-escalate-modal";
 import { formatLongDate } from "@/lib/format";
+import {
+  BTN_DANGER,
+  BTN_GHOST,
+  BTN_SECONDARY,
+  BTN_SIZE,
+} from "@/components/ui/button-styles";
 
 interface AdminFlagCardProps {
   flag: Flag;
@@ -170,7 +176,9 @@ export function AdminFlagCard({
                 e.stopPropagation();
                 setHideOpen(true);
               }}
-              className={primary ? primaryFreshBtn : secondaryBtn}
+              className={
+                primary ? `${dangerBtn} shadow-[var(--shadow-card)]` : dangerBtn
+              }
             >
               Hide…
             </button>
@@ -237,11 +245,6 @@ export function AdminFlagCard({
   );
 }
 
-const primaryFreshBtn =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] bg-fresh text-bone hover:bg-fresh-deep transition-colors rounded-full px-5 py-2";
-
-const secondaryBtn =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2";
-
-const tertiaryBtn =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-3 py-2";
+const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm}`;
+const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} px-3`;
+const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm}`;

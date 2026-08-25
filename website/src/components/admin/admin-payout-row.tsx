@@ -80,8 +80,10 @@ export function AdminPayoutRow({
       aria-label={`${subjectLabel}${
         selectionActive ? " — toggle selection" : " — open payout"
       }`}
-      className={`group rounded-2xl border bg-bone p-5 md:p-6 transition-colors cursor-pointer ${
-        selected ? "border-ink" : "border-line hover:border-ink"
+      className={`group rounded-2xl border p-5 md:p-6 transition-colors cursor-pointer ${
+        selected
+          ? "border-ink bg-fresh-tint/30"
+          : "border-line bg-bone hover:border-ink"
       } ${focused ? "ring-2 ring-ink ring-offset-2 ring-offset-bone" : ""}`}
     >
       <div className="flex items-start gap-4 flex-wrap md:flex-nowrap">

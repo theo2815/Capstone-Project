@@ -576,7 +576,7 @@ function PublicUrlChip({ handle }: { handle: string }) {
           type="button"
           onClick={copy}
           disabled={!valid}
-          className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
+          className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
         >
           Copy
         </button>

@@ -1023,7 +1023,7 @@ const QueueRow = memo(function QueueRow({
         {status === "done" && (
           <span
             aria-hidden="true"
-            className="absolute bottom-0.5 right-0.5 size-3.5 rounded-full bg-fresh text-bone flex items-center justify-center font-mono text-[8px] leading-none"
+            className="absolute bottom-0.5 right-0.5 size-3.5 rounded-full bg-fresh text-surface flex items-center justify-center font-mono text-[8px] leading-none"
           >
             ✓
           </span>

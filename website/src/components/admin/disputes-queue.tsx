@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Kicker } from "@/components/ui/kicker";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminDisputeCard } from "@/components/admin/admin-dispute-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
@@ -547,7 +548,7 @@ function DisputeDrawerActions({
         <button
           type="button"
           onClick={onDeny}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
         >
           Deny…
         </button>
@@ -556,7 +557,7 @@ function DisputeDrawerActions({
         <button
           type="button"
           onClick={onResolve}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
         >
           Resolve…
         </button>
@@ -598,9 +599,9 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
   return (
     <div className="space-y-10">
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        <Kicker as="p" tone="soft" className="mb-3">
           Claim
-        </p>
+        </Kicker>
         <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
           Reason: {DISPUTE_REASON_LABEL[dispute.reason]}
         </p>
@@ -610,9 +611,9 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
       </section>
 
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        <Kicker as="p" tone="soft" className="mb-3">
           Photo
-        </p>
+        </Kicker>
         <div className="grid grid-cols-1 sm:grid-cols-[10rem_1fr] gap-5 items-start">
           <DisputePhotoThumb
             thumbnailUrl={thumbnailUrl}
@@ -635,9 +636,9 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
       </section>
 
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        <Kicker as="p" tone="soft" className="mb-3">
           Order
-        </p>
+        </Kicker>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
           <FieldRow label="Order id" value={dispute.orderId} mono />
           <FieldRow
@@ -655,9 +656,9 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
       </section>
 
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        <Kicker as="p" tone="soft" className="mb-3">
           Parties
-        </p>
+        </Kicker>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="rounded-2xl border border-line bg-bone-deep p-4">
             <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
@@ -679,9 +680,9 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
       </section>
 
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        <Kicker as="p" tone="soft" className="mb-3">
           Activity
-        </p>
+        </Kicker>
         {dispute.status !== "open" &&
           (dispute.activity ?? []).length === 0 && (
             <ResolutionNote

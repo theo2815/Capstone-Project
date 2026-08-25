@@ -109,7 +109,7 @@ export function OnboardingForm() {
         <button
           type="submit"
           disabled={!role || isSubmitting}
-          className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSubmitting ? "Setting up…" : "Continue →"}
         </button>

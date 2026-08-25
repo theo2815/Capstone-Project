@@ -185,7 +185,7 @@ function NameSlab({ user, number }: { user: User; number: string }) {
           <button
             type="submit"
             disabled={!dirty || isSaving}
-            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
           >
             {isSaving ? "Saving…" : "Save name"}
             {!isSaving && <span aria-hidden="true">→</span>}
@@ -343,7 +343,7 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
           <button
             type="submit"
             disabled={isSaving}
-            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
           >
             {isSaving ? "Sending…" : "Send confirmation"}
             {!isSaving && <span aria-hidden="true">→</span>}
@@ -493,7 +493,7 @@ function PasswordSlab({ number }: { number: string }) {
         <button
           type="submit"
           disabled={isSaving}
-          className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+          className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
         >
           {isSaving ? "Saving…" : "Change password"}
           {!isSaving && <span aria-hidden="true">→</span>}

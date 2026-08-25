@@ -310,7 +310,7 @@ function ReportActions({ report, onAcknowledge, onResolve }: ReportActionsProps)
       <button
         type="button"
         onClick={onResolve}
-        className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
+        className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
       >
         Resolve…
       </button>
