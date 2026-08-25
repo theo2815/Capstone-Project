@@ -23,7 +23,7 @@ object RetrofitClient {
     //
     // When using the Android Studio Emulator, "http://10.0.2.2:8080/" routes to your PC's backend.
     // If you use a physical phone via USB instead of Wi-Fi, run "adb reverse tcp:8080 tcp:8080".
-    const val DEFAULT_BASE_URL = "http://10.0.2.2:8080/"
+    const val DEFAULT_BASE_URL = "http://192.168.1.9:8080/"
 
     // The live backend origin. Was a `const val` until 2026-08-16, which meant
     // every laptop IP change cost a Kotlin edit + recompile + reinstall — and on
