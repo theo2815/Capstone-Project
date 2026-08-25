@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 400" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg3" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F8F5EE" />
+      <stop offset="100%" stop-color="#E5DEC9" />
+    </linearGradient>
+  </defs>
+  <rect width="300" height="400" fill="url(#bg3)"/>
+  
+  <!-- Finish Arch Archway -->
+  <path d="M20 400 L20 120 Q150 40 280 120 L280 400" stroke="#2A2A28" stroke-width="12" fill="none" opacity="0.15"/>
+  <path d="M-10 170 Q150 210 310 170" stroke="#2D9E5E" stroke-width="8" fill="none"/>
+  <text x="150" y="155" font-family="monospace" font-size="14" font-weight="bold" fill="#237A48" letter-spacing="4" text-anchor="middle">FINISH LINE</text>
+
+  <!-- Runner Victory Arms Up -->
+  <g fill="#111111">
+    <circle cx="150" cy="190" r="16"/>
+    <!-- Arms Up V Shape -->
+    <path d="M140 212 L95 140 L110 130 L146 198 Z"/>
+    <path d="M160 212 L205 140 L190 130 L154 198 Z"/>
+    <!-- Torso -->
+    <path d="M136 210 L164 210 L160 280 L140 280 Z"/>
+    <!-- Legs -->
+    <path d="M140 280 L120 360 L140 362 L150 285 Z"/>
+    <path d="M160 280 L180 360 L160 362 L150 285 Z"/>
+  </g>
+
+  <!-- Bib -->
+  <rect x="135" y="225" width="30" height="22" rx="3" fill="#FFF" stroke="#111" stroke-width="1.5"/>
+  <rect x="135" y="225" width="30" height="5" fill="#2D9E5E"/>
+  <text x="150" y="240" font-family="monospace" font-size="8" font-weight="bold" fill="#111" text-anchor="middle">B-5512</text>
+</svg>

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 400" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg6" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#EFE9DC" />
+      <stop offset="100%" stop-color="#CDC4B0" />
+    </linearGradient>
+  </defs>
+  <rect width="300" height="400" fill="url(#bg6)"/>
+  
+  <!-- Banner Top -->
+  <rect x="0" y="40" width="300" height="45" fill="#111111"/>
+  <text x="150" y="68" font-family="monospace" font-size="15" font-weight="bold" fill="#2D9E5E" letter-spacing="3" text-anchor="middle">QUICKPITIK 21K</text>
+
+  <!-- Runners Pack Crowd -->
+  <g fill="#111111" opacity="0.85">
+    <!-- Runner A -->
+    <circle cx="50" cy="180" r="14"/>
+    <path d="M40 198 L62 198 L58 270 L42 270 Z"/>
+    <!-- Runner B (Center) -->
+    <circle cx="150" cy="150" r="18"/>
+    <path d="M135 172 L168 170 L160 260 L138 260 Z"/>
+    <!-- Runner C -->
+    <circle cx="240" cy="175" r="15"/>
+    <path d="M228 194 L252 194 L248 268 L232 268 Z"/>
+  </g>
+
+  <!-- Bib Numbers -->
+  <rect x="136" y="185" width="28" height="20" rx="2" fill="#FFF"/>
+  <text x="150" y="199" font-family="monospace" font-size="8" font-weight="bold" fill="#111" text-anchor="middle">B-4082</text>
+
+  <rect x="38" y="210" width="24" height="16" rx="2" fill="#FFF"/>
+  <text x="50" y="221" font-family="monospace" font-size="7" font-weight="bold" fill="#111" text-anchor="middle">1044</text>
+
+  <rect x="230" y="208" width="24" height="16" rx="2" fill="#FFF"/>
+  <text x="242" y="219" font-family="monospace" font-size="7" font-weight="bold" fill="#111" text-anchor="middle">7190</text>
+  
+  <path d="M0 320 L300 320 L300 400 L0 400 Z" fill="#B2A894" opacity="0.7"/>
+</svg>

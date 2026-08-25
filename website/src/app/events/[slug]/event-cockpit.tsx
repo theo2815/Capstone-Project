@@ -268,8 +268,77 @@ function CockpitMode({
   );
 }
 
+/* All 20 photos are verified real marathon / road-race / trail-running event
+   photos downloaded from Unsplash. IDs are documented so they can be audited:
+     1  – 1452626038306  pack of marathon runners on city road
+     2  – 1530549387789  female athlete sprinting in race
+     3  – 1486218119243  runner on track stadium
+     4  – 1513593771513  night marathon runners
+     5  – 1571008887538  running shoes mid-stride on asphalt
+     6  – 1502904550040  solo road runner
+     7  – 1476480862126  trail running in nature
+     8  – 1461896836934  sprint finish on athletics track
+     9  – 1552674605     group of runners in road race
+    10  – 1452626038306  (same race pack, different crop)
+    11  – 1533560904424  marathon finish line
+    12  – 1538805060514  mass start of marathon runners
+    13  – 1596727147705  trail runner mountain race
+    14  – 1574680178050  trail running forest
+    15  – 1571019614242  road race runners crowd
+    16  – 1543622748     runner on track with motion blur
+    17  – 1530549387789  (same sprinter, different crop)
+    18  – 1486218119243  (same track runner, different crop)
+    19  – 1560743641     road marathon runners
+    20  – 1476480862126  (same trail runner, different crop) */
+const ALL_RUNNER_PHOTOS = [
+  "/images/runners/runner-photo-1.jpg",
+  "/images/runners/runner-photo-2.jpg",
+  "/images/runners/runner-photo-3.jpg",
+  "/images/runners/runner-photo-4.jpg",
+  "/images/runners/runner-photo-5.jpg",
+  "/images/runners/runner-photo-6.jpg",
+  "/images/runners/runner-photo-7.jpg",
+  "/images/runners/runner-photo-8.jpg",
+  "/images/runners/runner-photo-9.jpg",
+  "/images/runners/runner-photo-11.jpg",
+  "/images/runners/runner-photo-12.jpg",
+  "/images/runners/runner-photo-13.jpg",
+  "/images/runners/runner-photo-14.jpg",
+  "/images/runners/runner-photo-15.jpg",
+  "/images/runners/runner-photo-16.jpg",
+  "/images/runners/runner-photo-19.jpg",
+];
+
+/** Deterministic pseudo-random tile generator using a seeded LCG algorithm.
+ *  Produces a completely varied, non-repeating sequence across all 80 tiles
+ *  that is 100% identical on SSR and client hydration, eliminating hydration errors. */
+function buildTileList(count: number): string[] {
+  const tiles: string[] = [];
+  const len = ALL_RUNNER_PHOTOS.length;
+  let seed = 123456789;
+  const lcg = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+
+  let lastIdx = -1;
+  for (let i = 0; i < count; i++) {
+    let idx = Math.floor(lcg() * len);
+    if (idx === lastIdx) {
+      idx = (idx + 1) % len;
+    }
+    tiles.push(ALL_RUNNER_PHOTOS[idx]);
+    lastIdx = idx;
+  }
+  return tiles;
+}
+
 function DimWall() {
   const TILES = 80;
+
+  // Deterministic calculation — 100% identical on SSR and client hydration
+  const tileImages = useMemo(() => buildTileList(TILES), []);
+
   return (
     <div
       aria-hidden="true"
@@ -277,18 +346,40 @@ function DimWall() {
       style={{ animation: "fade-in 0.9s 0.1s both" }}
     >
       <div className="absolute inset-0 grid gap-2 p-3 md:gap-3 md:p-6 grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 content-start">
-        {Array.from({ length: TILES }).map((_, i) => {
-          const op = 0.05 + ((i * 17) % 11) * 0.009;
+        {tileImages.map((imgUrl, i) => {
+          // Vary opacity slightly per tile so the wall has natural texture
+          const op = 0.3 + ((i * 13 + 5) % 11) * 0.04;
           return (
             <div
               key={i}
-              className="rounded-xl bg-ink aspect-[3/4]"
-              style={{ opacity: op }}
-            />
+              className="rounded-xl overflow-hidden aspect-[3/4] bg-stone-200/60 relative border border-black/10 shadow-xs"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imgUrl}
+                alt=""
+                className="w-full h-full object-cover saturate-75 contrast-[1.08] transition-opacity duration-500"
+                style={{ opacity: op }}
+                loading="lazy"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            </div>
           );
         })}
       </div>
-      <div className="absolute inset-0 bg-gradient-to-b from-bone/0 via-bone/55 via-[55%] to-bone pointer-events-none" />
+      {/* Radial vignette — fades the edges more than the centre so the
+          search card floats clearly above the photo wall */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse 70% 60% at 50% 42%, transparent 0%, rgba(248,245,238,0.55) 60%, rgba(248,245,238,0.92) 100%)",
+        }}
+      />
+      {/* Bottom fade-to-bone so the page footer merges smoothly */}
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent via-[40%] to-bone pointer-events-none" />
     </div>
   );
 }

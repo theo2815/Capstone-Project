@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 400" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F3EFE6" />
+      <stop offset="100%" stop-color="#E2DDD0" />
+    </linearGradient>
+    <linearGradient id="freshG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2D9E5E" />
+      <stop offset="100%" stop-color="#237A48" />
+    </linearGradient>
+  </defs>
+  <rect width="300" height="400" fill="url(#bg1)"/>
+  
+  <!-- Race Track Lines -->
+  <path d="M-50 320 Q150 280 350 340" stroke="#D5CFC0" stroke-width="8" fill="none"/>
+  <path d="M-50 350 Q150 310 350 370" stroke="#2D9E5E" stroke-width="3" opacity="0.6" fill="none"/>
+  <path d="M-50 380 Q150 340 350 400" stroke="#D5CFC0" stroke-width="12" fill="none"/>
+  
+  <!-- Runner Silhouette -->
+  <g fill="#111111">
+    <circle cx="165" cy="95" r="18"/>
+    <path d="M150 118 L185 115 L175 195 L142 190 Z" />
+    <path d="M150 120 L115 145 L95 135 L90 148 L115 162 L152 132 Z" fill="#2A2A28"/>
+    <path d="M182 118 L218 142 L238 128 L244 140 L218 158 L176 130 Z"/>
+    <path d="M148 190 L110 245 L65 270 L60 284 L115 258 L158 200 Z" fill="#2A2A28"/>
+    <path d="M172 192 L205 255 L245 305 L225 312 L192 262 L158 200 Z"/>
+  </g>
+  
+  <!-- Bib Number -->
+  <rect x="146" y="132" width="34" height="26" rx="3" fill="#FFFFFF" stroke="#111111" stroke-width="1.5"/>
+  <rect x="146" y="132" width="34" height="6" fill="url(#freshG)"/>
+  <text x="163" y="152" font-family="monospace" font-size="10" font-weight="bold" fill="#111111" text-anchor="middle">B-4082</text>
+  
+  <!-- Motion accents -->
+  <line x1="50" y1="120" x2="100" y2="120" stroke="#2D9E5E" stroke-width="2" opacity="0.4" stroke-dasharray="8,4"/>
+  <line x1="30" y1="140" x2="80" y2="140" stroke="#111111" stroke-width="1.5" opacity="0.2" stroke-dasharray="6,4"/>
+</svg>

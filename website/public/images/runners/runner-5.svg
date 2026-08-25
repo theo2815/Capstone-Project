@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 400" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg5" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F5F0E6" />
+      <stop offset="100%" stop-color="#DBD3BF" />
+    </linearGradient>
+  </defs>
+  <rect width="300" height="400" fill="url(#bg5)"/>
+  
+  <!-- Asphalt Road Texture -->
+  <line x1="0" y1="310" x2="300" y2="310" stroke="#111111" stroke-width="2" opacity="0.3"/>
+  <line x1="0" y1="340" x2="300" y2="340" stroke="#2D9E5E" stroke-width="4" stroke-dasharray="20,15"/>
+
+  <!-- Runner Stride Legs Close-up -->
+  <g fill="#111111">
+    <!-- Shorts -->
+    <path d="M70 80 L230 80 L210 170 L150 170 L140 170 L75 160 Z"/>
+    <!-- Left Leg Extended Back -->
+    <path d="M85 160 L40 260 L20 320 L50 320 L75 270 L120 170 Z"/>
+    <!-- Right Leg Pushing Forward -->
+    <path d="M165 170 L215 250 L260 305 L230 315 L190 260 L145 170 Z"/>
+  </g>
+
+  <!-- Bright Running Shoes -->
+  <path d="M15 315 L55 315 L50 328 L10 328 Z" fill="#2D9E5E"/>
+  <path d="M225 305 L268 305 L260 318 L218 318 Z" fill="#2D9E5E"/>
+
+  <text x="150" y="50" font-family="sans-serif" font-size="16" font-weight="900" fill="#111111" letter-spacing="6" opacity="0.2" text-anchor="middle">MARATHON</text>
+</svg>
