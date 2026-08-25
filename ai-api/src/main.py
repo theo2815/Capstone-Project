@@ -245,12 +245,13 @@ def create_app() -> FastAPI:
         should_group_status_codes=True,
         excluded_handlers=["/metrics"],
     )
-    instrumentator.instrument(app)
+    if settings.METRICS_ENABLED:
+        instrumentator.instrument(app)
 
-    if settings.DEBUG:
+    if settings.METRICS_ENABLED and settings.DEBUG:
         # In development, expose /metrics without auth
         instrumentator.expose(app, include_in_schema=False)
-    else:
+    elif settings.METRICS_ENABLED:
         # In production, serve metrics behind a dedicated authenticated route
         from starlette.responses import Response
         from prometheus_client import generate_latest, CONTENT_TYPE_LATEST

@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "QuickPitik API"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
+    METRICS_ENABLED: bool = True  # off in dev — instrumentator 7.1.0 crashes on FastAPI 0.141 nested routers
     LOG_LEVEL: str = "INFO"
     ENVIRONMENT: str = "development"
     SQL_ECHO: bool = False

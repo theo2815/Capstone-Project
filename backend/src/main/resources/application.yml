@@ -29,6 +29,10 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  # Dev: localhost is a shared cookie jar across every local dev server (e.g. a
+  # Supabase auth-token cookie ~2.5KB from another local app). <img> requests to
+  # /storage carry those cookies and blow past Tomcat's 8KB default, 503-ing image loads.
+  max-http-request-header-size: 64KB
   error:
     include-message: never
     include-stacktrace: never
