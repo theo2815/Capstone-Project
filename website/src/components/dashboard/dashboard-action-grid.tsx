@@ -35,10 +35,10 @@ export function DashboardActionGrid() {
 
   return (
     <section className="pb-12 md:pb-16">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate tnum">
         Overview · Cebu
       </p>
-      <h2 className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink leading-[1.05] mt-4">
+      <h2 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink leading-[1.05] mt-4">
         Welcome back, {firstName}.
       </h2>
 
@@ -62,7 +62,7 @@ function CardShell({
   return (
     <Link
       href={href}
-      className="group flex flex-col h-full border border-line rounded-2xl p-5 md:p-6 bg-bone hover:bg-bone-deep/40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+      className="group flex flex-col h-full border border-line rounded-2xl p-5 md:p-6 bg-surface shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-lift)] hover:border-fresh/40 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
     >
       {children}
     </Link>
@@ -71,7 +71,7 @@ function CardShell({
 
 function CardLabel({ children }: { children: ReactNode }) {
   return (
-    <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-auto">
+    <p className="font-display text-xl md:text-2xl font-bold tracking-tight text-ink mt-auto">
       {children}
     </p>
   );
@@ -225,7 +225,7 @@ function EventsCard() {
 
   return (
     <CardShell href={ROUTES.DASHBOARD_EVENTS}>
-      <ul className="space-y-2 font-mono uppercase tracking-[0.25em] text-[11px] text-slate tnum">
+      <ul className="space-y-2 font-mono uppercase tracking-[0.25em] text-[12px] text-slate tnum">
         <li className="flex items-center gap-2.5">
           <span
             aria-hidden="true"

@@ -127,11 +127,11 @@ export function RegisterForm() {
 
   return (
     <form onSubmit={handleSubmit} noValidate className="stagger-children space-y-7">
-      <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
         Create account
       </p>
 
-      <h1 className="font-display text-5xl md:text-6xl font-medium tracking-tight leading-[1.0]">
+      <h1 className="font-hero text-5xl md:text-6xl">
         Join
         <br />
         <span className="text-fresh">QuickPitik.</span>
@@ -166,7 +166,7 @@ export function RegisterForm() {
               )}
             >
               <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum">
+                <span className="font-mono text-[12px] tracking-[0.15em] text-slate-soft tnum">
                   {pad2(idx + 1)}
                 </span>
                 <span
@@ -177,7 +177,7 @@ export function RegisterForm() {
                   aria-hidden="true"
                 />
               </div>
-              <p className="font-display text-lg text-ink leading-tight mt-3">
+              <p className="font-display font-bold text-lg text-ink leading-tight mt-3">
                 {option.label}
               </p>
               <p className="font-sans text-sm text-slate mt-1.5">
@@ -192,7 +192,7 @@ export function RegisterForm() {
         <FieldBlock>
           <label
             htmlFor="name"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
           >
             Full name
           </label>
@@ -216,7 +216,7 @@ export function RegisterForm() {
         <FieldBlock>
           <label
             htmlFor="email"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
           >
             Email
           </label>
@@ -240,7 +240,7 @@ export function RegisterForm() {
         <FieldBlock>
           <label
             htmlFor="password"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
           >
             Password
             <span className="ml-2 text-slate-soft normal-case tracking-normal">
@@ -274,13 +274,13 @@ export function RegisterForm() {
       <button
         type="submit"
         disabled={isLoading}
-        className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isLoading ? "Creating account…" : "Create account →"}
       </button>
 
       <div className="border-t border-line pt-6">
-        <p className="text-center font-mono uppercase tracking-[0.2em] text-[10px] text-slate">
+        <p className="text-center font-mono uppercase tracking-[0.2em] text-[12px] text-slate">
           Already have an account?{" "}
           <Link
             href={

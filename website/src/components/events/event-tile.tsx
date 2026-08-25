@@ -108,7 +108,7 @@ export function EventTile(props: EventTileProps) {
         <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-3">
           <span className="tnum">{dateLabel}</span> · {cityUpper}
         </p>
-        <h3 className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-tight text-ink">
+        <h3 className="font-display text-2xl md:text-3xl font-extrabold tracking-tight leading-tight text-ink">
           {event.name}
         </h3>
         <p className="mt-3 font-sans text-sm md:text-base text-ink-soft">
@@ -131,7 +131,7 @@ export function EventTile(props: EventTileProps) {
       return (
         <div
           aria-label={`${event.name} — opens on race day`}
-          className="group block rounded-2xl border border-line bg-bone overflow-hidden"
+          className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden"
           style={animationStyle}
         >
           {body}
@@ -143,7 +143,7 @@ export function EventTile(props: EventTileProps) {
       <Link
         href={hrefOverride ?? `/events/${event.slug}`}
         aria-label={`Open ${event.name}`}
-        className="group block rounded-2xl border border-line bg-bone overflow-hidden transition-all duration-300 hover:border-ink hover:-translate-y-[2px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden transition-all duration-300 hover:border-fresh/50 hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
         style={animationStyle}
       >
         {body}
@@ -166,7 +166,7 @@ export function EventTile(props: EventTileProps) {
       <Link
         href={target}
         aria-label={aria}
-        className="group block rounded-2xl border border-line bg-bone overflow-hidden transition-all duration-300 hover:border-ink hover:-translate-y-[2px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden transition-all duration-300 hover:border-fresh/50 hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
         style={animationStyle}
       >
         {body}
@@ -179,7 +179,7 @@ export function EventTile(props: EventTileProps) {
     <Link
       href={`${ROUTES.DASHBOARD_EVENTS}/${event.id}`}
       aria-label={`Open ${event.name}`}
-      className="group block rounded-2xl border border-line bg-bone overflow-hidden transition-all duration-300 hover:border-ink hover:-translate-y-[2px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+      className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden transition-all duration-300 hover:border-fresh/50 hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
       style={animationStyle}
     >
       {body}

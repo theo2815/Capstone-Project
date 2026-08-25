@@ -230,7 +230,7 @@ function SelfieEmptyState({
 
       <label
         className={
-          "mt-6 inline-flex items-center gap-2 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors " +
+          "mt-6 inline-flex items-center gap-2 font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors " +
           (busy ? "opacity-60 cursor-wait" : "cursor-pointer")
         }
       >

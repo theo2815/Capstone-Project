@@ -75,12 +75,12 @@ export function ResetPasswordForm() {
   if (status !== "sent" && !token) {
     return (
       <div className="stagger-children space-y-7">
-        <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
           Reset access
           <span className="ml-2 text-error">&middot; Invalid link</span>
         </p>
 
-        <h1 className="font-display text-5xl md:text-6xl font-medium tracking-tight leading-[1.0]">
+        <h1 className="font-hero text-5xl md:text-6xl">
           Link is
           <br />
           <span className="text-fresh">missing.</span>
@@ -93,7 +93,7 @@ export function ResetPasswordForm() {
 
         <Link
           href={ROUTES.FORGOT_PASSWORD}
-          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors"
         >
           Request new link →
         </Link>
@@ -102,7 +102,7 @@ export function ResetPasswordForm() {
           <p className="text-center">
             <Link
               href={ROUTES.LOGIN}
-              className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors"
+              className="font-mono uppercase tracking-[0.2em] text-[12px] text-slate hover:text-ink transition-colors"
             >
               ← Back to sign in
             </Link>
@@ -115,12 +115,12 @@ export function ResetPasswordForm() {
   if (status === "sent") {
     return (
       <div className="stagger-children space-y-7">
-        <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
           Reset access
           <span className="ml-2 text-fresh">&middot; Done</span>
         </p>
 
-        <h1 className="font-display text-5xl md:text-6xl font-medium tracking-tight leading-[1.0]">
+        <h1 className="font-hero text-5xl md:text-6xl">
           Password
           <br />
           <span className="text-fresh">reset.</span>
@@ -132,7 +132,7 @@ export function ResetPasswordForm() {
 
         <Link
           href={ROUTES.LOGIN}
-          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors"
         >
           Sign in →
         </Link>
@@ -146,11 +146,11 @@ export function ResetPasswordForm() {
       noValidate
       className="stagger-children space-y-7"
     >
-      <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
         Reset access
       </p>
 
-      <h1 className="font-display text-5xl md:text-6xl font-medium tracking-tight leading-[1.0]">
+      <h1 className="font-hero text-5xl md:text-6xl">
         Set a new
         <br />
         <span className="text-fresh">password.</span>
@@ -164,7 +164,7 @@ export function ResetPasswordForm() {
         <div className="flex flex-col gap-2">
           <label
             htmlFor="password"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
           >
             New password
             <span className="ml-2 text-slate-soft normal-case tracking-normal">
@@ -196,7 +196,7 @@ export function ResetPasswordForm() {
         <div className="flex flex-col gap-2">
           <label
             htmlFor="confirm-password"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
           >
             Confirm new password
           </label>
@@ -228,7 +228,7 @@ export function ResetPasswordForm() {
       <button
         type="submit"
         disabled={isLoading}
-        className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isLoading ? "Saving…" : "Reset password →"}
       </button>
@@ -237,7 +237,7 @@ export function ResetPasswordForm() {
         <p className="text-center">
           <Link
             href={ROUTES.LOGIN}
-            className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.2em] text-[12px] text-slate hover:text-ink transition-colors"
           >
             ← Back to sign in
           </Link>

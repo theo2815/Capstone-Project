@@ -188,7 +188,7 @@ function BackChip() {
   return (
     <Link
       href={ROUTES.DASHBOARD_EVENTS}
-      className="inline-flex items-center gap-2 font-mono uppercase tracking-[0.3em] text-[10px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone mb-8 md:mb-10"
+      className="inline-flex items-center gap-2 font-mono uppercase tracking-[0.3em] text-[12px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone mb-8 md:mb-10"
     >
       <span aria-hidden="true">←</span>
       <span>Back to events</span>
@@ -199,12 +199,12 @@ function BackChip() {
 function Hero({ event }: { event: ListEvent }) {
   return (
     <section className="mb-10 md:mb-12">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum flex items-center gap-2 flex-wrap">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate tnum flex items-center gap-2 flex-wrap">
         <span>{formatLongDate(event.date, true)}</span>
         <span className="text-slate-soft">·</span>
         <StateChip state={event.state} />
       </p>
-      <h1 className="font-display text-4xl md:text-6xl font-medium tracking-tight text-ink mt-4 leading-[1.05]">
+      <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight text-ink mt-4 leading-[1.05]">
         {event.name}
       </h1>
       <p className="font-sans text-base md:text-lg text-ink-soft mt-4 max-w-md">
@@ -297,7 +297,7 @@ function ShareHeroBand({ event }: { event: ListEvent }) {
 
   return (
     <section className="mb-10 md:mb-12 border border-line rounded-2xl bg-bone-deep/30 p-6 md:p-10">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
         Public gallery
       </p>
 
@@ -316,7 +316,7 @@ function ShareHeroBand({ event }: { event: ListEvent }) {
       </div>
 
       <div className="mt-6 md:mt-8 flex flex-col md:flex-row md:items-center gap-3 md:gap-6">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft shrink-0">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft shrink-0">
           Share to your followers
         </p>
         <div className="flex items-center gap-2 md:gap-3 flex-wrap">
@@ -395,7 +395,7 @@ function ShareChip({
 
 function Stats({ photographer }: { photographer: PhotographerEventSummary }) {
   return (
-    <section className="mb-10 md:mb-12 flex flex-wrap items-baseline gap-x-8 gap-y-3 font-mono uppercase tracking-[0.3em] text-[11px] text-slate tnum">
+    <section className="mb-10 md:mb-12 flex flex-wrap items-baseline gap-x-8 gap-y-3 font-mono uppercase tracking-[0.3em] text-[12px] text-slate tnum">
       <span>
         <span className="text-ink">
           {photographer.photoCount.toLocaleString()}
@@ -513,10 +513,10 @@ function PhotoGrid({
   return (
     <section>
       <div className="flex items-baseline justify-between border-b border-line pb-4 mb-6 gap-4">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate tnum">
           Uploaded photos
         </p>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft tnum">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft tnum">
           <span className="text-ink">{total.toLocaleString()}</span> total
         </p>
       </div>

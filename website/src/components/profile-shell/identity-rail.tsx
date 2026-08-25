@@ -77,7 +77,7 @@ export function IdentityRail({
           </p>
           <h1
             className={cn(
-              "font-display font-medium tracking-tight leading-[1.05] text-ink mt-3",
+              "font-display font-extrabold tracking-tight leading-[1.05] text-ink mt-3",
               HEADLINE_SIZE[headlineSize],
             )}
           >

@@ -61,7 +61,7 @@ export function BibPanel({
       </label>
       <button
         type="submit"
-        className="mt-5 inline-flex items-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+        className="mt-5 inline-flex items-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors"
       >
         Search by bib →
       </button>

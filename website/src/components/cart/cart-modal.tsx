@@ -336,7 +336,7 @@ export function CartModal({
                     onClose();
                   }
                 }}
-                className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep"
+                className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep"
               >
                 Continue to checkout →
               </button>

@@ -34,10 +34,10 @@ export default async function EventsPage() {
 function Footer() {
   return (
     <footer className="px-6 md:px-10 py-8 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-bone">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
         QuickPitik &middot; Cebu, Philippines
       </p>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
         © 2026
       </p>
     </footer>

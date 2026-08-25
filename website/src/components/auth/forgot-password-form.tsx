@@ -61,12 +61,12 @@ export function ForgotPasswordForm() {
   if (status === "sent") {
     return (
       <div className="stagger-children space-y-7">
-        <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
           Reset access
           <span className="ml-2 text-fresh">&middot; Sent</span>
         </p>
 
-        <h1 className="font-display text-5xl md:text-6xl font-medium tracking-tight leading-[1.0]">
+        <h1 className="font-hero text-5xl md:text-6xl">
           Check your
           <br />
           <span className="text-fresh">inbox.</span>
@@ -90,7 +90,7 @@ export function ForgotPasswordForm() {
         <button
           type="button"
           onClick={handleReset}
-          className="w-full border border-line hover:border-ink text-ink py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+          className="w-full border border-line hover:border-ink text-ink py-4 rounded-full font-display font-semibold text-[15px] transition-colors"
         >
           Try another email →
         </button>
@@ -99,7 +99,7 @@ export function ForgotPasswordForm() {
           <p className="text-center">
             <Link
               href={ROUTES.LOGIN}
-              className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors"
+              className="font-mono uppercase tracking-[0.2em] text-[12px] text-slate hover:text-ink transition-colors"
             >
               ← Back to sign in
             </Link>
@@ -111,11 +111,11 @@ export function ForgotPasswordForm() {
 
   return (
     <form onSubmit={handleSubmit} noValidate className="stagger-children space-y-7">
-      <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
         Reset access
       </p>
 
-      <h1 className="font-display text-5xl md:text-6xl font-medium tracking-tight leading-[1.0]">
+      <h1 className="font-hero text-5xl md:text-6xl">
         Forgot
         <br />
         <span className="text-fresh">your password?</span>
@@ -129,7 +129,7 @@ export function ForgotPasswordForm() {
         <div className="flex flex-col gap-2">
           <label
             htmlFor="email"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
           >
             Email
           </label>
@@ -157,7 +157,7 @@ export function ForgotPasswordForm() {
       <button
         type="submit"
         disabled={isLoading}
-        className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isLoading ? "Sending…" : "Send reset link →"}
       </button>
@@ -166,7 +166,7 @@ export function ForgotPasswordForm() {
         <p className="text-center">
           <Link
             href={ROUTES.LOGIN}
-            className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.2em] text-[12px] text-slate hover:text-ink transition-colors"
           >
             ← Back to sign in
           </Link>

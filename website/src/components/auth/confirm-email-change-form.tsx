@@ -78,7 +78,7 @@ export function ConfirmEmailChangeForm() {
 
         <Link
           href={ROUTES.ACCOUNT}
-          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors"
         >
           Go to account &rarr;
         </Link>
@@ -119,7 +119,7 @@ export function ConfirmEmailChangeForm() {
 
         <Link
           href={ROUTES.LOGIN}
-          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors"
         >
           Sign in &rarr;
         </Link>

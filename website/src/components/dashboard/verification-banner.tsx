@@ -105,7 +105,7 @@ export function VerificationBanner({
       </p>
       <Link
         href={ROUTES.DASHBOARD_SETTINGS}
-        className="mt-5 inline-flex items-center gap-2 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors"
+        className="mt-5 inline-flex items-center gap-2 font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors"
       >
         Open settings
         <span aria-hidden="true">→</span>

@@ -208,7 +208,7 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
         <Kicker as="p" tnum>
           {date}
         </Kicker>
-        <h3 className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2 truncate">
+        <h3 className="font-display text-xl md:text-2xl font-bold tracking-tight text-ink mt-2 truncate">
           {entry.name}
         </h3>
         <p className="font-sans text-sm text-slate mt-2">
@@ -287,7 +287,7 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
 function RaceLogEmpty() {
   return (
     <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-      <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+      <p className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-ink">
         No races yet.
       </p>
       <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
@@ -436,7 +436,7 @@ function PhotographerProfileBody({ user }: { user: User }) {
         </div>
 
         <div className="mt-6 flex items-baseline gap-3 flex-wrap">
-          <h1 className="font-display text-4xl md:text-5xl font-medium tracking-tight text-ink leading-[1.05]">
+          <h1 className="font-display text-4xl md:text-5xl font-extrabold tracking-tight text-ink leading-[1.05]">
             {displayName}
           </h1>
           {accent && (
@@ -458,7 +458,7 @@ function PhotographerProfileBody({ user }: { user: User }) {
         <div className="mt-7 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
           <Link
             href={ROUTES.DASHBOARD_UPLOAD}
-            className="inline-flex items-center justify-center gap-2 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors w-full sm:w-auto"
+            className="inline-flex items-center justify-center gap-2 font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors w-full sm:w-auto"
           >
             <span aria-hidden="true">+</span>
             Upload photos
@@ -516,7 +516,7 @@ function Stat({ label, value }: { label: string; value: string }) {
       <Kicker as="p">
         {label}
       </Kicker>
-      <p className="font-display font-medium tracking-tight tnum text-2xl md:text-3xl text-ink mt-2 leading-none">
+      <p className="font-display font-extrabold tracking-tight tnum text-2xl md:text-3xl text-ink mt-2 leading-none">
         {value}
       </p>
     </div>
@@ -714,7 +714,7 @@ function PortfolioEmpty() {
   // the page's single fresh element. Empty state points users back up.
   return (
     <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-      <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+      <p className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-ink">
         Nothing shipped yet.
       </p>
       <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">

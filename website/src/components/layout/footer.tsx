@@ -1,96 +1,105 @@
 import Link from "next/link";
 import { ROUTES } from "@/lib/constants";
-import { Camera } from "lucide-react";
 
 export function Footer() {
   return (
-    <footer className="border-t border-white/[0.06] bg-charcoal-deep">
-      <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-4">
-          <div>
-            <Link href={ROUTES.HOME} className="group inline-flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary transition-transform duration-200 group-hover:scale-105">
-                <Camera className="h-4 w-4 text-white" />
-              </div>
-              <span className="text-lg font-bold text-white">Quick Pitik</span>
+    <footer className="border-t border-line bg-paper-deep">
+      {/* Finish-line accent */}
+      <div className="h-1 w-full flex" aria-hidden="true">
+        <span className="flex-1 bg-fresh" />
+        <span className="flex-1 bg-fresh-deep" />
+        <span className="flex-1 bg-pine" />
+      </div>
+
+      <div className="mx-auto max-w-7xl px-6 py-14 md:px-10">
+        <div className="grid grid-cols-2 gap-10 md:grid-cols-4">
+          <div className="col-span-2 md:col-span-1">
+            <Link
+              href={ROUTES.HOME}
+              className="inline-flex items-center gap-2.5 text-ink"
+              aria-label="QuickPitik home"
+            >
+              <svg className="size-7" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+                <circle cx="14" cy="14" r="13" stroke="currentColor" strokeWidth="1.5" />
+                <circle cx="14" cy="14" r="5" className="fill-fresh" />
+              </svg>
+              <span className="font-display text-lg font-extrabold tracking-tight">
+                QuickPitik
+              </span>
             </Link>
-            <p className="mt-4 max-w-xs text-sm leading-relaxed text-cool-gray/50">
-              AI-powered marathon photography platform. Find your race photos
-              in seconds using face recognition and bib number search.
+            <p className="mt-4 max-w-xs font-sans text-sm leading-relaxed text-slate">
+              Race photos delivered minutes after the finish line. Find yours by
+              face or bib in seconds — and photographers get found and paid.
             </p>
           </div>
 
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-cool-gray-dark">
-              Events
-            </h3>
-            <ul className="mt-4 space-y-3">
-              <li>
-                <Link
-                  href={ROUTES.EVENTS}
-                  className="text-sm text-cool-gray/60 hover:text-white transition-colors duration-200"
-                >
-                  Browse Events
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/#how-it-works"
-                  className="text-sm text-cool-gray/60 hover:text-white transition-colors duration-200"
-                >
-                  How It Works
-                </Link>
-              </li>
-            </ul>
-          </div>
+          <FooterColumn title="Events">
+            <FooterLink href={ROUTES.EVENTS}>Browse events</FooterLink>
+            <FooterLink href="/#how-it-works">How it works</FooterLink>
+          </FooterColumn>
 
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-cool-gray-dark">
-              Account
-            </h3>
-            <ul className="mt-4 space-y-3">
-              <li>
-                <Link
-                  href={ROUTES.LOGIN}
-                  className="text-sm text-cool-gray/60 hover:text-white transition-colors duration-200"
-                >
-                  Log In
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href={ROUTES.REGISTER}
-                  className="text-sm text-cool-gray/60 hover:text-white transition-colors duration-200"
-                >
-                  Sign Up
-                </Link>
-              </li>
-            </ul>
-          </div>
+          <FooterColumn title="Account">
+            <FooterLink href={ROUTES.LOGIN}>Log in</FooterLink>
+            <FooterLink href={ROUTES.REGISTER}>Sign up</FooterLink>
+          </FooterColumn>
 
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-cool-gray-dark">
-              Support
-            </h3>
-            <ul className="mt-4 space-y-3">
-              <li>
-                <span className="text-sm text-cool-gray/60">
-                  support@quickpitik.ph
-                </span>
-              </li>
-            </ul>
-          </div>
+          <FooterColumn title="Support">
+            <li>
+              <a
+                href="mailto:support@quickpitik.ph"
+                className="font-sans text-sm text-ink-soft hover:text-fresh transition-colors"
+              >
+                support@quickpitik.ph
+              </a>
+            </li>
+          </FooterColumn>
         </div>
 
-        <div className="mt-12 border-t border-white/[0.06] pt-8 flex flex-col items-center gap-2 sm:flex-row sm:justify-between">
-          <p className="text-xs text-cool-gray-dark">
-            &copy; {new Date().getFullYear()} Quick Pitik. All rights reserved.
+        <div className="mt-12 border-t border-line pt-8 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="font-mono uppercase tracking-[0.24em] text-[12px] text-slate-soft">
+            &copy; {new Date().getFullYear()} QuickPitik · All rights reserved
           </p>
-          <p className="text-xs text-cool-gray-dark/50">
-            Cebu, Philippines
+          <p className="font-mono uppercase tracking-[0.24em] text-[12px] text-slate-soft">
+            Cebu · Philippines
           </p>
         </div>
       </div>
     </footer>
+  );
+}
+
+function FooterColumn({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <h3 className="font-mono uppercase tracking-[0.22em] text-[12px] text-slate">
+        {title}
+      </h3>
+      <ul className="mt-4 space-y-3">{children}</ul>
+    </div>
+  );
+}
+
+function FooterLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <li>
+      <Link
+        href={href}
+        className="font-sans text-sm text-ink-soft hover:text-fresh transition-colors"
+      >
+        {children}
+      </Link>
+    </li>
   );
 }

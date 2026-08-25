@@ -1,23 +1,23 @@
 import type { Metadata, Viewport } from "next";
-import {
-  Bricolage_Grotesque,
-  Funnel_Sans,
-  Geist_Mono,
-} from "next/font/google";
+import { Anton, Archivo, Geist_Mono } from "next/font/google";
 import { Providers } from "./providers";
 import "./globals.css";
 
-const bricolage = Bricolage_Grotesque({
-  variable: "--font-bricolage",
+// Finish Line type system (2026-08-25 overhaul):
+//   Anton      → hero display + big race numbers (condensed, uppercase, max impact)
+//   Archivo    → headings + UI + body (athletic grotesque, weights 400–900)
+//   Geist Mono → bibs / times / prices / stats (race-clock feel)
+const anton = Anton({
+  variable: "--font-anton",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
+  weight: ["400"],
   display: "swap",
 });
 
-const funnel = Funnel_Sans({
-  variable: "--font-funnel",
+const archivo = Archivo({
+  variable: "--font-archivo",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "600", "700", "800", "900"],
   display: "swap",
 });
 
@@ -48,7 +48,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${bricolage.variable} ${funnel.variable} ${geistMono.variable} antialiased`}
+        className={`${anton.variable} ${archivo.variable} ${geistMono.variable} antialiased`}
       >
         <Providers>{children}</Providers>
       </body>

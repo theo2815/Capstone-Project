@@ -151,10 +151,17 @@ function Hero({ liveCount }: { liveCount: number }) {
 
       <div className="relative max-w-7xl mx-auto">
         <div className="max-w-2xl stagger-children">
-          <Kicker as="p" size="md" className="mb-4">
-            Race photos · Cebu
-          </Kicker>
-          <h1 className="font-display text-5xl md:text-7xl lg:text-8xl font-medium tracking-tight leading-[0.95]">
+          <div className="flex items-center gap-3 mb-4">
+            <span className="race-stripe" aria-hidden="true">
+              <span className="bg-fresh" />
+              <span className="bg-fresh-deep" />
+              <span className="bg-ink" />
+            </span>
+            <Kicker as="p" size="md">
+              Race photos · Cebu
+            </Kicker>
+          </div>
+          <h1 className="font-hero text-ink text-5xl md:text-7xl lg:text-8xl">
             Pick your race.
             <br />
             <span className="text-fresh">Find your photos.</span>
@@ -264,7 +271,7 @@ function LiveTodayBlock({ liveCount }: { liveCount: number }) {
         <span className="size-1.5 rounded-full bg-fresh breathe" />
         Live today
       </Kicker>
-      <p className="font-display text-6xl md:text-7xl font-medium tracking-tight leading-none text-ink mt-2 tnum count-up">
+      <p className="font-display text-6xl md:text-7xl font-extrabold tracking-tight leading-none text-ink mt-2 tnum count-up">
         {liveCount}
       </p>
       <Kicker as="p" className="mt-2 group-hover:text-fresh transition-colors">
@@ -577,7 +584,7 @@ function EmptyState() {
         <Kicker as="p" className="mb-3">
           No matches
         </Kicker>
-        <p className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight">
+        <p className="font-display text-3xl md:text-4xl font-extrabold text-ink tracking-tight">
           Nothing here yet.
         </p>
         <p className="font-sans text-base md:text-lg text-ink-soft mt-4">

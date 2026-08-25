@@ -185,7 +185,7 @@ function NameSlab({ user, number }: { user: User; number: string }) {
           <button
             type="submit"
             disabled={!dirty || isSaving}
-            className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
           >
             {isSaving ? "Saving…" : "Save name"}
             {!isSaving && <span aria-hidden="true">→</span>}
@@ -343,7 +343,7 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
           <button
             type="submit"
             disabled={isSaving}
-            className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
           >
             {isSaving ? "Sending…" : "Send confirmation"}
             {!isSaving && <span aria-hidden="true">→</span>}
@@ -493,7 +493,7 @@ function PasswordSlab({ number }: { number: string }) {
         <button
           type="submit"
           disabled={isSaving}
-          className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+          className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
         >
           {isSaving ? "Saving…" : "Change password"}
           {!isSaving && <span aria-hidden="true">→</span>}
@@ -543,7 +543,7 @@ function DevRoleSlab({ user, number }: { user: User; number: string }) {
       caption="Role swap (development only)"
     >
       <div className="border border-dashed border-line rounded-2xl px-6 py-5">
-        <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink">
+        <p className="font-display text-xl md:text-2xl font-bold tracking-tight text-ink">
           Switch roles for testing.
         </p>
         <p className="font-sans text-sm text-slate mt-2 max-w-md">
@@ -592,7 +592,7 @@ function DangerSlab({ number }: { number: string }) {
     <Slab id="danger" number={number} title="Danger" caption="Account-wide actions">
       <div className="space-y-6">
         <div className="border border-line rounded-2xl px-6 py-5 bg-bone-deep/40">
-          <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink">
+          <p className="font-display text-xl md:text-2xl font-bold tracking-tight text-ink">
             Sign out of QuickPitik.
           </p>
           <p className="font-sans text-sm text-slate mt-2 max-w-md">
@@ -602,7 +602,7 @@ function DangerSlab({ number }: { number: string }) {
           <button
             type="button"
             onClick={handleSignOut}
-            className="mt-5 font-sans text-base font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
+            className="mt-5 font-display text-base font-bold border border-ink text-ink hover:bg-ink hover:text-surface py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
           >
             Sign out
             <span aria-hidden="true">→</span>

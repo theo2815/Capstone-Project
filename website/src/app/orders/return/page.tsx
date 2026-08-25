@@ -234,7 +234,7 @@ function PaidState({
             <Kicker as="p" tone="active" className="mb-3">
               ── Payment received
             </Kicker>
-            <h1 className="font-display text-4xl md:text-5xl lg:text-6xl font-medium tracking-tight leading-[0.95] text-ink mb-5">
+            <h1 className="font-hero text-ink text-5xl md:text-6xl lg:text-7xl mb-5">
               All yours.
             </h1>
             <p className="font-sans text-base md:text-lg text-ink-soft leading-relaxed max-w-md mb-9">
@@ -351,10 +351,10 @@ function PhotoCard({
           href={downloadUrl}
           download={filename}
           className={cn(
-            "group inline-flex w-full items-center justify-center gap-2 px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+            "group inline-flex w-full items-center justify-center gap-2 px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
             variant === "primary"
-              ? "bg-fresh hover:bg-fresh-deep text-bone"
-              : "border border-ink text-ink hover:bg-ink hover:text-bone",
+              ? "bg-fresh hover:bg-fresh-deep text-surface"
+              : "border border-ink text-ink hover:bg-ink hover:text-surface",
           )}
         >
           <span
@@ -394,7 +394,7 @@ function DownloadAllButton({
       disabled={isPreparing}
       aria-live="polite"
       className={cn(
-        "group inline-flex w-full items-center justify-center gap-2.5 bg-fresh hover:bg-fresh-deep text-bone px-7 py-4 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+        "group inline-flex w-full items-center justify-center gap-2.5 bg-fresh hover:bg-fresh-deep text-surface px-7 py-4 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
         isPreparing && "opacity-90 cursor-wait hover:bg-fresh",
       )}
     >
@@ -497,7 +497,7 @@ function PollingState({ attempt }: { attempt: number }) {
         <Kicker as="p" className="mb-3">
           Confirming · attempt {attempt}
         </Kicker>
-        <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-tight mb-4">
+        <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-tight mb-4">
           Sealing your photos.
         </h1>
         <p className="font-sans text-base text-ink-soft">
@@ -522,7 +522,7 @@ function TimeoutState({
         <Kicker as="p" className="mb-3">
           Still processing
         </Kicker>
-        <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-tight mb-4">
+        <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-tight mb-4">
           Your bank is taking a moment.
         </h1>
         <p className="font-sans text-base text-ink-soft mb-8">
@@ -537,7 +537,7 @@ function TimeoutState({
         >
           Check again ↻
         </button>
-        <p className="mt-6 font-mono uppercase tracking-[0.25em] text-[11px] text-slate-soft">
+        <p className="mt-6 font-mono uppercase tracking-[0.25em] text-[12px] text-slate-soft">
           Reference ·{" "}
           <span className="text-ink tnum">{orderId.slice(0, 8).toUpperCase()}</span>
           {token ? " · Guest link" : ""}
@@ -554,7 +554,7 @@ function FailedState() {
         <Kicker as="p" className="mb-3">
           Something went sideways
         </Kicker>
-        <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-tight mb-4">
+        <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-tight mb-4">
           We couldn&rsquo;t confirm this order.
         </h1>
         <p className="font-sans text-base text-ink-soft mb-8">
@@ -576,7 +576,7 @@ function MissingOrder() {
   return (
     <div className="flex-1 flex items-center justify-center px-6 md:px-10 py-16">
       <div className="max-w-md w-full text-center">
-        <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-tight mb-4">
+        <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-tight mb-4">
           Nothing to see here.
         </h1>
         <p className="font-sans text-base text-ink-soft mb-8">

@@ -167,7 +167,7 @@ function BackChip() {
   return (
     <Link
       href={ROUTES.DASHBOARD_UPLOAD}
-      className="inline-flex items-center gap-2 font-mono uppercase tracking-[0.3em] text-[10px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone mb-8 md:mb-10"
+      className="inline-flex items-center gap-2 font-mono uppercase tracking-[0.3em] text-[12px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone mb-8 md:mb-10"
     >
       <span aria-hidden="true">←</span>
       <span>Back to picker</span>
@@ -178,13 +178,13 @@ function BackChip() {
 function Hero({ event }: { event: ListEvent }) {
   return (
     <section className="mb-12 md:mb-16">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum flex items-center gap-2 flex-wrap">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate tnum flex items-center gap-2 flex-wrap">
         <span>{formatLongDate(event.date, true)}</span>
         <span className="text-slate-soft">·</span>
         <StateChip state={event.state} />
         <GraceBadge event={event} />
       </p>
-      <h1 className="font-display text-4xl md:text-6xl font-medium tracking-tight text-ink mt-4 leading-[1.05]">
+      <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight text-ink mt-4 leading-[1.05]">
         {event.name}
       </h1>
       <p className="font-sans text-base md:text-lg text-ink-soft mt-4 max-w-md">
@@ -215,7 +215,7 @@ function UploadGate({ event }: { event: ListEvent }) {
   if (event.state === "upcoming") {
     return (
       <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
           Not yet
         </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
@@ -238,7 +238,7 @@ function UploadGate({ event }: { event: ListEvent }) {
   if (!canUploadToEvent(event.date)) {
     return (
       <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
           Upload window closed
         </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
@@ -267,7 +267,7 @@ function UploadGate({ event }: { event: ListEvent }) {
     // owns the message.
     return (
       <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
           Uploads paused
         </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
@@ -280,7 +280,7 @@ function UploadGate({ event }: { event: ListEvent }) {
   if (gate.kind !== "ok") {
     return (
       <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
           Uploads disabled
         </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
@@ -717,7 +717,7 @@ function UploadForm({ event }: { event: ListEvent }) {
               href={newTabHref}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-6 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
+              className="mt-6 font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
             >
               Upload more in new tab
               <span aria-hidden="true">↗</span>
@@ -742,7 +742,7 @@ function UploadForm({ event }: { event: ListEvent }) {
           />
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono uppercase tracking-[0.25em] text-[10px] tnum">
+        <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono uppercase tracking-[0.25em] text-[12px] tnum">
           <span className={atLimit ? "text-error" : "text-slate-soft"}>
             Queued{" "}
             <span className={atLimit ? "text-error" : "text-ink"}>
@@ -824,7 +824,7 @@ function StagedSection({
   return (
     <section className="mb-10">
       <div className="flex items-baseline justify-between border-b border-line pb-4 mb-6 gap-4 flex-wrap">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate tnum">
           <span className="text-ink">{entries.length.toLocaleString()}</span>{" "}
           staged
         </p>
@@ -897,7 +897,7 @@ function OverallProgress({
   return (
     <div className="mb-8">
       <div className="flex items-baseline justify-between gap-4 mb-3">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] tnum">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] tnum">
           {isComplete ? (
             <span className="text-fresh">
               All uploaded · {validTotal.toLocaleString()} live
@@ -917,7 +917,7 @@ function OverallProgress({
             </span>
           )}
         </p>
-        <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-ink tnum">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-ink tnum">
           {pct}%
         </p>
       </div>
@@ -938,7 +938,7 @@ function UploadMoreFooter({ href }: { href: string }) {
   return (
     <section className="mt-12 md:mt-16 border-t border-line pt-8 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
       <div className="max-w-md">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
           Need to upload more?
         </p>
         <p className="font-sans text-base text-ink-soft mt-2">

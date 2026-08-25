@@ -88,11 +88,11 @@ export function LoginForm() {
 
   return (
     <form onSubmit={handleSubmit} noValidate className="stagger-children space-y-7">
-      <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
         Log in
       </p>
 
-      <h1 className="font-display text-5xl md:text-6xl font-medium tracking-tight leading-[1.0]">
+      <h1 className="font-hero text-5xl md:text-6xl">
         Welcome
         <br />
         <span className="text-fresh">back.</span>
@@ -113,7 +113,7 @@ export function LoginForm() {
         <FieldBlock>
           <label
             htmlFor="email"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
           >
             Email
           </label>
@@ -137,7 +137,7 @@ export function LoginForm() {
         <FieldBlock>
           <label
             htmlFor="password"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate"
           >
             Password
           </label>
@@ -169,7 +169,7 @@ export function LoginForm() {
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? "Logging in…" : "Log in →"}
         </button>
@@ -177,7 +177,7 @@ export function LoginForm() {
         <div className="text-center">
           <Link
             href={ROUTES.FORGOT_PASSWORD}
-            className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.2em] text-[12px] text-slate hover:text-ink transition-colors"
           >
             Forgot password?
           </Link>
@@ -185,7 +185,7 @@ export function LoginForm() {
       </div>
 
       <div className="border-t border-line pt-6">
-        <p className="text-center font-mono uppercase tracking-[0.2em] text-[10px] text-slate">
+        <p className="text-center font-mono uppercase tracking-[0.2em] text-[12px] text-slate">
           New here?{" "}
           <Link
             href={

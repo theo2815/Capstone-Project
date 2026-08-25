@@ -52,7 +52,7 @@ export function SiteHeader({
             />
             <circle cx="14" cy="14" r="5" className="fill-fresh" />
           </svg>
-          <span className="font-display text-base font-semibold tracking-tight">
+          <span className="font-display text-base font-extrabold tracking-tight">
             QuickPitik
           </span>
         </Link>

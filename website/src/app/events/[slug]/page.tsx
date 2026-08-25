@@ -97,13 +97,13 @@ function UpcomingEventNotice({ event }: { event: EventDetail }) {
           )}
         </div>
         <div className="mt-10">
-          <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-fresh">
+          <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-fresh">
             Opens · <span className="tnum">{dateLabel}</span>
           </p>
-          <h1 className="mt-4 font-display text-3xl md:text-5xl font-medium tracking-tight leading-[1.05] text-ink">
+          <h1 className="mt-4 font-display font-extrabold text-3xl md:text-5xl tracking-tight leading-[1.05] text-ink">
             {event.name}
           </h1>
-          <p className="mt-4 font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+          <p className="mt-4 font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
             {cityUpper}
           </p>
           <p className="mt-2 font-sans text-base text-ink-soft max-w-prose">

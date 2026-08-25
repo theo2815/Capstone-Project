@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function RunnersPage() {
   return (
-    <main className="snap-y-mobile bg-bone text-ink relative">
+    <main className="snap-y-mobile bg-paper text-ink relative">
       <SiteHeader />
 
       <Hero />
@@ -21,7 +21,7 @@ export default function RunnersPage() {
         title="Pick your event."
         sub="Tap one. That's it."
         screen={<EventListScreen />}
-        bg="bone"
+        bg="paper"
       />
 
       <StepSection
@@ -29,7 +29,7 @@ export default function RunnersPage() {
         title="Show us your face."
         sub="Or just type your bib number."
         screen={<ScanScreen />}
-        bg="bone-deep"
+        bg="paper-deep"
         flip
       />
 
@@ -38,7 +38,7 @@ export default function RunnersPage() {
         title="Save them all."
         sub="Yours to keep, share, or print."
         screen={<PhotosScreen />}
-        bg="bone"
+        bg="paper"
       />
 
       <PhotoTeaser />
@@ -52,32 +52,83 @@ export default function RunnersPage() {
   );
 }
 
+function Kicker({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="race-stripe" aria-hidden="true">
+        <span className="bg-fresh" />
+        <span className="bg-fresh-deep" />
+        <span className="bg-ink" />
+      </span>
+      <p className="font-mono uppercase tracking-[0.26em] text-[12px] text-slate">
+        {children}
+      </p>
+    </div>
+  );
+}
+
+function PrimaryCta({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group inline-flex items-center gap-2 rounded-full bg-fresh px-6 py-3.5 font-display font-bold text-[15px] text-surface transition-colors hover:bg-fresh-deep"
+    >
+      {children}
+      <Arrow />
+    </Link>
+  );
+}
+
+function Arrow() {
+  return (
+    <svg
+      className="size-4 transition-transform duration-300 group-hover:translate-x-1"
+      viewBox="0 0 20 20"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M4 10h12m0 0l-5-5m5 5l-5 5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function Hero() {
   return (
-    <section className="snap-section min-h-[calc(100vh-3.75rem)] flex items-center px-6 md:px-10 py-16 md:py-20 bg-bone">
+    <section className="snap-section md:min-h-[calc(100vh-var(--site-header-h))] flex items-start md:items-center px-6 md:px-10 pt-10 pb-14 md:py-20 bg-paper">
       <div className="max-w-7xl mx-auto w-full grid md:grid-cols-2 gap-12 md:gap-16 items-center">
         <div className="stagger-children">
-          <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate mb-4">
-            For Runners
-          </p>
-          <h1 className="font-display text-5xl md:text-7xl lg:text-8xl font-medium tracking-tight leading-[0.95]">
+          <Kicker>For runners</Kicker>
+          <h1 className="font-hero text-ink text-5xl md:text-7xl lg:text-8xl mt-5">
             From finish line
             <br />
             <span className="text-fresh">to your phone.</span>
           </h1>
-          <p className="font-sans text-lg md:text-xl text-ink-soft max-w-md mt-8">
+          <p className="font-sans text-lg md:text-xl text-ink-soft max-w-md mt-7 leading-relaxed">
             Three taps. No sorting through thousands of photos.
           </p>
-          <div className="mt-10 flex items-center gap-4 flex-wrap">
+          <div className="mt-10 flex items-center gap-5 flex-wrap">
             <a
               href="#step-1"
-              className="bg-fresh hover:bg-fresh-deep text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+              className="group inline-flex items-center gap-2 rounded-full bg-fresh px-6 py-3.5 font-display font-bold text-[15px] text-surface transition-colors hover:bg-fresh-deep"
             >
-              See how →
+              See how
+              <Arrow />
             </a>
             <a
               href="#cta"
-              className="text-ink hover:text-fresh font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+              className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
             >
               Skip to search
             </a>
@@ -127,7 +178,7 @@ function DotNode({ cx, cy, label, delay }: DotNodeProps) {
         cx={cx}
         cy={cy}
         r="10"
-        fill="var(--bone)"
+        fill="var(--paper)"
         stroke="var(--ink)"
         strokeWidth="2"
       />
@@ -152,12 +203,12 @@ interface StepSectionProps {
   title: string;
   sub: string;
   screen: React.ReactNode;
-  bg: "bone" | "bone-deep";
+  bg: "paper" | "paper-deep";
   flip?: boolean;
 }
 
 function StepSection({ n, title, sub, screen, bg, flip = false }: StepSectionProps) {
-  const bgClass = bg === "bone-deep" ? "bg-bone-deep" : "bg-bone";
+  const bgClass = bg === "paper-deep" ? "bg-paper-deep" : "bg-paper";
   return (
     <section
       id={`step-${n}`}
@@ -165,17 +216,17 @@ function StepSection({ n, title, sub, screen, bg, flip = false }: StepSectionPro
     >
       <div className="max-w-7xl mx-auto w-full grid md:grid-cols-2 gap-12 md:gap-20 items-center">
         <div className={flip ? "md:order-2" : ""}>{screen && <DeviceMock>{screen}</DeviceMock>}</div>
-        <div className={`space-y-6 ${flip ? "md:order-1" : ""}`}>
-          <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+        <div className={`space-y-5 ${flip ? "md:order-1" : ""}`}>
+          <p className="font-mono uppercase tracking-[0.26em] text-[12px] text-slate">
             Step
           </p>
-          <p className="font-display text-7xl md:text-8xl lg:text-9xl font-medium text-fresh leading-[0.85] tnum">
+          <p className="font-hero text-fresh text-8xl md:text-9xl leading-[0.8] tnum">
             0{n}
           </p>
-          <h2 className="font-display text-4xl md:text-5xl lg:text-6xl font-medium tracking-tight leading-[1.05]">
+          <h2 className="font-display font-extrabold text-4xl md:text-5xl lg:text-6xl tracking-tight leading-[1.05]">
             {title}
           </h2>
-          <p className="font-sans text-lg md:text-xl text-ink-soft max-w-md">
+          <p className="font-sans text-lg md:text-xl text-ink-soft max-w-md leading-relaxed">
             {sub}
           </p>
         </div>
@@ -187,7 +238,7 @@ function StepSection({ n, title, sub, screen, bg, flip = false }: StepSectionPro
 function DeviceMock({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto aspect-[9/16] w-full max-w-[260px] md:max-w-[320px] rounded-[2.5rem] bg-ink p-3 shadow-2xl shadow-ink/10">
-      <div className="h-full w-full rounded-[2rem] bg-bone overflow-hidden relative">
+      <div className="h-full w-full rounded-[2rem] bg-paper overflow-hidden relative">
         {children}
       </div>
     </div>
@@ -217,13 +268,13 @@ function EventListScreen() {
             key={e.name}
             className={`p-3 rounded-xl border transition-all ${
               e.active
-                ? "bg-ink text-bone border-ink"
-                : "bg-bone-deep/60 text-ink-soft border-line"
+                ? "bg-ink text-paper border-ink"
+                : "bg-paper-deep/60 text-ink-soft border-line"
             }`}
             style={{ animation: `fade-up 0.5s ${0.1 * i + 0.3}s both`, opacity: 0 }}
           >
             <div className="flex items-center justify-between mb-1">
-              <span className="font-display text-sm font-medium tracking-tight">
+              <span className="font-display text-sm font-semibold tracking-tight">
                 {e.name}
               </span>
               {e.active && (
@@ -270,7 +321,7 @@ function PhotosScreen() {
       </div>
       <div className="grid grid-cols-2 gap-2 flex-1">
         {[0, 1, 2, 3, 4, 5].map((i) => {
-          const colors = ["var(--ink-soft)", "var(--slate)", "var(--bone-deep)"];
+          const colors = ["var(--ink-soft)", "var(--slate)", "var(--paper-deep)"];
           return (
             <div
               key={i}
@@ -284,7 +335,7 @@ function PhotosScreen() {
           );
         })}
       </div>
-      <button className="mt-4 bg-fresh text-bone py-2.5 rounded-full font-mono uppercase tracking-[0.2em] text-[10px]">
+      <button className="mt-4 bg-fresh text-surface py-2.5 rounded-full font-mono uppercase tracking-[0.2em] text-[10px]">
         Save all →
       </button>
     </div>
@@ -293,13 +344,18 @@ function PhotosScreen() {
 
 function PhotoTeaser() {
   return (
-    <section className="snap-section min-h-screen flex items-center px-6 md:px-10 py-16 md:py-20 bg-ink text-bone">
+    <section className="snap-section min-h-screen flex items-center px-6 md:px-10 py-16 md:py-20 bg-paper-deep text-ink">
       <div className="max-w-7xl mx-auto w-full">
-        <div className="text-center mb-12 md:mb-16">
-          <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate-soft mb-4">
+        <div className="text-center mb-12 md:mb-16 flex flex-col items-center">
+          <div className="race-stripe mb-4" aria-hidden="true">
+            <span className="bg-fresh" />
+            <span className="bg-fresh-deep" />
+            <span className="bg-ink" />
+          </div>
+          <p className="font-mono uppercase tracking-[0.26em] text-[12px] text-slate mb-4">
             Your moments. Captured.
           </p>
-          <h2 className="font-display text-4xl md:text-6xl lg:text-7xl font-medium tracking-tight">
+          <h2 className="font-hero text-ink text-5xl md:text-7xl lg:text-8xl">
             Hundreds of photos.
             <br />
             <span className="text-fresh">Yours in seconds.</span>
@@ -310,8 +366,8 @@ function PhotoTeaser() {
             const colors = [
               "var(--ink-soft)",
               "var(--slate)",
-              "var(--bone-deep)",
-              "var(--bone)",
+              "var(--fresh)",
+              "var(--pine)",
             ];
             return (
               <div
@@ -319,7 +375,7 @@ function PhotoTeaser() {
                 className="aspect-[3/4] rounded-lg"
                 style={{
                   backgroundColor: colors[i % colors.length],
-                  opacity: 0.7 + (i % 3) * 0.1,
+                  opacity: 0.85,
                   animation: `fade-up 0.6s ${0.04 * i}s both`,
                 }}
               />
@@ -335,30 +391,30 @@ function FinalCta() {
   return (
     <section
       id="cta"
-      className="snap-section min-h-[80vh] flex items-center px-6 md:px-10 py-16 md:py-24 bg-bone"
+      className="snap-section min-h-[80vh] flex items-center px-6 md:px-10 py-16 md:py-24 bg-paper"
     >
-      <div className="max-w-4xl mx-auto w-full text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate mb-4">
+      <div className="max-w-4xl mx-auto w-full text-center flex flex-col items-center">
+        <div className="race-stripe mb-4" aria-hidden="true">
+          <span className="bg-fresh" />
+          <span className="bg-fresh-deep" />
+          <span className="bg-ink" />
+        </div>
+        <p className="font-mono uppercase tracking-[0.26em] text-[12px] text-slate mb-4">
           Ready when you are
         </p>
-        <h2 className="font-display text-5xl md:text-7xl lg:text-8xl font-medium tracking-tight leading-[1.0]">
+        <h2 className="font-hero text-ink text-5xl md:text-7xl lg:text-8xl">
           Find your
           <br />
           <span className="text-fresh">race photos.</span>
         </h2>
-        <p className="font-sans text-lg md:text-xl text-ink-soft mt-6 max-w-md mx-auto">
+        <p className="font-sans text-lg md:text-xl text-ink-soft mt-6 max-w-md">
           Free to search. Pay only for the ones you want.
         </p>
-        <div className="mt-10 flex flex-col md:flex-row items-center justify-center gap-4">
-          <Link
-            href={ROUTES.EVENTS}
-            className="w-full md:w-auto bg-fresh hover:bg-fresh-deep text-bone px-8 py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
-          >
-            Find my photos →
-          </Link>
+        <div className="mt-10 flex flex-col md:flex-row items-center justify-center gap-5">
+          <PrimaryCta href={ROUTES.EVENTS}>Find my photos</PrimaryCta>
           <Link
             href={ROUTES.PHOTOGRAPHERS}
-            className="font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
           >
             I&apos;m a photographer instead
           </Link>
@@ -370,11 +426,11 @@ function FinalCta() {
 
 function Footer() {
   return (
-    <footer className="px-6 md:px-10 py-8 pb-24 md:pb-8 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-bone">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+    <footer className="px-6 md:px-10 py-8 pb-24 md:pb-8 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-paper">
+      <p className="font-mono uppercase tracking-[0.28em] text-[12px] text-slate-soft">
         QuickPitik &middot; Cebu, Philippines
       </p>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.28em] text-[12px] text-slate-soft">
         © 2026
       </p>
     </footer>
@@ -384,14 +440,15 @@ function Footer() {
 function MobileStickyCta() {
   return (
     <div
-      className="md:hidden fixed bottom-0 inset-x-0 px-4 pt-3 bg-bone/95 backdrop-blur-md border-t border-line z-40"
+      className="md:hidden fixed bottom-0 inset-x-0 px-4 pt-3 bg-paper/95 backdrop-blur-md border-t border-line z-40"
       style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
     >
       <Link
         href={ROUTES.EVENTS}
-        className="block w-full bg-fresh active:bg-fresh-deep text-bone text-center py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px]"
+        className="flex w-full items-center justify-center gap-2 bg-fresh active:bg-fresh-deep text-surface text-center py-3.5 rounded-full font-display font-bold text-[15px]"
       >
-        Find my photos →
+        Find my photos
+        <Arrow />
       </Link>
     </div>
   );

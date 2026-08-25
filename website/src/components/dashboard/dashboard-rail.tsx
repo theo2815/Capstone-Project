@@ -106,12 +106,12 @@ export function DashboardRail() {
       <div className="flex items-start gap-5 md:block">
         <AvatarDisc name={user.name} size="md" />
         <div className="flex-1 min-w-0 md:mt-7">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+          <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
             Photographer · Cebu
             <span className="text-slate-soft"> · </span>
             <span className="tnum">Since {memberSince}</span>
           </p>
-          <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+          <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
             Dashboard.
           </h1>
           <p className="font-sans text-sm text-slate mt-2 max-w-xs">
@@ -122,14 +122,14 @@ export function DashboardRail() {
 
       <nav aria-label="Dashboard sections" className="hidden md:block mt-10">
         <div className="flex items-baseline justify-between gap-3">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
             Sections
           </p>
           <button
             type="button"
             onClick={toggleTipsDisabled}
             aria-pressed={tipsDisabled}
-            className="font-mono uppercase tracking-[0.25em] text-[9px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             {tipsDisabled ? "Show tips" : "Hide tips"}
           </button>
@@ -155,7 +155,7 @@ export function DashboardRail() {
       </nav>
 
       <div className="mt-8 md:mt-10">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
           More
         </p>
         <ul className="mt-4 space-y-3">
@@ -293,7 +293,7 @@ function RailRow({
                 ? `Hide tip for ${route.label}`
                 : `Show tip for ${route.label}`
             }
-            className="shrink-0 size-5 rounded-full border border-line text-slate hover:text-ink hover:border-ink transition-colors flex items-center justify-center font-mono text-[10px] leading-none focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone [@media(hover:hover)]:hidden"
+            className="shrink-0 size-5 rounded-full border border-line text-slate hover:text-ink hover:border-ink transition-colors flex items-center justify-center font-mono text-[12px] leading-none focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone [@media(hover:hover)]:hidden"
           >
             <span aria-hidden="true">{pinned ? "−" : "?"}</span>
           </button>

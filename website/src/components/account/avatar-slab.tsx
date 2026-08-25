@@ -153,7 +153,7 @@ export function AvatarSlab() {
               type="button"
               onClick={handleConfirm}
               disabled={busy}
-              className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+              className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
             >
               {busy ? "Saving…" : "Use this picture"}
               {!busy && <span aria-hidden="true">→</span>}

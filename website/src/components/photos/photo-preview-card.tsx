@@ -326,7 +326,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               <button
                 type="button"
                 onClick={props.onDownload}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap bg-fresh hover:bg-fresh-deep text-bone"
+                className="w-full inline-flex items-center justify-center gap-2 px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap bg-fresh hover:bg-fresh-deep text-surface"
               >
                 Download photo
                 <span aria-hidden="true">↓</span>
@@ -349,7 +349,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                   onClick={props.onToggleCart}
                   aria-pressed={props.inCart}
                   className={cn(
-                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
+                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
                     "border border-line bg-bone hover:bg-bone-deep text-ink",
                   )}
                 >
@@ -359,8 +359,8 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                   type="button"
                   onClick={props.onBuyNow}
                   className={cn(
-                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-mono uppercase tracking-[0.15em] sm:tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
-                    "bg-fresh hover:bg-fresh-deep text-bone",
+                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
+                    "bg-fresh hover:bg-fresh-deep text-surface",
                   )}
                 >
                   {props.inCart ? "Checkout now" : "Buy now"} ·

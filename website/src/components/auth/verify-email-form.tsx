@@ -80,7 +80,7 @@ export function VerifyEmailForm() {
 
         <Link
           href={continueHref}
-          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors"
         >
           {continueLabel} &rarr;
         </Link>
@@ -109,7 +109,7 @@ export function VerifyEmailForm() {
 
         <Link
           href={continueHref}
-          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors"
         >
           {continueLabel} &rarr;
         </Link>
@@ -146,7 +146,7 @@ export function VerifyEmailForm() {
 
         <Link
           href={continueHref}
-          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+          className="block w-full text-center bg-fresh hover:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors"
         >
           {continueLabel} &rarr;
         </Link>

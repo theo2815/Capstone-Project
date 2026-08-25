@@ -216,7 +216,7 @@ function Stat({
     <div className="border-l border-line pl-4 md:pl-6 first:border-0 first:pl-0">
       <p
         className={cn(
-          "font-display font-medium tracking-tight tnum text-3xl md:text-5xl leading-none",
+          "font-display font-extrabold tracking-tight tnum text-3xl md:text-5xl leading-none",
           accent ? "text-fresh" : "text-ink",
         )}
       >
@@ -465,16 +465,16 @@ function ReceiptRow({
           {eventName && eventSlug ? (
             <Link
               href={`/events/${eventSlug}`}
-              className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink hover:text-fresh transition-colors mt-2 inline-block max-w-full truncate"
+              className="font-display text-xl md:text-2xl font-bold tracking-tight text-ink hover:text-fresh transition-colors mt-2 inline-block max-w-full truncate"
             >
               {eventName}
             </Link>
           ) : eventName ? (
-            <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
+            <p className="font-display text-xl md:text-2xl font-bold tracking-tight text-ink mt-2">
               {eventName}
             </p>
           ) : (
-            <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-slate mt-2">
+            <p className="font-display text-xl md:text-2xl font-bold tracking-tight text-slate mt-2">
               Event archived
             </p>
           )}
@@ -539,7 +539,7 @@ function ReceiptRow({
               <button
                 type="button"
                 onClick={handleDownloadAll}
-                className="font-sans text-base font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
+                className="font-display text-base font-bold border border-ink text-ink hover:bg-ink hover:text-surface py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
               >
                 {photoCount === 1 ? "Download photo" : "Download all"}
                 <span aria-hidden="true">↓</span>
@@ -668,7 +668,7 @@ function PhotoStrip({
 function ReceiptsEmpty() {
   return (
     <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-      <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+      <p className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-ink">
         No purchases yet.
       </p>
       <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">

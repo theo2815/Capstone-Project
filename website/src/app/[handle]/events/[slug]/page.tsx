@@ -218,7 +218,7 @@ function Gallery({
             <span className="text-slate-soft">·</span>
             <CoverageStateChip state={coverage?.state ?? "open"} />
           </Kicker>
-          <h1 className="font-display text-4xl md:text-6xl font-medium tracking-tight leading-[0.95] text-ink mt-4">
+          <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight leading-[0.95] text-ink mt-4">
             {isFiltered ? (
               visible.length === 0 ? (
                 "No matches yet."
@@ -573,7 +573,7 @@ function EmptyGalleryPanel({ displayName }: { displayName: string }) {
       <Kicker as="p" tone="soft">
         Gallery
       </Kicker>
-      <p className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink mt-4">
+      <p className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink mt-4">
         Photos coming soon.
       </p>
       <p className="font-sans text-base text-ink-soft mt-3 max-w-md mx-auto">
@@ -619,7 +619,7 @@ function NotFoundBody({
         <Kicker as="p" tone="soft">
           Not found
         </Kicker>
-        <h1 className="font-display text-4xl md:text-5xl font-medium tracking-tight text-ink mt-4">
+        <h1 className="font-display text-4xl md:text-5xl font-extrabold tracking-tight text-ink mt-4">
           {headline}
         </h1>
         <p className="font-sans text-base text-ink-soft mt-3">{body}</p>

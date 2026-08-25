@@ -156,7 +156,7 @@ export function FloatingCart() {
           } · ${formatPrice(total)}`}
           className={cn(
             "group relative inline-flex items-center gap-3 pl-4 pr-5 h-14 md:h-16 rounded-full",
-            "bg-fresh hover:bg-fresh-deep text-bone",
+            "bg-fresh hover:bg-fresh-deep text-surface",
             "shadow-[0_18px_40px_-12px_rgba(17,17,17,0.5)]",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
             "transition-transform duration-200 hover:-translate-y-0.5",
@@ -248,7 +248,7 @@ export function FloatingCart() {
         mobileBottomClass,
         desktopBottomClass,
         "size-14 md:size-16 rounded-full",
-        "bg-fresh hover:bg-fresh-deep text-bone",
+        "bg-fresh hover:bg-fresh-deep text-surface",
         "shadow-[-8px_18px_40px_-12px_rgba(17,17,17,0.45)]",
         "inline-flex items-center justify-center",
         "transition-transform duration-[420ms] [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]",

@@ -216,13 +216,13 @@ function CockpitMode({
         <div className="relative px-6 md:px-10 py-16 md:py-24 min-h-[78vh] flex flex-col items-center justify-center">
           <div className="w-full max-w-md">
             <div
-              className="rounded-2xl bg-bone border border-line shadow-[0_24px_60px_-20px_rgba(17,17,17,0.18)] p-8 md:p-10"
+              className="rounded-2xl bg-surface border border-line shadow-[var(--shadow-lift)] p-8 md:p-10"
               style={{ animation: "fade-up 0.7s 0.05s both", opacity: 0 }}
             >
               <Kicker as="p" className="mb-5">
                 {event.name}
               </Kicker>
-              <h1 className="font-display text-4xl md:text-5xl font-medium tracking-tight leading-[0.95]">
+              <h1 className="font-hero text-ink text-5xl md:text-6xl">
                 Find your
                 <br />
                 <span className="text-fresh">photos.</span>
@@ -304,7 +304,7 @@ function AboutStrip({ event }: { event: EventDetail }) {
           <Kicker as="p" className="mb-4">
             About this race
           </Kicker>
-          <h2 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-tight text-ink">
+          <h2 className="font-display font-extrabold text-3xl md:text-4xl tracking-tight leading-tight text-ink">
             Race day notes.
           </h2>
           <div className="mt-6 space-y-2">
@@ -347,7 +347,7 @@ function AboutStrip({ event }: { event: EventDetail }) {
               Pricing
             </Kicker>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-              <span className="font-display text-5xl md:text-6xl font-medium text-fresh tracking-tight tnum">
+              <span className="font-display text-5xl md:text-6xl font-extrabold text-fresh tracking-tight tnum">
                 ₱{event.pricePerPhoto}
               </span>
               <Kicker>per photo</Kicker>
@@ -462,7 +462,7 @@ function BrowseMode({
           <Kicker as="p" className="mb-4">
             {headerKicker}
           </Kicker>
-          <h2 className="font-display text-4xl md:text-6xl font-medium tracking-tight leading-[0.95] text-ink">
+          <h2 className="font-hero text-ink text-4xl md:text-6xl">
             {isAnyFilter ? (
               visible.length === 0 ? (
                 "No matches yet."
@@ -580,7 +580,7 @@ function BrowseMode({
               <button
                 type="button"
                 onClick={live.refresh}
-                className="font-mono uppercase tracking-[0.25em] text-[10px] text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
+                className="font-mono uppercase tracking-[0.25em] text-[12px] text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
               >
                 Connection lost · Refresh ↻
               </button>
@@ -593,7 +593,7 @@ function BrowseMode({
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }
                 }}
-                className="font-mono uppercase tracking-[0.25em] text-[10px] text-fresh hover:text-fresh-deep"
+                className="font-mono uppercase tracking-[0.25em] text-[12px] text-fresh hover:text-fresh-deep"
               >
                 <span className="tnum">{live.newCount}</span> new photo
                 {live.newCount === 1 ? "" : "s"} · jump to top ↑
@@ -638,7 +638,7 @@ function BrowseMode({
                 }
               />
               {!isBibFilter && !isFaceMode && total > visible.length && (
-                <p className="mt-4 text-center font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+                <p className="mt-4 text-center font-mono uppercase tracking-[0.25em] text-[12px] text-slate-soft">
                   Showing first <span className="tnum text-ink">{visible.length}</span> of <span className="tnum text-ink">{total}</span> · search by bib or selfie to find yours
                 </p>
               )}
@@ -699,7 +699,7 @@ function FaceEmptyResult({ onClear }: { onClear: () => void }) {
         <Kicker as="p" className="mb-3">
           No matches yet
         </Kicker>
-        <p className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight">
+        <p className="font-display font-extrabold text-3xl md:text-4xl text-ink tracking-tight">
           We didn&apos;t find your face.
         </p>
         <p className="font-sans text-base md:text-lg text-ink-soft mt-4">
@@ -709,7 +709,7 @@ function FaceEmptyResult({ onClear }: { onClear: () => void }) {
         <button
           type="button"
           onClick={onClear}
-          className="mt-7 inline-flex items-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[12px] transition-colors"
+          className="mt-7 inline-flex items-center gap-2 bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors"
         >
           Browse the wall →
         </button>

@@ -150,16 +150,16 @@ function OpenRequestGlance({
 
   return (
     <>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft flex items-center gap-2 flex-wrap">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft flex items-center gap-2 flex-wrap">
         <span>Payout request</span>
         <span className="text-slate-soft">·</span>
         <span className={stageTone[stage]}>{stageLabel[stage]}</span>
       </p>
-      <p className="font-display text-5xl md:text-6xl font-semibold tracking-tight text-ink tnum mt-3 leading-none">
+      <p className="font-display text-5xl md:text-6xl font-extrabold tracking-tight text-ink tnum mt-3 leading-none">
         ₱{request.amount.toLocaleString()}
       </p>
       {stage === "approved" && request.settledAt && (
-        <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate mt-4 tnum">
+        <p className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate mt-4 tnum">
           Approved {formatLongDate(request.settledAt)}
         </p>
       )}
@@ -185,7 +185,7 @@ function AvailableGlance({
   if (!eligible && unpaidBalance === 0) {
     return (
       <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-        <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+        <p className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-ink">
           No earnings yet.
         </p>
         <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
@@ -198,12 +198,12 @@ function AvailableGlance({
 
   return (
     <>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
         Available to request
       </p>
       <p
         className={cn(
-          "font-display text-5xl md:text-6xl font-semibold tracking-tight tnum mt-3 leading-none",
+          "font-display text-5xl md:text-6xl font-extrabold tracking-tight tnum mt-3 leading-none",
           eligible ? "text-fresh" : "text-slate",
         )}
       >
@@ -274,7 +274,7 @@ function NextUpGlance() {
         </ul>
       ) : upcoming.length === 0 ? (
         <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-          <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+          <p className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-ink">
             No upcoming coverage.
           </p>
           <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
@@ -315,12 +315,12 @@ function FeaturedEventRow({ event }: { event: PhotographerEventSummary }) {
     >
       <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
         <div className="flex-1 min-w-0">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum flex items-center gap-2 flex-wrap">
+          <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate tnum flex items-center gap-2 flex-wrap">
             <span>{formatLongDate(event.date, true)}</span>
             <span className="text-slate-soft">·</span>
             <StateChip state={event.state} />
           </p>
-          <h3 className="font-display text-lg md:text-xl font-medium tracking-tight text-ink mt-2 truncate group-hover:text-ink-soft transition-colors">
+          <h3 className="font-display text-lg md:text-xl font-bold tracking-tight text-ink mt-2 truncate group-hover:text-ink-soft transition-colors">
             {event.name}
           </h3>
         </div>
