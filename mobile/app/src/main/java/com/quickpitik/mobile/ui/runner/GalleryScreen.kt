@@ -17,8 +17,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -88,7 +90,7 @@ fun RunnerGalleryScreen(
     val liveState by viewModel.liveState.collectAsState()
     // Hoisted so the live-photos pill can jump the runner back to the top when
     // new shots land while they're scrolled down the grid.
-    val scrollState = rememberScrollState()
+    val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
 
     // Push channels are held only while the cockpit is actually on screen. A
@@ -134,393 +136,510 @@ fun RunnerGalleryScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let { viewModel.searchBySelfieUri(it) }
-    }
-
-    // Lock the Runner Dashboard to the uniform Light Warm Cream Brand Theme
+    }    // Lock the Runner Dashboard to the uniform Light Warm Cream Brand Theme
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = Bone
     ) {
-        Column(
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            state = gridState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp)
-                .verticalScroll(scrollState)
                 .statusBarsPadding()
-                .navigationBarsPadding()
+                .navigationBarsPadding(),
+            contentPadding = PaddingValues(24.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Header Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "GALLERY HUB",
-                        style = Typography.labelMedium,
-                        color = Slate
-                    )
-                    Text(
-                        text = "QuickPitik",
-                        style = Typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Ink
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RunnerInboxBell(
-                        messageCount = inboxMessages.size,
-                        unreadCount = inboxUnread,
-                        onClick = { showInbox = true },
-                    )
-                    // Cart access lives in the global FloatingCart pill — header icon dropped
-                    // to avoid two affordances pointing at the same overlay.
-                    var menuExpanded by remember { mutableStateOf(false) }
-                    val sessionManager = remember { SessionManager.getInstance(context) }
-                    val userName = sessionManager.getUserName() ?: "Runner"
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "GALLERY HUB",
+                            style = Typography.labelMedium,
+                            color = Slate
+                        )
+                        Text(
+                            text = "QuickPitik",
+                            style = Typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Ink
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        RunnerInboxBell(
+                            messageCount = inboxMessages.size,
+                            unreadCount = inboxUnread,
+                            onClick = { showInbox = true },
+                        )
+                        // Cart access lives in the global FloatingCart pill — header icon dropped
+                        // to avoid two affordances pointing at the same overlay.
+                        var menuExpanded by remember { mutableStateOf(false) }
+                        val sessionManager = remember { SessionManager.getInstance(context) }
+                        val userName = sessionManager.getUserName() ?: "Runner"
 
-                    Box {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(BoneDeep)
-                                .clickable { menuExpanded = true },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = userName.take(1).uppercase(),
-                                color = Ink,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                        }
+                        Box {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(BoneDeep)
+                                    .clickable { menuExpanded = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = userName.take(1).uppercase(),
+                                    color = Ink,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp
+                                )
+                            }
 
-                        DropdownMenu(
-                            expanded = menuExpanded,
-                            onDismissRequest = { menuExpanded = false },
-                            modifier = Modifier.background(Bone)
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Profile & Selfies", color = Ink) },
-                                onClick = {
-                                    menuExpanded = false
-                                    onNavigateToProfile()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Account Settings", color = Ink) },
-                                onClick = {
-                                    menuExpanded = false
-                                    onNavigateToSettings()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Purchased Photos", color = Ink) },
-                                onClick = {
-                                    menuExpanded = false
-                                    onNavigateToOrders()
-                                }
-                            )
-                            Divider(color = SlateSoft)
-                            DropdownMenuItem(
-                                text = { Text("Sign Out", color = ErrorRed) },
-                                onClick = {
-                                    menuExpanded = false
-                                    onLogout()
-                                }
-                            )
+                            DropdownMenu(
+                                expanded = menuExpanded,
+                                onDismissRequest = { menuExpanded = false },
+                                modifier = Modifier.background(Bone)
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Profile & Selfies", color = Ink) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onNavigateToProfile()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Account Settings", color = Ink) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onNavigateToSettings()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Purchased Photos", color = Ink) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onNavigateToOrders()
+                                    }
+                                )
+                                Divider(color = SlateSoft)
+                                DropdownMenuItem(
+                                    text = { Text("Sign Out", color = ErrorRed) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onLogout()
+                                    }
+                                )
+                            }
                         }
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(24.dp))
 
             if (activeEvent == null) {
-                LoadingSkeleton(
-                    shape = QpCardShape,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(220.dp),
-                )
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    LoadingSkeleton(
+                        shape = QpCardShape,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp),
+                    )
+                }
             } else if (deriveEventState(activeEvent!!.date) == EventState.UPCOMING) {
                 // Pre-race-day: no gallery, no search. Port of the website's
                 // UpcomingEventNotice branch in events/[slug]/page.tsx.
-                UpcomingEventNotice(
-                    event = activeEvent!!,
-                    onBack = {
-                        viewModel.clearSelectedEvent()
-                        onNavigateBack()
-                    },
-                )
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    UpcomingEventNotice(
+                        event = activeEvent!!,
+                        onBack = {
+                            viewModel.clearSelectedEvent()
+                            onNavigateBack()
+                        },
+                    )
+                }
             } else {
                 // SELECTED EVENT GALLERY VIEW
-                Card(
-                    shape = QpCardShape,
-                    colors = CardDefaults.cardColors(containerColor = BoneDeep),
-                    border = BorderStroke(1.dp, Line),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        if (!activeEvent?.bannerUrl.isNullOrEmpty()) {
-                            AsyncImage(
-                                model = activeEvent?.bannerUrl,
-                                contentDescription = "Event Banner",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(160.dp)
-                                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
-                                contentScale = ContentScale.Crop
-                            )
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(
-                                onClick = {
-                                    viewModel.clearSelectedEvent()
-                                    onNavigateBack()
-                                },
-                                modifier = Modifier.padding(end = 8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ArrowBack,
-                                    contentDescription = "Back to Events",
-                                    tint = Ink
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Card(
+                        shape = QpCardShape,
+                        colors = CardDefaults.cardColors(containerColor = BoneDeep),
+                        border = BorderStroke(1.dp, Line),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            if (!activeEvent?.bannerUrl.isNullOrEmpty()) {
+                                AsyncImage(
+                                    model = activeEvent?.bannerUrl,
+                                    contentDescription = "Event Banner",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(160.dp)
+                                        .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
+                                    contentScale = ContentScale.Crop
                                 )
                             }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "SELECTED MARATHON",
-                                    style = Typography.labelSmall,
-                                    color = Slate
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = activeEvent?.name ?: "",
-                                    style = Typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Ink
-                                )
-                                Text(
-                                    text = activeEvent?.location ?: "",
-                                    style = Typography.bodySmall,
-                                    color = SlateSoft
-                                )
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        viewModel.clearSelectedEvent()
+                                        onNavigateBack()
+                                    },
+                                    modifier = Modifier.padding(end = 8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowBack,
+                                        contentDescription = "Back to Events",
+                                        tint = Ink
+                                    )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "SELECTED MARATHON",
+                                        style = Typography.labelSmall,
+                                        color = Slate
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = activeEvent?.name ?: "",
+                                        style = Typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Ink
+                                    )
+                                    Text(
+                                        text = activeEvent?.location ?: "",
+                                        style = Typography.bodySmall,
+                                        color = SlateSoft
+                                    )
+                                }
                             }
                         }
                     }
                 }
                 // Pre-purchase refund disclosure — port of the web cockpit's
                 // "Refund Policy →" kicker (event-cockpit.tsx). Read-only.
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clickable { showRefundPolicy = true }
-                        .padding(vertical = 8.dp),
-                ) {
-                    Kicker(text = "Refund Policy", color = Slate)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "→", color = Slate, style = Typography.labelMedium)
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clickable { showRefundPolicy = true }
+                            .padding(vertical = 8.dp),
+                    ) {
+                        Kicker(text = "Refund Policy", color = Slate)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(text = "→", color = Slate, style = Typography.labelMedium)
+                    }
                 }
-
-                Spacer(modifier = Modifier.height(20.dp))
 
                 // AI Search Selector Cards (Selfie vs Bib)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Selfie Match Card
-                    Card(
-                        onClick = { activeSearchTab = 0 },
-                        border = BorderStroke(
-                            width = 1.5.dp,
-                            color = if (activeSearchTab == 0) Ink else Line
-                        ),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (activeSearchTab == 0) BoneDeep else Bone
-                        ),
-                        shape = QpCardShape,
-                        modifier = Modifier.weight(1f)
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Icon(Icons.Default.Face, contentDescription = "Selfie", tint = Fresh)
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text("Selfie Match", style = Typography.titleMedium, color = Ink)
-                            Text("AI Face Search", style = Typography.bodyMedium, color = SlateSoft)
-                        }
-                    }
-
-                    // Bib Number Search Card
-                    Card(
-                        onClick = { activeSearchTab = 1 },
-                        border = BorderStroke(
-                            width = 1.5.dp,
-                            color = if (activeSearchTab == 1) Ink else Line
-                        ),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (activeSearchTab == 1) BoneDeep else Bone
-                        ),
-                        shape = QpCardShape,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Icon(Icons.Default.Search, contentDescription = "Bib", tint = Fresh)
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text("Bib Lookup", style = Typography.titleMedium, color = Ink)
-                            Text("Search by Number", style = Typography.bodyMedium, color = SlateSoft)
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Search Action Interface
-                if (activeSearchTab == 0) {
-                    // Selfie Upload Action Trigger
-                    Card(
-                        border = BorderStroke(1.dp, Line),
-                        colors = CardDefaults.cardColors(containerColor = BoneDeep),
-                        shape = QpCardShape,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                        // Selfie Match Card
+                        Card(
+                            onClick = { activeSearchTab = 0 },
+                            border = BorderStroke(
+                                width = 1.5.dp,
+                                color = if (activeSearchTab == 0) Ink else Line
+                            ),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (activeSearchTab == 0) BoneDeep else Bone
+                            ),
+                            shape = QpCardShape,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Text(
-                                text = "Find photos of yourself instantly with face recognition.",
-                                textAlign = TextAlign.Center,
-                                style = Typography.bodyMedium,
-                                color = InkSoft
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-                            // Primary: search with a saved library selfie
-                            PrimaryCta(
-                                text = "Search with stored selfie",
-                                onClick = { viewModel.searchByStoredSelfie() },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                // Take a selfie now — opens the camera via a MediaStore URI
-                                GhostCta(
-                                    text = "Take a selfie",
-                                    onClick = {
-                                        try {
-                                            val values = ContentValues().apply {
-                                                put(MediaStore.Images.Media.TITLE, "selfie_search_${System.currentTimeMillis()}")
-                                                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                                            }
-                                            val uri = context.contentResolver.insert(
-                                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                                                values
-                                            )
-                                            pendingSelfieUri = uri
-                                            if (uri != null) selfieCameraLauncher.launch(uri)
-                                        } catch (e: Exception) {
-                                            // Swallow — camera unavailable; user can still use Upload/Stored.
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                                // Upload an existing photo from the device
-                                GhostCta(
-                                    text = "Upload",
-                                    onClick = { selfieGalleryLauncher.launch("image/*") },
-                                    modifier = Modifier.weight(1f),
-                                )
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Icon(Icons.Default.Face, contentDescription = "Selfie", tint = Fresh)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text("Selfie Match", style = Typography.titleMedium, color = Ink)
+                                Text("AI Face Search", style = Typography.bodyMedium, color = SlateSoft)
+                            }
+                        }
+
+                        // Bib Number Search Card
+                        Card(
+                            onClick = { activeSearchTab = 1 },
+                            border = BorderStroke(
+                                width = 1.5.dp,
+                                color = if (activeSearchTab == 1) Ink else Line
+                            ),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (activeSearchTab == 1) BoneDeep else Bone
+                            ),
+                            shape = QpCardShape,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Icon(Icons.Default.Search, contentDescription = "Bib", tint = Fresh)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text("Bib Lookup", style = Typography.titleMedium, color = Ink)
+                                Text("Search by Number", style = Typography.bodyMedium, color = SlateSoft)
                             }
                         }
                     }
-                } else {
-                    // Bib Entry Action Input
-                    TextField(
-                        value = bibSearchQuery,
-                        onValueChange = {
-                            bibSearchQuery = it
-                            viewModel.searchByBib(it)
-                        },
-                        placeholder = { Text("Enter bib number (e.g. 2948)", color = SlateSoft) },
-                        singleLine = true,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = BoneDeep,
-                            unfocusedContainerColor = BoneDeep,
-                            focusedIndicatorColor = Fresh,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            focusedTextColor = Ink,
-                            unfocusedTextColor = InkSoft
-                        ),
-                        shape = FieldShape,
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
-                Spacer(modifier = Modifier.height(24.dp))
+
+                // Search Action Interface
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    if (activeSearchTab == 0) {
+                        // Selfie Upload Action Trigger
+                        Card(
+                            border = BorderStroke(1.dp, Line),
+                            colors = CardDefaults.cardColors(containerColor = BoneDeep),
+                            shape = QpCardShape,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "Find photos of yourself instantly with face recognition.",
+                                    textAlign = TextAlign.Center,
+                                    style = Typography.bodyMedium,
+                                    color = InkSoft
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                // Primary: search with a saved library selfie
+                                PrimaryCta(
+                                    text = "Search with stored selfie",
+                                    onClick = { viewModel.searchByStoredSelfie() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    // Take a selfie now — opens the camera via a MediaStore URI
+                                    GhostCta(
+                                        text = "Take a selfie",
+                                        onClick = {
+                                            try {
+                                                val values = ContentValues().apply {
+                                                    put(MediaStore.Images.Media.TITLE, "selfie_search_${System.currentTimeMillis()}")
+                                                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                                }
+                                                val uri = context.contentResolver.insert(
+                                                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                                    values
+                                                )
+                                                pendingSelfieUri = uri
+                                                if (uri != null) selfieCameraLauncher.launch(uri)
+                                            } catch (e: Exception) {
+                                                // Swallow — camera unavailable; user can still use Upload/Stored.
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    // Upload an existing photo from the device
+                                    GhostCta(
+                                        text = "Upload",
+                                        onClick = { selfieGalleryLauncher.launch("image/*") },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        // Bib Entry Action Input
+                        TextField(
+                            value = bibSearchQuery,
+                            onValueChange = {
+                                bibSearchQuery = it
+                                viewModel.searchByBib(it)
+                            },
+                            placeholder = { Text("Enter bib number (e.g. 2948)", color = SlateSoft) },
+                            singleLine = true,
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = BoneDeep,
+                                unfocusedContainerColor = BoneDeep,
+                                focusedIndicatorColor = Fresh,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                focusedTextColor = Ink,
+                                unfocusedTextColor = InkSoft
+                            ),
+                            shape = FieldShape,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
 
                 // Watermarked Photo Stream Title with Reset Button
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Kicker("Matched photos")
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Watermarked previews — buy to unlock the full-resolution shot.",
-                            style = Typography.bodySmall,
-                            color = SlateSoft,
-                        )
-                    }
-                    if (isFiltered || searchState is PhotosSearchState.Error) {
-                        Text(
-                            text = "Reset",
-                            style = Typography.labelMedium,
-                            color = Fresh,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .padding(start = 12.dp, top = 2.dp)
-                                .clickable {
-                                    bibSearchQuery = ""
-                                    viewModel.clearFilter()
-                                }
-                        )
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Kicker("Matched photos")
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Watermarked previews — buy to unlock the full-resolution shot.",
+                                style = Typography.bodySmall,
+                                color = SlateSoft,
+                            )
+                        }
+                        if (isFiltered || searchState is PhotosSearchState.Error) {
+                            Text(
+                                text = "Reset",
+                                style = Typography.labelMedium,
+                                color = Fresh,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .padding(start = 12.dp, top = 2.dp)
+                                    .clickable {
+                                        bibSearchQuery = ""
+                                        viewModel.clearFilter()
+                                    }
+                            )
+                        }
                     }
                 }
-                LivePhotosBanner(
-                    newPhotoCount = newPhotoCount,
-                    liveState = liveState,
-                    onJumpToTop = {
-                        viewModel.resetNewPhotoCount()
-                        scope.launch { scrollState.animateScrollTo(0) }
-                    },
-                    onRetry = { viewModel.retryLivePhotos() },
-                )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    LivePhotosBanner(
+                        newPhotoCount = newPhotoCount,
+                        liveState = liveState,
+                        onJumpToTop = {
+                            viewModel.resetNewPhotoCount()
+                            scope.launch { gridState.animateScrollToItem(0) }
+                        },
+                        onRetry = { viewModel.retryLivePhotos() },
+                    )
+                }
 
                 // Beautiful Watermarked Photo Grid
                 when (val state = searchState) {
                     is PhotosSearchState.Loading -> {
-                        PhotoGridSkeleton()
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            PhotoGridSkeleton()
+                        }
                     }
                     is PhotosSearchState.Error -> {
-                        ErrorView(
-                            message = state.message,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            ErrorView(
+                                message = state.message,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                     is PhotosSearchState.Success -> {
                         if (state.photos.isEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 32.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "No matched photos found for this event.\nTry another search parameter or selfie scan!",
+                                        color = SlateSoft,
+                                        textAlign = TextAlign.Center,
+                                        style = Typography.bodyMedium
+                                    )
+                                }
+                            }
+                        } else {
+                            items(state.photos, key = { it.id }) { photo ->
+                                val photoInCart = cartItems.any { it.photoId == photo.id }
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(0.85f)
+                                        .clip(QpCardShape)
+                                        .background(BoneDeep)
+                                        .clickable { selectedPhotoForDetail = photo },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (photo.imageUrl != null) {
+                                        AsyncImage(
+                                            model = photo.imageUrl,
+                                            contentDescription = "Photo preview",
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(Color.Black.copy(alpha = 0.3f))
+                                        )
+                                    }
+
+                                    // Premium transparent watermark overlay (Fulfills NFR-P-2 security preview)
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(Color.Black.copy(alpha = 0.04f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "QUICKPITIK\nPREVIEW",
+                                            color = Color.White.copy(alpha = 0.35f),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            textAlign = TextAlign.Center,
+                                            letterSpacing = 1.5.sp
+                                        )
+                                    }
+
+                                    // Inline cart / buy actions — bottom-right of tile.
+                                    Row(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(8.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        TileActionPill(
+                                            label = if (photoInCart) "✓ cart" else "+ cart",
+                                            filled = photoInCart,
+                                            onClick = {
+                                                val event = activeEvent ?: return@TileActionPill
+                                                if (photoInCart) {
+                                                    cartViewModel.removeFromCart(photo.id)
+                                                } else {
+                                                    cartViewModel.addToCart(
+                                                        photo, event.id, event.slug, event.name,
+                                                    )
+                                                }
+                                            },
+                                        )
+                                        TileActionPill(
+                                            label = "buy →",
+                                            filled = false,
+                                            onClick = {
+                                                val event = activeEvent ?: return@TileActionPill
+                                                if (photoInCart) {
+                                                    cartViewModel.openCheckoutSheet()
+                                                } else {
+                                                    cartViewModel.triggerExpressCheckout()
+                                                    cartViewModel.addToCart(
+                                                        photo, event.id, event.slug, event.name,
+                                                    )
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -528,125 +647,12 @@ fun RunnerGalleryScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "No matched photos found for this event.\nTry another search parameter or selfie scan!",
+                                    text = "Please select a marathon and run a search to fetch premium matched photos.",
                                     color = SlateSoft,
                                     textAlign = TextAlign.Center,
                                     style = Typography.bodyMedium
                                 )
                             }
-                        } else {
-                            state.photos.chunked(2).forEach { rowPhotos ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    rowPhotos.forEach { photo ->
-                                        key(photo.id) {
-                                            val photoInCart = cartItems.any { it.photoId == photo.id }
-                                            Box(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .aspectRatio(0.85f)
-                                                    .clip(QpCardShape)
-                                                    .background(BoneDeep)
-                                                    .clickable { selectedPhotoForDetail = photo },
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                if (photo.imageUrl != null) {
-                                                    AsyncImage(
-                                                        model = photo.imageUrl,
-                                                        contentDescription = "Photo preview",
-                                                        modifier = Modifier.fillMaxSize(),
-                                                        contentScale = ContentScale.Crop
-                                                    )
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .fillMaxSize()
-                                                            .background(Color.Black.copy(alpha = 0.3f))
-                                                    )
-                                                }
-
-                                                // Premium transparent watermark overlay (Fulfills NFR-P-2 security preview)
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxSize()
-                                                        .background(Color.Black.copy(alpha = 0.04f)),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(
-                                                        text = "QUICKPITIK\nPREVIEW",
-                                                        color = Color.White.copy(alpha = 0.35f),
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        textAlign = TextAlign.Center,
-                                                        letterSpacing = 1.5.sp
-                                                    )
-                                                }
-
-                                                // Inline cart / buy actions — bottom-right of tile.
-                                                // Website parity (photo-mosaic-tile.tsx):
-                                                //   • + cart  → addItem; flips to ✓ cart (Fresh fill) when in cart
-                                                //   • buy →   → express checkout (add + skip to checkout sheet)
-                                                Row(
-                                                    modifier = Modifier
-                                                        .align(Alignment.BottomEnd)
-                                                        .padding(8.dp),
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                ) {
-                                                    TileActionPill(
-                                                        label = if (photoInCart) "✓ cart" else "+ cart",
-                                                        filled = photoInCart,
-                                                        onClick = {
-                                                            val event = activeEvent ?: return@TileActionPill
-                                                            if (photoInCart) {
-                                                                cartViewModel.removeFromCart(photo.id)
-                                                            } else {
-                                                                cartViewModel.addToCart(
-                                                                    photo, event.id, event.slug, event.name,
-                                                                )
-                                                            }
-                                                        },
-                                                    )
-                                                    TileActionPill(
-                                                        label = "buy →",
-                                                        filled = false,
-                                                        onClick = {
-                                                            val event = activeEvent ?: return@TileActionPill
-                                                            if (photoInCart) {
-                                                                cartViewModel.openCheckoutSheet()
-                                                            } else {
-                                                                cartViewModel.triggerExpressCheckout()
-                                                                cartViewModel.addToCart(
-                                                                    photo, event.id, event.slug, event.name,
-                                                                )
-                                                            }
-                                                        },
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if (rowPhotos.size == 1) {
-                                        Spacer(modifier = Modifier.weight(1f))
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(12.dp))
-                            }
-                        }
-                    }
-                    else -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "Please select a marathon and run a search to fetch premium matched photos.",
-                                color = SlateSoft,
-                                textAlign = TextAlign.Center,
-                                style = Typography.bodyMedium
-                            )
                         }
                     }
                 }
