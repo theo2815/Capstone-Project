@@ -52,7 +52,10 @@ import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerMessageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.usb.CameraConnectionState
+import com.quickpitik.mobile.ui.runner.EventState
 import com.quickpitik.mobile.ui.runner.canUploadToEvent
+import com.quickpitik.mobile.ui.runner.deriveEventState
+import com.quickpitik.mobile.ui.runner.eventDateLabel
 import com.quickpitik.mobile.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1003,26 +1006,20 @@ private fun PublicEventPickerList(
                 }
             }
             is EventsState.Success -> {
-                // Picker contract: show every event that's currently within the
-                // race-day + 3-day upload window — including events the
-                // photographer is ALREADY covering (so they can return to dump
-                // more frames mid-event). Mirrors the website's
-                // canUploadToEvent gate; backend enforces the same window
-                // server-side as EVENT_NOT_UPLOADABLE.
-                val uploadableEvents = (state.events + assignedEvents)
+                val allPickerEvents = (state.events + assignedEvents)
                     .distinctBy { it.id }
-                    .filter { canUploadToEvent(it.date) }
+                    .sortedBy { it.date }
 
-                if (uploadableEvents.isEmpty()) {
+                if (allPickerEvents.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxWidth().weight(1f).padding(24.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Kicker(text = "Nothing open for upload", color = Slate)
+                            Kicker(text = "No events on the calendar", color = Slate)
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Capture opens on race day and stays open for 3 days after each event.",
+                                text = "Events created in the system will appear here for capture and upload.",
                                 color = Slate,
                                 style = Typography.bodyMedium,
                                 textAlign = TextAlign.Center
@@ -1032,17 +1029,21 @@ private fun PublicEventPickerList(
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth().weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        contentPadding = PaddingValues(bottom = 24.dp)
                     ) {
-                        items(uploadableEvents) { event ->
+                        items(allPickerEvents, key = { it.id }) { event ->
+                            val canUpload = canUploadToEvent(event.date)
                             EventPickerCard(
                                 event = event,
                                 onClick = {
-                                    when {
-                                        currentStatus == "approved" -> onSelectEvent(event)
-                                        isRejected -> showIncompleteAlert = true
-                                        currentStatus == "pending" -> showPendingAlert = true
-                                        else -> showIncompleteAlert = true
+                                    if (canUpload) {
+                                        when {
+                                            currentStatus == "approved" -> onSelectEvent(event)
+                                            isRejected -> showIncompleteAlert = true
+                                            currentStatus == "pending" -> showPendingAlert = true
+                                            else -> showIncompleteAlert = true
+                                        }
                                     }
                                 }
                             )
@@ -1112,18 +1113,28 @@ private fun EventPickerCard(
         else url.replace("localhost", RetrofitClient.backendHost)
             .replace("127.0.0.1", RetrofitClient.backendHost)
     }
-    val stateLabel = event.state.uppercase()
-    val tone = when (stateLabel) {
-        "LIVE", "OPEN" -> StatusTone.Approved
-        "UPCOMING" -> StatusTone.Warning
-        "CLOSED", "ENDED" -> StatusTone.Neutral
-        else -> StatusTone.Neutral
+    val lifecycle = deriveEventState(event.date)
+    val isUpcoming = lifecycle == EventState.UPCOMING
+    val isClosed = !canUploadToEvent(event.date) && !isUpcoming
+    val isLive = canUploadToEvent(event.date)
+
+    val stateLabel = when {
+        isUpcoming -> "OPENS ON ${eventDateLabel(event.date)}"
+        isClosed -> "CLOSED"
+        else -> "LIVE"
     }
+    val tone = when {
+        isUpcoming -> StatusTone.Warning
+        isClosed -> StatusTone.Neutral
+        else -> StatusTone.Approved
+    }
+
     Surface(
         shape = QpCardShape,
-        color = BoneDeep,
+        color = if (isLive) BoneDeep else Bone,
         border = BorderStroke(1.dp, Line),
         onClick = onClick,
+        enabled = isLive,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column {
@@ -1151,7 +1162,7 @@ private fun EventPickerCard(
             Column(modifier = Modifier.padding(16.dp)) {
                 val cityLabel = extractCity(event.location)
                 Kicker(
-                    text = "${event.date} · ${if (cityLabel.isNotBlank()) cityLabel else event.location}",
+                    text = "${eventDateLabel(event.date)} · ${if (cityLabel.isNotBlank()) cityLabel else event.location}",
                     color = Slate
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1175,15 +1186,43 @@ private fun EventPickerCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     StatusChip(text = stateLabel, tone = tone)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Kicker(text = "Cover event", color = Ink)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.Default.ArrowForward,
-                            contentDescription = null,
-                            tint = Ink,
-                            modifier = Modifier.size(14.dp)
-                        )
+                    when {
+                        isUpcoming -> {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = SlateSoft,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Kicker(text = "Opens on race day", color = SlateSoft)
+                            }
+                        }
+                        isClosed -> {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = SlateSoft,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Kicker(text = "Upload window closed", color = SlateSoft)
+                            }
+                        }
+                        else -> {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Kicker(text = "Cover event", color = Ink)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.Default.ArrowForward,
+                                    contentDescription = null,
+                                    tint = Ink,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
