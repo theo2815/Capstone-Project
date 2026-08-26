@@ -112,6 +112,8 @@ fun AccountSettingsScreen(
             // Top Bar
             RunnerTopBar(
                 kicker = "ACCOUNT SETTINGS",
+                userName = name,
+                avatarUrl = avatarUrl,
                 onLogout = onLogout
             )
 

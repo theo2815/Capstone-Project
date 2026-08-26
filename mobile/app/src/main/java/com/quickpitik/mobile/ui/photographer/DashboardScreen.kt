@@ -858,7 +858,7 @@ private fun EventPickerCard(
         else -> "LIVE"
     }
     val tone = when {
-        isUpcoming -> StatusTone.Warning
+        isUpcoming -> StatusTone.Neutral
         isClosed -> StatusTone.Neutral
         else -> StatusTone.Approved
     }

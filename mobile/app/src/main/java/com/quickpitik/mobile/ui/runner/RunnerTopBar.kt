@@ -32,17 +32,18 @@ import com.quickpitik.mobile.ui.theme.*
 fun RunnerTopBar(
     kicker: String,
     title: String = "QuickPitik",
+    userName: String? = null,
+    avatarUrl: String? = null,
     onLogout: () -> Unit = {},
     modifier: Modifier = Modifier,
     trailingContent: (@Composable () -> Unit)? = null
 ) {
     val context = LocalContext.current
     val sessionManager = remember { SessionManager.getInstance(context) }
-    // Not remember{}-cached: an unkeyed remember froze the pre-edit name (and
-    // avatar) until the composable left composition, so a change on the
-    // settings screen never reached the header.
-    val userName = sessionManager.getUserName() ?: "Runner"
-    val avatarUrl = RetrofitClient.resolveImageUrl(sessionManager.getAvatarUrl())
+    val displayName = userName ?: sessionManager.getUserName() ?: "Runner"
+    val resolvedAvatarUrl = RetrofitClient.resolveImageUrl(
+        avatarUrl ?: sessionManager.getAvatarUrl()
+    )
     var menuExpanded by remember { mutableStateOf(false) }
 
     Row(
@@ -85,16 +86,16 @@ fun RunnerTopBar(
                     // Real avatar when one exists (SessionManager caches it;
                     // the photographer top bar already did this) — initials
                     // only as the fallback.
-                    if (!avatarUrl.isNullOrBlank()) {
+                    if (!resolvedAvatarUrl.isNullOrBlank()) {
                         AsyncImage(
-                            model = avatarUrl,
+                            model = resolvedAvatarUrl,
                             contentDescription = "Profile menu",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize().clip(CircleShape),
                         )
                     } else {
                         Text(
-                            text = userName.take(1).uppercase(),
+                            text = displayName.take(1).uppercase(),
                             color = Ink,
                             style = Typography.titleMedium,
                             fontWeight = FontWeight.Bold
