@@ -159,7 +159,7 @@ private fun CoverBanner(cover: CoverSourceDto?, brandColor: String?, displayName
             }
         }
         // Scrim for legible name
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f)))
+        Box(modifier = Modifier.fillMaxSize().background(WatermarkInk))
         Text(
             text = displayName ?: "Photographer",
             color = Color.White,

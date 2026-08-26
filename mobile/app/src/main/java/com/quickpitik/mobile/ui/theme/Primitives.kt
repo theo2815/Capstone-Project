@@ -42,12 +42,15 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// ── Quiet Studio shared primitives ──────────────────────────────────────────
+// ── Finish Line shared primitives ───────────────────────────────────────────
 // Encode the website's hard rules ONCE so screens stop hand-rolling styles:
-//   • mono UPPERCASE kickers   • single-accent (Fresh) pill CTAs
+//   • mono UPPERCASE kickers   • single-accent (Fresh #1B7A46) pill CTAs
+//   • Anton UPPERCASE heroes (HeroText — the ONLY non-kicker uppercase)
 //   • ghost (ink-outline) CTAs • 16dp Bone-deep cards • tabular stat numerals
-// All reference the `Typography`/token vals directly (not MaterialTheme.*) so
-// they stay font- and color-correct even inside a nested MaterialTheme override.
+// New depth tokens FreshTint / Pine / LineStrong are available for washes and
+// stronger borders. All reference the `Typography`/token vals directly (not
+// MaterialTheme.*) so they stay font- and color-correct even inside a nested
+// MaterialTheme override.
 
 /** Pill radius for CTAs/chips (website `rounded-full`). */
 val PillShape = RoundedCornerShape(100)
@@ -55,7 +58,28 @@ val PillShape = RoundedCornerShape(100)
 /** Card radius (website `rounded-2xl` = 16px). */
 val QpCardShape = RoundedCornerShape(16.dp)
 
-/** Mono, UPPERCASE eyebrow. Rule: kickers are the only uppercase text. */
+/**
+ * Anton hero headline — the website's `.font-hero` (Finish Line). UPPERCASES
+ * internally because Compose has no text-transform; this and Kicker are the
+ * only uppercase text. Marketing/auth/discovery surfaces only — Anton never
+ * appears in the studio (website rule: no Anton in dashboards). Anton is
+ * single-weight; displayLarge already pins FontWeight.Normal.
+ */
+@Composable
+fun HeroText(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Ink,
+) {
+    Text(
+        text = text.uppercase(),
+        style = Typography.displayLarge,
+        color = color,
+        modifier = modifier,
+    )
+}
+
+/** Mono, UPPERCASE eyebrow. Kickers + HeroText are the only uppercase text. */
 @Composable
 fun Kicker(
     text: String,
@@ -303,7 +327,13 @@ fun StatusChip(
         StatusTone.Danger -> ErrorRed
         StatusTone.Neutral -> Slate
     }
-    val bg = if (tone == StatusTone.Neutral) Line else fg.copy(alpha = 0.10f)
+    // Approved uses the Finish Line green wash token (the website's exact
+    // chip background) instead of a computed alpha of the darker green.
+    val bg = when (tone) {
+        StatusTone.Neutral -> Line
+        StatusTone.Approved -> FreshTint
+        else -> fg.copy(alpha = 0.10f)
+    }
     Row(
         modifier = modifier
             .background(bg, BadgeShape)

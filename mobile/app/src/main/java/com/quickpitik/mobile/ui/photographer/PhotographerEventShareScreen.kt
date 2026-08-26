@@ -182,17 +182,17 @@ fun PhotographerEventShareScreen(
                 Text("SHARE TO YOUR FOLLOWERS", style = Typography.labelSmall, color = SlateSoft)
                 Spacer(modifier = Modifier.height(10.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ShareChip(label = "Facebook", dotColor = Color(0xFF1877F2)) {
+                    ShareChip(label = "Facebook", dotColor = FacebookBlue) {
                         openUrl(context, "https://www.facebook.com/sharer/sharer.php?u=${enc(fullUrl)}")
                     }
-                    ShareChip(label = "Instagram", dotColor = Color(0xFFE4405F)) {
+                    ShareChip(label = "Instagram", dotColor = InstagramPink) {
                         copyLink(context, fullUrl)
                         Toast.makeText(context, "Link copied. Paste into your IG bio or story.", Toast.LENGTH_LONG).show()
                     }
-                    ShareChip(label = "X", dotColor = Color(0xFF000000)) {
+                    ShareChip(label = "X", dotColor = XBlack) {
                         openUrl(context, "https://twitter.com/intent/tweet?url=${enc(fullUrl)}&text=${enc("Photos from ${event.name}")}")
                     }
-                    ShareChip(label = "Threads", dotColor = Color(0xFF444444)) {
+                    ShareChip(label = "Threads", dotColor = ThreadsGray) {
                         openUrl(context, "https://www.threads.net/intent/post?text=${enc("Photos from ${event.name} — $displayUrl")}")
                     }
                 }
@@ -378,6 +378,13 @@ private fun ShareChip(label: String, dotColor: Color, onClick: () -> Unit) {
         Text(label, style = Typography.bodyMedium, color = Ink, fontWeight = FontWeight.Medium)
     }
 }
+
+// Platform brand colors for the share-chip dots — external identities, not
+// theme tokens, but named so they don't read as stray magic hexes.
+private val FacebookBlue = Color(0xFF1877F2)
+private val InstagramPink = Color(0xFFE4405F)
+private val XBlack = Color(0xFF000000)
+private val ThreadsGray = Color(0xFF444444)
 
 private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
 

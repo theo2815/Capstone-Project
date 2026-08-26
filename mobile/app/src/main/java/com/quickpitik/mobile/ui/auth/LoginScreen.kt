@@ -104,12 +104,13 @@ fun LoginScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Display Title
+            // Hero title — Anton uppercase (Finish Line). Uppercased in the
+            // literals because HeroText can't carry the two-tone span.
             Text(
                 text = buildAnnotatedString {
-                    append("Welcome\n")
+                    append("WELCOME\n")
                     withStyle(style = SpanStyle(color = Fresh)) {
-                        append("back.")
+                        append("BACK.")
                     }
                 },
                 style = Typography.displayLarge,

@@ -168,17 +168,9 @@ fun EventsDiscoveryScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
             ) {
-                // ---- Hero ----
-                Text(
-                    "Pick your race.",
-                    style = Typography.displayLarge,
-                    color = Ink
-                )
-            Text(
-                "Find your photos.",
-                style = Typography.displayLarge,
-                color = Fresh
-            )
+                // ---- Hero (Anton uppercase — Finish Line) ----
+                HeroText("Pick your race.")
+            HeroText("Find your photos.", color = Fresh)
             Spacer(Modifier.height(8.dp))
             Text(
                 "Open an event, then search by face or bib. Free to look — pay only for the ones you keep.",

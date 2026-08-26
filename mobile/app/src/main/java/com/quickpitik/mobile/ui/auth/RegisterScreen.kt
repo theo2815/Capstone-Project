@@ -106,12 +106,13 @@ fun RegisterScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Display Title
+            // Hero title — Anton uppercase (Finish Line). Uppercased in the
+            // literals because HeroText can't carry the two-tone span.
             Text(
                 text = buildAnnotatedString {
-                    append("Join\n")
+                    append("JOIN\n")
                     withStyle(style = SpanStyle(color = Fresh)) {
-                        append("QuickPitik.")
+                        append("QUICKPITIK.")
                     }
                 },
                 style = Typography.displayLarge,

@@ -106,10 +106,12 @@ private fun AuthLogoLockup() {
  */
 @Composable
 fun AuthHeadline(lead: String, accent: String) {
+    // Anton hero (Finish Line) — uppercased here because HeroText can't carry
+    // the two-tone span.
     Text(
         text = buildAnnotatedString {
-            append("$lead\n")
-            withStyle(style = SpanStyle(color = Fresh)) { append(accent) }
+            append("${lead.uppercase()}\n")
+            withStyle(style = SpanStyle(color = Fresh)) { append(accent.uppercase()) }
         },
         style = Typography.displayLarge,
         color = Ink,

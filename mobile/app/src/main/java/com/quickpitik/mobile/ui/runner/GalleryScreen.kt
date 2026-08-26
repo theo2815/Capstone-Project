@@ -612,7 +612,7 @@ fun RunnerGalleryScreen(
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
-                                                .background(Color.Black.copy(alpha = 0.3f))
+                                                .background(WatermarkInk)
                                         )
                                     }
 
@@ -902,9 +902,12 @@ private fun UpcomingEventNotice(
         // date kicker carries the accent, as it does on the web.
         Kicker(text = "Opens · $dateLabel", color = Fresh)
         Spacer(modifier = Modifier.height(12.dp))
+        // displayMedium, not the Anton hero style: the event name is
+        // user-generated text and uppercasing it in a condensed display face
+        // reads wrong (flagged during the Finish Line migration).
         Text(
             text = event.name,
-            style = Typography.displayLarge,
+            style = Typography.displayMedium,
             color = Ink,
         )
         Spacer(modifier = Modifier.height(12.dp))
