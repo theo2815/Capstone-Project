@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
 class CartRepositoryImpl : CartRepository {
-    private val api = RetrofitClient.apiService
+    private val api get() = RetrofitClient.apiService
     private val _cartItems = MutableStateFlow<List<CartItemDto>>(emptyList())
     override val cartItems: StateFlow<List<CartItemDto>> = _cartItems.asStateFlow()
 
