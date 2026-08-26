@@ -43,6 +43,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,8 +76,9 @@ fun RunnerGalleryScreen(
     onOpenPhotographer: (String) -> Unit,
     onLogout: () -> Unit
 ) {
-    var bibSearchQuery by remember { mutableStateOf("") }
-    var activeSearchTab by remember { mutableStateOf(0) } // 0 = Selfie, 1 = Bib Number
+    // rememberSaveable: the typed bib + chosen search tab survive rotation.
+    var bibSearchQuery by rememberSaveable { mutableStateOf("") }
+    var activeSearchTab by rememberSaveable { mutableStateOf(0) } // 0 = Selfie, 1 = Bib Number
     var selectedPhotoForDetail by remember { mutableStateOf<PhotoDto?>(null) }
 
     val inboxMessages by inboxViewModel.messages.collectAsState()

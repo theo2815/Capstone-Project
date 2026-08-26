@@ -74,12 +74,17 @@ fun FloatingCart(
         if (cartOpen || checkoutOpen) minimized = false
     }
 
-    // Mirrors the website's HIDDEN_ROUTES (components/cart/floating-cart.tsx):
-    // no cart pill over an auth surface. Web lists login/register/forgot-password;
-    // reset-password is added here because the web list predates that page's
-    // final route and a pill over a password form is plainly wrong on a phone.
-    val hiddenRoute = route in setOf("login", "register", "forgot-password", "reset-password")
-    val showPill = itemCount > 0 && !hiddenRoute
+    // Inverted to an ALLOWLIST of runner marketplace surfaces. The old
+    // blocklist (auth routes only) let the pill float over the photographer
+    // studio — CartViewModel.init merges the cart for any signed-in user, so a
+    // photographer with stale cart rows got a green cart over their dashboard.
+    // The website's HIDDEN_ROUTES blocklist works there because its cart is
+    // runner-scoped by layout; here the allowlist is the equivalent.
+    val allowedRoute = route in setOf(
+        "events", "gallery", "profile", "settings",
+        "orders?orderId={orderId}",
+    )
+    val showPill = itemCount > 0 && allowedRoute
 
     if (showPill) {
         // No padding on the parent — pill applies its own inset (so it sits

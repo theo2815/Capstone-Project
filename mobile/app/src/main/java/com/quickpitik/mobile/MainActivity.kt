@@ -15,24 +15,42 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavController
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.quickpitik.mobile.data.local.SessionEvents
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.isPhotographerRole
 import com.quickpitik.mobile.ui.auth.AuthViewModel
 import com.quickpitik.mobile.ui.auth.ForgotPasswordScreen
 import com.quickpitik.mobile.ui.auth.LoginScreen
 import com.quickpitik.mobile.ui.auth.RegisterScreen
 import com.quickpitik.mobile.ui.auth.ResetPasswordScreen
-import com.quickpitik.mobile.ui.photographer.PhotographerDashboardScreen
+import com.quickpitik.mobile.ui.photographer.EventsState
+import com.quickpitik.mobile.ui.photographer.PhotographerCaptureScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
+import com.quickpitik.mobile.ui.photographer.PhotographerEarningsScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerEventShareScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerEventsScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerFloatingBottomNav
+import com.quickpitik.mobile.ui.photographer.PhotographerOverviewScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerPublicProfileScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerSettingsScreen
 import com.quickpitik.mobile.ui.photographer.PublicPhotographerViewModel
+import com.quickpitik.mobile.ui.photographer.STUDIO_TAB_ROUTES
+import com.quickpitik.mobile.ui.photographer.StudioInboxLifecycle
+import com.quickpitik.mobile.ui.photographer.StudioTabScaffold
+import com.quickpitik.mobile.ui.photographer.StudioTheme
+import com.quickpitik.mobile.ui.photographer.VerificationUiState
 import com.quickpitik.mobile.ui.runner.EventsDiscoveryScreen
 import com.quickpitik.mobile.ui.runner.FloatingCart
 import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
@@ -93,6 +111,21 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.navigation.compose.currentBackStackEntryAsState
 
+// Runner-owned route PATTERNS (as the back stack reports them). Used by the
+// role guard and, minus the receipt route, by the bottom-nav gate.
+// "photographer/{handle}" and the auth routes belong to NEITHER role set —
+// they are shared surfaces.
+private val RUNNER_ROUTES = setOf(
+    "events", "gallery", "profile", "settings",
+    "orders?orderId={orderId}", "orders/return/{orderId}",
+)
+
+// Where the runner bottom nav shows: the tab surfaces + the orders list, but
+// NOT the modal PayMongo receipt ("orders/return/{orderId}").
+private val RUNNER_NAV_ROUTES = setOf(
+    "events", "gallery", "profile", "settings", "orders?orderId={orderId}",
+)
+
 class MainActivity : ComponentActivity() {
     // Latest deep-link URI from a quickpitik:// intent. Compose observes this
     // via a LaunchedEffect and routes the user to OrdersScreen (return) or
@@ -132,8 +165,7 @@ class MainActivity : ComponentActivity() {
                 val startDestination = remember {
                     when {
                         sessionManager.getAccessToken() == null -> "login"
-                        sessionManager.getUserRole()
-                            .equals("PHOTOGRAPHER", ignoreCase = true) -> "dashboard"
+                        isPhotographerRole(sessionManager.getUserRole()) -> "studio"
                         else -> "events"
                     }
                 }
@@ -159,13 +191,106 @@ class MainActivity : ComponentActivity() {
 
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
-                val showBottomBar = currentRoute?.startsWith("orders") == true || currentRoute in listOf("events", "gallery", "profile", "settings")
+                // Exact route PATTERNS, not startsWith: "orders/return/{orderId}"
+                // is the modal PayMongo receipt and must NOT carry the
+                // persistent nav (startsWith("orders") used to match it).
+                val showRunnerBottomBar = currentRoute in RUNNER_NAV_ROUTES
+
+                // While any studio/* destination is on the stack this resolves
+                // the graph's back-stack entry — the owner of the ONE shared
+                // PhotographerDashboardViewModel. Null for runner sessions, so
+                // a runner never constructs the VM (and its init{} salvo).
+                val studioEntry = remember(navBackStackEntry) {
+                    runCatching { navController.getBackStackEntry("studio") }.getOrNull()
+                }
+
+                // The single studio tab-navigation path: bottom nav + Overview
+                // quick links both come through here, so the per-tab
+                // deliberate-refresh `when` exists exactly once (it was
+                // duplicated twice in the old DashboardScreen). popUpTo keeps
+                // the stack at [home, currentTab] — back from any tab lands
+                // Home; back from Home exits. saveState/restoreState preserve
+                // tab-internal scroll. NOTE: studio/capture is deliberately
+                // absent from the refresh `when` — PublicEventPickerList
+                // refetches itself on re-entry.
+                val studioNavigate: (String) -> Unit = navigate@{ route ->
+                    if (currentRoute != route) {
+                        navController.navigate(route) {
+                            popUpTo("studio/home") { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                    val entry = runCatching {
+                        navController.getBackStackEntry("studio")
+                    }.getOrNull() ?: return@navigate
+                    val vm = ViewModelProvider(entry)[PhotographerDashboardViewModel::class.java]
+                    when (route) {
+                        "studio/home" -> {
+                            vm.fetchVerificationStatus()
+                            vm.fetchEvents()
+                            vm.fetchEarningsAndTransactions()
+                            vm.fetchMessages()
+                            vm.fetchSettings()
+                        }
+                        "studio/events" -> {
+                            vm.fetchEvents()
+                            // The tab merges covered + public events; both
+                            // refreshed here (this replaces the screen's old
+                            // mount-time LaunchedEffect).
+                            vm.fetchPublicEvents()
+                        }
+                        "studio/earnings" -> vm.fetchEarningsAndTransactions()
+                        "studio/settings" -> vm.fetchVerificationStatus()
+                    }
+                }
+
+                // Inbox socket held once for the whole studio session — a
+                // per-tab lifecycle would reconnect (and refetch) on every tab
+                // switch. See StudioInboxLifecycle.
+                if (studioEntry != null) {
+                    val studioVm: PhotographerDashboardViewModel = viewModel(studioEntry)
+                    StudioInboxLifecycle(studioVm)
+                }
+
+                // Role guard — the one choke point every navigation source
+                // (bottom nav, deep links, programmatic) passes through.
+                // Runner routes reject a photographer; studio routes reject a
+                // runner. `photographer/{handle}` and the auth routes are in
+                // neither set (shared). Redirects never popUpTo: a hostile
+                // deep link must not be able to pop the studio graph and kill
+                // a live tether session.
+                LaunchedEffect(navBackStackEntry) {
+                    val route = navBackStackEntry?.destination?.route ?: return@LaunchedEffect
+                    if (sessionManager.getAccessToken() == null) return@LaunchedEffect
+                    val photographer = isPhotographerRole(sessionManager.getUserRole())
+                    when {
+                        route in RUNNER_ROUTES && photographer ->
+                            navController.navigate("studio") { launchSingleTop = true }
+                        route.startsWith("studio") && !photographer ->
+                            navController.navigate("events") { launchSingleTop = true }
+                    }
+                }
 
                 Scaffold(
                     containerColor = Bone,
                     bottomBar = {
-                        if (showBottomBar) {
-                            RunnerFloatingBottomNav(
+                        when {
+                            currentRoute in STUDIO_TAB_ROUTES && studioEntry != null -> {
+                                val studioVm: PhotographerDashboardViewModel = viewModel(studioEntry)
+                                val verificationState by studioVm.verificationState.collectAsState()
+                                val showSettingsBadge = when (val s = verificationState) {
+                                    is VerificationUiState.Success ->
+                                        s.verification.status.lowercase() != "approved"
+                                    else -> true
+                                }
+                                PhotographerFloatingBottomNav(
+                                    currentRoute = currentRoute,
+                                    showSettingsBadge = showSettingsBadge,
+                                    onNavigate = studioNavigate,
+                                )
+                            }
+                            showRunnerBottomBar -> RunnerFloatingBottomNav(
                                 currentRoute = currentRoute,
                                 onNavigate = { route ->
                                     if (currentRoute != route) {
@@ -202,7 +327,7 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onLoginSuccess = { isPhotographer ->
                                         sessionNotice = null
-                                        val target = if (isPhotographer) "dashboard" else "events"
+                                        val target = if (isPhotographer) "studio" else "events"
                                         navController.navigate(target) {
                                             popUpTo("login") { inclusive = true }
                                         }
@@ -239,24 +364,140 @@ class MainActivity : ComponentActivity() {
                                         navController.navigate("login")
                                     },
                                     onRegisterSuccess = { isPhotographer ->
-                                        val target = if (isPhotographer) "dashboard" else "events"
+                                        val target = if (isPhotographer) "studio" else "events"
                                         navController.navigate(target) {
                                             popUpTo("login") { inclusive = true }
                                         }
                                     }
                                 )
                             }
-                            composable("dashboard") {
-                                val photographerViewModel: PhotographerDashboardViewModel = viewModel()
-                                PhotographerDashboardScreen(
-                                    viewModel = photographerViewModel,
-                                    onLogout = {
-                                        authViewModel.logout()
-                                        navController.navigate("login") {
-                                            popUpTo("dashboard") { inclusive = true }
+                            // ── Photographer studio ─────────────────────────
+                            // Nested graph so all seven routes share ONE
+                            // PhotographerDashboardViewModel scoped to the
+                            // graph's back-stack entry: lazy (a runner session
+                            // never constructs it), and cleared exactly when
+                            // logout pops the graph — the same teardown the old
+                            // dashboard-entry scoping gave the tether loop.
+                            // GUARD RULE: nothing may popUpTo past "studio"
+                            // except logout/forced-logout, or a live tether VM
+                            // dies mid-shoot.
+                            navigation(startDestination = "studio/home", route = "studio") {
+                                val studioLogout: () -> Unit = {
+                                    authViewModel.logout()
+                                    cartViewModel.clearCart()
+                                    navController.navigate("login") {
+                                        popUpTo("studio") { inclusive = true }
+                                    }
+                                }
+                                val openProfilePreview: () -> Unit = {
+                                    navController.navigate("studio/profile-preview")
+                                }
+                                composable("studio/home") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    StudioTabScaffold(
+                                        viewModel = vm,
+                                        onLogout = studioLogout,
+                                        onPreviewProfile = openProfilePreview,
+                                    ) {
+                                        PhotographerOverviewScreen(
+                                            viewModel = vm,
+                                            onNavigateToSettings = { studioNavigate("studio/settings") },
+                                            onNavigateToTab = studioNavigate,
+                                        )
+                                    }
+                                }
+                                composable("studio/capture") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    StudioTabScaffold(
+                                        viewModel = vm,
+                                        onLogout = studioLogout,
+                                        onPreviewProfile = openProfilePreview,
+                                    ) {
+                                        PhotographerCaptureScreen(viewModel = vm)
+                                    }
+                                }
+                                composable("studio/events") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    StudioTabScaffold(
+                                        viewModel = vm,
+                                        onLogout = studioLogout,
+                                        onPreviewProfile = openProfilePreview,
+                                    ) {
+                                        PhotographerEventsScreen(
+                                            viewModel = vm,
+                                            onOpenShare = { event ->
+                                                navController.navigate("studio/share/${event.id}")
+                                            },
+                                            onSyncEvent = { ev ->
+                                                vm.selectEvent(ev)
+                                                studioNavigate("studio/capture")
+                                            },
+                                        )
+                                    }
+                                }
+                                composable("studio/earnings") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    StudioTabScaffold(
+                                        viewModel = vm,
+                                        onLogout = studioLogout,
+                                        onPreviewProfile = openProfilePreview,
+                                    ) {
+                                        PhotographerEarningsScreen(viewModel = vm)
+                                    }
+                                }
+                                composable("studio/settings") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    StudioTabScaffold(
+                                        viewModel = vm,
+                                        onLogout = studioLogout,
+                                        onPreviewProfile = openProfilePreview,
+                                    ) {
+                                        PhotographerSettingsScreen(
+                                            viewModel = vm,
+                                            onLogout = studioLogout,
+                                        )
+                                    }
+                                }
+                                // Fullscreen sub-surfaces — no tab chrome, no
+                                // bottom nav; back pops to the launching tab.
+                                composable(
+                                    route = "studio/share/{eventId}",
+                                    arguments = listOf(navArgument("eventId") { type = NavType.StringType }),
+                                ) { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    val eventId = entry.arguments?.getString("eventId")
+                                    val eventsState by vm.eventsState.collectAsState()
+                                    val event = (eventsState as? EventsState.Success)
+                                        ?.events?.firstOrNull { it.id == eventId }
+                                    if (event == null) {
+                                        // List not loaded / unknown id — nothing
+                                        // to share; fall back to the tab.
+                                        LaunchedEffect(eventId) { navController.popBackStack() }
+                                    } else {
+                                        StudioTheme {
+                                            PhotographerEventShareScreen(
+                                                event = event,
+                                                viewModel = vm,
+                                                onBack = { navController.popBackStack() },
+                                            )
                                         }
                                     }
-                                )
+                                }
+                                composable("studio/profile-preview") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    // Route-scoped on purpose: the same screen
+                                    // serves a runner tapping a photo byline
+                                    // via "photographer/{handle}".
+                                    val publicVm: PublicPhotographerViewModel = viewModel()
+                                    val brandSettings by vm.brandSettings.collectAsState()
+                                    StudioTheme {
+                                        PhotographerPublicProfileScreen(
+                                            handle = brandSettings?.handle,
+                                            viewModel = publicVm,
+                                            onBack = { navController.popBackStack() },
+                                        )
+                                    }
+                                }
                             }
                             composable("events") {
                                 EventsDiscoveryScreen(
@@ -464,6 +705,16 @@ class MainActivity : ComponentActivity() {
         // as scheme=quickpitik, host=orders, path=/return.
         val host = uri.host?.lowercase() ?: return
         val path = uri.path?.lowercase().orEmpty()
+        // Every quickpitik:// target below is a runner surface. A photographer
+        // token would 403 the cart fetch and land on screens with no way back,
+        // so route them home instead. Handled here (not only in the route
+        // guard) because the `cart` case opens a sheet WITHOUT navigating —
+        // the destination-change guard never sees it. launchSingleTop, never
+        // popUpTo: a stray deep link must not pop a live tether session.
+        if (isPhotographerRole(SessionManager.getInstance(this).getUserRole())) {
+            navController.navigate("studio") { launchSingleTop = true }
+            return
+        }
         when {
             host == "orders" && path.startsWith("/return") -> {
                 val orderId = uri.getQueryParameter("orderId")
@@ -503,6 +754,19 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
+
+// The ONE shared studio VM, owned by the "studio" graph's back-stack entry —
+// every studio route resolves the same instance, and it is cleared (tether
+// teardown included) exactly when logout pops the graph. `remember(entry)`
+// because getBackStackEntry must not run on every recomposition.
+@Composable
+private fun studioViewModel(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): PhotographerDashboardViewModel {
+    val graphEntry = remember(entry) { navController.getBackStackEntry("studio") }
+    return viewModel(graphEntry)
 }
 
 // ─── Floating-pill bottom nav for Runner ──────────────────────────────────────
@@ -548,7 +812,9 @@ private fun RunnerFloatingBottomNav(
             RunnerFloatingNavItem(
                 icon = Icons.Default.List,
                 label = "Orders",
-                selected = currentRoute?.startsWith("orders") == true,
+                // Exact pattern — startsWith("orders") also matched the
+                // PayMongo receipt route "orders/return/{orderId}".
+                selected = currentRoute == "orders?orderId={orderId}",
                 onClick = { onNavigate("orders") },
                 modifier = Modifier.weight(1f),
             )

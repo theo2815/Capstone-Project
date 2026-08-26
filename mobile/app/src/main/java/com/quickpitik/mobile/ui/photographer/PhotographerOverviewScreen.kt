@@ -42,7 +42,9 @@ private data class SetupStep(
 fun PhotographerOverviewScreen(
     viewModel: PhotographerDashboardViewModel,
     onNavigateToSettings: () -> Unit,
-    onNavigateToTab: (Int) -> Unit,
+    // Studio ROUTE name (e.g. "studio/capture") — the tabs are NavHost routes
+    // now, and MainActivity's studioNavigate owns the per-tab refresh.
+    onNavigateToTab: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val verificationState by viewModel.verificationState.collectAsState()
@@ -136,9 +138,9 @@ fun PhotographerOverviewScreen(
                 events = events,
                 earnings = earnings,
                 transactions = transactions,
-                onCapture = { onNavigateToTab(1) },
-                onOpenEvent = { onNavigateToTab(2) },
-                onOpenEarnings = { onNavigateToTab(3) },
+                onCapture = { onNavigateToTab("studio/capture") },
+                onOpenEvent = { onNavigateToTab("studio/events") },
+                onOpenEarnings = { onNavigateToTab("studio/earnings") },
             )
         } else {
             SetupHomeBody(

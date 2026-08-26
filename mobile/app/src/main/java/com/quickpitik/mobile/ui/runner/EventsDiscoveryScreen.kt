@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,9 +81,11 @@ fun EventsDiscoveryScreen(
     val eventsState by viewModel.eventsState.collectAsState()
     val savedIds by savedEventsViewModel.savedIds.collectAsState()
 
-    var query by remember { mutableStateOf("") }
-    var cityFilter by remember { mutableStateOf("all") }
-    var dateFilter by remember { mutableStateOf(DateFilter.ANY) }
+    // rememberSaveable: filters survive rotation (they still reset on
+    // navigation away — URL-persisted filters are a web-only affordance).
+    var query by rememberSaveable { mutableStateOf("") }
+    var cityFilter by rememberSaveable { mutableStateOf("all") }
+    var dateFilter by rememberSaveable { mutableStateOf(DateFilter.ANY) }
 
     val inboxMessages by inboxViewModel.messages.collectAsState()
     val inboxUnread by inboxViewModel.unreadCount.collectAsState()
@@ -291,7 +294,7 @@ fun EventsDiscoveryScreen(
                         }
                     } else {
                         // Flat filtered view with load-more, like the web's FlatResults.
-                        var visibleCount by remember(query, cityFilter, dateFilter) { mutableStateOf(FLAT_PAGE_SIZE) }
+                        var visibleCount by rememberSaveable(query, cityFilter, dateFilter) { mutableStateOf(FLAT_PAGE_SIZE) }
                         val cityLabel = if (cityFilter == "all") "All cities" else cityFilter
                         Text(
                             "${filtered.size} of ${withState.size} ${if (withState.size == 1) "race" else "races"}",

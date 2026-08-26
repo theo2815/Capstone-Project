@@ -3,6 +3,14 @@ package com.quickpitik.mobile.data.local
 import android.content.Context
 import android.content.SharedPreferences
 
+// THE role check — every "is this a photographer?" branch goes through here.
+// Three call sites used to disagree (equals("PHOTOGRAPHER") in MainActivity vs
+// contains("PHOTO") on the auth screens), which would route a hypothetical new
+// role differently at login than at cold start. Mobile only ever branches
+// photographer/not-photographer, so a boolean beats an enum.
+fun isPhotographerRole(raw: String?): Boolean =
+    raw.equals("PHOTOGRAPHER", ignoreCase = true)
+
 class SessionManager private constructor(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 

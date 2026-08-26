@@ -21,6 +21,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.core.*
+import com.quickpitik.mobile.data.local.isPhotographerRole
 import com.quickpitik.mobile.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,7 +45,7 @@ fun LoginScreen(
     LaunchedEffect(authState) {
         if (authState is AuthState.Success) {
             val user = (authState as AuthState.Success).response.user
-            onLoginSuccess(user.role.contains("PHOTO", ignoreCase = true))
+            onLoginSuccess(isPhotographerRole(user.role))
             viewModel.resetState()
         }
     }

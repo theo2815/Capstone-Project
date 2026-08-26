@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,11 +51,13 @@ fun OrdersScreen(
     val orderDetailState by viewModel.orderDetailState.collectAsState()
     val refundAction by viewModel.refundActionState.collectAsState()
 
-    var selectedOrderId by remember { mutableStateOf(initialOrderId) }
+    // rememberSaveable: rotating mid-receipt used to bounce the runner back to
+    // the list top with the detail closed.
+    var selectedOrderId by rememberSaveable { mutableStateOf(initialOrderId) }
     // How many receipts are rendered; grows by RECEIPT_PAGE on "LOAD MORE".
-    var receiptLimit by remember { mutableStateOf(RECEIPT_INITIAL) }
+    var receiptLimit by rememberSaveable { mutableStateOf(RECEIPT_INITIAL) }
     // Index into the open order's photos while the owned lightbox is showing.
-    var ownedPreviewIndex by remember { mutableStateOf<Int?>(null) }
+    var ownedPreviewIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     var showRefundDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()

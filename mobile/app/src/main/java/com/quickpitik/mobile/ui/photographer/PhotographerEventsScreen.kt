@@ -63,11 +63,11 @@ fun PhotographerEventsScreen(
     val activeEvent by viewModel.activeEvent.collectAsState()
     val today = remember { LocalDate.now() }
 
-    LaunchedEffect(Unit) {
-        viewModel.fetchEvents()
-        viewModel.fetchPublicEvents()
-    }
-
+    // No mount-time fetch: with the tabs as NavHost routes this composable
+    // recomposes on every tab visit AND on state restoration, so a
+    // LaunchedEffect(Unit) here would double the refetch MainActivity's
+    // studioNavigate already fires on the explicit tap (which is the one
+    // deliberate-refresh trigger — see its comment).
     Column(
         modifier = modifier
             .fillMaxSize()
