@@ -1,0 +1,70 @@
+# backend/src/main/resources/application-local.example.yml
+#
+# TEMPLATE — this file is safe to commit (placeholders only). To use it:
+#   1. Copy it to `application-local.yml` (same folder). That file is GITIGNORED
+#      — it's where your real secrets live and must never be committed.
+#   2. Fill in the real values below.
+#   3. Run the backend with the `local` profile:  SPRING_PROFILES_ACTIVE=local
+#
+# Spring reads this profile file natively — there is NO `.env` loading here.
+# Values set here OVERRIDE the ${ENV:default} placeholders in application.yml.
+# Equivalently, you can supply each value as an OS environment variable using
+# the names shown in ${...} in application.yml (handy for deployment) — you do
+# not need both. Keep only the blocks you actually use.
+
+app:
+  # ── AI provider ────────────────────────────────────────────────────────────
+  # `ai-api` (default) = self-hosted service. `rekognition` = AWS Rekognition.
+  ai:
+    provider: rekognition                 # or: ai-api
+    rekognition:
+      region: ap-southeast-1              # Singapore — closest to Cebu
+      # AWS credentials. Leave BLANK to use the AWS default chain
+      # (~/.aws/credentials or an EC2/ECS instance role). Fill both for a plain
+      # dev laptop with no AWS CLI configured:
+      access-key: AKIA_your_aws_access_key_id
+      secret-key: your_aws_secret_access_key
+      # face-match-threshold: 0.8         # optional, 0–1 (client floor is 0.8)
+
+  # ── Master AI switch ───────────────────────────────────────────────────────
+  # Turns face enroll + bib OCR + face search on. Leave off (false) to develop
+  # without any AI. Independent of the provider choice above.
+  ai-api:
+    enabled: true
+    # Only needed if provider=ai-api (self-hosted). Ignored under rekognition:
+    # base-url: http://localhost:8000
+    # api-key: your_ai_api_key
+
+  # ── Photo storage ──────────────────────────────────────────────────────────
+  # Cloudflare R2 (S3-compatible). OMIT this whole block to use local disk
+  # (.storage) for dev — the app defaults to LOCAL.
+  storage:
+    backend: S3
+    bucket: quickpitik-prod
+    region: auto                          # R2 uses "auto"
+    endpoint: https://<your-account-id>.r2.cloudflarestorage.com
+    access-key: your_r2_access_key_id     # from an R2 "Object Read & Write" token
+    secret-key: your_r2_secret_access_key
+    path-style-access: true               # required for R2
+
+  # ── Payments (PayMongo) ────────────────────────────────────────────────────
+  payments:
+    paymongo:
+      secret-key: sk_test_your_paymongo_secret_key
+      webhook-secret: whsk_your_paymongo_webhook_secret
+
+  # ── Email (Resend) ─────────────────────────────────────────────────────────
+  email:
+    resend:
+      api-key: re_your_resend_api_key
+      from-address: onboarding@resend.dev
+      from-name: QuickPitik
+
+# ── Database (optional) ───────────────────────────────────────────────────────
+# The defaults in application.yml already point at the local docker Postgres,
+# so you normally leave this out. Uncomment to point at a remote DB (e.g. RDS):
+# spring:
+#   datasource:
+#     url: jdbc:postgresql://<host>:5432/quickpitik
+#     username: quickpitik
+#     password: your_db_password

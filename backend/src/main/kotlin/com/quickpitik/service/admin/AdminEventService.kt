@@ -15,7 +15,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.service.ai.AiApiClient
+import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
 import org.slf4j.LoggerFactory
@@ -34,7 +34,7 @@ class AdminEventService(
     private val adminDecisionLogService: AdminDecisionLogService,
     private val eventDtoMapper: EventDtoMapper,
     private val eventCoverService: EventCoverService,
-    private val aiApiClient: AiApiClient,
+    private val aiApiClient: FaceBibProvider,
     private val aiApiProperties: AiApiProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)

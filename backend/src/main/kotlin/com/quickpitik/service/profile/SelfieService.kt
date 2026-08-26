@@ -11,8 +11,8 @@ import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserSelfieRepository
-import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiApiException
+import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.image.ExifOrientation
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
@@ -47,7 +47,7 @@ class SelfieService(
     private val userSelfieRepository: UserSelfieRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
-    private val aiApiClient: AiApiClient,
+    private val aiApiClient: FaceBibProvider,
     private val aiApiProperties: AiApiProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)

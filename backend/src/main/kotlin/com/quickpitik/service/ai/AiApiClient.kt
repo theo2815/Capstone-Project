@@ -35,15 +35,15 @@ class AiApiClient(
     @Qualifier("aiApiRestClient") private val client: RestClient,
     private val props: AiApiProperties,
     private val objectMapper: ObjectMapper,
-) {
+) : FaceBibProvider {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    fun facesDetect(file: ByteArray, contentType: String, filename: String): FacesDetectResult {
+    override fun facesDetect(file: ByteArray, contentType: String, filename: String): FacesDetectResult {
         val body = singleFileBody(file, contentType, filename)
         return postAndUnwrap("/api/v1/faces/detect", body, facesDetectRef)
     }
 
-    fun facesEnroll(
+    override fun facesEnroll(
         file: ByteArray,
         contentType: String,
         filename: String,
@@ -59,24 +59,24 @@ class AiApiClient(
         return postAndUnwrap("/api/v1/faces/enroll", body, facesEnrollRef)
     }
 
-    fun facesSearch(
+    override fun facesSearch(
         file: ByteArray,
         contentType: String,
         filename: String,
         eventId: UUID,
-        threshold: Double = props.faceMatchThresholdDefault,
-        topK: Int = props.faceTopKDefault,
+        threshold: Double,
+        topK: Int,
     ): FacesSearchResult {
         val body = singleFileBody(file, contentType, filename)
         val path = "/api/v1/faces/search?event_id=$eventId&threshold=$threshold&top_k=$topK"
         return postAndUnwrap(path, body, facesSearchRef)
     }
 
-    fun bibsRecognize(
+    override fun bibsRecognize(
         file: ByteArray,
         contentType: String,
         filename: String,
-        minChars: Int? = null,
+        minChars: Int?,
     ): BibsRecognizeResult {
         val body = singleFileBody(file, contentType, filename)
         val path = if (minChars != null) "/api/v1/bibs/recognize?min_chars=$minChars" else "/api/v1/bibs/recognize"
@@ -116,7 +116,7 @@ class AiApiClient(
         return objectMapper.readTree(raw).path("success").asBoolean(false)
     }
 
-    fun deleteFacesPerson(personId: String) {
+    override fun deleteFacesPerson(personId: String) {
         withRetry("DELETE /faces/persons/$personId") {
             client.delete()
                 .uri("/api/v1/faces/persons/{id}", personId)
@@ -128,7 +128,7 @@ class AiApiClient(
     // GDPR bulk erasure: remove every ai-api person (and their face embeddings)
     // enrolled under one event in a single event-scoped call — used when a
     // backend deletes an event, instead of a per-photo deleteFacesPerson loop.
-    fun deleteFacesByEvent(eventId: UUID) {
+    override fun deleteFacesByEvent(eventId: UUID) {
         withRetry("DELETE /faces/persons?event_id=$eventId") {
             client.delete()
                 .uri("/api/v1/faces/persons?event_id={eventId}", eventId.toString())
@@ -140,7 +140,7 @@ class AiApiClient(
     // Every person ai-api holds for one event (tenant-scoped by the API key),
     // paged out fully. Best-effort, tree-parsed like the webhook helpers — the
     // reaper that calls this catches failures and retries on its next sweep.
-    fun listPersonsForEvent(eventId: UUID): List<AiPersonRef> {
+    override fun listPersonsForEvent(eventId: UUID): List<AiPersonRef> {
         val persons = mutableListOf<AiPersonRef>()
         var offset = 0
         while (true) {

@@ -79,6 +79,30 @@ app:
     path-style-access: ${STORAGE_PATH_STYLE:false}
     local-root: ${STORAGE_LOCAL_ROOT:.storage}
     public-base-url: ${STORAGE_PUBLIC_BASE_URL:}
+  ai:
+    # Which backend fulfils face + bib inference. `ai-api` (default) uses the
+    # self-hosted ai-api service configured under app.ai-api below.
+    # `rekognition` routes face + bib to AWS Rekognition. The AI master on/off
+    # switch stays app.ai-api.enabled; this only selects the provider.
+    provider: ${AI_PROVIDER:ai-api}
+    # AWS Rekognition config (used only when provider=rekognition). Credentials
+    # come from the AWS default chain — AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+    # for local dev, or the instance/task role in production. Never put keys here.
+    rekognition:
+      region: ${AWS_REGION:ap-southeast-1}
+      # AWS credentials — leave empty to use the default chain (env vars /
+      # ~/.aws/credentials / instance role). For a plain dev machine, set them
+      # in application-local.yml alongside the other secrets.
+      access-key: ${AWS_ACCESS_KEY_ID:}
+      secret-key: ${AWS_SECRET_ACCESS_KEY:}
+      # One collection per event (prefix + eventId) = the isolation boundary.
+      collection-prefix: ${REKOGNITION_COLLECTION_PREFIX:qp-event-}
+      # Face-search floor, 0–1 (sent to Rekognition as *100). 0.8 ≈ AWS's
+      # recommended identity-match floor; the client never searches looser.
+      face-match-threshold: ${REKOGNITION_FACE_THRESHOLD:0.8}
+      max-faces-per-image: 15
+      bib-min-chars: 2
+      max-image-dimension: 2048
   ai-api:
     # Master switch. Default is off until ai-api work begins — feature
     # development runs faster without 3-attempt retry backoff on every

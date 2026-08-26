@@ -6,8 +6,8 @@ import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoBibEmbed
 import com.quickpitik.entity.PhotoFacePersonEmbed
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiApiException
+import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.PhotoIndexedEvent
 import org.slf4j.LoggerFactory
@@ -25,7 +25,7 @@ import java.util.UUID
 class PhotoIndexingService(
     private val photoRepository: PhotoRepository,
     private val storageService: StorageService,
-    private val aiApiClient: AiApiClient,
+    private val aiApiClient: FaceBibProvider,
     private val aiApiProperties: AiApiProperties,
     private val eventPublisher: ApplicationEventPublisher,
 ) {

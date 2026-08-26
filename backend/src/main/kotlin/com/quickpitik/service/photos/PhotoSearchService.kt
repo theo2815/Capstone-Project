@@ -6,8 +6,8 @@ import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.dto.photos.PhotoDto
 import com.quickpitik.exception.ValidationException
-import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiApiException
+import com.quickpitik.service.ai.FaceBibProvider
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
@@ -15,7 +15,7 @@ import java.util.UUID
 
 @Service
 class PhotoSearchService(
-    private val aiApiClient: AiApiClient,
+    private val aiApiClient: FaceBibProvider,
     private val aiApiProperties: AiApiProperties,
     private val photoService: PhotoService,
 ) {

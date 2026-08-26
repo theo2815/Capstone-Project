@@ -36,6 +36,10 @@ dependencies {
 	runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
 
 	implementation("software.amazon.awssdk:s3:2.30.21")
+	// AWS Rekognition — face index/search + bib text detection, used when
+	// app.ai.provider=rekognition (the AWS-managed alternative to self-hosted
+	// ai-api for web/mobile face + bib). Same SDK version as s3 above.
+	implementation("software.amazon.awssdk:rekognition:2.30.21")
 
 	// Pooled HTTP client for the ai-api RestClient (RestClientConfig). Async
 	// photo indexing fans out concurrent face + bib calls; the default
