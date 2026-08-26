@@ -1,9 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
-import { useEffectiveRole } from "@/hooks/use-effective-role";
 import { useSelfiesList } from "@/hooks/use-selfies";
 import {
   fetchPhotoAlertStatus,
@@ -12,7 +11,7 @@ import {
   type PhotoAlertStatus,
 } from "@/lib/api-photo-alert";
 import { ROUTES } from "@/lib/constants";
-import { buildLoginRedirect } from "@/lib/redirect";
+import { buildLoginRedirect, currentUrlForRedirect } from "@/lib/redirect";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { cn } from "@/lib/utils";
@@ -23,15 +22,14 @@ import { cn } from "@/lib/utils";
 // (mirrors SelfieSearchPanel's auth/selfie affordances).
 export function PhotoAlertToggle({ eventSlug }: { eventSlug: string }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const role = useEffectiveRole();
+  const role = useAuthStore((s) => s.user?.role ?? null);
   const router = useRouter();
-  const pathname = usePathname();
   const queryClient = useQueryClient();
   const { selfies, isLoading: selfiesLoading } = useSelfiesList();
-  const here = pathname || `/events/${eventSlug}`;
+  const here = currentUrlForRedirect() || `/events/${eventSlug}`;
 
   const hasSelfie = selfies.length > 0;
-  const canToggle = isAuthenticated && hasSelfie;
+  const canToggle = isAuthenticated && role === "RUNNER" && hasSelfie;
 
   const statusQuery = useQuery<PhotoAlertStatus>({
     queryKey: ["photo-alert", eventSlug],
@@ -52,8 +50,7 @@ export function PhotoAlertToggle({ eventSlug }: { eventSlug: string }) {
     },
   });
 
-  // Photographers don't receive race-photo alerts (no runner selfie library).
-  if (role === "PHOTOGRAPHER") return null;
+  if (isAuthenticated && role !== "RUNNER") return null;
 
   const subtitle = !isAuthenticated
     ? "Sign in and we'll email you the moment we spot you."

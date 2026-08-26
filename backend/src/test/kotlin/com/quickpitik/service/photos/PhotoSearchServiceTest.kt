@@ -138,6 +138,21 @@ class PhotoSearchServiceTest {
     }
 
     @Test
+    fun `a strict search never uses the configured full-grid fallback`() {
+        val service = service(fallback = true)
+        whenFacesSearch().thenThrow(AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "offline"))
+
+        assertFailsWith<AiApiException> {
+            service.searchByFace(
+                eventId, selfie, "image/jpeg", "s.jpg", pagination,
+                allowFallbackOnError = false,
+            )
+        }
+
+        Mockito.verify(photoService, Mockito.never()).listForEvent(anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
     fun `ai-api disabled short-circuits to 503 before any call is made`() {
         val service = service(enabled = false)
 

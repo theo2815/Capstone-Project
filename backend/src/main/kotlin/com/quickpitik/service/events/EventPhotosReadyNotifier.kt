@@ -42,6 +42,9 @@ class EventPhotosReadyNotifier(
         val alert = alertRepository.findById(alertId).orElse(null) ?: return
         if (alert.notifiedAt != null) return // already sent (cheap fast path)
         if (!aiApiProperties.enabled) return // no AI => no possible match (sweep also gates)
+        // Pending rows are ordered by this stamp, rotating unmatched or broken
+        // alerts behind runners the bounded sweep has not checked yet.
+        alert.lastCheckedAt = OffsetDateTime.now()
 
         val event = eventRepository.findById(alert.eventId).orElse(null) ?: return
 
@@ -56,14 +59,20 @@ class EventPhotosReadyNotifier(
 
         // One call answers both "ready?" and "how many?" — total is the full
         // match count (PaginatedResponse.of computes it independently of limit).
-        val page = photoSearchService.searchByFace(
-            eventId = event.id,
-            selfieBytes = bytes,
-            contentType = contentTypeOf(selfie.s3Key),
-            filename = selfie.s3Key.substringAfterLast('/'),
-            pagination = PaginationParams.of(0, 1),
-            requesterUserId = alert.userId,
-        )
+        val page = try {
+            photoSearchService.searchByFace(
+                eventId = event.id,
+                selfieBytes = bytes,
+                contentType = contentTypeOf(selfie.s3Key),
+                filename = selfie.s3Key.substringAfterLast('/'),
+                pagination = PaginationParams.of(0, 1),
+                requesterUserId = alert.userId,
+                allowFallbackOnError = false,
+            )
+        } catch (ex: Exception) {
+            log.warn("Photos-ready: face search failed for alert {} - retry after rotation: {}", alert.id, ex.message)
+            return
+        }
         if (page.total == 0L) return // photos not ready — claim NOT burned, retry next sweep
 
         val user = userRepository.findById(alert.userId).orElse(null) ?: return

@@ -53,7 +53,9 @@ class EventPhotoSearchGateTest {
             ),
         )
         Mockito.`when`(
-            photoSearchService.searchByFace(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()),
+            photoSearchService.searchByFace(
+                anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(),
+            ),
         ).thenReturn(PaginatedResponse(emptyList<PhotoDto>(), 0L, 0, 20))
 
         controller = EventPhotoController(
@@ -120,7 +122,7 @@ class EventPhotoSearchGateTest {
         }
 
         Mockito.verify(photoSearchService, Mockito.times(3))
-            .searchByFace(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+            .searchByFace(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean())
     }
 
     @Test
@@ -129,7 +131,7 @@ class EventPhotoSearchGateTest {
         search(MockMultipartFile("selfie", "selfie.jpg", "image/jpeg; charset=binary", byteArrayOf(1, 2, 3)))
 
         Mockito.verify(photoSearchService)
-            .searchByFace(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+            .searchByFace(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean())
     }
 
     // The route was opened to guests 2026-08-14 (SecurityConfig permitAll) so a
@@ -163,7 +165,7 @@ class EventPhotoSearchGateTest {
     )
 
     private fun verifyNoSearch() = Mockito.verify(photoSearchService, Mockito.never())
-        .searchByFace(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        .searchByFace(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean())
 
     private fun <T> anyArg(): T = Mockito.any()
 }

@@ -31,6 +31,9 @@ class EventPhotoAlert(
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 
+    @Column(name = "last_checked_at")
+    var lastCheckedAt: OffsetDateTime? = null,
+
     @Column(name = "notified_at")
     var notifiedAt: OffsetDateTime? = null,
 )

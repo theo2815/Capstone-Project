@@ -11,12 +11,12 @@ import java.time.ZoneId
 
 // Date-based sweep for the "your photos are ready" email. Events are
 // day-granular (Event.date has no clock time), and photographers upload across
-// the [date, date+3d] window, so this checks periodically across that window
-// and emails each opted-in runner once, the moment their photos appear.
+// the [date, date+3d] window, so this checks through date+4 (one final day for
+// accepted uploads to finish indexing) and emails each opted-in runner once.
 //
 // Mirrors PhotoIndexingTrigger.reconcile — synchronous per-tick loop, gated on
 // aiApiProperties.enabled, bounded batch. fixedDelay waits for a tick to finish
-// before starting the next, so a slow ai-api can't overlap runs. Single-instance
+// before starting the next, so a slow provider can't overlap runs. Single-instance
 // assumption like the other sweeps; the claimNotify conditional UPDATE keeps the
 // send single even if two instances ever sweep at once.
 @Component
@@ -33,7 +33,7 @@ class EventPhotosReadySweep(
         val today = LocalDate.now(PH_ZONE)
         val pending = alertRepository.findPendingInWindow(
             today = today,
-            windowStart = today.minusDays(UPLOAD_WINDOW_DAYS),
+            windowStart = today.minusDays(UPLOAD_WINDOW_DAYS + POST_WINDOW_CHECK_DAYS),
             pageable = PageRequest.of(0, BATCH),
         )
         if (pending.isEmpty()) return
@@ -50,6 +50,7 @@ class EventPhotosReadySweep(
     private companion object {
         val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
         const val UPLOAD_WINDOW_DAYS = 3L // matches PhotoUploadService [date, date+3d]
+        const val POST_WINDOW_CHECK_DAYS = 1L
         // ponytail: synchronous per-tick loop bounded at 100; dispatch to the
         // imageProcessing pool only if one event ever exceeds a few hundred opt-ins.
         const val BATCH = 100

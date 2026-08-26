@@ -12,7 +12,7 @@ import java.util.UUID
 
 // Mirrors PhotoIndexingTriggerTest: the sweep is gated on ai-api being enabled,
 // no-ops on an empty backlog, and drives the notifier once per pending opt-in
-// across the [today-3, today] upload window.
+// across the upload window plus its final indexing-grace day.
 class EventPhotosReadySweepTest {
 
     private lateinit var alertRepository: EventPhotoAlertRepository
@@ -60,9 +60,9 @@ class EventPhotosReadySweepTest {
 
         Mockito.verify(notifier).notifyIfMatched(a1.id)
         Mockito.verify(notifier).notifyIfMatched(a2.id)
-        // Window opens 3 days before today — matches the [date, date+3d] upload window.
+        // Date+4 gets one final day for accepted uploads to finish indexing.
         Mockito.verify(alertRepository)
-            .findPendingInWindow(eqArg(today), eqArg(today.minusDays(3)), anyArg())
+            .findPendingInWindow(eqArg(today), eqArg(today.minusDays(4)), anyArg())
     }
 
     // Mockito.eq returns a platform type; wrapping keeps Kotlin's null-check off a

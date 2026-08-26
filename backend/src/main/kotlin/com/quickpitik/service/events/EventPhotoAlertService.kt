@@ -3,13 +3,18 @@ package com.quickpitik.service.events
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.events.PhotoAlertStatusDto
 import com.quickpitik.entity.EventPhotoAlert
+import com.quickpitik.entity.EventStatus
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EventPhotoAlertRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.UserSelfieRepository
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
 
 // Runner opt-in for the "your photos are ready" email. Reuses the runner's
@@ -25,6 +30,15 @@ class EventPhotoAlertService(
     fun register(userId: UUID, slug: String, selfieIdRaw: String?): PhotoAlertStatusDto {
         val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+
+        val today = LocalDate.now(PH_ZONE)
+        if (event.status !in ALERTABLE_STATUSES || today.isAfter(event.date.plusDays(UPLOAD_WINDOW_DAYS))) {
+            throw ApiException(
+                status = HttpStatus.UNPROCESSABLE_ENTITY,
+                code = ErrorCodes.EVENT_NOT_UPLOADABLE,
+                message = "This event is not accepting photo alerts.",
+            )
+        }
 
         val selfieId = resolveSelfieId(userId, selfieIdRaw)
 
@@ -80,5 +94,11 @@ class EventPhotoAlertService(
                 field = "selfie",
             )
         return fallback.id
+    }
+
+    private companion object {
+        val ALERTABLE_STATUSES = setOf(EventStatus.ACTIVE, EventStatus.COMPLETED)
+        val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
+        const val UPLOAD_WINDOW_DAYS = 3L
     }
 }

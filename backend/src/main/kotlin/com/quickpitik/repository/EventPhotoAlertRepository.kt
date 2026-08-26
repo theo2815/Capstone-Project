@@ -19,10 +19,10 @@ interface EventPhotoAlertRepository : JpaRepository<EventPhotoAlert, UUID> {
     @Modifying
     fun deleteByEventIdAndUserId(eventId: UUID, userId: UUID): Long
 
-    // Un-notified opt-ins whose event is ACTIVE and inside its [date, date+3d]
-    // upload window (windowStart = today - 3). The window bound is what stops the
-    // sweep from re-running ai-api forever on a runner who was never
-    // photographed — once the event's date leaves the window the row drops out.
+    // Un-notified opt-ins for uploadable events, including one post-window day
+    // so the last accepted uploads can finish indexing. Never-checked rows sort
+    // first, then the least recently checked, so a batch cannot starve later
+    // runners when early opt-ins have no match.
     @Query(
         """
         SELECT a FROM EventPhotoAlert a
@@ -30,11 +30,18 @@ interface EventPhotoAlertRepository : JpaRepository<EventPhotoAlert, UUID> {
           AND a.eventId IN (
               SELECT e.id FROM Event e
               WHERE e.deletedAt IS NULL
-                AND e.status = com.quickpitik.entity.EventStatus.ACTIVE
+                AND e.status IN (
+                    com.quickpitik.entity.EventStatus.ACTIVE,
+                    com.quickpitik.entity.EventStatus.COMPLETED
+                )
                 AND e.date <= :today
                 AND e.date >= :windowStart
           )
-        ORDER BY a.createdAt ASC
+        ORDER BY
+          CASE WHEN a.lastCheckedAt IS NULL THEN 0 ELSE 1 END,
+          a.lastCheckedAt ASC,
+          a.createdAt ASC,
+          a.id ASC
         """,
     )
     fun findPendingInWindow(

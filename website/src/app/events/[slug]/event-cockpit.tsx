@@ -38,6 +38,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
 import { ApiError } from "@/lib/api";
 import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
+import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
 
 type Mode = "cockpit" | "browse";
 
@@ -64,6 +65,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const [bibInput, setBibInput] = useState(bibFilter);
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const accountRole = useAuthStore((s) => s.user?.role ?? null);
   const { selfies, isLoading: selfiesLoading } = useSelfiesList();
   const primarySelfieId = useMemo(
     () => selfies.find((s) => s.isPrimary)?.id ?? selfies[0]?.id ?? null,
@@ -143,8 +145,11 @@ export function EventCockpit({ event, initialPhotos }: Props) {
     setMyPhotosError(null);
     setMyPhotosLoading(true);
     try {
+      const selfieId = isMine
+        ? (await fetchPhotoAlertStatus(event.slug)).selfieId ?? primarySelfieId
+        : primarySelfieId;
       const result = await searchEventByFace(event.slug, {
-        selfieId: primarySelfieId,
+        selfieId,
       });
       handleFaceSearchSuccess(result);
     } catch (err) {
@@ -154,7 +159,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
     } finally {
       setMyPhotosLoading(false);
     }
-  }, [primarySelfieId, event.slug, handleFaceSearchSuccess, setUrlBatch]);
+  }, [primarySelfieId, isMine, event.slug, handleFaceSearchSuccess, setUrlBatch]);
 
   // Auto-fire once when a runner arrives from the "your photos are ready" email
   // (/events/{slug}?mine=1). Waits for the selfie library to load so
@@ -165,6 +170,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
     if (
       isMine &&
       isAuthenticated &&
+      accountRole === "RUNNER" &&
       primarySelfieId &&
       !mineFiredRef.current &&
       !myPhotosLoading
@@ -172,7 +178,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
       mineFiredRef.current = true;
       void runMyPhotos();
     }
-  }, [isMine, isAuthenticated, primarySelfieId, myPhotosLoading, runMyPhotos]);
+  }, [isMine, isAuthenticated, accountRole, primarySelfieId, myPhotosLoading, runMyPhotos]);
 
   // Email-link landing gate: hold a loading state while the auto-fire resolves
   // so the runner doesn't flash the cockpit or the full wall before their
@@ -181,6 +187,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const mineResolving =
     isMine &&
     isAuthenticated &&
+    accountRole === "RUNNER" &&
     faceSearchResult === null &&
     myPhotosError === null &&
     (selfiesLoading || myPhotosLoading || primarySelfieId !== null);

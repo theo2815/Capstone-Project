@@ -23,6 +23,7 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
+import kotlin.test.assertNotNull
 
 // Mirrors OrderReceiptEmailClaimTest: the single-send guarantee for the
 // "photos ready" mail. What matters is exactly one send per match, that a
@@ -99,9 +100,13 @@ class EventPhotosReadyNotifierTest {
 
         notifier().notifyIfMatched(alert.id)
 
+        assertNotNull(alert.lastCheckedAt)
         Mockito.verify(alertRepository, Mockito.never()).claimNotify(anyArg(), anyArg())
         Mockito.verify(emailService, Mockito.never())
             .sendEventPhotosReadyEmail(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt())
+        Mockito.verify(photoSearchService).searchByFace(
+            anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), eqArg(false),
+        )
     }
 
     @Test
@@ -167,7 +172,9 @@ class EventPhotosReadyNotifierTest {
         Mockito.`when`(userSelfieRepository.findByIdAndUserId(selfieId, userId)).thenReturn(selfie)
         Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(byteArrayOf(1, 2, 3))
         Mockito.`when`(
-            photoSearchService.searchByFace(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()),
+            photoSearchService.searchByFace(
+                anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(),
+            ),
         ).thenReturn(PaginatedResponse(emptyList<PhotoDto>(), matchTotal, 0, 1))
         Mockito.`when`(userRepository.findById(userId)).thenReturn(Optional.of(user))
         return alert

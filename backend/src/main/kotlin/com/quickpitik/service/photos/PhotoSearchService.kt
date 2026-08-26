@@ -28,6 +28,7 @@ class PhotoSearchService(
         filename: String,
         pagination: PaginationParams,
         requesterUserId: UUID? = null,
+        allowFallbackOnError: Boolean = true,
     ): PaginatedResponse<PhotoDto> {
         require(selfieBytes.isNotEmpty()) {
             throw ValidationException(
@@ -58,7 +59,7 @@ class PhotoSearchService(
                 topK = 50,
             )
         } catch (ex: Exception) {
-            if (aiApiProperties.searchFallbackOnError) {
+            if (allowFallbackOnError && aiApiProperties.searchFallbackOnError) {
                 log.warn(
                     "DEMO FALLBACK (app.ai-api.search-fallback-on-error=true): faces/search failed for event {}: {}. " +
                         "Returning the full event grid — these are NOT face matches.",
