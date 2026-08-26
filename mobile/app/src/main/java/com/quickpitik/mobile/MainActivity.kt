@@ -29,6 +29,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.quickpitik.mobile.data.local.SessionEvents
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.ViewMode
 import com.quickpitik.mobile.data.local.isPhotographerRole
 import com.quickpitik.mobile.ui.auth.AuthViewModel
 import com.quickpitik.mobile.ui.auth.ForgotPasswordScreen
@@ -163,12 +164,21 @@ class MainActivity : ComponentActivity() {
                 // so a later clearSession() can't re-key the NavHost mid-session.
                 val sessionManager = remember { SessionManager.getInstance(this@MainActivity) }
                 val startDestination = remember {
+                    ViewMode.init(sessionManager)
                     when {
                         sessionManager.getAccessToken() == null -> "login"
+                        // A photographer who killed the app while in runner
+                        // view cold-starts back into runner view — starting in
+                        // studio with the flag still set would strand the flag,
+                        // because studio is legal for the true role and the
+                        // guard would never fire.
+                        isPhotographerRole(sessionManager.getUserRole()) &&
+                            sessionManager.isRunnerView() -> "events"
                         isPhotographerRole(sessionManager.getUserRole()) -> "studio"
                         else -> "events"
                     }
                 }
+                val runnerView by ViewMode.runnerView.collectAsState()
 
                 // Raised by TokenAuthenticator when refresh fails: the session is
                 // unrecoverable, so drop the whole back stack and land on login.
@@ -180,8 +190,9 @@ class MainActivity : ComponentActivity() {
                         sessionNotice = reason
                         // Parity with the manual sign-out paths: the next user
                         // on this device must not inherit the previous
-                        // session's cart pill.
+                        // session's cart pill — nor its runner-view flag.
                         cartViewModel.clearCart()
+                        ViewMode.reset(sessionManager)
                         navController.navigate("login") {
                             popUpTo(0) { inclusive = true }
                             launchSingleTop = true
@@ -260,15 +271,33 @@ class MainActivity : ComponentActivity() {
                 // neither set (shared). Redirects never popUpTo: a hostile
                 // deep link must not be able to pop the studio graph and kill
                 // a live tether session.
-                LaunchedEffect(navBackStackEntry) {
+                // Web use-effective-role parity: runner routes check the
+                // EFFECTIVE role (a photographer in runner view passes),
+                // studio routes check the TRUE role (a photographer in runner
+                // view may still deep-return to studio).
+                LaunchedEffect(navBackStackEntry, runnerView) {
                     val route = navBackStackEntry?.destination?.route ?: return@LaunchedEffect
                     if (sessionManager.getAccessToken() == null) return@LaunchedEffect
                     val photographer = isPhotographerRole(sessionManager.getUserRole())
+                    val effectiveRunner = !photographer || runnerView
                     when {
-                        route in RUNNER_ROUTES && photographer ->
+                        route in RUNNER_ROUTES && !effectiveRunner ->
                             navController.navigate("studio") { launchSingleTop = true }
                         route.startsWith("studio") && !photographer ->
                             navController.navigate("events") { launchSingleTop = true }
+                    }
+                }
+
+                // RunnerTopBar's "Switch to photographer" lands here — the bar
+                // has no NavController. Pop-inclusive so the stack never mixes
+                // the two roles' surfaces.
+                LaunchedEffect(Unit) {
+                    ViewMode.switchToPhotographer.collect {
+                        ViewMode.reset(sessionManager)
+                        navController.navigate("studio") {
+                            popUpTo("events") { inclusive = true }
+                            launchSingleTop = true
+                        }
                     }
                 }
 
@@ -392,12 +421,27 @@ class MainActivity : ComponentActivity() {
                                 val openProfilePreview: () -> Unit = {
                                     navController.navigate("studio/profile-preview")
                                 }
+                                // Enter runner view: pop the studio graph
+                                // inclusively so the stack never mixes the two
+                                // roles' surfaces (system back can't land a
+                                // runner-view user on a studio screen). This
+                                // clears the studio VM — same teardown as
+                                // logout; StudioTabScaffold confirms first if
+                                // a shutter watch is live.
+                                val switchToRunnerView: () -> Unit = {
+                                    ViewMode.set(sessionManager, true)
+                                    navController.navigate("events") {
+                                        popUpTo("studio") { inclusive = true }
+                                        launchSingleTop = true
+                                    }
+                                }
                                 composable("studio/home") { entry ->
                                     val vm = studioViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
+                                        onSwitchToRunner = switchToRunnerView,
                                     ) {
                                         PhotographerOverviewScreen(
                                             viewModel = vm,
@@ -412,6 +456,7 @@ class MainActivity : ComponentActivity() {
                                         viewModel = vm,
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
+                                        onSwitchToRunner = switchToRunnerView,
                                     ) {
                                         PhotographerCaptureScreen(viewModel = vm)
                                     }
@@ -422,6 +467,7 @@ class MainActivity : ComponentActivity() {
                                         viewModel = vm,
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
+                                        onSwitchToRunner = switchToRunnerView,
                                     ) {
                                         PhotographerEventsScreen(
                                             viewModel = vm,
@@ -441,6 +487,7 @@ class MainActivity : ComponentActivity() {
                                         viewModel = vm,
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
+                                        onSwitchToRunner = switchToRunnerView,
                                     ) {
                                         PhotographerEarningsScreen(viewModel = vm)
                                     }
@@ -451,6 +498,7 @@ class MainActivity : ComponentActivity() {
                                         viewModel = vm,
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
+                                        onSwitchToRunner = switchToRunnerView,
                                     ) {
                                         PhotographerSettingsScreen(
                                             viewModel = vm,
@@ -711,7 +759,8 @@ class MainActivity : ComponentActivity() {
         // guard) because the `cart` case opens a sheet WITHOUT navigating —
         // the destination-change guard never sees it. launchSingleTop, never
         // popUpTo: a stray deep link must not pop a live tether session.
-        if (isPhotographerRole(SessionManager.getInstance(this).getUserRole())) {
+        val session = SessionManager.getInstance(this)
+        if (isPhotographerRole(session.getUserRole()) && !session.isRunnerView()) {
             navController.navigate("studio") { launchSingleTop = true }
             return
         }

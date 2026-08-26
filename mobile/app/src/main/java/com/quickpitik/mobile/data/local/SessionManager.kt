@@ -25,6 +25,10 @@ class SessionManager private constructor(context: Context) {
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_USER_EMAIL = "user_email"
         private const val KEY_USER_AVATAR = "user_avatar"
+        // Photographer→runner view switch (see ViewMode). Cleared by
+        // clearSession()'s prefs.clear() and explicitly on saveSession so a
+        // fresh login always lands in photographer view.
+        private const val KEY_VIEW_MODE = "runner_view"
 
         @Volatile
         private var INSTANCE: SessionManager? = null
@@ -53,8 +57,15 @@ class SessionManager private constructor(context: Context) {
             putString(KEY_USER_NAME, name)
             putString(KEY_USER_EMAIL, email)
             putString(KEY_USER_AVATAR, avatarUrl)
+            remove(KEY_VIEW_MODE)
             apply()
         }
+    }
+
+    fun isRunnerView(): Boolean = prefs.getBoolean(KEY_VIEW_MODE, false)
+
+    fun setRunnerView(runner: Boolean) {
+        prefs.edit().putBoolean(KEY_VIEW_MODE, runner).apply()
     }
 
     // Token-only writer for the 401-refresh path. saveSession() would blank the

@@ -15,6 +15,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.ViewMode
+import com.quickpitik.mobile.data.local.isPhotographerRole
 import com.quickpitik.mobile.ui.theme.*
 
 /**
@@ -84,6 +86,20 @@ fun RunnerTopBar(
                     onDismissRequest = { menuExpanded = false },
                     modifier = Modifier.background(BoneDeep)
                 ) {
+                    // Only a PHOTOGRAPHER browsing in runner view sees this —
+                    // the true role never changes while switched (web
+                    // useViewModeStore parity). The bar reads the role itself
+                    // and signals via ViewMode so six host screens don't each
+                    // thread a callback; MainActivity performs the navigation.
+                    if (isPhotographerRole(sessionManager.getUserRole())) {
+                        DropdownMenuItem(
+                            text = { Text("Switch to photographer", color = Ink) },
+                            onClick = {
+                                menuExpanded = false
+                                ViewMode.requestSwitchToPhotographer()
+                            }
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Log out", color = ErrorRed) },
                         onClick = {

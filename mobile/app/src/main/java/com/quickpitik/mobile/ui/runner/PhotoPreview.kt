@@ -152,6 +152,10 @@ fun PhotoPreview(
     // non-null handle; the byline is not a tap target without one.
     onOpenPhotographer: (String) -> Unit = {},
     mode: PhotoPreviewMode = PhotoPreviewMode.Browse,
+    // Browse mode only. False for a PHOTOGRAPHER browsing in runner view
+    // (ViewMode): the cart endpoints are RUNNER-role-gated server-side, so the
+    // Add/Buy CTAs are hidden — price + byline stay.
+    commerceEnabled: Boolean = true,
 ) {
     if (photos.isEmpty()) {
         onClose()
@@ -379,21 +383,23 @@ fun PhotoPreview(
                                         )
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    GhostCta(
-                                        text = if (photoInCart) "− Remove" else "+ Add to cart",
-                                        onClick = { onToggleCart(activePhoto) },
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    PrimaryCta(
-                                        text = if (photoInCart) "Checkout now →" else "Buy now →",
-                                        onClick = { onBuyNow(activePhoto) },
-                                        modifier = Modifier.weight(1f),
-                                    )
+                                if (commerceEnabled) {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        GhostCta(
+                                            text = if (photoInCart) "− Remove" else "+ Add to cart",
+                                            onClick = { onToggleCart(activePhoto) },
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        PrimaryCta(
+                                            text = if (photoInCart) "Checkout now →" else "Buy now →",
+                                            onClick = { onBuyNow(activePhoto) },
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    }
                                 }
                             }
                             PhotoPreviewMode.Owned -> {

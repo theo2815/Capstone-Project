@@ -103,12 +103,18 @@ fun EventsDiscoveryScreen(
     // otherwise. The VM keeps the existing list visible during the refetch
     // (Loading state is only assigned when no prior Success exists).
     LaunchedEffect(Unit) { viewModel.fetchPublicEvents() }
-    LaunchedEffect(Unit) { savedEventsViewModel.refresh() }
+    // Saved events + the runner inbox are RUNNER-role-gated server-side — a
+    // photographer browsing in runner view (ViewMode) gets neither: the fetch
+    // and the socket are skipped, the bell and hearts don't render. Web parity.
+    val isTrueRunner = rememberIsTrueRunner()
+    if (isTrueRunner) {
+        LaunchedEffect(Unit) { savedEventsViewModel.refresh() }
+    }
     // Inbox pushes live over /ws/me/runner/notifications, held only while this
     // screen is on-screen so a pocketed phone isn't keeping a socket open. The
     // socket refetches on every (re)open, which also covers the cold-start load.
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    if (isTrueRunner) DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> inboxViewModel.connect()
@@ -143,11 +149,13 @@ fun EventsDiscoveryScreen(
                 kicker = "RACE PHOTOS · CEBU",
                 onLogout = onLogout,
                 trailingContent = {
-                    RunnerInboxBell(
-                        messageCount = inboxMessages.size,
-                        unreadCount = inboxUnread,
-                        onClick = { showInbox = true },
-                    )
+                    if (isTrueRunner) {
+                        RunnerInboxBell(
+                            messageCount = inboxMessages.size,
+                            unreadCount = inboxUnread,
+                            onClick = { showInbox = true },
+                        )
+                    }
                 }
             )
 
@@ -520,11 +528,15 @@ private fun EventTile(
                     state = state,
                     modifier = Modifier.align(Alignment.TopStart).padding(10.dp)
                 )
-                SaveButton(
-                    saved = saved,
-                    onToggle = { onToggleSave(event) },
-                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp)
-                )
+                // Saved events are RUNNER-gated server-side — hidden for a
+                // photographer browsing in runner view (see rememberIsTrueRunner).
+                if (rememberIsTrueRunner()) {
+                    SaveButton(
+                        saved = saved,
+                        onToggle = { onToggleSave(event) },
+                        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp)
+                    )
+                }
             }
             Column(modifier = Modifier.padding(14.dp)) {
                 Text(

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.ViewMode
 import com.quickpitik.mobile.data.remote.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -173,6 +174,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() {
         val refreshToken = sessionManager.getRefreshToken()
         sessionManager.clearSession()
+        // clearSession() wipes the persisted runner-view flag; this resets the
+        // in-memory one so the next login starts in the true role's home.
+        ViewMode.reset(sessionManager)
         _authState.value = AuthState.Idle
 
         if (refreshToken == null) return

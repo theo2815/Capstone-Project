@@ -101,17 +101,22 @@ fun RunnerGalleryScreen(
     // race lasts hours; a socket surviving in a pocketed phone would burn
     // battery for frames nobody can see, and Android freezes cached processes
     // anyway. Every reconnect refetches, so nothing is missed on return.
+    // RUNNER-role-gated affordances (cart, photo alerts, runner inbox) are
+    // hidden for a photographer browsing in runner view (ViewMode) — the
+    // backend 403s a photographer token on those endpoints. Browsing, search,
+    // the lightbox, and live photos all stay live for both.
+    val isTrueRunner = rememberIsTrueRunner()
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, activeEvent?.id) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
                     viewModel.connectLivePhotos()
-                    inboxViewModel.connect()
+                    if (isTrueRunner) inboxViewModel.connect()
                 }
                 Lifecycle.Event.ON_STOP -> {
                     viewModel.disconnectLivePhotos()
-                    inboxViewModel.disconnect()
+                    if (isTrueRunner) inboxViewModel.disconnect()
                 }
                 else -> Unit
             }
@@ -120,7 +125,7 @@ fun RunnerGalleryScreen(
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             viewModel.disconnectLivePhotos()
-            inboxViewModel.disconnect()
+            if (isTrueRunner) inboxViewModel.disconnect()
         }
     }
     // Hoisted so the grid tile's inline +cart / buy buttons can read in-cart
@@ -144,7 +149,8 @@ fun RunnerGalleryScreen(
 
     // Load the "notify me when ready" opt-in state whenever a new event is
     // selected (any lifecycle state — upcoming events are the main use case).
-    LaunchedEffect(activeEvent?.slug) {
+    // RUNNER-gated endpoint — skipped in photographer runner-view.
+    if (isTrueRunner) LaunchedEffect(activeEvent?.slug) {
         activeEvent?.slug?.let { viewModel.loadPhotoAlert(it) }
     }
 
@@ -185,11 +191,13 @@ fun RunnerGalleryScreen(
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        RunnerInboxBell(
-                            messageCount = inboxMessages.size,
-                            unreadCount = inboxUnread,
-                            onClick = { showInbox = true },
-                        )
+                        if (isTrueRunner) {
+                            RunnerInboxBell(
+                                messageCount = inboxMessages.size,
+                                unreadCount = inboxUnread,
+                                onClick = { showInbox = true },
+                            )
+                        }
                         // Cart access lives in the global FloatingCart pill — header icon dropped
                         // to avoid two affordances pointing at the same overlay.
                         var menuExpanded by remember { mutableStateOf(false) }
@@ -254,7 +262,8 @@ fun RunnerGalleryScreen(
                 }
                 // Pre-event opt-in — "notify me when my photos are ready" is most
                 // useful before race day, when there's nothing to search yet.
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                // RUNNER-gated — hidden in photographer runner-view.
+                if (isTrueRunner) item(span = { GridItemSpan(maxLineSpan) }) {
                     PhotoAlertCard(
                         state = photoAlert,
                         onToggle = { register ->
@@ -328,7 +337,8 @@ fun RunnerGalleryScreen(
                     }
                 }
                 // Pre-event opt-in — mirrors the website cockpit's PhotoAlertToggle.
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                // RUNNER-gated — hidden in photographer runner-view.
+                if (isTrueRunner) item(span = { GridItemSpan(maxLineSpan) }) {
                     PhotoAlertCard(
                         state = photoAlert,
                         onToggle = { register ->
@@ -630,35 +640,39 @@ fun RunnerGalleryScreen(
                                             .padding(8.dp),
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     ) {
-                                        TileActionPill(
-                                            label = if (photoInCart) "✓ cart" else "+ cart",
-                                            filled = photoInCart,
-                                            onClick = {
-                                                val event = activeEvent ?: return@TileActionPill
-                                                if (photoInCart) {
-                                                    cartViewModel.removeFromCart(photo.id)
-                                                } else {
-                                                    cartViewModel.addToCart(
-                                                        photo, event.id, event.slug, event.name,
-                                                    )
-                                                }
-                                            },
-                                        )
-                                        TileActionPill(
-                                            label = "buy →",
-                                            filled = false,
-                                            onClick = {
-                                                val event = activeEvent ?: return@TileActionPill
-                                                if (photoInCart) {
-                                                    cartViewModel.openCheckoutSheet()
-                                                } else {
-                                                    cartViewModel.triggerExpressCheckout()
-                                                    cartViewModel.addToCart(
-                                                        photo, event.id, event.slug, event.name,
-                                                    )
-                                                }
-                                            },
-                                        )
+                                        // Cart is RUNNER-gated server-side —
+                                        // pills hidden in photographer runner-view.
+                                        if (isTrueRunner) {
+                                            TileActionPill(
+                                                label = if (photoInCart) "✓ cart" else "+ cart",
+                                                filled = photoInCart,
+                                                onClick = {
+                                                    val event = activeEvent ?: return@TileActionPill
+                                                    if (photoInCart) {
+                                                        cartViewModel.removeFromCart(photo.id)
+                                                    } else {
+                                                        cartViewModel.addToCart(
+                                                            photo, event.id, event.slug, event.name,
+                                                        )
+                                                    }
+                                                },
+                                            )
+                                            TileActionPill(
+                                                label = "buy →",
+                                                filled = false,
+                                                onClick = {
+                                                    val event = activeEvent ?: return@TileActionPill
+                                                    if (photoInCart) {
+                                                        cartViewModel.openCheckoutSheet()
+                                                    } else {
+                                                        cartViewModel.triggerExpressCheckout()
+                                                        cartViewModel.addToCart(
+                                                            photo, event.id, event.slug, event.name,
+                                                        )
+                                                    }
+                                                },
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -698,6 +712,7 @@ fun RunnerGalleryScreen(
             PhotoPreview(
                 photos = previewPhotos,
                 currentIndex = currentIndex,
+                commerceEnabled = isTrueRunner,
                 isInCart = { previewData ->
                     cartItems.any { it.photoId == previewData.id }
                 },

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.isPhotographerRole
 import com.quickpitik.mobile.data.remote.*
 import com.quickpitik.mobile.data.repository.CartRepository
 import com.quickpitik.mobile.data.repository.CartRepositoryImpl
@@ -107,10 +108,12 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        // Initial sync if logged in
+        // Initial sync if logged in. Skipped for a PHOTOGRAPHER token — the
+        // cart endpoints are RUNNER-role-gated, so the merge was one doomed
+        // 403 per app start (and the cart UI is hidden for them anyway).
         viewModelScope.launch {
             val token = sessionManager.getAccessToken()
-            if (token != null) {
+            if (token != null && !isPhotographerRole(sessionManager.getUserRole())) {
                 repository.mergeCart(token)
             }
         }

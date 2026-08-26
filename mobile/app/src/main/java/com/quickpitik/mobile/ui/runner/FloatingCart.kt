@@ -41,6 +41,10 @@ fun FloatingCart(
     cartViewModel: CartViewModel,
     onAfterCheckoutSuccess: () -> Unit,
 ) {
+    // The cart is RUNNER-role-gated server-side. A photographer never gets a
+    // pill or the sheets — including in runner view (ViewMode) — matching the
+    // website, which leaves the cart absent for switched photographers.
+    if (!rememberIsTrueRunner()) return
     val items by cartViewModel.cartItems.collectAsState()
     val total by cartViewModel.cartTotal.collectAsState()
     val cartOpen by cartViewModel.cartSheetOpen.collectAsState()

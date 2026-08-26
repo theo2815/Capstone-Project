@@ -89,6 +89,7 @@ fun StudioTabScaffold(
     viewModel: PhotographerDashboardViewModel,
     onLogout: () -> Unit,
     onPreviewProfile: () -> Unit,
+    onSwitchToRunner: () -> Unit,
     content: @Composable () -> Unit,
 ) {
     val messages by viewModel.messages.collectAsState()
@@ -98,8 +99,15 @@ fun StudioTabScaffold(
     // the import sheet. The Sync queue card on the Capture tab remains the
     // detailed view; this is the persistent ambient status.
     val queueStats by viewModel.queueStats.collectAsState()
+    val watchState by viewModel.shutterWatchState.collectAsState()
     val unreadCount = remember(messages) { messages.count { it.readAt == null } }
     var showNotifDialog by remember { mutableStateOf(false) }
+    // Switching to runner view pops the studio graph, which clears this VM —
+    // and with it a live shutter watch. Correct on purpose (same teardown as
+    // logout), but it must never be an accidental one-tap mid-shoot.
+    var confirmSwitch by remember { mutableStateOf(false) }
+    val tetherLive = watchState is ShutterWatchState.Starting ||
+        watchState is ShutterWatchState.Watching
     val resolvedAvatarUrl = RetrofitClient.resolveImageUrl(brandSettings?.avatarUrl)
 
     StudioTheme {
@@ -112,6 +120,64 @@ fun StudioTabScaffold(
                 onRemove = { id -> viewModel.removeMessage(id) },
             )
         }
+        if (confirmSwitch) {
+            AlertDialog(
+                onDismissRequest = { confirmSwitch = false },
+                title = {
+                    Text(
+                        text = "Stop capturing and switch?",
+                        color = Ink,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Your camera is capturing right now. Switching to the runner view stops the tether session — photos already queued keep uploading in the background.",
+                        color = Slate,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            confirmSwitch = false
+                            onSwitchToRunner()
+                        },
+                        shape = PillShape,
+                        colors = ButtonDefaults.buttonColors(containerColor = Ink),
+                        modifier = Modifier.height(40.dp),
+                    ) {
+                        Text(
+                            text = "SWITCH",
+                            color = Bone,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.5.sp,
+                        )
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = { confirmSwitch = false },
+                        shape = PillShape,
+                        border = BorderStroke(1.dp, Ink),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
+                        modifier = Modifier.height(40.dp),
+                    ) {
+                        Text(
+                            text = "KEEP CAPTURING",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.5.sp,
+                        )
+                    }
+                },
+                containerColor = Bone,
+                shape = QpCardShape,
+            )
+        }
         Scaffold(
             containerColor = Bone,
             topBar = {
@@ -120,6 +186,9 @@ fun StudioTabScaffold(
                     unreadCount = unreadCount,
                     onOpenNotifications = { showNotifDialog = true },
                     onPreviewProfile = onPreviewProfile,
+                    onSwitchToRunner = {
+                        if (tetherLive) confirmSwitch = true else onSwitchToRunner()
+                    },
                     onLogout = onLogout,
                 )
             },
@@ -301,6 +370,7 @@ private fun PhotographerTopBar(
     unreadCount: Int,
     onOpenNotifications: () -> Unit,
     onPreviewProfile: () -> Unit,
+    onSwitchToRunner: () -> Unit,
     onLogout: () -> Unit,
 ) {
     var showAvatarMenu by remember { mutableStateOf(false) }
@@ -396,18 +466,19 @@ private fun PhotographerTopBar(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("Switch to runner", color = SlateSoft, fontSize = 13.sp) },
-                        trailingIcon = {
-                            Text(
-                                text = "SOON",
-                                color = SlateSoft,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 0.8.sp,
+                        text = { Text("Switch to runner", color = Ink, fontSize = 13.sp) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                tint = Ink,
+                                modifier = Modifier.size(18.dp),
                             )
                         },
-                        enabled = false,
-                        onClick = {},
+                        onClick = {
+                            showAvatarMenu = false
+                            onSwitchToRunner()
+                        },
                     )
                     Divider(color = Line)
                     DropdownMenuItem(

@@ -68,10 +68,13 @@ fun ProfileScreen(
     val ordersState by cartViewModel.ordersState.collectAsState()
     val savedEvents by savedEventsViewModel.savedEvents.collectAsState()
 
-    // Trigger fetches if not loaded
+    // Trigger fetches if not loaded. Saved events are RUNNER-role-gated —
+    // skipped for a photographer browsing in runner view (their race log then
+    // shows purchases only, which for a photographer is none).
+    val isTrueRunner = rememberIsTrueRunner()
     LaunchedEffect(Unit) {
         cartViewModel.fetchOrders()
-        savedEventsViewModel.refresh()
+        if (isTrueRunner) savedEventsViewModel.refresh()
         viewModel.fetchSelfies()
     }
 
