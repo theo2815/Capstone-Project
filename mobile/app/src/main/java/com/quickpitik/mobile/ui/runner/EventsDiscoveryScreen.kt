@@ -186,19 +186,6 @@ fun EventsDiscoveryScreen(
                             modifier = Modifier.background(Bone)
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Profile & Selfies", color = Ink) },
-                                onClick = { menuExpanded = false; onNavigateToProfile() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Account Settings", color = Ink) },
-                                onClick = { menuExpanded = false; onNavigateToSettings() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Purchased Photos", color = Ink) },
-                                onClick = { menuExpanded = false; onNavigateToOrders() }
-                            )
-                            Divider(color = SlateSoft)
-                            DropdownMenuItem(
                                 text = { Text("Sign Out", color = ErrorRed) },
                                 onClick = { menuExpanded = false; onLogout() }
                             )
