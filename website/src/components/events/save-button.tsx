@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useToast } from "@/hooks/use-toast";
+import { useEffectiveRole } from "@/hooks/use-effective-role";
 import { getEventById } from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -51,7 +52,10 @@ export function SaveButton({
   disabled = false,
 }: SaveButtonProps) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const userRole = useAuthStore((s) => s.user?.role);
+  // Effective role so a photographer in runner view gets the save affordance
+  // like a runner. (Persisted sync stays RUNNER-gated — saves are local-only
+  // for a photographer account, but they still toggle + survive refresh.)
+  const userRole = useEffectiveRole();
   const isSaved = useSavedEventsStore((s) => s.ids.includes(eventId));
   const toggle = useSavedEventsStore((s) => s.toggle);
   const { showToast } = useToast();

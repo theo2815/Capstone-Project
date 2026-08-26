@@ -3,8 +3,7 @@
 import type { ReactNode } from "react";
 import { SiteHeader } from "@/components/layout/site-header";
 import { DashboardRail } from "@/components/dashboard/dashboard-rail";
-import { DashboardMobileStrip } from "@/components/dashboard/dashboard-mobile-strip";
-import { DesktopNudge } from "@/components/dashboard/desktop-nudge";
+import { DashboardBottomNav } from "@/components/dashboard/dashboard-bottom-nav";
 import { VerificationBanner } from "@/components/dashboard/verification-banner";
 import { usePhotographerSettingsHydration } from "@/hooks/use-photographer-settings-hydration";
 import { usePhotographerVerificationSync } from "@/lib/photographer-verification-sync";
@@ -23,14 +22,9 @@ import { usePhotographerVerificationSync } from "@/lib/photographer-verification
 // banner. The sync hook polls /me/photographer/verification on mount, focus,
 // and every 30s while pending — single mount keeps duplicate polling away.
 //
-// Mobile-only sticky stack under <SiteHeader>: a single wrapper at
-// `top-[var(--site-header-h)]` (matching the /events/[slug]?browse=1 "Find
-// your photos" pattern) holds <DesktopNudge> on top + <DashboardMobileStrip>
-// below. Both
-// pin together as the user scrolls every /dashboard/* route. When the user
-// dismisses the nudge, it returns null and the wrapper shrinks so the strip
-// pins flush under the header — no gap. Putting both in one sticky parent
-// avoids two siblings racing at the same `top` value (they'd overlap).
+// Photographer section nav is split by breakpoint: the vertical <DashboardRail>
+// on desktop (hidden below md), and the floating <DashboardBottomNav> pill on
+// mobile (hidden from md up).
 export function DashboardShell({ children }: { children: ReactNode }) {
   usePhotographerVerificationSync();
   // Repopulates the photographer-settings + user-media stores from the BE
@@ -43,19 +37,16 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
       <SiteHeader />
-      <div className="md:hidden sticky top-[var(--site-header-h)] z-20">
-        <DesktopNudge />
-        <DashboardMobileStrip />
-      </div>
       <div className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10 flex flex-col">
         <div className="md:grid md:grid-cols-[15rem_1fr] md:gap-12 lg:gap-20 flex-1">
           <DashboardRail />
-          <div className="stagger-children min-w-0 pt-6 md:pt-10 pb-8 md:pb-20 md:border-l md:border-line md:-ml-6 lg:-ml-10 md:pl-6 lg:pl-10">
+          <div className="stagger-children min-w-0 pt-6 md:pt-10 pb-28 md:pb-20 md:border-l md:border-line md:-ml-6 lg:-ml-10 md:pl-6 lg:pl-10">
             <VerificationBanner />
             {children}
           </div>
         </div>
       </div>
+      <DashboardBottomNav />
     </main>
   );
 }

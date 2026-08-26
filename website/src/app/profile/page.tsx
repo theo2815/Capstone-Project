@@ -20,6 +20,7 @@ import {
 } from "@/components/dashboard/event-filter-bar";
 import { Kicker } from "@/components/ui/kicker";
 import { useAuth } from "@/hooks/use-auth";
+import { useEffectiveRole } from "@/hooks/use-effective-role";
 import { usePhotographerEvents } from "@/hooks/use-photographer-data";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useOrdersList } from "@/hooks/use-orders";
@@ -75,16 +76,27 @@ export default function ProfilePage() {
 // page with edit affordances.
 function ProfileRouter() {
   const { user } = useAuth();
-  if (!user) return null;
-  if (user.role === "PHOTOGRAPHER") return <PhotographerProfileBody user={user} />;
-  return <RunnerProfileBody user={user} />;
+  const effectiveRole = useEffectiveRole();
+  if (!user || !effectiveRole) return null;
+  // Effective role, not user.role — a photographer in runner view sees the
+  // full runner profile (selfie library + race log), never the photographer
+  // portfolio.
+  if (effectiveRole === "PHOTOGRAPHER")
+    return <PhotographerProfileBody user={user} />;
+  return <RunnerProfileBody user={user} effectiveRole={effectiveRole} />;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
 // Runner profile (existing layout)
 // ─────────────────────────────────────────────────────────────────────────
 
-function RunnerProfileBody({ user }: { user: User }) {
+function RunnerProfileBody({
+  user,
+  effectiveRole,
+}: {
+  user: User;
+  effectiveRole: Role;
+}) {
   const memberSince = formatMemberSince(user.createdAt);
 
   return (
@@ -96,7 +108,7 @@ function RunnerProfileBody({ user }: { user: User }) {
             user={user}
             kicker={
               <>
-                {roleLabel(user.role)}
+                {roleLabel(effectiveRole)}
                 {" · Cebu · "}
                 <span className="tnum">Since {memberSince}</span>
               </>

@@ -14,6 +14,7 @@ import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 import { useAdminUsersServerStore } from "@/lib/admin-users-data";
 import { useMyPhotographerMessagesStore } from "@/lib/me-photographer-messages-data";
+import { useViewModeStore } from "@/store/view-mode-store";
 
 // Reset every Zustand store that carries user-scoped data + clears the
 // underlying localStorage slot each one persists into. Call this on every
@@ -40,6 +41,10 @@ import { useMyPhotographerMessagesStore } from "@/lib/me-photographer-messages-d
 export function resetUserScopedStores(): void {
   useCartStore.getState().setSyncEnabled(false);
   useSavedEventsStore.getState().setSyncEnabled(false);
+
+  // View mode is a client-only photographer/runner toggle — always reset to
+  // photographer so a fresh login never auto-exposes the runner interface.
+  useViewModeStore.getState().reset();
 
   usePhotographerSettingsStore.getState().reset();
   // PF-9 (2026-05-27): the photographer-messages inbox cache survived logout

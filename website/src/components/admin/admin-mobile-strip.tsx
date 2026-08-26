@@ -50,9 +50,9 @@ const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED
   ? ADMIN_ROUTES_ALL
   : ADMIN_ROUTES_ALL.filter((r) => r.href !== ROUTES.ADMIN_FLAGS);
 
-// Mobile-only chip strip for /admin/*. Mirrors `<DashboardMobileStrip>`:
-// sticky wrapper lives in <AdminShell> so the strip pins under SiteHeader
-// alongside <DesktopNudge>. Renders nothing ≥ md (parent has `md:hidden`).
+// Mobile-only chip strip for /admin/*. The sticky wrapper lives in
+// <AdminShell> so the strip pins under SiteHeader. Renders nothing ≥ md
+// (parent has `md:hidden`).
 export function AdminMobileStrip() {
   const pathname = usePathname();
   const attention = useAdminAttentionTarget();

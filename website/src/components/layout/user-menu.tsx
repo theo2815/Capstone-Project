@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { useUserMediaStore } from "@/store/user-media-store";
+import { useViewModeStore } from "@/store/view-mode-store";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import type { Role, User } from "@/types/user";
@@ -58,6 +59,13 @@ export function UserMenu({ user }: UserMenuProps) {
   const { logout } = useAuth();
   const { confirm } = useConfirmation();
   const avatar = useUserMediaStore((s) => s.avatar);
+  const viewMode = useViewModeStore((s) => s.viewMode);
+  const setViewMode = useViewModeStore((s) => s.setViewMode);
+  // Account role is singular; a photographer can view the runner surfaces via a
+  // client-only mode flip. A pure runner/admin has no second surface to switch
+  // into, so the toggle is photographer-only.
+  const isPhotographerAccount = user.role === "PHOTOGRAPHER";
+  const inRunnerView = isPhotographerAccount && viewMode === "runner";
   const [isOpen, setIsOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -116,8 +124,16 @@ export function UserMenu({ user }: UserMenuProps) {
     router.replace(ROUTES.LOGIN);
   }
 
+  function handleSwitchMode() {
+    // Flip the view flag and land on the target home. roleHome() always maps a
+    // photographer to /dashboard, so the two targets are hardcoded here.
+    setViewMode(inRunnerView ? "photographer" : "runner");
+    setIsOpen(false);
+    router.push(inRunnerView ? ROUTES.DASHBOARD : ROUTES.EVENTS);
+  }
+
   const initials = getInitials(user.name);
-  const links = linksForRole(user.role);
+  const links = linksForRole(inRunnerView ? "RUNNER" : user.role);
 
   return (
     <div className="relative" ref={wrapRef}>
@@ -210,6 +226,24 @@ export function UserMenu({ user }: UserMenuProps) {
             ))}
           </ul>
 
+          {isPhotographerAccount && (
+            <div className="border-t border-line">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={handleSwitchMode}
+                className="group w-full flex items-center gap-5 px-6 py-3.5 hover:bg-bone-deep transition-colors"
+              >
+                <span className="text-slate-soft group-hover:text-fresh transition-colors">
+                  <SwapIcon />
+                </span>
+                <span className="flex-1 text-left font-display text-base text-ink">
+                  {inRunnerView ? "Switch to Photographer" : "Switch to Runner"}
+                </span>
+              </button>
+            </div>
+          )}
+
           <div className="border-t border-line">
             <button
               type="button"
@@ -249,5 +283,23 @@ export function UserMenu({ user }: UserMenuProps) {
         </div>
       )}
     </div>
+  );
+}
+
+function SwapIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="size-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.25}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 4.5 H12 M9.5 2 L12 4.5 L9.5 7" />
+      <path d="M13 11.5 H4 M6.5 9 L4 11.5 L6.5 14" />
+    </svg>
   );
 }

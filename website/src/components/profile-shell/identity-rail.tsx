@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { useAuth } from "@/hooks/use-auth";
+import { useEffectiveRole } from "@/hooks/use-effective-role";
 import { useActiveSection } from "@/hooks/use-active-section";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -59,8 +60,11 @@ export function IdentityRail({
 }: IdentityRailProps) {
   const router = useRouter();
   const { logout } = useAuth();
+  const effectiveRole = useEffectiveRole();
   const activeId = useActiveSection(jumpSections.map((s) => s.id));
-  const moreLinks = moreLinksForRole(user.role, currentPath);
+  // Effective role so the rail "More" list shows runner links (Orders) in
+  // runner view, not the photographer's Dashboard link.
+  const moreLinks = moreLinksForRole(effectiveRole ?? user.role, currentPath);
 
   function handleSignOut() {
     logout();

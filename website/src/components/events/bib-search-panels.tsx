@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
+import { useEffectiveRole } from "@/hooks/use-effective-role";
 import { ROUTES } from "@/lib/constants";
 import {
   searchEventByFace,
@@ -127,7 +128,7 @@ export function SelfieSearchPanel({
   const router = useRouter();
   const pathname = usePathname();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const role = useAuthStore((s) => s.user?.role);
+  const role = useEffectiveRole();
   const { selfies } = useSelfiesList();
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);

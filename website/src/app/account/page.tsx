@@ -13,6 +13,7 @@ import {
 import { Kicker } from "@/components/ui/kicker";
 import { AvatarSlab } from "@/components/account/avatar-slab";
 import { useAuth } from "@/hooks/use-auth";
+import { useEffectiveRole } from "@/hooks/use-effective-role";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
@@ -68,9 +69,12 @@ export default function AccountPage() {
 
 function AccountBody() {
   const { user } = useAuth();
+  const effectiveRole = useEffectiveRole();
   if (!user) return null;
 
-  const isPhotographer = user.role === "PHOTOGRAPHER";
+  // Effective role — in runner view a photographer gets the runner account
+  // layout (Picture/avatar slab shown), not the photographer variant.
+  const isPhotographer = effectiveRole === "PHOTOGRAPHER";
   const jumpSections = isPhotographer
     ? PHOTOGRAPHER_JUMP_SECTIONS
     : RUNNER_JUMP_SECTIONS;

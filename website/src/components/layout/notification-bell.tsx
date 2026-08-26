@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
+import { useEffectiveRole } from "@/hooks/use-effective-role";
 import { getUnreadCount } from "@/lib/photographer-messages";
 import { useMyPhotographerMessages } from "@/lib/me-photographer-messages-data";
 import { usePhotographerNotificationsWs } from "@/hooks/use-photographer-notifications-ws";
@@ -24,8 +25,14 @@ import { PhotographerInboxModal } from "@/components/layout/photographer-inbox-m
 // applyPush which dedupes by id, so cross-path collisions are harmless.
 
 export function NotificationBell() {
-  const { user, isAuthenticated, isLoading } = useAuth();
-  const isPhotographer = user?.role === "PHOTOGRAPHER";
+  const { isAuthenticated, isLoading } = useAuth();
+  // Effective role: hide the photographer inbox bell (and silence its WS/poll)
+  // when a photographer is in runner view — no photographer chrome in runner
+  // mode. The runner bell stays gated on the TRUE role (the runner inbox is
+  // RUNNER-only server-side), so a photographer in runner view simply has no
+  // bell, which is correct — they have no runner inbox.
+  const effectiveRole = useEffectiveRole();
+  const isPhotographer = effectiveRole === "PHOTOGRAPHER";
   const enabled = isAuthenticated && isPhotographer;
   // Mount BEFORE the early return — the WS must stay alive even when the
   // bell hides itself (zero messages, modal closed). Without this, a fresh

@@ -184,7 +184,7 @@ function SpendSlab() {
       title="Spend"
       caption="Lifetime totals"
     >
-      <div className="grid grid-cols-3 gap-4 md:gap-8">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3 lg:gap-8">
         <Stat value={`₱${stats.total.toLocaleString()}`} label="spent" accent />
         <Stat
           value={String(stats.orderCount)}
@@ -214,10 +214,10 @@ function Stat({
   accent?: boolean;
 }) {
   return (
-    <div className="border-l border-line pl-4 md:pl-6 first:border-0 first:pl-0">
+    <div className="border-line lg:border-l lg:pl-6 lg:first:border-0 lg:first:pl-0">
       <p
         className={cn(
-          "font-display font-extrabold tracking-tight tnum text-3xl md:text-5xl leading-none",
+          "font-display font-extrabold tracking-tight tnum text-3xl md:text-4xl leading-none",
           accent ? "text-fresh" : "text-ink",
         )}
       >

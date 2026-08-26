@@ -649,7 +649,7 @@ function EditModePill() {
   if (readyToSubmitSlot) return null;
 
   return createPortal(
-    <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3">
+    <div className="fixed bottom-[calc(6rem_+_env(safe-area-inset-bottom))] md:bottom-6 right-6 z-50 flex items-center gap-3">
       {editing ? (
         <>
           <button
@@ -1109,7 +1109,7 @@ function ReadyToSubmitPill({ onClick }: { onClick: () => void }) {
   }, []);
   if (!mounted) return null;
   return createPortal(
-    <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3">
+    <div className="fixed bottom-[calc(6rem_+_env(safe-area-inset-bottom))] md:bottom-6 right-6 z-50 flex items-center gap-3">
       <button
         type="button"
         onClick={beginEdit}
