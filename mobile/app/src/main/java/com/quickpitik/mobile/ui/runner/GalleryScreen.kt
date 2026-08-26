@@ -567,8 +567,13 @@ fun RunnerGalleryScreen(
                     }
                     is PhotosSearchState.Error -> {
                         item(span = { GridItemSpan(maxLineSpan) }) {
+                            // Retry re-runs the typed bib query (or the plain
+                            // browse when empty) — for a failed FACE search
+                            // this lands back on the browsable wall, the same
+                            // recovery the website's FaceEmptyResult offers.
                             ErrorView(
                                 message = state.message,
+                                onRetry = { viewModel.searchByBib(bibSearchQuery) },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
@@ -576,18 +581,62 @@ fun RunnerGalleryScreen(
                     is PhotosSearchState.Success -> {
                         if (state.photos.isEmpty()) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
-                                Box(
+                                // Status-aware empty copy — ports the website's
+                                // BibEmptyResult + FaceEmptyResult in place of
+                                // the old one-size-fits-all string. (The web's
+                                // notify-me email form is deliberately absent:
+                                // the PhotoAlertCard above is mobile's native
+                                // equivalent of that intent.)
+                                val trimmedBib = bibSearchQuery.trim()
+                                val eventState = activeEvent?.let { deriveEventState(it.date) }
+                                val isFaceEmpty = isFiltered && trimmedBib.isEmpty()
+                                val (emptyTitle, emptyBody) = when {
+                                    isFaceEmpty ->
+                                        "We didn't find your face." to
+                                            "Try adding another selfie angle, or browse the wall while photos roll in."
+                                    isFiltered && eventState == EventState.LIVE ->
+                                        "Still uploading." to
+                                            "Photographers are still working through this race — check back soon for $trimmedBib."
+                                    isFiltered && eventState == EventState.PAST ->
+                                        "This race has wrapped." to
+                                            "Photos for $trimmedBib never landed in this archive. The wall's still here if you want to skim."
+                                    isFiltered ->
+                                        "Bib not found." to
+                                            "All photos for this race have been uploaded — $trimmedBib isn't in there. Double-check the number, or skim the wall."
+                                    else ->
+                                        "No photos yet." to
+                                            "Nothing has been uploaded for this event so far."
+                                }
+                                Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(vertical = 32.dp),
-                                    contentAlignment = Alignment.Center
+                                    horizontalAlignment = Alignment.CenterHorizontally,
                                 ) {
                                     Text(
-                                        text = "No matched photos found for this event.\nTry another search parameter or selfie scan!",
+                                        text = emptyTitle,
+                                        color = Ink,
+                                        textAlign = TextAlign.Center,
+                                        style = Typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = emptyBody,
                                         color = SlateSoft,
                                         textAlign = TextAlign.Center,
-                                        style = Typography.bodyMedium
+                                        style = Typography.bodyMedium,
                                     )
+                                    if (isFiltered) {
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        GhostCta(
+                                            text = "Browse the wall →",
+                                            onClick = {
+                                                bibSearchQuery = ""
+                                                viewModel.clearFilter()
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         } else {
@@ -772,6 +821,8 @@ fun RunnerGalleryScreen(
                 showInbox = false
                 onOpenOrder(orderId)
             },
+            fetchError = inboxViewModel.fetchError.collectAsState().value,
+            onRetry = { inboxViewModel.fetchMessages() },
         )
     }
 }

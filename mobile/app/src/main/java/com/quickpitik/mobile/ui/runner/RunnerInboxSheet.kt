@@ -52,6 +52,7 @@ import com.quickpitik.mobile.ui.theme.Kicker
 import com.quickpitik.mobile.ui.theme.Line
 import com.quickpitik.mobile.ui.theme.QuickPitikMobileTheme
 import com.quickpitik.mobile.ui.theme.Slate
+import com.quickpitik.mobile.ui.theme.ErrorView
 import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.Typography
 import com.quickpitik.mobile.ui.theme.WarningOrange
@@ -74,6 +75,11 @@ fun RunnerInboxSheet(
     onMarkAllRead: () -> Unit,
     onRemove: (String) -> Unit,
     onOpenOrder: (String) -> Unit,
+    // Non-null when the fetch failed with nothing cached — the sheet must
+    // show the failure, not "No messages yet." (an error is not an empty
+    // inbox). Retry re-runs the fetch.
+    fetchError: String? = null,
+    onRetry: () -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var removeTarget by remember { mutableStateOf<RunnerMessageDto?>(null) }
@@ -120,7 +126,14 @@ fun RunnerInboxSheet(
             }
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (messages.isEmpty()) {
+            if (messages.isEmpty() && fetchError != null) {
+                ErrorView(
+                    message = fetchError,
+                    title = "Couldn't load your inbox",
+                    onRetry = onRetry,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else if (messages.isEmpty()) {
                 RunnerInboxEmptyState()
             } else {
                 LazyColumn(

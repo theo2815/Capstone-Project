@@ -202,6 +202,24 @@ fun PhotographerSettingsScreen(
     val regions by viewModel.regions.collectAsState()
     val isSaving by viewModel.isSavingSettings.collectAsState()
     val actionMessage by viewModel.settingsActionState.collectAsState()
+    val settingsLoadError by viewModel.settingsLoadError.collectAsState()
+
+    // Hydration gate: with no cached brand payload and a failed fetch, the
+    // form would render EMPTY but editable — and Save would overwrite real
+    // server values with blanks. Show the failure instead.
+    if (brandSettings == null && settingsLoadError != null) {
+        Box(
+            modifier = modifier.fillMaxSize().background(Bone),
+            contentAlignment = Alignment.Center,
+        ) {
+            ErrorView(
+                message = settingsLoadError ?: "",
+                title = "Couldn't load your settings",
+                onRetry = { viewModel.fetchSettings() },
+            )
+        }
+        return
+    }
 
     // Batched form inputs (Save button)
     var brandName by remember { mutableStateOf("") }
@@ -276,14 +294,21 @@ fun PhotographerSettingsScreen(
         }
     }
 
+    // Hydrate ONCE per screen mount. The old per-field `if (x.isEmpty())`
+    // guard meant a field the photographer deliberately CLEARED was silently
+    // repopulated from the server on the next fetchSettings() — an emptied bio
+    // would spring back mid-edit. A single hydration pass keeps later
+    // refetches from clobbering any in-progress edit, cleared or typed.
+    var formHydrated by remember { mutableStateOf(false) }
     LaunchedEffect(brandSettings) {
-        brandSettings?.let {
-            if (brandName.isEmpty()) brandName = it.brandName.orEmpty()
-            if (bio.isEmpty()) bio = it.bio.orEmpty()
-            if (handle.isEmpty()) handle = it.handle.orEmpty()
-            if (regionCode.isEmpty()) regionCode = it.regionCode.orEmpty()
-            if (provinceCode.isEmpty()) provinceCode = it.provinceCode.orEmpty()
-        }
+        val s = brandSettings ?: return@LaunchedEffect
+        if (formHydrated) return@LaunchedEffect
+        formHydrated = true
+        brandName = s.brandName.orEmpty()
+        bio = s.bio.orEmpty()
+        handle = s.handle.orEmpty()
+        regionCode = s.regionCode.orEmpty()
+        provinceCode = s.provinceCode.orEmpty()
     }
 
     var socialSheetMode by remember { mutableStateOf<SocialSheetMode?>(null) }
@@ -317,6 +342,7 @@ fun PhotographerSettingsScreen(
                 onSubmit = { viewModel.submitVerification() },
                 onWithdraw = { viewModel.withdrawVerification() },
                 onAttemptSubmit = { hasAttemptedSubmit = true },
+                onRetry = { viewModel.fetchVerificationStatus() },
             )
         }
         item("publicProfile") {
@@ -528,6 +554,7 @@ private fun VerificationSlab(
     onSubmit: () -> Unit,
     onWithdraw: () -> Unit,
     onAttemptSubmit: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     Column {
         Kicker(text = "Verification", color = SlateSoft)
@@ -536,7 +563,10 @@ private fun VerificationSlab(
             is VerificationUiState.Loading -> {
                 LoadingSkeleton(modifier = Modifier.fillMaxWidth().height(40.dp))
             }
-            is VerificationUiState.Error -> ErrorView(message = state.message)
+            is VerificationUiState.Error -> ErrorView(
+                message = state.message,
+                onRetry = onRetry,
+            )
             is VerificationUiState.Success -> {
                 val data = state.verification
                 val status = data.status.lowercase()

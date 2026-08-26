@@ -1,13 +1,16 @@
 [versions]
 agp = "8.3.2"
-kotlin = "1.9.0"
+# 1.9.24 pairs with compose compiler 1.5.14 — the floor for the 2024.09 BOM
+# (material3 1.3, which ships PullToRefreshBox; the Mobile Design skill
+# mandates pull-to-refresh on every network-backed list).
+kotlin = "1.9.24"
 coreKtx = "1.12.0"
 junit = "4.13.2"
 junitVersion = "1.3.0"
 espressoCore = "3.7.0"
 lifecycleRuntimeKtx = "2.7.0"
 activityCompose = "1.8.2"
-composeBom = "2023.08.00"
+composeBom = "2024.09.00"
 retrofit = "2.9.0"
 okhttp = "4.12.0"
 room = "2.6.1"

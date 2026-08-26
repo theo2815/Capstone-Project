@@ -134,14 +134,27 @@ fun PhotographerOverviewScreen(
         Spacer(modifier = Modifier.height(24.dp))
 
         if (isApproved) {
-            ApprovedHomeBody(
-                events = events,
-                earnings = earnings,
-                transactions = transactions,
-                onCapture = { onNavigateToTab("studio/capture") },
-                onOpenEvent = { onNavigateToTab("studio/events") },
-                onOpenEarnings = { onNavigateToTab("studio/earnings") },
-            )
+            // The money cards must never render a FAILED (or still-loading)
+            // earnings fetch as real ₱0 figures — an error shows as an error.
+            when (earningsUiState) {
+                is EarningsUiState.Error -> ErrorView(
+                    message = (earningsUiState as EarningsUiState.Error).message,
+                    title = "Couldn't load your studio stats",
+                    onRetry = { viewModel.fetchEarningsAndTransactions() },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                is EarningsUiState.Loading -> LoadingSkeleton(
+                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                )
+                is EarningsUiState.Success -> ApprovedHomeBody(
+                    events = events,
+                    earnings = earnings,
+                    transactions = transactions,
+                    onCapture = { onNavigateToTab("studio/capture") },
+                    onOpenEvent = { onNavigateToTab("studio/events") },
+                    onOpenEarnings = { onNavigateToTab("studio/earnings") },
+                )
+            }
         } else {
             SetupHomeBody(
                 verificationState = verificationState,

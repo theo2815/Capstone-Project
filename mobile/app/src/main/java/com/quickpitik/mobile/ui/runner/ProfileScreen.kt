@@ -15,6 +15,8 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import android.content.ContentValues
@@ -46,6 +48,7 @@ import java.io.FileOutputStream
 // limit; this drives the copy and hides the add tile once reached.
 const val SELFIE_MAX = 5
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
@@ -127,6 +130,24 @@ fun ProfileScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            // Pull-to-refresh (Mobile Design skill) — re-pulls selfies +
+            // orders (+ saved events for true runners); spinner settles when
+            // the slow fetch (orders) completes.
+            var profileRefreshing by remember { mutableStateOf(false) }
+            val refreshScope = rememberCoroutineScope()
+            PullToRefreshBox(
+                isRefreshing = profileRefreshing,
+                onRefresh = {
+                    profileRefreshing = true
+                    refreshScope.launch {
+                        viewModel.fetchSelfies()
+                        if (isTrueRunner) savedEventsViewModel.refresh()
+                        cartViewModel.fetchOrders().join()
+                        profileRefreshing = false
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            ) {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -309,6 +330,17 @@ fun ProfileScreen(
                     item {
                         RaceLogSkeleton()
                     }
+                } else if (ordersState is OrdersState.Error && raceLog.isEmpty()) {
+                    // A failed orders fetch used to render as "No races yet."
+                    // — an error must never masquerade as an empty state.
+                    item {
+                        ErrorView(
+                            message = (ordersState as OrdersState.Error).message,
+                            title = "Couldn't load your races",
+                            onRetry = { cartViewModel.fetchOrders() },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 } else if (raceLog.isEmpty()) {
                     item {
                         Column(
@@ -354,6 +386,7 @@ fun ProfileScreen(
                 item {
                     Spacer(modifier = Modifier.height(24.dp))
                 }
+            }
             }
         }
         SnackbarHost(

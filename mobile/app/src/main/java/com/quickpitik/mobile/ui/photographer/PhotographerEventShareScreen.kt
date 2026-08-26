@@ -73,7 +73,11 @@ fun PhotographerEventShareScreen(
 
     LaunchedEffect(event.id) {
         viewModel.fetchSharePhotos(event.id)
-        viewModel.fetchSettings()
+        // The handle is read from the shared brandSettings flow, hydrated by
+        // the VM's init + Settings/Home refreshes. fetchSettings() here fired
+        // FOUR extra requests per share-page open purely to re-read one field
+        // that was already in memory; re-fetch only if it never loaded.
+        if (viewModel.brandSettings.value == null) viewModel.fetchSettings()
     }
 
     val handle = brand?.handle?.takeIf { it.isNotBlank() } ?: "your-handle"
@@ -227,9 +231,12 @@ fun PhotographerEventShareScreen(
                     }
                 }
                 is SharePhotosState.Error -> {
-                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
-                        Text(state.message, color = ErrorRed, textAlign = TextAlign.Center, style = Typography.bodyMedium)
-                    }
+                    ErrorView(
+                        message = state.message,
+                        title = "Couldn't load your uploads",
+                        onRetry = { viewModel.fetchSharePhotos(event.id) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
                 is SharePhotosState.Success -> {
                     if (state.photos.isEmpty()) {

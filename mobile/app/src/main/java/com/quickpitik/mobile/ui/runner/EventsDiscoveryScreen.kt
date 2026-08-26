@@ -15,8 +15,10 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -161,10 +163,28 @@ fun EventsDiscoveryScreen(
 
             Spacer(Modifier.height(24.dp))
 
-            Column(
+            // Pull-to-refresh (Mobile Design skill: every network-backed
+            // list). The spinner settles when the fetch Job actually
+            // completes, not on a timer.
+            var refreshing by remember { mutableStateOf(false) }
+            val refreshScope = rememberCoroutineScope()
+            PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = {
+                    refreshing = true
+                    refreshScope.launch {
+                        if (isTrueRunner) savedEventsViewModel.refresh()
+                        viewModel.fetchPublicEvents().join()
+                        refreshing = false
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .weight(1f),
+            ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
             ) {
@@ -327,6 +347,7 @@ fun EventsDiscoveryScreen(
             Spacer(Modifier.height(24.dp))
         }
         }
+        }
     }
         SnackbarHost(
             hostState = snackbarHostState,
@@ -348,6 +369,8 @@ fun EventsDiscoveryScreen(
                 showInbox = false
                 onOpenOrder(orderId)
             },
+            fetchError = inboxViewModel.fetchError.collectAsState().value,
+            onRetry = { inboxViewModel.fetchMessages() },
         )
     }
 }

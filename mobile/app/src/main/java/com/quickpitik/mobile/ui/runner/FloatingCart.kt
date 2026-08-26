@@ -12,6 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Icon
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -266,6 +268,27 @@ fun FloatingCart(
                 cartViewModel.closeCheckoutSheet()
                 onAfterCheckoutSuccess()
             },
+        )
+    }
+
+    // Cart-mutation outcome snackbar — hosted HERE (the one overlay mounted on
+    // every runner route) so a failed add/remove from any screen's tile is
+    // announced instead of the optimistic state silently snapping back.
+    // Rendered regardless of the pill: a failed remove can leave the cart
+    // optimistically empty, hiding the pill at the exact moment the message
+    // matters.
+    val cartMessage by cartViewModel.cartMessage.collectAsState()
+    val messageHost = remember { SnackbarHostState() }
+    LaunchedEffect(cartMessage) {
+        cartMessage?.let { msg ->
+            messageHost.showSnackbar(msg)
+            cartViewModel.clearCartMessage()
+        }
+    }
+    Box(modifier = Modifier.fillMaxSize().navigationBarsPadding()) {
+        SnackbarHost(
+            hostState = messageHost,
+            modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
 }

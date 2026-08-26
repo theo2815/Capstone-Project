@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -63,6 +64,9 @@ fun OrdersScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var bulkBusy by remember { mutableStateOf(false) }
+    // Pull-to-refresh (Mobile Design skill) — spinner settles when the fetch
+    // Job completes.
+    var ordersRefreshing by remember { mutableStateOf(false) }
 
     // Per-photo + bundle download — mirrors website /orders triggerDownload
     // (anchor + Content-Disposition: attachment), but lands the JPEG straight
@@ -162,11 +166,11 @@ fun OrdersScreen(
                     }
                     is OrdersState.Error -> {
                         Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                                Icon(Icons.Default.Warning, contentDescription = "Error", tint = ErrorRed, modifier = Modifier.size(48.dp))
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(state.message, color = ErrorRed, style = Typography.bodyMedium, textAlign = TextAlign.Center)
-                            }
+                            ErrorView(
+                                message = state.message,
+                                title = "Couldn't load your orders",
+                                onRetry = { viewModel.fetchOrders() },
+                            )
                         }
                     }
                     is OrdersState.Success -> {
@@ -177,10 +181,22 @@ fun OrdersScreen(
                         // filtered), so the same runner saw two lifetime totals.
                         val visibleOrders = state.orders
                         if (visibleOrders.isEmpty()) {
-                            LazyColumn(
+                            PullToRefreshBox(
+                                isRefreshing = ordersRefreshing,
+                                onRefresh = {
+                                    ordersRefreshing = true
+                                    scope.launch {
+                                        viewModel.fetchOrders().join()
+                                        ordersRefreshing = false
+                                    }
+                                },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .weight(1f)
+                                    .weight(1f),
+                            ) {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxSize()
                                     .padding(horizontal = 24.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
                                 contentPadding = PaddingValues(bottom = 24.dp)
@@ -210,13 +226,26 @@ fun OrdersScreen(
                                     }
                                 }
                             }
+                            }
                         } else {
                             val spendStats = remember(visibleOrders) { computeSpendStats(visibleOrders) }
                             val pagedOrders = visibleOrders.take(receiptLimit)
-                            LazyColumn(
+                            PullToRefreshBox(
+                                isRefreshing = ordersRefreshing,
+                                onRefresh = {
+                                    ordersRefreshing = true
+                                    scope.launch {
+                                        viewModel.fetchOrders().join()
+                                        ordersRefreshing = false
+                                    }
+                                },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .weight(1f)
+                                    .weight(1f),
+                            ) {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxSize()
                                     .padding(horizontal = 24.dp),
                                 contentPadding = PaddingValues(bottom = 24.dp)
                             ) {
@@ -254,6 +283,7 @@ fun OrdersScreen(
                                         )
                                     }
                                 }
+                            }
                             }
                         }
                     }
@@ -294,13 +324,15 @@ fun OrdersScreen(
                     is OrderDetailState.Error -> {
                         Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Default.Warning, contentDescription = "Error", tint = ErrorRed, modifier = Modifier.size(48.dp))
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(detailState.message, color = ErrorRed, style = Typography.bodyMedium, textAlign = TextAlign.Center)
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Button(onClick = { selectedOrderId = null }, colors = ButtonDefaults.buttonColors(containerColor = Line, contentColor = Ink)) {
-                                    Text("BACK TO LIST")
-                                }
+                                ErrorView(
+                                    message = detailState.message,
+                                    title = "Couldn't load this order",
+                                    onRetry = { selectedOrderId?.let { viewModel.fetchOrderDetail(it) } },
+                                )
+                                GhostCta(
+                                    text = "Back to list",
+                                    onClick = { selectedOrderId = null },
+                                )
                             }
                         }
                     }

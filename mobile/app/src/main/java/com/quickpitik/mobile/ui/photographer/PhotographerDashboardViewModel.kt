@@ -51,6 +51,8 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -207,6 +209,11 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     private val _brandSettings = MutableStateFlow<com.quickpitik.mobile.data.remote.BrandSettingsResponseDto?>(null)
     val brandSettings: StateFlow<com.quickpitik.mobile.data.remote.BrandSettingsResponseDto?> = _brandSettings
+
+    // Non-null when the settings hydration failed with nothing cached — the
+    // settings screen must not offer an empty editable form (see fetchSettings).
+    private val _settingsLoadError = MutableStateFlow<String?>(null)
+    val settingsLoadError: StateFlow<String?> = _settingsLoadError
 
     // Backend-owned PH region/province list (GET /regions). Empty until the
     // fetch lands; the region slab shows "Loading regions…" meanwhile rather
@@ -447,9 +454,22 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             }
 
             try {
-                val overviewResponse = RetrofitClient.apiService.getEarningsOverview("Bearer $token")
-                val balanceResponse = RetrofitClient.apiService.getPayoutBalance("Bearer $token")
-                val transactionsResponse = RetrofitClient.apiService.getTransactionsLedger("Bearer $token")
+                // Independent endpoints — fired concurrently. Sequential
+                // awaits made the Earnings tab pay the sum of three
+                // round-trips instead of the slowest one.
+                val (overviewResponse, balanceResponse, transactionsResponse) =
+                    coroutineScope {
+                        val overview = async {
+                            RetrofitClient.apiService.getEarningsOverview("Bearer $token")
+                        }
+                        val balance = async {
+                            RetrofitClient.apiService.getPayoutBalance("Bearer $token")
+                        }
+                        val transactions = async {
+                            RetrofitClient.apiService.getTransactionsLedger("Bearer $token")
+                        }
+                        Triple(overview.await(), balance.await(), transactions.await())
+                    }
 
                 if (overviewResponse.success && overviewResponse.data != null &&
                     balanceResponse.success && balanceResponse.data != null &&
@@ -468,7 +488,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     _earningsUiState.value = EarningsUiState.Error(errMsg)
                 }
             } catch (e: Exception) {
-                _earningsUiState.value = EarningsUiState.Error(e.localizedMessage ?: "Failed to connect to server.")
+                _earningsUiState.value = EarningsUiState.Error(RetrofitClient.parseError(e))
             }
         }
     }
@@ -505,8 +525,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         _payoutActionState.value = null
     }
 
-    fun fetchEvents() {
-        viewModelScope.launch {
+    // Returns the Job so pull-to-refresh can join() it (fire-and-forget
+    // callers unaffected).
+    fun fetchEvents(): Job = viewModelScope.launch {
             _eventsState.value = EventsState.Loading
             val token = sessionManager.getAccessToken()
             if (token == null) {
@@ -525,10 +546,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 _eventsState.value = EventsState.Error(e.localizedMessage ?: "Failed to connect to server.")
             }
         }
-    }
 
-    fun fetchPublicEvents() {
-        viewModelScope.launch {
+    fun fetchPublicEvents(): Job = viewModelScope.launch {
             _publicEventsState.value = EventsState.Loading
             try {
                 val response = RetrofitClient.apiService.getPublicEvents(status = "ACTIVE,COMPLETED,ARCHIVED", limit = 100)
@@ -555,7 +574,6 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 _publicEventsState.value = EventsState.Error(e.localizedMessage ?: "Failed to connect to server.")
             }
         }
-    }
 
     fun selectEvent(event: PhotographerEventSummaryDto?) {
         // A live watch is bound to the event it started with — switching away
@@ -824,9 +842,16 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 val brandResponse = RetrofitClient.apiService.getBrandSettings("Bearer $token")
                 if (brandResponse.success && brandResponse.data != null) {
                     _brandSettings.value = brandResponse.data
+                    _settingsLoadError.value = null
                 }
             } catch (e: Exception) {
-                // Fail silently
+                // The brand payload hydrates the whole settings form. With
+                // nothing cached, silence meant the screen rendered an EMPTY
+                // editable form — and saving it would overwrite real server
+                // values with blanks. The screen gates on this error instead.
+                if (_brandSettings.value == null) {
+                    _settingsLoadError.value = RetrofitClient.parseError(e)
+                }
             }
             try {
                 val payoutsResponse = RetrofitClient.apiService.getPayoutAccounts("Bearer $token")

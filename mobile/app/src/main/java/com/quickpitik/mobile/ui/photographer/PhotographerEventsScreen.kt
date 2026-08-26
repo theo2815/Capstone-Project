@@ -15,6 +15,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.runtime.*
@@ -52,6 +54,7 @@ private fun PhotographerEventSummaryDto.filterBucket(today: LocalDate = LocalDat
     }
 
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun PhotographerEventsScreen(
     viewModel: PhotographerDashboardViewModel,
     modifier: Modifier = Modifier,
@@ -167,8 +170,25 @@ fun PhotographerEventsScreen(
                         },
                     )
                 } else {
-                    LazyColumn(
+                    // Pull-to-refresh (Mobile Design skill) — same refetch as
+                    // the tab tap; spinner settles when both Jobs complete.
+                    var eventsRefreshing by remember { mutableStateOf(false) }
+                    val refreshScope = rememberCoroutineScope()
+                    PullToRefreshBox(
+                        isRefreshing = eventsRefreshing,
+                        onRefresh = {
+                            eventsRefreshing = true
+                            refreshScope.launch {
+                                val a = viewModel.fetchEvents()
+                                val b = viewModel.fetchPublicEvents()
+                                a.join(); b.join()
+                                eventsRefreshing = false
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth().weight(1f),
+                    ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         contentPadding = PaddingValues(bottom = 24.dp),
                     ) {
@@ -194,6 +214,7 @@ fun PhotographerEventsScreen(
                                 )
                             }
                         }
+                }
                 }
             }
         }

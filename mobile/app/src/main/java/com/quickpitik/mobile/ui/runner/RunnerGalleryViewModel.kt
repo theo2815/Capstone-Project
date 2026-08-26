@@ -194,8 +194,10 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         super.onCleared()
     }
 
-    fun fetchPublicEvents() {
-        viewModelScope.launch {
+    // Returns the Job so pull-to-refresh can join() it and settle its spinner
+    // when the fetch actually finishes (existing fire-and-forget callers are
+    // unaffected).
+    fun fetchPublicEvents(): Job = viewModelScope.launch {
             // Only show the skeleton on first load; re-fetches (screen re-entry,
             // future pull-to-refresh) keep the existing list visible so the UI
             // doesn't flash back to a loading state on every navigation.
@@ -223,7 +225,6 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 _eventsState.value = RunnerEventsState.Error(e.localizedMessage ?: "Failed to connect to backend server.")
             }
         }
-    }
 
     // Resolve a loaded event by slug. Used by the profile race log's "Open →" to
     // jump straight into the cockpit for a saved/purchased event without a second

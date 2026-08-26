@@ -37,6 +37,12 @@ class RunnerInboxViewModel(application: Application) : AndroidViewModel(applicat
     private val _messages = MutableStateFlow<List<RunnerMessageDto>>(emptyList())
     val messages: StateFlow<List<RunnerMessageDto>> = _messages
 
+    // Non-null while the last fetch failed AND there is nothing cached to
+    // show. The bell stays ambient (hidden at zero, failure included), but
+    // the SHEET must not render a dead network as "No messages yet."
+    private val _fetchError = MutableStateFlow<String?>(null)
+    val fetchError: StateFlow<String?> = _fetchError
+
     val unreadCount: StateFlow<Int> = _messages
         .map { list -> list.count { it.readAt == null } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
@@ -84,11 +90,16 @@ class RunnerInboxViewModel(application: Application) : AndroidViewModel(applicat
                 val response = RetrofitClient.apiService.getRunnerMessages("Bearer $token")
                 if (response.success && response.data != null) {
                     _messages.value = response.data
+                    _fetchError.value = null
                 }
             } catch (e: Exception) {
-                // Fail silently: the inbox is ambient, and a failed poll must not
-                // interrupt whatever the runner was actually doing. Same posture
-                // as the photographer inbox.
+                // Quiet while cached messages exist (the inbox is ambient and a
+                // failed poll must not interrupt the runner) — but with nothing
+                // cached the sheet needs to say WHY it's empty, not fake an
+                // empty inbox.
+                if (_messages.value.isEmpty()) {
+                    _fetchError.value = RetrofitClient.parseError(e)
+                }
             }
         }
     }
