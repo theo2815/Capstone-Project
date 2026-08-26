@@ -574,6 +574,7 @@ class MainActivity : ComponentActivity() {
                                     viewModel = runnerViewModel,
                                     cartViewModel = cartViewModel,
                                     inboxViewModel = runnerInboxViewModel,
+                                    savedEventsViewModel = savedEventsViewModel,
                                     onNavigateToOrders = {
                                         navController.navigate("orders")
                                     },

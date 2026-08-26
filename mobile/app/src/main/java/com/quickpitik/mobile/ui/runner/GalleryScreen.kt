@@ -12,6 +12,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -26,6 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
@@ -68,6 +71,7 @@ fun RunnerGalleryScreen(
     viewModel: RunnerGalleryViewModel,
     cartViewModel: CartViewModel,
     inboxViewModel: RunnerInboxViewModel,
+    savedEventsViewModel: SavedEventsViewModel,
     onNavigateToOrders: () -> Unit,
     onNavigateToProfile: () -> Unit,
     onNavigateToSettings: () -> Unit,
@@ -153,6 +157,9 @@ fun RunnerGalleryScreen(
     if (isTrueRunner) LaunchedEffect(activeEvent?.slug) {
         activeEvent?.slug?.let { viewModel.loadPhotoAlert(it) }
     }
+    // Selfie library for the picker in the Selfie Match card (Bearer, any role).
+    LaunchedEffect(Unit) { viewModel.loadSelfies() }
+    val eventDetail by viewModel.eventDetail.collectAsState()
 
     // Lock the Runner Dashboard to the uniform Light Warm Cream Brand Theme
     Surface(
@@ -191,7 +198,23 @@ fun RunnerGalleryScreen(
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        // Save-event affordance ON the event page (web parity:
+                        // the cockpit header carries a SaveButton) — previously
+                        // save only existed back on the discovery tile.
                         if (isTrueRunner) {
+                            val savedIds by savedEventsViewModel.savedIds.collectAsState()
+                            val event = activeEvent
+                            if (event != null) {
+                                val saved = event.id in savedIds
+                                IconButton(onClick = { savedEventsViewModel.toggle(event) }) {
+                                    Icon(
+                                        imageVector = if (saved) Icons.Default.Favorite
+                                        else Icons.Default.FavoriteBorder,
+                                        contentDescription = if (saved) "Remove from saved" else "Save event",
+                                        tint = if (saved) Fresh else Slate,
+                                    )
+                                }
+                            }
                             RunnerInboxBell(
                                 messageCount = inboxMessages.size,
                                 unreadCount = inboxUnread,
@@ -362,6 +385,61 @@ fun RunnerGalleryScreen(
                     }
                 }
 
+                // About strip — web AboutStrip parity: organizer, description,
+                // categories, and the pricing block. Renders once the detail
+                // endpoint answers; the cockpit works without it.
+                eventDetail?.let { detail ->
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        QpCard(modifier = Modifier.fillMaxWidth()) {
+                            Kicker("About this race", color = Slate)
+                            if (!detail.organizerName.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Organized by ${detail.organizerName}",
+                                    style = Typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Ink,
+                                )
+                            }
+                            if (!detail.description.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = detail.description,
+                                    style = Typography.bodyMedium,
+                                    color = Slate,
+                                )
+                            }
+                            if (detail.categories.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    detail.categories.take(4).forEach { category ->
+                                        StatusChip(text = category, tone = StatusTone.Neutral)
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Divider(color = Line)
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = buildString {
+                                    append("₱${"%,.0f".format(detail.pricePerPhoto)} per photo")
+                                    if (detail.bundlePrice != null && detail.bundleSize != null) {
+                                        append(" · or ₱${"%,.0f".format(detail.bundlePrice)} for ${detail.bundleSize}")
+                                    }
+                                },
+                                style = NumeralStyle.copy(fontSize = 14.sp),
+                                color = Ink,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Watermarked previews are free. Pay once, download forever.",
+                                style = Typography.bodySmall,
+                                color = SlateSoft,
+                            )
+                        }
+                    }
+                }
+
                 // AI Search Selector Cards (Selfie vs Bib)
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Row(
@@ -433,12 +511,65 @@ fun RunnerGalleryScreen(
                                     color = InkSoft
                                 )
                                 Spacer(modifier = Modifier.height(16.dp))
-                                // Primary: search with a saved library selfie
-                                PrimaryCta(
-                                    text = "Search with stored selfie",
-                                    onClick = { viewModel.searchByStoredSelfie() },
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
+                                // Selfie picker — web SelfieSearchPanel parity:
+                                // the runner picks WHICH stored selfie to match
+                                // with; tapping a thumbnail fires the search.
+                                // Falls back to the primary-selfie CTA when the
+                                // library hasn't loaded (or is empty).
+                                val librarySelfies by viewModel.selfies.collectAsState()
+                                if (librarySelfies.isNotEmpty()) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        librarySelfies.take(5).forEach { selfie ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .aspectRatio(1f)
+                                                    .clip(TileShape)
+                                                    .border(
+                                                        width = if (selfie.isPrimary) 2.dp else 1.dp,
+                                                        color = if (selfie.isPrimary) Fresh else Line,
+                                                        shape = TileShape,
+                                                    )
+                                                    .clickable { viewModel.searchBySelfieId(selfie.id) },
+                                            ) {
+                                                AsyncImage(
+                                                    model = RetrofitClient.resolveImageUrl(selfie.dataUrl),
+                                                    contentDescription = "Search with this selfie",
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                )
+                                                if (selfie.isPrimary) {
+                                                    Kicker(
+                                                        text = "Primary",
+                                                        color = Fresh,
+                                                        modifier = Modifier
+                                                            .align(Alignment.BottomCenter)
+                                                            .background(Bone.copy(alpha = 0.85f))
+                                                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "Tap a selfie to search with it.",
+                                        style = Typography.bodySmall,
+                                        color = SlateSoft,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                } else {
+                                    // Primary: search with a saved library selfie
+                                    PrimaryCta(
+                                        text = "Search with stored selfie",
+                                        onClick = { viewModel.searchByStoredSelfie() },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -640,6 +771,40 @@ fun RunnerGalleryScreen(
                                 }
                             }
                         } else {
+                            // "Buy all N · ₱X →" — web BuyAllBar parity: one
+                            // tap adds every visible match to the cart. Shown
+                            // only on a filtered result set (your matches, not
+                            // the whole wall) and only for true runners (cart
+                            // is RUNNER-gated server-side).
+                            if (isFiltered && isTrueRunner) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    val allInCart = state.photos.all { p ->
+                                        cartItems.any { it.photoId == p.id }
+                                    }
+                                    val bulkTotal = state.photos.sumOf { it.price }
+                                    PrimaryCta(
+                                        text = when {
+                                            allInCart -> "Added · ${state.photos.size} in cart ✓"
+                                            state.photos.size == 1 ->
+                                                "Buy 1 · ₱${"%,.0f".format(bulkTotal)} →"
+                                            else ->
+                                                "Buy all ${state.photos.size} · ₱${"%,.0f".format(bulkTotal)} →"
+                                        },
+                                        enabled = !allInCart,
+                                        onClick = {
+                                            val event = activeEvent ?: return@PrimaryCta
+                                            state.photos.forEach { p ->
+                                                if (cartItems.none { it.photoId == p.id }) {
+                                                    cartViewModel.addToCart(
+                                                        p, event.id, event.slug, event.name,
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                            }
                             items(state.photos, key = { it.id }) { photo ->
                                 val photoInCart = cartItems.any { it.photoId == photo.id }
                                 Box(
@@ -722,6 +887,32 @@ fun RunnerGalleryScreen(
                                                 },
                                             )
                                         }
+                                    }
+                                }
+                            }
+                            // Load more + "Showing first N of M" — web
+                            // LoadMoreButton parity. Face results are one-shot
+                            // (total == size), so this renders only for the
+                            // paged bib/browse queries.
+                            if (state.total > state.photos.size) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 8.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                    ) {
+                                        GhostCta(
+                                            text = if (state.loadingMore) "Loading…" else "Load more",
+                                            enabled = !state.loadingMore,
+                                            onClick = { viewModel.loadMorePhotos() },
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Kicker(
+                                            text = "Showing first ${state.photos.size} of ${state.total}",
+                                            color = SlateSoft,
+                                        )
                                     }
                                 }
                             }

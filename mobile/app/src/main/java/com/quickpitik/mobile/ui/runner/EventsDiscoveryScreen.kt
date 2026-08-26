@@ -131,8 +131,17 @@ fun EventsDiscoveryScreen(
         }
     }
     LaunchedEffect(savedMessage) {
-        savedMessage?.let {
-            snackbarHostState.showSnackbar(it)
+        savedMessage?.let { msg ->
+            // An unsave carries an Undo action (web parity — accidental
+            // unsaves happen); everything else is a plain toast.
+            val undo = savedEventsViewModel.undoCandidate.value
+            val result = snackbarHostState.showSnackbar(
+                message = msg,
+                actionLabel = if (undo != null) "Undo" else null,
+            )
+            if (result == SnackbarResult.ActionPerformed && undo != null) {
+                savedEventsViewModel.undoUnsave(undo.first, undo.second)
+            }
             savedEventsViewModel.clearMessage()
         }
     }

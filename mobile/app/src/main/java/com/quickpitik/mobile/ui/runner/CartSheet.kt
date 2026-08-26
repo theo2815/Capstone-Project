@@ -312,6 +312,16 @@ private fun CartSheetRow(
                 color = Ink,
                 maxLines = 2,
             )
+            // Bib + time — web cart-modal parity ("Untagged" when no bib).
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = buildString {
+                    append(item.bib?.takeIf { it.isNotBlank() }?.let { "Bib $it" } ?: "Untagged")
+                    item.time?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                },
+                style = NumeralStyle.copy(fontSize = 11.sp),
+                color = SlateSoft,
+            )
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(

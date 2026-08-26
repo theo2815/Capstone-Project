@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
+import com.quickpitik.mobile.data.remote.EventDetailDto
 import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.QpWebSocket
@@ -34,7 +35,13 @@ sealed class RunnerEventsState {
 sealed class PhotosSearchState {
     object Idle : PhotosSearchState()
     object Loading : PhotosSearchState()
-    data class Success(val photos: List<PhotoDto>) : PhotosSearchState()
+    data class Success(
+        val photos: List<PhotoDto>,
+        // Server-side total for "Showing first N of M" + the Load more CTA.
+        // Face-search results are one-shot (total == photos.size).
+        val total: Long = 0,
+        val loadingMore: Boolean = false,
+    ) : PhotosSearchState()
     data class Error(val message: String) : PhotosSearchState()
 }
 
@@ -69,6 +76,29 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
 
     private val _photoAlert = MutableStateFlow<PhotoAlertUiState>(PhotoAlertUiState.Loading)
     val photoAlert: StateFlow<PhotoAlertUiState> = _photoAlert
+
+    // Editorial detail for the AboutStrip (organizer, description, categories,
+    // pricing) — GET /events/{slug}, fetched best-effort on selectEvent. Null
+    // until loaded (or on failure): the strip simply doesn't render, the
+    // cockpit works without it.
+    private val _eventDetail = MutableStateFlow<EventDetailDto?>(null)
+    val eventDetail: StateFlow<EventDetailDto?> = _eventDetail
+
+    // Selfie library for the cockpit's face-search picker — the runner picks
+    // WHICH selfie to match with (web SelfieSearchPanel parity), instead of
+    // the old silent primary-only button.
+    private val _selfies = MutableStateFlow<List<SelfieRefDto>>(emptyList())
+    val selfies: StateFlow<List<SelfieRefDto>> = _selfies
+
+    fun loadSelfies() {
+        viewModelScope.launch {
+            val token = SessionManager.getInstance(getApplication()).getAccessToken() ?: return@launch
+            runCatching { RetrofitClient.apiService.getSelfies("Bearer $token") }
+                .getOrNull()
+                ?.takeIf { it.success && it.data != null }
+                ?.let { _selfies.value = it.data!! }
+        }
+    }
 
     // ---- Live photo arrival (/ws/events/{id}/photos) ------------------------
     //
@@ -235,6 +265,18 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     fun selectEvent(event: EventDto) {
         _activeEvent.value = event
         _isFiltered.value = false
+        // Editorial detail is best-effort and non-blocking — the cockpit
+        // renders from the list DTO while this fills the AboutStrip in.
+        _eventDetail.value = null
+        viewModelScope.launch {
+            runCatching { RetrofitClient.apiService.getEventDetail(event.slug) }
+                .getOrNull()
+                ?.takeIf { it.success && it.data != null }
+                ?.let { detail ->
+                    // Guard against a stale response after a rapid re-select.
+                    if (_activeEvent.value?.slug == event.slug) _eventDetail.value = detail.data
+                }
+        }
         // Only channel STATE is reset here; the socket itself is owned by the
         // cockpit's lifecycle effect, which is keyed on the active event id and
         // so tears down / reopens on its own when this value changes. A pending
@@ -259,6 +301,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         _activeEvent.value = null
         _searchState.value = PhotosSearchState.Idle
         _isFiltered.value = false
+        _eventDetail.value = null
         // As in selectEvent: the lifecycle effect closes the socket when the
         // active event id changes. Here we only drop the derived state.
         liveRefreshJob?.cancel()
@@ -305,7 +348,10 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     bib = query
                 )
                 if (response.success && response.data != null) {
-                    _searchState.value = PhotosSearchState.Success(response.data.items)
+                    _searchState.value = PhotosSearchState.Success(
+                        photos = response.data.items,
+                        total = response.data.total,
+                    )
                 } else if (showLoading) {
                     _searchState.value = PhotosSearchState.Error(response.error ?: "Search lookup failed.")
                 }
@@ -324,6 +370,43 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         // Explicit tap — no reason to sit out the keystroke debounce.
         bibSearchJob?.cancel()
         runBibSearch("", showLoading = true)
+    }
+
+    /**
+     * Appends the next page of the CURRENT bib/browse query ("Load more").
+     * Face-search results are one-shot and never paged, matching the website.
+     */
+    fun loadMorePhotos() {
+        val event = _activeEvent.value ?: return
+        val current = _searchState.value as? PhotosSearchState.Success ?: return
+        if (isFaceSearchMode || current.loadingMore) return
+        if (current.photos.size >= current.total) return
+        viewModelScope.launch {
+            _searchState.value = current.copy(loadingMore = true)
+            try {
+                val token = SessionManager.getInstance(getApplication()).getAccessToken()
+                val response = RetrofitClient.apiService.getEventPhotos(
+                    token = token?.let { "Bearer $it" },
+                    slug = event.slug,
+                    bib = activeBibQuery.ifEmpty { null },
+                    offset = current.photos.size,
+                )
+                if (response.success && response.data != null) {
+                    // Dedupe by id: a photo published between the two pages
+                    // shifts offsets and could deliver a duplicate row.
+                    val seen = current.photos.mapTo(HashSet()) { it.id }
+                    _searchState.value = PhotosSearchState.Success(
+                        photos = current.photos + response.data.items.filter { it.id !in seen },
+                        total = response.data.total,
+                    )
+                } else {
+                    _searchState.value = current.copy(loadingMore = false)
+                }
+            } catch (e: Exception) {
+                // Keep what's on screen; the CTA simply becomes tappable again.
+                _searchState.value = current.copy(loadingMore = false)
+            }
+        }
     }
 
     // Website-parity copy for face-search failures (bib-search-panels.tsx
@@ -372,7 +455,10 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     selfie = selfiePart
                 )
                 if (response.success && response.data != null) {
-                    _searchState.value = PhotosSearchState.Success(response.data.items)
+                    _searchState.value = PhotosSearchState.Success(
+                        photos = response.data.items,
+                        total = response.data.items.size.toLong(),
+                    )
                 } else {
                     val err = response.errors?.firstOrNull()
                     _searchState.value =
@@ -411,6 +497,43 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    /**
+     * Face search with a SPECIFIC stored selfie — the cockpit's picker grid
+     * (web SelfieSearchPanel parity: tapping a thumbnail fires the search).
+     */
+    fun searchBySelfieId(selfieId: String) {
+        val event = _activeEvent.value ?: return
+        _isFiltered.value = true
+        isFaceSearchMode = true
+        val token = SessionManager.getInstance(getApplication()).getAccessToken()
+        if (token == null) {
+            _searchState.value = PhotosSearchState.Error("Authentication token not found. Please log in.")
+            return
+        }
+        viewModelScope.launch {
+            _searchState.value = PhotosSearchState.Loading
+            try {
+                val response = RetrofitClient.apiService.searchPhotosByFaceJson(
+                    token = "Bearer $token",
+                    slug = event.slug,
+                    request = SearchByFaceJsonRequest(selfieId = selfieId)
+                )
+                if (response.success && response.data != null) {
+                    _searchState.value = PhotosSearchState.Success(
+                        photos = response.data.items,
+                        total = response.data.items.size.toLong(),
+                    )
+                } else {
+                    val err = response.errors?.firstOrNull()
+                    _searchState.value =
+                        PhotosSearchState.Error(humanizeFaceSearchError(err?.code, err?.message))
+                }
+            } catch (e: Exception) {
+                _searchState.value = PhotosSearchState.Error(faceSearchErrorFrom(e))
+            }
+        }
+    }
+
     fun searchByStoredSelfie() {
         val event = _activeEvent.value ?: return
         _isFiltered.value = true
@@ -445,7 +568,10 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     request = SearchByFaceJsonRequest(selfieId = primarySelfie.id)
                 )
                 if (response.success && response.data != null) {
-                    _searchState.value = PhotosSearchState.Success(response.data.items)
+                    _searchState.value = PhotosSearchState.Success(
+                        photos = response.data.items,
+                        total = response.data.items.size.toLong(),
+                    )
                 } else {
                     val err = response.errors?.firstOrNull()
                     _searchState.value =

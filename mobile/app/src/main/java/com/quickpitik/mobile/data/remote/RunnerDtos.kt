@@ -12,6 +12,28 @@ data class EventDto(
     val status: String // "LIVE", "COMPLETED", etc.
 )
 
+// GET /events/{slug} — backend dto/events/EventDetailDto. The list DTO above
+// deliberately omits the editorial fields (description, organizer, categories,
+// pricing); this carries them for the cockpit's AboutStrip. All content
+// fields nullable-with-defaults so a trimmed backend payload can't NPE Gson.
+data class EventDetailDto(
+    val id: String,
+    val slug: String,
+    val name: String,
+    val date: String,
+    val location: String,
+    val bannerUrl: String? = null,
+    val photoCount: Int = 0,
+    val participantCount: Int = 0,
+    val status: String = "",
+    val description: String? = null,
+    val organizerName: String? = null,
+    val categories: List<String> = emptyList(),
+    val pricePerPhoto: Double = 0.0,
+    val bundlePrice: Double? = null,
+    val bundleSize: Int? = null,
+)
+
 data class PhotoDto(
     val id: String,
     val bib: String?,

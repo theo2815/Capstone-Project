@@ -257,6 +257,13 @@ interface QuickPitikApi {
         @Query("limit") limit: Int = 100
     ): ApiResponseEnvelope<PaginatedResponse<EventDto>>
 
+    // Event editorial detail (organizer, description, categories, pricing) —
+    // the cockpit's AboutStrip. The list endpoint deliberately omits these.
+    @GET("api/v1/events/{slug}")
+    suspend fun getEventDetail(
+        @Path("slug") slug: String
+    ): ApiResponseEnvelope<EventDetailDto>
+
     // The route is public, but the bearer matters when signed in: the backend
     // reads principal?.userId to populate PhotoDto.cleanUrl for photos the
     // caller owns (unwatermarked lightbox) and to rate-bucket bib search per

@@ -62,6 +62,22 @@ class SavedEventsRepositoryImpl : SavedEventsRepository {
         }
     }
 
+    override suspend fun saveById(token: String, eventId: String): Result<SavedEventSummaryDto> {
+        return try {
+            val response = api.saveEvent("Bearer $token", SaveEventRequest(eventId))
+            if (response.success && response.data != null) {
+                if (_saved.value.none { it.id == eventId }) {
+                    _saved.value = _saved.value + response.data
+                }
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Failed to save event"))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(RetrofitClient.parseError(e)))
+        }
+    }
+
     override suspend fun unsave(token: String, eventId: String): Result<Boolean> {
         val original = _saved.value
         _saved.value = original.filter { it.id != eventId }

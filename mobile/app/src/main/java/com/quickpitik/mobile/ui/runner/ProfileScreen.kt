@@ -87,11 +87,21 @@ fun ProfileScreen(
 
     val context = LocalContext.current
     var tempImageUri by remember { mutableStateOf<Uri?>(null) }
+    // Declared before the launchers below, which write to it from callbacks.
+    var snackbarMessage by remember { mutableStateOf<String?>(null) }
 
+    // Multi-select (web selfie-library parity): pick several angles at once,
+    // capped to the open slots. Overflow is announced, not silently dropped.
     val galleryLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        uri?.let { viewModel.uploadSelfie(it) }
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val remaining = (SELFIE_MAX - selfies.size).coerceAtLeast(0)
+        uris.take(remaining).forEach { viewModel.uploadSelfie(it) }
+        if (uris.size > remaining) {
+            snackbarMessage = "The library holds $SELFIE_MAX selfies — " +
+                "${uris.size - remaining} didn't fit."
+        }
     }
 
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -106,11 +116,27 @@ fun ProfileScreen(
 
     val hapticFire = rememberQpHaptic()
     val snackbarHostState = remember { SnackbarHostState() }
-    var snackbarMessage by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(snackbarMessage) {
         snackbarMessage?.let { msg ->
             snackbarHostState.showSnackbar(msg)
             snackbarMessage = null
+        }
+    }
+    // Saved-events feedback (race-log Unsave) — with an Undo action, web
+    // parity. This screen previously never surfaced the VM's message at all,
+    // so an unsave here was completely silent.
+    val savedMessage by savedEventsViewModel.message.collectAsState()
+    LaunchedEffect(savedMessage) {
+        savedMessage?.let { msg ->
+            val undo = savedEventsViewModel.undoCandidate.value
+            val result = snackbarHostState.showSnackbar(
+                message = msg,
+                actionLabel = if (undo != null) "Undo" else null,
+            )
+            if (result == SnackbarResult.ActionPerformed && undo != null) {
+                savedEventsViewModel.undoUnsave(undo.first, undo.second)
+            }
+            savedEventsViewModel.clearMessage()
         }
     }
 
@@ -448,9 +474,10 @@ private fun SelfieGrid(
             else -> 2
         }
         val gap = if (maxWidth >= 768.dp) 16.dp else 12.dp
-        // The add tile trails the list while under the cap, mirroring the web's
-        // file-input tile.
-        val cellCount = selfies.size + if (selfies.size < SELFIE_MAX) 1 else 0
+        // The trailing tile is the add affordance under the cap, and a cap
+        // EXPLAINER at 5/5 (web SelfieCapTile parity — the tile silently
+        // vanishing read as a bug, not a limit).
+        val cellCount = selfies.size + 1
 
         Column(verticalArrangement = Arrangement.spacedBy(gap)) {
             (0 until cellCount step columns).forEach { rowStart ->
@@ -468,10 +495,11 @@ private fun SelfieGrid(
                                     )
                                 }
                             }
-                            cell < cellCount -> SelfieAddTile(
-                                onClick = onAdd,
-                                modifier = Modifier.weight(1f),
-                            )
+                            cell < cellCount ->
+                                if (selfies.size < SELFIE_MAX) SelfieAddTile(
+                                    onClick = onAdd,
+                                    modifier = Modifier.weight(1f),
+                                ) else SelfieCapTile(modifier = Modifier.weight(1f))
                             // Empty filler keeps a partial row's tiles the same
                             // width as a full row's.
                             else -> Spacer(modifier = Modifier.weight(1f))
@@ -480,6 +508,26 @@ private fun SelfieGrid(
                 }
             }
         }
+    }
+}
+
+// Shown at 5/5 in place of the add tile — says WHY adding is closed (web
+// SelfieCapTile parity).
+@Composable
+private fun SelfieCapTile(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .aspectRatio(1f)
+            .border(1.dp, Line, TileShape)
+            .padding(8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "Library full — remove one to add another.",
+            style = Typography.bodySmall,
+            color = SlateSoft,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 

@@ -2,6 +2,7 @@ package com.quickpitik.mobile.ui.runner
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -655,6 +656,37 @@ fun RefundRequestDialog(
 
                 // Sticky footer actions
                 Divider(color = Line)
+                // Collapsible refund policy — web refund-modal parity (its
+                // <details> block). The full-dialog version stays reachable
+                // from the event page; this keeps the terms one tap away at
+                // the moment of asking.
+                var policyExpanded by remember { mutableStateOf(false) }
+                Column(modifier = Modifier.padding(horizontal = 24.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clickable { policyExpanded = !policyExpanded }
+                            .padding(vertical = 6.dp),
+                    ) {
+                        Kicker(
+                            text = if (policyExpanded) "Hide refund policy" else "Read our refund policy",
+                            color = Slate,
+                        )
+                    }
+                    if (policyExpanded) {
+                        REFUND_POLICY_BULLETS.forEach { (kicker, body) ->
+                            Column(modifier = Modifier.padding(bottom = 10.dp)) {
+                                Kicker(text = kicker, color = SlateSoft)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = body,
+                                    style = Typography.bodySmall,
+                                    color = Slate,
+                                )
+                            }
+                        }
+                    }
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
