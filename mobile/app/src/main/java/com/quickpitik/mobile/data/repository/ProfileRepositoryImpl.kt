@@ -6,7 +6,7 @@ import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
 class ProfileRepositoryImpl : ProfileRepository {
-    private val api = RetrofitClient.apiService
+    private val api get() = RetrofitClient.apiService
 
     override suspend fun getSelfies(token: String): Result<List<SelfieRefDto>> {
         return try {

@@ -41,12 +41,9 @@ private const val RECEIPT_PAGE = 10
 @Composable
 fun OrdersScreen(
     viewModel: CartViewModel,
-    onNavigateBack: () -> Unit,
-    // Deep-link target from the runner inbox: a dispute-outcome message carries
-    // an orderId, and tapping it should land on that order's detail with the
-    // refund timeline already open (the website does this via /orders?expand=).
-    // Seeding selectedOrderId is enough — the LaunchedEffect below fetches it.
+    onNavigateBack: () -> Unit = {},
     initialOrderId: String? = null,
+    onLogout: () -> Unit = {}
 ) {
     val ordersState by viewModel.ordersState.collectAsState()
     val orderDetailState by viewModel.orderDetailState.collectAsState()
@@ -141,32 +138,16 @@ fun OrdersScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp)
                 .statusBarsPadding()
                 .navigationBarsPadding()
+                .padding(top = 24.dp)
         ) {
             if (selectedOrderId == null) {
                 // Main Orders List View
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = onNavigateBack,
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = BoneDeep)
-                    ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Ink)
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column {
-                        Kicker("Marketplace")
-                        Text(
-                            text = "Order history",
-                            style = Typography.headlineSmall,
-                            color = Ink
-                        )
-                    }
-                }
+                RunnerTopBar(
+                    kicker = "ORDER HISTORY",
+                    onLogout = onLogout
+                )
                 Spacer(modifier = Modifier.height(24.dp))
 
                 when (val state = ordersState) {
@@ -193,82 +174,76 @@ fun OrdersScreen(
                             state.orders.filter { it.status == "PAID" || it.status == "FULFILLED" }
                         }
                         if (visibleOrders.isEmpty()) {
-                            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
-                                    Text("No Orders Found", style = Typography.titleMedium, fontWeight = FontWeight.Bold, color = Ink)
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = "Any photo checkouts you complete on this account will be listed here for digital high-res downloading.",
-                                        style = Typography.bodyMedium,
-                                        color = SlateSoft,
-                                        textAlign = TextAlign.Center
-                                    )
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                                    .padding(horizontal = 24.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                contentPadding = PaddingValues(bottom = 24.dp)
+                            ) {
+                                item {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                                    ) {
+                                        Kicker("01  SPEND")
+                                        Text(
+                                            text = "Your purchase totals will land here once you keep your first photo.",
+                                            style = Typography.bodyMedium,
+                                            color = Slate
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Divider(color = Line, thickness = 1.dp)
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Kicker("02  RECEIPTS")
+                                        Text(
+                                            text = "No receipts yet. Complete your first checkout to view receipts here.",
+                                            style = Typography.bodyMedium,
+                                            color = Slate
+                                        )
+                                    }
                                 }
                             }
                         } else {
                             val spendStats = remember(visibleOrders) { computeSpendStats(visibleOrders) }
-                            // Client-side paging, port of the website's LoadMoreButton.
-                            // Spend stats stay computed over ALL orders — only the
-                            // rendered rows are capped.
                             val pagedOrders = visibleOrders.take(receiptLimit)
                             LazyColumn(
-                                modifier = Modifier.fillMaxWidth().weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                                    .padding(horizontal = 24.dp),
+                                contentPadding = PaddingValues(bottom = 24.dp)
                             ) {
                                 item { SpendSection(spendStats) }
-                                items(pagedOrders, key = { it.id }) { order ->
-                                    Card(
-                                        onClick = { selectedOrderId = order.id },
-                                        colors = CardDefaults.cardColors(containerColor = BoneDeep),
-                                        border = BorderStroke(1.dp, Line),
-                                        shape = QpCardShape,
-                                        modifier = Modifier.fillMaxWidth()
+                                item {
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(bottom = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(16.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = order.eventName ?: "Marathon Event",
-                                                    style = Typography.titleMedium,
-                                                    color = Ink
-                                                )
-                                                Text(
-                                                    text = "${order.photoIds.size} photos · ${order.paymentMethod}",
-                                                    style = Typography.bodySmall,
-                                                    color = SlateSoft
-                                                )
-                                                Spacer(modifier = Modifier.height(6.dp))
-                                                Text(
-                                                    text = String.format("₱%,.2f", order.total),
-                                                    style = NumeralStyle.copy(fontSize = 16.sp),
-                                                    color = Fresh
-                                                )
-                                                // Refund state at a glance, so the runner doesn't
-                                                // have to open each receipt to find the one still
-                                                // in review. Renders nothing when there's no
-                                                // dispute. Backend already sends `disputes` on the
-                                                // list DTO, so this costs no extra fetch.
-                                                RefundStatusChip(
-                                                    rollup = computeRefundRollup(
-                                                        photoCount = order.photoIds.size,
-                                                        disputes = order.disputes,
-                                                    ),
-                                                    photoCount = order.photoIds.size,
-                                                )
-                                            }
-                                            // No payment-status chip — mirrors website /orders which never
-                                            // renders PAID/PENDING on the receipt row. PENDING orders (abandoned
-                                            // PayMongo sessions) still appear in the list because the backend
-                                            // returns every order; the chevron alone signals tap-for-detail.
-                                            Icon(Icons.Default.KeyboardArrowRight, contentDescription = "Detail", tint = Ink)
-                                        }
+                                        Kicker("02  RECEIPTS")
+                                        Kicker(
+                                            text = "${visibleOrders.size} ${if (visibleOrders.size == 1) "RECEIPT" else "RECEIPTS"}",
+                                            color = SlateSoft
+                                        )
                                     }
+                                }
+                                items(pagedOrders, key = { it.id }) { order ->
+                                    ReceiptRowItem(
+                                        order = order,
+                                        onClick = { selectedOrderId = order.id }
+                                    )
+                                    Divider(color = Line, thickness = 1.dp)
                                 }
                                 if (visibleOrders.size > pagedOrders.size) {
                                     item {
+                                        Spacer(modifier = Modifier.height(16.dp))
                                         GhostCta(
                                             text = "LOAD MORE",
                                             onClick = { receiptLimit += RECEIPT_PAGE },
@@ -283,7 +258,10 @@ fun OrdersScreen(
             } else {
                 // Order Detail & High-Res Download View
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .padding(horizontal = 24.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
@@ -326,8 +304,12 @@ fun OrdersScreen(
                     is OrderDetailState.Success -> {
                         val order = detailState.order
                         LazyColumn(
-                            modifier = Modifier.fillMaxWidth().weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .padding(horizontal = 24.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            contentPadding = PaddingValues(bottom = 24.dp)
                         ) {
                             // Order summary header card + bundle download
                             item {
@@ -545,76 +527,147 @@ private fun OrderPhotoDetailDto.toOwnedPreviewData(eventName: String?): PhotoPre
 // historically rare.
 @Composable
 private fun SpendSection(stats: SpendStats) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
-        border = BorderStroke(1.dp, Line),
-        shape = QpCardShape,
-        modifier = Modifier.fillMaxWidth()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
-            Kicker("Lifetime totals")
-            Spacer(modifier = Modifier.height(14.dp))
+        Kicker("01  SPEND")
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = String.format(Locale.US, "₱%,.2f", stats.total),
+                style = NumeralStyle.copy(fontSize = 36.sp, fontWeight = FontWeight.ExtraBold),
+                color = Fresh
+            )
+            Kicker(text = "SPENT", color = SlateSoft)
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = stats.orderCount.toString(),
+                style = NumeralStyle.copy(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                color = Ink
+            )
+            Kicker(text = if (stats.orderCount == 1) "ORDER" else "ORDERS", color = SlateSoft)
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = stats.photoCount.toString(),
+                style = NumeralStyle.copy(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                color = Ink
+            )
+            Kicker(text = if (stats.photoCount == 1) "PHOTO KEPT" else "PHOTOS KEPT", color = SlateSoft)
+        }
+
+        if (stats.firstPurchase != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Kicker(text = "SINCE ${stats.firstPurchase.uppercase()}", color = SlateSoft)
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Divider(color = Line, thickness = 1.dp)
+    }
+}
+
+@Composable
+private fun ReceiptRowItem(
+    order: OrderListItemDto,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        // Date kicker (e.g. MAY 28 · 2026)
+        Kicker(
+            text = formatReceiptDate(order.paidAt),
+            color = SlateSoft
+        )
+
+        // Event Name
+        Text(
+            text = order.eventName ?: "Event Photos",
+            style = Typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            color = Ink
+        )
+
+        // Metadata line
+        val photoCountLabel = if (order.photoIds.size == 1) "1 photo" else "${order.photoIds.size} photos"
+        val paymentMethod = labelForPaymentMethod(order.paymentMethod)
+        val orderRef = order.id.take(36)
+        Text(
+            text = "$photoCountLabel · $paymentMethod · $orderRef",
+            style = Typography.bodySmall,
+            color = Slate
+        )
+
+        // Refund status chip (if any)
+        val rollup = computeRefundRollup(
+            photoCount = order.photoIds.size,
+            disputes = order.disputes
+        )
+        RefundStatusChip(
+            rollup = rollup,
+            photoCount = order.photoIds.size
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Price & "View photos →"
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = String.format(Locale.US, "₱%,.2f", order.total),
+                style = NumeralStyle.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold),
+                color = Ink
+            )
+
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Top
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                SpendStatCell(
-                    value = String.format(Locale.ENGLISH, "₱%,d", stats.total.toLong()),
-                    label = "spent",
-                    accent = true,
-                    modifier = Modifier.weight(1f)
+                Text(
+                    text = "View photos",
+                    style = Typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                    color = Ink
                 )
-                Divider(
-                    color = Line,
-                    modifier = Modifier
-                        .width(1.dp)
-                        .height(56.dp)
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowRight,
+                    contentDescription = "View photos",
+                    tint = Ink,
+                    modifier = Modifier.size(16.dp)
                 )
-                SpendStatCell(
-                    value = stats.orderCount.toString(),
-                    label = if (stats.orderCount == 1) "order" else "orders",
-                    accent = false,
-                    modifier = Modifier.weight(1f)
-                )
-                Divider(
-                    color = Line,
-                    modifier = Modifier
-                        .width(1.dp)
-                        .height(56.dp)
-                )
-                SpendStatCell(
-                    value = stats.photoCount.toString(),
-                    label = if (stats.photoCount == 1) "photo kept" else "photos kept",
-                    accent = false,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            if (stats.firstPurchase != null) {
-                Spacer(modifier = Modifier.height(14.dp))
-                Kicker(text = "Since ${stats.firstPurchase}", color = SlateSoft)
             }
         }
     }
 }
 
-@Composable
-private fun SpendStatCell(
-    value: String,
-    label: String,
-    accent: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier.padding(horizontal = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Text(
-            text = value,
-            style = NumeralStyle.copy(fontSize = 22.sp),
-            color = if (accent) Fresh else Ink
-        )
-        Kicker(label)
+private fun labelForPaymentMethod(method: String?): String {
+    if (method.isNullOrBlank()) return "Online"
+    return when (method.lowercase()) {
+        "gcash" -> "GCash"
+        "card" -> "Card"
+        "paymaya", "maya" -> "PayMaya"
+        "grabpay", "grab_pay" -> "GrabPay"
+        else -> method.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() }
     }
+}
+
+private val RECEIPT_DATE_FMT: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("MMM dd · yyyy", Locale.US)
+
+private fun formatReceiptDate(iso: String?): String {
+    val dt = parsePaidAt(iso) ?: return "RECENT"
+    return dt.format(RECEIPT_DATE_FMT).uppercase()
 }
 
 private data class SpendStats(

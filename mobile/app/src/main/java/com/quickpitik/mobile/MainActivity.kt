@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,19 +46,46 @@ import com.quickpitik.mobile.ui.runner.ProfileViewModel
 import com.quickpitik.mobile.ui.runner.ProfileScreen
 import com.quickpitik.mobile.ui.runner.AccountSettingsScreen
 import com.quickpitik.mobile.ui.theme.QuickPitikMobileTheme
+import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.PillShape
+import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.SlateSoft
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.List
@@ -123,93 +151,25 @@ class MainActivity : ComponentActivity() {
 
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
-                val showBottomBar = currentRoute in listOf("events", "gallery", "profile", "settings", "orders")
+                val showBottomBar = currentRoute?.startsWith("orders") == true || currentRoute in listOf("events", "gallery", "profile", "settings")
 
                 Scaffold(
+                    containerColor = Bone,
                     bottomBar = {
                         if (showBottomBar) {
-                            NavigationBar(
-                                containerColor = BoneDeep,
-                                tonalElevation = 8.dp
-                            ) {
-                                NavigationBarItem(
-                                    selected = currentRoute == "events" || currentRoute == "gallery",
-                                    onClick = {
-                                        if (currentRoute != "events") {
-                                            navController.navigate("events") {
+                            RunnerFloatingBottomNav(
+                                currentRoute = currentRoute,
+                                onNavigate = { route ->
+                                    if (currentRoute != route) {
+                                        navController.navigate(route) {
+                                            if (route == "events") {
                                                 popUpTo("events") { inclusive = false }
-                                                launchSingleTop = true
                                             }
+                                            launchSingleTop = true
                                         }
-                                    },
-                                    icon = { Icon(Icons.Default.Search, contentDescription = "Browse") },
-                                    label = { Text("Browse", style = MaterialTheme.typography.labelSmall) },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = Fresh,
-                                        selectedTextColor = Fresh,
-                                        unselectedIconColor = SlateSoft,
-                                        unselectedTextColor = SlateSoft,
-                                        indicatorColor = Color.Transparent
-                                    )
-                                )
-                                NavigationBarItem(
-                                    selected = currentRoute == "profile",
-                                    onClick = {
-                                        if (currentRoute != "profile") {
-                                            navController.navigate("profile") {
-                                                launchSingleTop = true
-                                            }
-                                        }
-                                    },
-                                    icon = { Icon(Icons.Default.Face, contentDescription = "Profile") },
-                                    label = { Text("Profile", style = MaterialTheme.typography.labelSmall) },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = Fresh,
-                                        selectedTextColor = Fresh,
-                                        unselectedIconColor = SlateSoft,
-                                        unselectedTextColor = SlateSoft,
-                                        indicatorColor = Color.Transparent
-                                    )
-                                )
-                                NavigationBarItem(
-                                    selected = currentRoute?.startsWith("orders") == true,
-                                    onClick = {
-                                        if (currentRoute != "orders") {
-                                            navController.navigate("orders") {
-                                                launchSingleTop = true
-                                            }
-                                        }
-                                    },
-                                    icon = { Icon(Icons.Default.List, contentDescription = "Orders") },
-                                    label = { Text("Orders", style = MaterialTheme.typography.labelSmall) },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = Fresh,
-                                        selectedTextColor = Fresh,
-                                        unselectedIconColor = SlateSoft,
-                                        unselectedTextColor = SlateSoft,
-                                        indicatorColor = Color.Transparent
-                                    )
-                                )
-                                NavigationBarItem(
-                                    selected = currentRoute == "settings",
-                                    onClick = {
-                                        if (currentRoute != "settings") {
-                                            navController.navigate("settings") {
-                                                launchSingleTop = true
-                                            }
-                                        }
-                                    },
-                                    icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                                    label = { Text("Settings", style = MaterialTheme.typography.labelSmall) },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = Fresh,
-                                        selectedTextColor = Fresh,
-                                        unselectedIconColor = SlateSoft,
-                                        unselectedTextColor = SlateSoft,
-                                        indicatorColor = Color.Transparent
-                                    )
-                                )
-                            }
+                                    }
+                                }
+                            )
                         }
                     }
                 ) { innerPadding ->
@@ -372,6 +332,13 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onBrowseEvents = {
                                         navController.navigate("events")
+                                    },
+                                    onLogout = {
+                                        authViewModel.logout()
+                                        cartViewModel.clearCart()
+                                        navController.navigate("login") {
+                                            popUpTo("events") { inclusive = true }
+                                        }
                                     }
                                 )
                             }
@@ -406,6 +373,13 @@ class MainActivity : ComponentActivity() {
                                         navController.popBackStack()
                                     },
                                     initialOrderId = entry.arguments?.getString("orderId"),
+                                    onLogout = {
+                                        authViewModel.logout()
+                                        cartViewModel.clearCart()
+                                        navController.navigate("login") {
+                                            popUpTo("events") { inclusive = true }
+                                        }
+                                    }
                                 )
                             }
                             composable(
@@ -518,5 +492,118 @@ class MainActivity : ComponentActivity() {
                 cartViewModel.openCartSheet()
             }
         }
+    }
+}
+
+// ─── Floating-pill bottom nav for Runner ──────────────────────────────────────
+// Mirrors the Quiet Studio photographer floating pill nav format:
+// Bone background, 1dp Line border, PillShape, animated Ink active background, Bone/Slate tint.
+@Composable
+private fun RunnerFloatingBottomNav(
+    currentRoute: String?,
+    onNavigate: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(PillShape)
+                .background(Bone)
+                .border(BorderStroke(1.dp, Line), PillShape)
+                .padding(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            RunnerFloatingNavItem(
+                icon = Icons.Default.Search,
+                label = "Browse",
+                selected = currentRoute == "events" || currentRoute == "gallery",
+                onClick = { onNavigate("events") },
+                modifier = Modifier.weight(1f),
+            )
+            RunnerFloatingNavItem(
+                icon = Icons.Default.Face,
+                label = "Profile",
+                selected = currentRoute == "profile",
+                onClick = { onNavigate("profile") },
+                modifier = Modifier.weight(1f),
+            )
+            RunnerFloatingNavItem(
+                icon = Icons.Default.List,
+                label = "Orders",
+                selected = currentRoute?.startsWith("orders") == true,
+                onClick = { onNavigate("orders") },
+                modifier = Modifier.weight(1f),
+            )
+            RunnerFloatingNavItem(
+                icon = Icons.Default.Settings,
+                label = "Settings",
+                selected = currentRoute == "settings",
+                onClick = { onNavigate("settings") },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RunnerFloatingNavItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    badge: Boolean = false,
+) {
+    val bg by animateColorAsState(
+        targetValue = if (selected) Ink else Color.Transparent,
+        animationSpec = tween(180),
+        label = "runnerNavItemBg",
+    )
+    val tint by animateColorAsState(
+        targetValue = if (selected) Bone else Slate,
+        animationSpec = tween(180),
+        label = "runnerNavItemTint",
+    )
+    Column(
+        modifier = modifier
+            .heightIn(min = 56.dp)
+            .clip(PillShape)
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        if (badge) {
+            BadgedBox(
+                badge = {
+                    Badge(
+                        containerColor = Fresh,
+                        modifier = Modifier.size(6.dp),
+                    )
+                },
+            ) {
+                Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
+            }
+        } else {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = label,
+            color = tint,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
     }
 }

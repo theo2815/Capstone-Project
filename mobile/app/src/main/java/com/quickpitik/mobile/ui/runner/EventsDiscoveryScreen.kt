@@ -130,78 +130,38 @@ fun EventsDiscoveryScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(24.dp)
+                .padding(top = 24.dp)
         ) {
-            // ---- Header: brand + cart + avatar menu (same chrome as the gallery) ----
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("RACE PHOTOS · CEBU", style = Typography.labelMedium, color = Slate)
-                    Text(
-                        "QuickPitik",
-                        style = Typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Ink
-                    )
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            // ---- Sticky Header ----
+            RunnerTopBar(
+                kicker = "RACE PHOTOS · CEBU",
+                onLogout = onLogout,
+                trailingContent = {
                     RunnerInboxBell(
                         messageCount = inboxMessages.size,
                         unreadCount = inboxUnread,
                         onClick = { showInbox = true },
                     )
-                    // Cart access lives in the global FloatingCart pill — header icon dropped
-                    // to avoid two affordances pointing at the same overlay.
-                    var menuExpanded by remember { mutableStateOf(false) }
-                    val sessionManager = remember { SessionManager.getInstance(context) }
-                    val userName = sessionManager.getUserName() ?: "Runner"
-                    Box {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(BoneDeep)
-                                .clickable { menuExpanded = true },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                userName.take(1).uppercase(),
-                                color = Ink,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = menuExpanded,
-                            onDismissRequest = { menuExpanded = false },
-                            modifier = Modifier.background(Bone)
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Sign Out", color = ErrorRed) },
-                                onClick = { menuExpanded = false; onLogout() }
-                            )
-                        }
-                    }
                 }
-            }
+            )
 
             Spacer(Modifier.height(24.dp))
 
-            // ---- Hero ----
-            Text(
-                "Pick your race.",
-                style = Typography.displayLarge,
-                color = Ink
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp)
+            ) {
+                // ---- Hero ----
+                Text(
+                    "Pick your race.",
+                    style = Typography.displayLarge,
+                    color = Ink
+                )
             Text(
                 "Find your photos.",
                 style = Typography.displayLarge,
@@ -361,6 +321,7 @@ fun EventsDiscoveryScreen(
             }
 
             Spacer(Modifier.height(24.dp))
+        }
         }
     }
         SnackbarHost(

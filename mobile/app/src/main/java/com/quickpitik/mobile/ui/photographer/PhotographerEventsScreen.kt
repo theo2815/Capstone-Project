@@ -32,6 +32,7 @@ import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.runner.EventState
 import com.quickpitik.mobile.ui.runner.deriveEventState
+import com.quickpitik.mobile.ui.runner.eventDateLabel
 import com.quickpitik.mobile.ui.runner.extractCity
 import com.quickpitik.mobile.ui.theme.*
 import java.time.LocalDate
@@ -58,8 +59,14 @@ fun PhotographerEventsScreen(
     onSyncEvent: (PhotographerEventSummaryDto) -> Unit = {},
 ) {
     val eventsState by viewModel.eventsState.collectAsState()
+    val publicEventsState by viewModel.publicEventsState.collectAsState()
     val activeEvent by viewModel.activeEvent.collectAsState()
     val today = remember { LocalDate.now() }
+
+    LaunchedEffect(Unit) {
+        viewModel.fetchEvents()
+        viewModel.fetchPublicEvents()
+    }
 
     Column(
         modifier = modifier
@@ -71,44 +78,50 @@ fun PhotographerEventsScreen(
         Kicker(text = "Covered events", color = Slate)
         Spacer(modifier = Modifier.height(16.dp))
 
-        when (val state = eventsState) {
-            is EventsState.Loading -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Slate, strokeWidth = 2.dp)
-                }
+        val coveredEvents = (eventsState as? EventsState.Success)?.events.orEmpty()
+        val publicEvents = (publicEventsState as? EventsState.Success)?.events.orEmpty()
+        val all = remember(coveredEvents, publicEvents) {
+            (coveredEvents + publicEvents).distinctBy { it.id }
+        }
+
+        val isLoading = (eventsState is EventsState.Loading || publicEventsState is EventsState.Loading) && all.isEmpty()
+        val isError = eventsState is EventsState.Error && publicEventsState is EventsState.Error && all.isEmpty()
+
+        if (isLoading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Slate, strokeWidth = 2.dp)
             }
-            is EventsState.Error -> {
-                ErrorView(
-                    message = state.message,
-                    onRetry = { viewModel.fetchEvents() },
+        } else if (isError) {
+            val errorMsg = (eventsState as? EventsState.Error)?.message
+                ?: (publicEventsState as? EventsState.Error)?.message
+                ?: "Failed to load events."
+            ErrorView(
+                message = errorMsg,
+                onRetry = {
+                    viewModel.fetchEvents()
+                    viewModel.fetchPublicEvents()
+                },
+            )
+        } else {
+            val buckets = remember(all, today) { all.groupBy { it.filterBucket(today) } }
+            val liveCount = buckets[StatusFilter.LIVE]?.size ?: 0
+            val upcomingCount = buckets[StatusFilter.UPCOMING]?.size ?: 0
+            val completedCount = buckets[StatusFilter.COMPLETED]?.size ?: 0
+
+            var selectedFilter by remember(liveCount, upcomingCount, completedCount) {
+                mutableStateOf(
+                    when {
+                        liveCount > 0 -> StatusFilter.LIVE
+                        upcomingCount > 0 -> StatusFilter.UPCOMING
+                        else -> StatusFilter.COMPLETED
+                    }
                 )
             }
-            is EventsState.Success -> {
-                // Drop the active-event injection from the prior pass — the picker
-                // owns "what's active." This screen is about the photographer's
-                // covered set, plus their upcoming roster.
-                val all = state.events
-                val buckets = remember(all) { all.groupBy { it.filterBucket(today) } }
-                val liveCount = buckets[StatusFilter.LIVE]?.size ?: 0
-                val upcomingCount = buckets[StatusFilter.UPCOMING]?.size ?: 0
-                val completedCount = buckets[StatusFilter.COMPLETED]?.size ?: 0
 
-                // Smart default: pick the bucket where the photographer's attention
-                // most likely belongs — LIVE > UPCOMING > COMPLETED.
-                var selectedFilter by remember(liveCount, upcomingCount, completedCount) {
-                    mutableStateOf(
-                        when {
-                            liveCount > 0 -> StatusFilter.LIVE
-                            upcomingCount > 0 -> StatusFilter.UPCOMING
-                            else -> StatusFilter.COMPLETED
-                        }
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                     StatusFilterChip(
                         label = StatusFilter.LIVE.label,
                         count = liveCount,
@@ -181,7 +194,6 @@ fun PhotographerEventsScreen(
                                 )
                             }
                         }
-                    }
                 }
             }
         }
@@ -358,7 +370,7 @@ private fun UpcomingEventCard(
             EventCoverThumbnail(url = event.bannerUrl)
             Column(modifier = Modifier.weight(1f)) {
                 val city = extractCity(event.location).uppercase().ifBlank { "CEBU" }
-                Kicker(text = "${event.date} · $city", color = Slate)
+                Kicker(text = "${eventDateLabel(event.date)} · $city", color = Slate)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = event.name,
@@ -367,12 +379,21 @@ private fun UpcomingEventCard(
                     fontWeight = FontWeight.SemiBold,
                     lineHeight = 20.sp,
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = formatOpensIn(event.date, today),
-                    color = SlateSoft,
-                    style = Typography.bodySmall,
-                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    StatusChip(
+                        text = "OPENS ON ${eventDateLabel(event.date)}",
+                        tone = StatusTone.Warning
+                    )
+                    Text(
+                        text = "· ${formatOpensIn(event.date, today)}",
+                        color = SlateSoft,
+                        style = Typography.bodySmall,
+                    )
+                }
             }
         }
     }
@@ -394,7 +415,7 @@ private fun CompletedEventCard(
             EventCoverThumbnail(url = event.bannerUrl)
             Column(modifier = Modifier.weight(1f)) {
                 val city = extractCity(event.location).uppercase().ifBlank { "CEBU" }
-                Kicker(text = "${event.date} · $city", color = Slate)
+                Kicker(text = "${eventDateLabel(event.date)} · $city", color = Slate)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = event.name,
@@ -404,17 +425,23 @@ private fun CompletedEventCard(
                     lineHeight = 20.sp,
                     maxLines = 2,
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "₱%,.0f · %d sold".format(event.revenueKept, event.salesCount),
-                    color = Slate,
-                    style = Typography.bodySmall,
-                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    StatusChip(text = "COMPLETED", tone = StatusTone.Neutral)
+                    Text(
+                        text = if (event.photoCount > 0) "· ${event.photoCount} photos · %d sold".format(event.salesCount) else "· Event ended",
+                        color = Slate,
+                        style = Typography.bodySmall,
+                    )
+                }
             }
             Icon(
                 imageVector = Icons.Default.KeyboardArrowRight,
-                contentDescription = null,
-                tint = SlateSoft,
+                contentDescription = "View gallery",
+                tint = Ink,
                 modifier = Modifier.size(20.dp),
             )
         }

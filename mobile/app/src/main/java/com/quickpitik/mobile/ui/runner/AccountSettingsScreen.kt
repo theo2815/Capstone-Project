@@ -109,34 +109,22 @@ fun AccountSettingsScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
+                .padding(top = 24.dp)
         ) {
             // Top Bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onNavigateBack,
-                    colors = IconButtonDefaults.iconButtonColors(containerColor = BoneDeep)
-                ) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Ink)
-                }
-                Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = "ACCOUNT SETTINGS",
-                    style = Typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Ink
-                )
-            }
+            RunnerTopBar(
+                kicker = "ACCOUNT SETTINGS",
+                onLogout = onLogout
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
 
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp)
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+                contentPadding = PaddingValues(bottom = 24.dp)
             ) {
                 // Section 1: Display Name
                 item {

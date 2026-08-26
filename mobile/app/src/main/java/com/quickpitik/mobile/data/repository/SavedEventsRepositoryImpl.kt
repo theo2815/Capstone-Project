@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.time.OffsetDateTime
 
 class SavedEventsRepositoryImpl : SavedEventsRepository {
-    private val api = RetrofitClient.apiService
+    private val api get() = RetrofitClient.apiService
     private val _saved = MutableStateFlow<List<SavedEventSummaryDto>>(emptyList())
     override val savedEvents: StateFlow<List<SavedEventSummaryDto>> = _saved.asStateFlow()
 

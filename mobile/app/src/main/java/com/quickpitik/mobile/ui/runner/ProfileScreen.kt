@@ -51,9 +51,10 @@ fun ProfileScreen(
     viewModel: ProfileViewModel,
     cartViewModel: CartViewModel,
     savedEventsViewModel: SavedEventsViewModel,
-    onNavigateBack: () -> Unit,
-    onOpenEvent: (String) -> Unit,
-    onBrowseEvents: () -> Unit
+    onNavigateBack: () -> Unit = {},
+    onOpenEvent: (String) -> Unit = {},
+    onBrowseEvents: () -> Unit = {},
+    onLogout: () -> Unit = {}
 ) {
     val selfies by viewModel.selfiesState.collectAsState()
     val isLoading by viewModel.selfiesLoading.collectAsState()
@@ -113,29 +114,22 @@ fun ProfileScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
+                .padding(top = 24.dp)
         ) {
             // Top Bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onNavigateBack,
-                    colors = IconButtonDefaults.iconButtonColors(containerColor = BoneDeep)
-                ) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Ink)
-                }
-                Spacer(modifier = Modifier.width(16.dp))
-                Kicker("Runner profile")
-            }
+            RunnerTopBar(
+                kicker = "RUNNER PROFILE",
+                onLogout = onLogout
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
 
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp)
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+                contentPadding = PaddingValues(bottom = 24.dp)
             ) {
                 // Identity Card
                 item {
