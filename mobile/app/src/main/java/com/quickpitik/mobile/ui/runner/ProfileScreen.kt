@@ -54,7 +54,6 @@ fun ProfileScreen(
     viewModel: ProfileViewModel,
     cartViewModel: CartViewModel,
     savedEventsViewModel: SavedEventsViewModel,
-    onNavigateBack: () -> Unit = {},
     onOpenEvent: (String) -> Unit = {},
     onBrowseEvents: () -> Unit = {},
     onLogout: () -> Unit = {}

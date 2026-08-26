@@ -56,6 +56,7 @@ import com.quickpitik.mobile.ui.runner.EventState
 import com.quickpitik.mobile.ui.runner.canUploadToEvent
 import com.quickpitik.mobile.ui.runner.deriveEventState
 import com.quickpitik.mobile.ui.runner.eventDateLabel
+import com.quickpitik.mobile.ui.runner.extractCity
 import com.quickpitik.mobile.ui.theme.*
 
 /**
@@ -148,7 +149,7 @@ private fun TetherConsoleView(
             val stateLabel = activeEvent?.state?.uppercase() ?: "EVENT"
             val tone = when (stateLabel) {
                 "LIVE", "OPEN" -> StatusTone.Approved
-                "UPCOMING" -> StatusTone.Warning
+                // Neutral — upcoming isn't a caution state (web parity).
                 else -> StatusTone.Neutral
             }
             StatusChip(text = "Event · $stateLabel", tone = tone)
@@ -838,11 +839,6 @@ private fun PublicEventPickerList(
             containerColor = BoneDeep
         )
     }
-}
-
-private fun extractCity(location: String): String {
-    val idx = location.lastIndexOf(',')
-    return if (idx == -1) location.trim() else location.substring(idx + 1).trim()
 }
 
 @Composable

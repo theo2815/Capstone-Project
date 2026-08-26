@@ -298,8 +298,13 @@ fun PhotoPreview(
                                         )
                                     }
                                 }
-                                // QuickPitik watermark (bottom-left of each page).
-                                Row(
+                                // QuickPitik watermark (bottom-left of each
+                                // page) — Browse only. A runner in Owned mode
+                                // PAID for the unwatermarked shot, and a
+                                // photographer reviewing their own uploads
+                                // needs no client-side mark either (web
+                                // suppresses it when cleanUrl is present).
+                                if (mode == PhotoPreviewMode.Browse) Row(
                                     modifier = Modifier
                                         .align(Alignment.BottomStart)
                                         .padding(12.dp),

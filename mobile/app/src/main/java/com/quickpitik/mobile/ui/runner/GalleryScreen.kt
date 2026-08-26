@@ -57,6 +57,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.ViewMode
+import com.quickpitik.mobile.data.local.isPhotographerRole
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -72,9 +74,7 @@ fun RunnerGalleryScreen(
     cartViewModel: CartViewModel,
     inboxViewModel: RunnerInboxViewModel,
     savedEventsViewModel: SavedEventsViewModel,
-    onNavigateToOrders: () -> Unit,
     onNavigateToProfile: () -> Unit,
-    onNavigateToSettings: () -> Unit,
     onNavigateBack: () -> Unit,
     onOpenOrder: (String) -> Unit,
     onOpenPhotographer: (String) -> Unit,
@@ -249,8 +249,19 @@ fun RunnerGalleryScreen(
                                 onDismissRequest = { menuExpanded = false },
                                 modifier = Modifier.background(Bone)
                             ) {
+                                // Same items + labels as RunnerTopBar's menu —
+                                // this inline copy had drifted ("Sign Out").
+                                if (isPhotographerRole(sessionManager.getUserRole())) {
+                                    DropdownMenuItem(
+                                        text = { Text("Switch to photographer", color = Ink) },
+                                        onClick = {
+                                            menuExpanded = false
+                                            ViewMode.requestSwitchToPhotographer()
+                                        }
+                                    )
+                                }
                                 DropdownMenuItem(
-                                    text = { Text("Sign Out", color = ErrorRed) },
+                                    text = { Text("Log out", color = ErrorRed) },
                                     onClick = {
                                         menuExpanded = false
                                         onLogout()

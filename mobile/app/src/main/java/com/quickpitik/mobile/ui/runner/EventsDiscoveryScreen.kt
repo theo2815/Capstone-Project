@@ -74,9 +74,6 @@ fun EventsDiscoveryScreen(
     savedEventsViewModel: SavedEventsViewModel,
     inboxViewModel: RunnerInboxViewModel,
     onEventSelected: (EventDto) -> Unit,
-    onNavigateToOrders: () -> Unit,
-    onNavigateToProfile: () -> Unit,
-    onNavigateToSettings: () -> Unit,
     onOpenOrder: (String) -> Unit,
     onLogout: () -> Unit,
 ) {
@@ -92,8 +89,6 @@ fun EventsDiscoveryScreen(
     val inboxMessages by inboxViewModel.messages.collectAsState()
     val inboxUnread by inboxViewModel.unreadCount.collectAsState()
     var showInbox by remember { mutableStateOf(false) }
-
-    val context = LocalContext.current
 
     // Saved-events list is refreshed each time the browse screen is shown (the
     // runner is always authed here), keeping the heart state and the profile

@@ -12,7 +12,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -96,7 +95,7 @@ fun PhotographerEventShareScreen(
             // Back
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(TileShape)
                     .clickable { onBack() }
                     .padding(vertical = 6.dp, horizontal = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -117,7 +116,7 @@ fun PhotographerEventShareScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(180.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                        .clip(QpCardShape)
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -133,22 +132,18 @@ fun PhotographerEventShareScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // Share band
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(BoneDeep)
-                    .border(BorderStroke(1.dp, Line), RoundedCornerShape(16.dp))
-                    .padding(20.dp)
+            QpCard(
+                modifier = Modifier.fillMaxWidth(),
+                padding = 20.dp
             ) {
-                Text("PUBLIC GALLERY", style = Typography.labelSmall, color = Slate)
+                Kicker("Public gallery")
                 Spacer(modifier = Modifier.height(12.dp))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(100))
+                        .clip(PillShape)
                         .background(Bone)
-                        .border(BorderStroke(1.dp, Line), RoundedCornerShape(100))
+                        .border(BorderStroke(1.dp, Line), PillShape)
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
                     Text(
@@ -161,29 +156,22 @@ fun PhotographerEventShareScreen(
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(
+                    PrimaryCta(
+                        text = "Copy link",
                         onClick = {
                             copyLink(context, fullUrl)
                             Toast.makeText(context, "Link copied.", Toast.LENGTH_SHORT).show()
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
-                        shape = RoundedCornerShape(100),
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text("COPY LINK", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                    OutlinedButton(
+                    )
+                    GhostCta(
+                        text = "Share",
                         onClick = { shareNative(context, event.name, fullUrl) },
-                        border = BorderStroke(1.dp, Ink),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
-                        shape = RoundedCornerShape(100),
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text("SHARE", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
+                    )
                 }
                 Spacer(modifier = Modifier.height(18.dp))
-                Text("SHARE TO YOUR FOLLOWERS", style = Typography.labelSmall, color = SlateSoft)
+                Kicker("Share to your followers", color = SlateSoft)
                 Spacer(modifier = Modifier.height(10.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ShareChip(label = "Facebook", dotColor = FacebookBlue) {
@@ -208,9 +196,9 @@ fun PhotographerEventShareScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                ShareStat(value = "${event.photoCount}", label = "PHOTOS")
-                ShareStat(value = "${event.salesCount}", label = "SOLD")
-                ShareStat(value = "₱%,.0f".format(event.revenueKept), label = "KEPT", valueColor = Fresh)
+                StatNumber(value = "${event.photoCount}", label = "Photos")
+                StatNumber(value = "${event.salesCount}", label = "Sold")
+                StatNumber(value = "₱%,.0f".format(event.revenueKept), label = "Kept", valueColor = Fresh)
             }
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -220,7 +208,7 @@ fun PhotographerEventShareScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("UPLOADED PHOTOS", style = Typography.labelMedium, color = Slate)
+                Kicker("Uploaded photos")
             }
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -331,7 +319,7 @@ private fun SharePhotoTile(
     Box(
         modifier = modifier
             .aspectRatio(0.85f)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(QpCardShape)
             .background(BoneDeep)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
@@ -350,7 +338,7 @@ private fun SharePhotoTile(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
-                    .clip(RoundedCornerShape(100))
+                    .clip(PillShape)
                     .background(Ink.copy(alpha = 0.55f))
                     .padding(horizontal = 8.dp, vertical = 3.dp)
             ) {
@@ -361,27 +349,18 @@ private fun SharePhotoTile(
 }
 
 @Composable
-private fun ShareStat(value: String, label: String, valueColor: Color = Ink) {
-    Column {
-        Text(value, color = valueColor, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(label, color = SlateSoft, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-    }
-}
-
-@Composable
 private fun ShareChip(label: String, dotColor: Color, onClick: () -> Unit) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(100))
+            .clip(PillShape)
             .background(Bone)
-            .border(BorderStroke(1.dp, Line), RoundedCornerShape(100))
+            .border(BorderStroke(1.dp, Line), PillShape)
             .clickable { onClick() }
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Box(modifier = Modifier.size(8.dp).clip(RoundedCornerShape(100)).background(dotColor))
+        Box(modifier = Modifier.size(8.dp).clip(PillShape).background(dotColor))
         Text(label, style = Typography.bodyMedium, color = Ink, fontWeight = FontWeight.Medium)
     }
 }

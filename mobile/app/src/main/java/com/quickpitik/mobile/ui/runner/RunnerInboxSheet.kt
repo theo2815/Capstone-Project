@@ -317,9 +317,10 @@ private fun RunnerMessageRow(
         )
         if (message.orderId != null) {
             Spacer(modifier = Modifier.height(6.dp))
+            // Web copy + tone: "View receipt →" in fresh (was ink "VIEW ORDER").
             Text(
-                text = "VIEW ORDER →",
-                color = Ink,
+                text = "VIEW RECEIPT →",
+                color = Fresh,
                 style = Typography.labelMedium,
             )
         }
@@ -353,13 +354,16 @@ private fun runnerMessageKindLabel(kind: String): String = when (kind) {
 
 private fun runnerMessageKindTone(kind: String): Color = when (kind) {
     "dispute_resolved", "account_unsuspended" -> Fresh
-    "dispute_denied", "dispute_escalated" -> WarningOrange
+    // Web KIND_TONE: a DENIED refund is error-red; only escalation is amber.
+    "dispute_denied" -> ErrorRed
+    "dispute_escalated" -> WarningOrange
     "account_suspended" -> ErrorRed
     "admin_message" -> Ink
     else -> Slate
 }
 
-// "AUG 14" — same compact form the photographer inbox uses.
+// "AUG 14, 2026" — the year matters: refund messages stay in the inbox for
+// months, and the website's rows carry it (formatLongDate parity).
 private fun formatRunnerInboxDate(iso: String): String {
     return try {
         val parts = iso.substring(0, 10).split("-")
@@ -367,7 +371,7 @@ private fun formatRunnerInboxDate(iso: String): String {
             "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
             "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
         )
-        "${months[parts[1].toInt() - 1]} ${parts[2].toInt()}"
+        "${months[parts[1].toInt() - 1]} ${parts[2].toInt()}, ${parts[0]}"
     } catch (e: Exception) {
         iso
     }

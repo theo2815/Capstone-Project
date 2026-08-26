@@ -846,6 +846,8 @@ private fun messageKindLabel(kind: String): String = when (kind) {
     else -> kind.replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
 
+// "AUG 14, 2026" — the year matters on messages that live for months
+// (web formatLongDate parity, same as the runner inbox).
 private fun formatInboxDate(iso: String): String {
     return try {
         val parts = iso.substring(0, 10).split("-")
@@ -853,6 +855,6 @@ private fun formatInboxDate(iso: String): String {
             "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
             "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
         )
-        "${months[parts[1].toInt() - 1]} ${parts[2].toInt()}"
+        "${months[parts[1].toInt() - 1]} ${parts[2].toInt()}, ${parts[0]}"
     } catch (e: Exception) { iso }
 }

@@ -556,9 +556,6 @@ class MainActivity : ComponentActivity() {
                                         runnerViewModel.selectEvent(event)
                                         navController.navigate("gallery")
                                     },
-                                    onNavigateToOrders = { navController.navigate("orders") },
-                                    onNavigateToProfile = { navController.navigate("profile") },
-                                    onNavigateToSettings = { navController.navigate("settings") },
                                     onOpenOrder = { orderId -> navController.navigate("orders?orderId=$orderId") },
                                     onLogout = {
                                         authViewModel.logout()
@@ -575,9 +572,6 @@ class MainActivity : ComponentActivity() {
                                     cartViewModel = cartViewModel,
                                     inboxViewModel = runnerInboxViewModel,
                                     savedEventsViewModel = savedEventsViewModel,
-                                    onNavigateToOrders = {
-                                        navController.navigate("orders")
-                                    },
                                     onOpenOrder = { orderId ->
                                         navController.navigate("orders?orderId=$orderId")
                                     },
@@ -586,9 +580,6 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onNavigateToProfile = {
                                         navController.navigate("profile")
-                                    },
-                                    onNavigateToSettings = {
-                                        navController.navigate("settings")
                                     },
                                     onNavigateBack = {
                                         navController.popBackStack()
@@ -621,9 +612,6 @@ class MainActivity : ComponentActivity() {
                                     viewModel = profileViewModel,
                                     cartViewModel = cartViewModel,
                                     savedEventsViewModel = savedEventsViewModel,
-                                    onNavigateBack = {
-                                        navController.popBackStack()
-                                    },
                                     onOpenEvent = { slug ->
                                         val event = runnerViewModel.eventBySlug(slug)
                                         if (event != null) {
@@ -648,9 +636,6 @@ class MainActivity : ComponentActivity() {
                             composable("settings") {
                                 AccountSettingsScreen(
                                     viewModel = profileViewModel,
-                                    onNavigateBack = {
-                                        navController.popBackStack()
-                                    },
                                     onLogout = {
                                         authViewModel.logout()
                                         cartViewModel.clearCart()
@@ -672,9 +657,6 @@ class MainActivity : ComponentActivity() {
                             ) { entry ->
                                 OrdersScreen(
                                     viewModel = cartViewModel,
-                                    onNavigateBack = {
-                                        navController.popBackStack()
-                                    },
                                     initialOrderId = entry.arguments?.getString("orderId"),
                                     onLogout = {
                                         authViewModel.logout()

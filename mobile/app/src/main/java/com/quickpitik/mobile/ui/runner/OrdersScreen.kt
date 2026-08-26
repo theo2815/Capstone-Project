@@ -44,7 +44,6 @@ private const val RECEIPT_PAGE = 10
 @Composable
 fun OrdersScreen(
     viewModel: CartViewModel,
-    onNavigateBack: () -> Unit = {},
     initialOrderId: String? = null,
     onLogout: () -> Unit = {}
 ) {

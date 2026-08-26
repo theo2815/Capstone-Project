@@ -14,9 +14,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.ViewMode
 import com.quickpitik.mobile.data.local.isPhotographerRole
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 
 /**
@@ -34,7 +38,11 @@ fun RunnerTopBar(
 ) {
     val context = LocalContext.current
     val sessionManager = remember { SessionManager.getInstance(context) }
-    val userName = remember { sessionManager.getUserName() ?: "Runner" }
+    // Not remember{}-cached: an unkeyed remember froze the pre-edit name (and
+    // avatar) until the composable left composition, so a change on the
+    // settings screen never reached the header.
+    val userName = sessionManager.getUserName() ?: "Runner"
+    val avatarUrl = RetrofitClient.resolveImageUrl(sessionManager.getAvatarUrl())
     var menuExpanded by remember { mutableStateOf(false) }
 
     Row(
@@ -74,12 +82,24 @@ fun RunnerTopBar(
                         .clickable { menuExpanded = true },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = userName.take(1).uppercase(),
-                        color = Ink,
-                        style = Typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                    // Real avatar when one exists (SessionManager caches it;
+                    // the photographer top bar already did this) — initials
+                    // only as the fallback.
+                    if (!avatarUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = avatarUrl,
+                            contentDescription = "Profile menu",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        )
+                    } else {
+                        Text(
+                            text = userName.take(1).uppercase(),
+                            color = Ink,
+                            style = Typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
                 DropdownMenu(
                     expanded = menuExpanded,

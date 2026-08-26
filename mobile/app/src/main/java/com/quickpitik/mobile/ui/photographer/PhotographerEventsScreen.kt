@@ -45,7 +45,9 @@ import java.time.temporal.ChronoUnit
 
 private enum class StatusFilter(val label: String, val tone: StatusTone) {
     LIVE("Live", StatusTone.Approved),
-    UPCOMING("Upcoming", StatusTone.Warning),
+    // Neutral, not amber — a routine future event isn't a caution state (the
+    // website renders UPCOMING as plain slate).
+    UPCOMING("Upcoming", StatusTone.Neutral),
     COMPLETED("Completed", StatusTone.Neutral),
 }
 
@@ -437,7 +439,7 @@ private fun UpcomingEventCard(
                 ) {
                     StatusChip(
                         text = "OPENS ON ${eventDateLabel(event.date)}",
-                        tone = StatusTone.Warning
+                        tone = StatusTone.Neutral
                     )
                     Text(
                         text = "· ${formatOpensIn(event.date, today)}",

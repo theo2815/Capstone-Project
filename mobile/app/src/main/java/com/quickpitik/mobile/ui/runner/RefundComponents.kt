@@ -171,9 +171,12 @@ fun orderRefundKind(order: OrderDetailDto): String =
 fun RefundStatusChip(rollup: RefundRollup, photoCount: Int) {
     if (rollup.kind == "none") return
 
+    // Slate for pending/in-review — web RefundStatusChip parity (its
+    // pending/partial dot is slate; amber was mobile-only drift that made a
+    // routine open request read as a warning).
     val (tone, label) = when (rollup.kind) {
-        "pending" -> WarningOrange to "Refund pending · ${rollup.totalDisputed} of $photoCount"
-        "partial" -> WarningOrange to "Refund in review · ${rollup.totalDisputed} of $photoCount"
+        "pending" -> Slate to "Refund pending · ${rollup.totalDisputed} of $photoCount"
+        "partial" -> Slate to "Refund in review · ${rollup.totalDisputed} of $photoCount"
         "approved" -> Fresh to "Refund approved · ₱${formatPeso(rollup.refundAmount)}"
         "rejected" -> ErrorRed to "Refund declined"
         else -> Slate to "Refund updated"

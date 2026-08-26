@@ -2,13 +2,11 @@ package com.quickpitik.mobile.ui.runner
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -31,7 +29,6 @@ import com.quickpitik.mobile.ui.theme.*
 @Composable
 fun AccountSettingsScreen(
     viewModel: ProfileViewModel,
-    onNavigateBack: () -> Unit,
     onLogout: () -> Unit
 ) {
     val name by viewModel.profileName.collectAsState()
@@ -132,16 +129,11 @@ fun AccountSettingsScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(BoneDeep, RoundedCornerShape(16.dp))
+                            .background(BoneDeep, QpCardShape)
                             .padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Text(
-                            text = "01. Profile Name",
-                            style = Typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Ink
-                        )
+                        Kicker("01 · Profile name")
 
                         OutlinedTextField(
                             value = nameInput,
@@ -174,20 +166,12 @@ fun AccountSettingsScreen(
                             )
                         }
 
-                        Button(
+                        PrimaryCta(
+                            text = "Save name",
                             onClick = { viewModel.updateName(nameInput) },
                             enabled = nameInput.trim() != name && nameInput.trim().isNotEmpty(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Fresh,
-                                contentColor = Bone,
-                                disabledContainerColor = SlateSoft,
-                                disabledContentColor = Slate
-                            ),
-                            shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.align(Alignment.End)
-                        ) {
-                            Text("SAVE NAME", fontWeight = FontWeight.Bold)
-                        }
+                        )
                     }
                 }
 
@@ -196,16 +180,11 @@ fun AccountSettingsScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(BoneDeep, RoundedCornerShape(16.dp))
+                            .background(BoneDeep, QpCardShape)
                             .padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Text(
-                            text = "02. Profile Picture",
-                            style = Typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Ink
-                        )
+                        Kicker("02 · Profile picture")
                         Text(
                             text = "Shown next to your name across QuickPitik.",
                             style = Typography.bodySmall,
@@ -241,22 +220,11 @@ fun AccountSettingsScreen(
                                 }
                             }
                             Column(modifier = Modifier.weight(1f)) {
-                                Button(
+                                PrimaryCta(
+                                    text = "Change photo",
                                     onClick = { avatarPicker.launch("image/*") },
-                                    enabled = !avatarUploading,
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = Fresh,
-                                        contentColor = Bone,
-                                        disabledContainerColor = SlateSoft,
-                                        disabledContentColor = Slate
-                                    ),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(
-                                        text = if (avatarUploading) "UPLOADING…" else "CHANGE PHOTO",
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
+                                    loading = avatarUploading
+                                )
                                 // Only offered when there is something to
                                 // remove. Ghost, not Fresh — the Change button
                                 // above already owns the one accent here.
@@ -295,16 +263,11 @@ fun AccountSettingsScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(BoneDeep, RoundedCornerShape(16.dp))
+                            .background(BoneDeep, QpCardShape)
                             .padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = "03. Sign-In Email",
-                            style = Typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Ink
-                        )
+                        Kicker("03 · Sign-in email")
                         Text(
                             text = "We'll email a confirmation link to the new address. " +
                                 "Your sign-in email stays the same until you open it.",
@@ -315,7 +278,7 @@ fun AccountSettingsScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(Bone, RoundedCornerShape(8.dp))
+                                .background(Bone, TileShape)
                                 .padding(12.dp)
                         ) {
                             Text(
@@ -327,15 +290,11 @@ fun AccountSettingsScreen(
                         }
 
                         if (!emailFormOpen) {
-                            OutlinedButton(
+                            GhostCta(
+                                text = "Change email",
                                 onClick = { emailFormOpen = true },
-                                border = BorderStroke(1.dp, Ink),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
-                                shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.align(Alignment.End)
-                            ) {
-                                Text("CHANGE EMAIL", fontWeight = FontWeight.Bold)
-                            }
+                            )
                         } else {
                             OutlinedTextField(
                                 value = newEmail,
@@ -397,21 +356,14 @@ fun AccountSettingsScreen(
                                     Text("CANCEL", color = Slate, fontWeight = FontWeight.Bold)
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
-                                OutlinedButton(
+                                GhostCta(
+                                    text = if (emailChangeSubmitting) "Sending…" else "Send link",
                                     onClick = {
                                         viewModel.requestEmailChange(newEmail, emailPassword)
                                     },
                                     enabled = !emailChangeSubmitting &&
-                                        newEmail.isNotEmpty() && emailPassword.isNotEmpty(),
-                                    border = BorderStroke(1.dp, Ink),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(
-                                        text = if (emailChangeSubmitting) "SENDING…" else "SEND LINK",
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
+                                        newEmail.isNotEmpty() && emailPassword.isNotEmpty()
+                                )
                             }
                         }
 
@@ -434,16 +386,11 @@ fun AccountSettingsScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(BoneDeep, RoundedCornerShape(16.dp))
+                            .background(BoneDeep, QpCardShape)
                             .padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Text(
-                            text = "04. Update Password",
-                            style = Typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Ink
-                        )
+                        Kicker("04 · Update password")
 
                         OutlinedTextField(
                             value = currentPassword,
@@ -526,7 +473,8 @@ fun AccountSettingsScreen(
                             )
                         }
 
-                        Button(
+                        PrimaryCta(
+                            text = "Update password",
                             onClick = {
                                 if (newPassword != confirmPassword) {
                                     passwordMatchError = "New passwords do not match"
@@ -535,17 +483,8 @@ fun AccountSettingsScreen(
                                 }
                             },
                             enabled = currentPassword.isNotEmpty() && newPassword.isNotEmpty() && confirmPassword.isNotEmpty(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Fresh,
-                                contentColor = Bone,
-                                disabledContainerColor = SlateSoft,
-                                disabledContentColor = Slate
-                            ),
-                            shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.align(Alignment.End)
-                        ) {
-                            Text("UPDATE PASSWORD", fontWeight = FontWeight.Bold)
-                        }
+                        )
                     }
                 }
 
@@ -554,30 +493,21 @@ fun AccountSettingsScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(BoneDeep, RoundedCornerShape(16.dp))
+                            .background(BoneDeep, QpCardShape)
                             .padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Text(
-                            text = "05. Sign Out",
-                            style = Typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Ink
-                        )
+                        Kicker("05 · Sign out")
                         Text(
                             text = "You'll need to sign in again on this device to access your profile, selfies, and orders.",
                             style = Typography.bodySmall,
                             color = Slate
                         )
-                        OutlinedButton(
+                        GhostCta(
+                            text = "Sign out",
                             onClick = onLogout,
-                            border = BorderStroke(1.dp, Ink),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
-                            shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.align(Alignment.End)
-                        ) {
-                            Text("SIGN OUT", fontWeight = FontWeight.Bold)
-                        }
+                        )
                         Text(
                             text = "Need to delete your account? Contact support@quickpitik.com and we'll handle it within 7 days.",
                             style = Typography.bodySmall,
