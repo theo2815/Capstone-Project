@@ -52,6 +52,22 @@ object RetrofitClient {
     val backendOrigin: String
         get() = BASE_URL.trimEnd('/')
 
+    // THE image-URL resolver — every AsyncImage model should pass through
+    // here. Two dev-time shapes need fixing: backend-relative paths
+    // ("/storage/…" → prefix the live origin) and presigned URLs minted
+    // against localhost (→ swap in the live host). This helper used to exist
+    // as five private copies across the photographer screens while no runner
+    // screen had one, so a relative path rendered broken tiles on every
+    // runner surface only. (Coil's HostRewriteInterceptor still covers the
+    // localhost half as a second net; the relative half only lives here.)
+    fun resolveImageUrl(url: String?): String? = when {
+        url.isNullOrBlank() -> url
+        url.startsWith("/") -> "$backendOrigin$url"
+        else -> url
+            .replace("localhost", backendHost)
+            .replace("127.0.0.1", backendHost)
+    }
+
     // WebSocket origin ("ws://host:port"), derived from BASE_URL for the same
     // reason as the getters above — one host change flows everywhere. The BE
     // registers its handlers at /ws/... on the server ROOT, not under the REST

@@ -357,8 +357,23 @@ private fun WalletSlab(
     onRequestPayout: () -> Unit,
     onClearActionState: () -> Unit,
 ) {
+    // The kicker + CTA name the ACTUAL primary payout method from the
+    // backend-authoritative balance snapshot — this card used to hardcode
+    // "GCash" whatever the account was, and offered the CTA even when no
+    // primary account existed (the demo-day PAYOUT_NO_ACCOUNT mismatch the
+    // backend added `primaryAccount` to prevent).
+    val methodLabel = when (balance.primaryAccount?.method?.lowercase()) {
+        "gcash" -> "GCash"
+        "maya" -> "Maya"
+        "gotyme" -> "GoTyme"
+        null -> null
+        else -> balance.primaryAccount.method.replaceFirstChar { it.uppercase() }
+    }
     QpCard(modifier = Modifier.fillMaxWidth(), padding = 16.dp) {
-        Kicker(text = "Unpaid balance · GCash", color = SlateSoft)
+        Kicker(
+            text = if (methodLabel != null) "Unpaid balance · $methodLabel" else "Unpaid balance",
+            color = SlateSoft,
+        )
         Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = "₱%,.2f".format(balance.unpaidBalance),
@@ -371,20 +386,28 @@ private fun WalletSlab(
         if (hasOpen) {
             OpenRequestBlock(openRequest = balance.openRequest, fallbackAmount = balance.unpaidBalance)
         } else {
-            val canWithdraw = balance.unpaidBalance >= balance.minimum
+            val hasAccount = balance.primaryAccount != null
+            val canWithdraw = hasAccount && balance.unpaidBalance >= balance.minimum
             val isProcessing = payoutActionState == "processing"
             GhostCta(
-                text = if (isProcessing) "Requesting…" else "Request payout to GCash",
+                text = when {
+                    isProcessing -> "Requesting…"
+                    methodLabel != null -> "Request payout to $methodLabel"
+                    else -> "Request payout"
+                },
                 onClick = onRequestPayout,
                 enabled = canWithdraw && !isProcessing,
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = if (canWithdraw) {
-                    "Minimum withdrawal ₱%,.0f".format(balance.minimum)
-                } else {
-                    "Reach ₱%,.0f to request a payout".format(balance.minimum)
+                text = when {
+                    !hasAccount ->
+                        "Set up a payout account in Settings to request payouts."
+                    canWithdraw ->
+                        "Minimum withdrawal ₱%,.0f".format(balance.minimum)
+                    else ->
+                        "Reach ₱%,.0f to request a payout".format(balance.minimum)
                 },
                 color = SlateSoft,
                 style = Typography.bodySmall,

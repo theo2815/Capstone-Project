@@ -24,6 +24,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -225,7 +226,7 @@ fun AccountSettingsScreen(
                             ) {
                                 if (!avatarUrl.isNullOrEmpty()) {
                                     AsyncImage(
-                                        model = avatarUrl,
+                                        model = RetrofitClient.resolveImageUrl(avatarUrl),
                                         contentDescription = "Profile picture",
                                         modifier = Modifier.fillMaxSize(),
                                         contentScale = ContentScale.Crop

@@ -355,7 +355,7 @@ fun RegisterScreen(
             if (displayedError != null) {
                 Text(
                     text = displayedError,
-                    color = Color.Red,
+                    color = ErrorRed,
                     style = Typography.bodyMedium,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -364,13 +364,18 @@ fun RegisterScreen(
 
             // CTA Button
             Button(
-                onClick = { 
+                onClick = {
+                    // Shared validators, not inline rules: the hand-rolled
+                    // `length < 8` check silently accepted a >72-byte password
+                    // that bcrypt truncates — the reset screen enforced the
+                    // ceiling while register didn't. One rulebook for both.
+                    val emailProblem = validateEmail(email)
+                    val passwordProblem = validateNewPassword(password)
                     when {
+                        emailProblem != null -> validationError = emailProblem
+                        passwordProblem != null -> validationError = passwordProblem
                         password != confirmPassword -> {
                             validationError = "Passwords do not match"
-                        }
-                        password.length < 8 -> {
-                            validationError = "Password must be at least 8 characters"
                         }
                         else -> {
                             validationError = null

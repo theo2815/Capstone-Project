@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 
 // Mobile mirror of website `CartModal`. Opens as a full-height
@@ -288,7 +289,7 @@ private fun CartSheetRow(
         ) {
             if (item.thumbnailUrl != null) {
                 AsyncImage(
-                    model = item.thumbnailUrl,
+                    model = RetrofitClient.resolveImageUrl(item.thumbnailUrl),
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
                 )

@@ -29,7 +29,10 @@ fun LoginScreen(
     viewModel: AuthViewModel,
     onNavigateToRegister: () -> Unit,
     onNavigateToForgotPassword: () -> Unit,
-    onLoginSuccess: (isPhotographer: Boolean) -> Unit
+    onLoginSuccess: (isPhotographer: Boolean) -> Unit,
+    // Why the user landed here involuntarily (e.g. "Your account has been
+    // suspended…" from a rejected refresh). Null on an ordinary visit.
+    sessionNotice: String? = null,
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -190,11 +193,23 @@ fun LoginScreen(
             }
             Spacer(modifier = Modifier.height(20.dp))
 
+            // Forced-logout explanation (suspension etc.) — shown until the
+            // user signs back in. Distinct tone from a failed attempt below.
+            if (sessionNotice != null && authState !is AuthState.Error) {
+                Text(
+                    text = sessionNotice,
+                    color = WarningOrange,
+                    style = Typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             // Dynamic Error Message Text
             if (authState is AuthState.Error) {
                 Text(
                     text = (authState as AuthState.Error).message,
-                    color = Color.Red,
+                    color = ErrorRed,
                     style = Typography.bodyMedium,
                     modifier = Modifier.fillMaxWidth()
                 )

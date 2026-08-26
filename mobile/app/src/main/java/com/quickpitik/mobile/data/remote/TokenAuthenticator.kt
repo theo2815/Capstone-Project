@@ -67,16 +67,28 @@ class TokenAuthenticator(
             val auth = refreshed.body()?.data
             // A real rejection (401/403 on a valid-looking token) means the
             // session is genuinely dead — that's the only case worth clearing.
-            if (!refreshed.isSuccessful || auth == null) return giveUp()
+            // The rejection's error body distinguishes WHY: an ACCOUNT_SUSPENDED
+            // refresh must land on login with the reason shown, not read like an
+            // ordinary expiry.
+            if (!refreshed.isSuccessful || auth == null) {
+                val err = runCatching {
+                    com.google.gson.Gson().fromJson(
+                        refreshed.errorBody()?.string(),
+                        ApiErrorEnvelope::class.java,
+                    )?.errors?.firstOrNull()
+                }.getOrNull()
+                val reason = err?.message?.takeIf { err.code == "ACCOUNT_SUSPENDED" }
+                return giveUp(reason)
+            }
 
             sessionManager.updateTokens(auth.accessToken, auth.refreshToken)
             return retryWith(response.request, auth.accessToken)
         }
     }
 
-    private fun giveUp(): Request? {
+    private fun giveUp(reason: String? = null): Request? {
         sessionManager.clearSession()
-        SessionEvents.raiseForcedLogout()
+        SessionEvents.raiseForcedLogout(reason)
         return null
     }
 

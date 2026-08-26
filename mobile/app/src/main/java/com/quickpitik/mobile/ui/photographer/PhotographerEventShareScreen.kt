@@ -399,10 +399,5 @@ private fun openUrl(context: Context, url: String) {
     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
 }
 
-private fun resolveShareImageUrl(url: String?): String? {
-    if (url.isNullOrBlank()) return null
-    // M-2 (2026-05-27 PM): host derived from RetrofitClient.BASE_URL.
-    if (url.startsWith("/")) return "${RetrofitClient.backendOrigin}$url"
-    return url.replace("localhost", RetrofitClient.backendHost)
-        .replace("127.0.0.1", RetrofitClient.backendHost)
-}
+private fun resolveShareImageUrl(url: String?): String? =
+    RetrofitClient.resolveImageUrl(url?.takeIf { it.isNotBlank() })

@@ -55,10 +55,14 @@ interface QuickPitikApi {
         @Body request: PhotoExistsRequest
     ): ApiResponseEnvelope<PhotoExistsResponse>
 
+    // limit defaults to the backend's MAX_LIMIT (200): without it the server
+    // default of 50 silently truncated a busy photographer's covered events —
+    // no caller pages through this list.
     @GET("api/v1/me/photographer/events")
     suspend fun getPhotographerEvents(
         @Header("Authorization") token: String,
-        @Query("withUploads") withUploads: Boolean = false
+        @Query("withUploads") withUploads: Boolean = false,
+        @Query("limit") limit: Int = 200
     ): ApiResponseEnvelope<PaginatedResponse<PhotographerEventSummaryDto>>
 
     @GET("api/v1/me/photographer/events/{eventId}/photos")
@@ -253,8 +257,14 @@ interface QuickPitikApi {
         @Query("limit") limit: Int = 100
     ): ApiResponseEnvelope<PaginatedResponse<EventDto>>
 
+    // The route is public, but the bearer matters when signed in: the backend
+    // reads principal?.userId to populate PhotoDto.cleanUrl for photos the
+    // caller owns (unwatermarked lightbox) and to rate-bucket bib search per
+    // user instead of per IP (shared race-day Wi-Fi). Nullable so the header is
+    // simply omitted if a token is ever absent.
     @GET("api/v1/events/{slug}/photos")
     suspend fun getEventPhotos(
+        @Header("Authorization") token: String? = null,
         @Path("slug") slug: String,
         @Query("bib") bib: String? = null,
         @Query("offset") offset: Int = 0,

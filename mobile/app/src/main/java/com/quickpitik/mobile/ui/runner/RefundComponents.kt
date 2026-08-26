@@ -19,6 +19,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.OrderDetailDto
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.RunnerDisputeDto
 import com.quickpitik.mobile.ui.theme.*
 import java.util.Locale
@@ -554,7 +555,7 @@ fun RefundRequestDialog(
                                         ) {
                                             if (photo.thumbnailUrl != null) {
                                                 AsyncImage(
-                                                    model = photo.thumbnailUrl,
+                                                    model = RetrofitClient.resolveImageUrl(photo.thumbnailUrl),
                                                     contentDescription = null,
                                                     modifier = Modifier.fillMaxSize()
                                                 )

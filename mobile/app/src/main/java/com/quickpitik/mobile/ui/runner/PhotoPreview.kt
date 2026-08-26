@@ -36,6 +36,7 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.CartItemDto
 import com.quickpitik.mobile.data.remote.PhotoDto
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 
 // Unified photo lightbox — the one preview surface used by both the cart sheet
@@ -274,7 +275,7 @@ fun PhotoPreview(
                             Box(modifier = Modifier.fillMaxSize()) {
                                 if (pagePhoto.imageUrl != null) {
                                     AsyncImage(
-                                        model = pagePhoto.imageUrl,
+                                        model = RetrofitClient.resolveImageUrl(pagePhoto.imageUrl),
                                         contentDescription = "Race photo",
                                         contentScale = ContentScale.Fit,
                                         modifier = Modifier.fillMaxSize(),

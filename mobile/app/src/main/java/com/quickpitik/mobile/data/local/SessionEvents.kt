@@ -11,10 +11,15 @@ import kotlinx.coroutines.flow.SharedFlow
 // extraBufferCapacity=1 keeps tryEmit() non-suspending, which matters because
 // TokenAuthenticator raises it from OkHttp's thread, outside any coroutine.
 object SessionEvents {
-    private val _forcedLogout = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val forcedLogout: SharedFlow<Unit> = _forcedLogout
+    // The payload is an optional human-readable reason ("Your account has been
+    // suspended…"). Null = the ordinary expired-session case, where the login
+    // screen needs no banner. Without this, an ACCOUNT_SUSPENDED refresh
+    // rejection was indistinguishable from expiry — the user was signed out
+    // with no explanation.
+    private val _forcedLogout = MutableSharedFlow<String?>(extraBufferCapacity = 1)
+    val forcedLogout: SharedFlow<String?> = _forcedLogout
 
-    fun raiseForcedLogout() {
-        _forcedLogout.tryEmit(Unit)
+    fun raiseForcedLogout(reason: String? = null) {
+        _forcedLogout.tryEmit(reason)
     }
 }

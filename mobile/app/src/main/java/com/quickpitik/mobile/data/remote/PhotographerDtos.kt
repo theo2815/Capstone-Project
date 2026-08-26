@@ -51,7 +51,18 @@ data class PayoutBalanceDto(
     val unpaidBalance: Double,
     val minimum: Double,
     val hasOpenRequest: Boolean,
-    val openRequest: PhotographerPayoutDto?
+    val openRequest: PhotographerPayoutDto?,
+    // Backend-authoritative primary payout account (null = none configured).
+    // The request-payout CTA gates on THIS, not on any client-side settings
+    // state — the field exists precisely so a client can't offer the CTA and
+    // then eat a PAYOUT_NO_ACCOUNT (backend EarningsDtos.kt:147-154).
+    val primaryAccount: PayoutBalanceAccountDto? = null
+)
+
+data class PayoutBalanceAccountDto(
+    val method: String,
+    val accountNumber: String,
+    val accountName: String
 )
 
 data class PhotographerTransactionDto(

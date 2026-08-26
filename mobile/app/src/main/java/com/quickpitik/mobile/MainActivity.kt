@@ -140,8 +140,16 @@ class MainActivity : ComponentActivity() {
 
                 // Raised by TokenAuthenticator when refresh fails: the session is
                 // unrecoverable, so drop the whole back stack and land on login.
+                // The payload (nullable) says WHY — e.g. an ACCOUNT_SUSPENDED
+                // rejection — and is surfaced as a notice on the login screen.
+                var sessionNotice by remember { mutableStateOf<String?>(null) }
                 LaunchedEffect(Unit) {
-                    SessionEvents.forcedLogout.collect {
+                    SessionEvents.forcedLogout.collect { reason ->
+                        sessionNotice = reason
+                        // Parity with the manual sign-out paths: the next user
+                        // on this device must not inherit the previous
+                        // session's cart pill.
+                        cartViewModel.clearCart()
                         navController.navigate("login") {
                             popUpTo(0) { inclusive = true }
                             launchSingleTop = true
@@ -185,6 +193,7 @@ class MainActivity : ComponentActivity() {
                             composable("login") {
                                 LoginScreen(
                                     viewModel = authViewModel,
+                                    sessionNotice = sessionNotice,
                                     onNavigateToRegister = {
                                         navController.navigate("register")
                                     },
@@ -192,6 +201,7 @@ class MainActivity : ComponentActivity() {
                                         navController.navigate("forgot-password")
                                     },
                                     onLoginSuccess = { isPhotographer ->
+                                        sessionNotice = null
                                         val target = if (isPhotographer) "dashboard" else "events"
                                         navController.navigate(target) {
                                             popUpTo("login") { inclusive = true }

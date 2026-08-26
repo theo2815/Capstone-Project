@@ -494,7 +494,7 @@ fun SelfieCard(
             .clickable { if (!selfie.isPrimary) onSetPrimary() }
     ) {
         AsyncImage(
-            model = selfie.dataUrl,
+            model = RetrofitClient.resolveImageUrl(selfie.dataUrl),
             contentDescription = "Runner Selfie",
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop

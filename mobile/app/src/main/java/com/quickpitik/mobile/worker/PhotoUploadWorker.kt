@@ -129,6 +129,15 @@ class PhotoUploadWorker(
 
             if (ok) {
                 database.uploadQueueDao().updateStatus(record.id, "COMPLETED", null)
+                // The photo is on the server; the local full-res copy is pure
+                // waste from here (a 500-shot race left ~1 GB in cacheDir for
+                // the life of the install). The Room row is deliberately KEPT —
+                // it is the card-import re-import dedupe ledger
+                // (getActiveOrCompletedForEvent). Only files we spooled into
+                // our own cacheDir are touched.
+                if (file.absolutePath.startsWith(applicationContext.cacheDir.absolutePath)) {
+                    runCatching { file.delete() }
+                }
             } else {
                 val errorMsg = responseEnvelope.error ?: "Upload rejected by server."
                 // A duplicate rejection (backend ErrorCodes.PHOTO_DUPLICATE_*) is
@@ -189,12 +198,28 @@ class PhotoUploadWorker(
     }
 
     private companion object {
-        // Backend dedup rejections (backend ErrorCodes.PHOTO_DUPLICATE_*). A
-        // duplicate can never succeed on retry, so these END the record instead
-        // of driving WorkManager's exponential-backoff retry loop forever.
+        // Rejections that can NEVER succeed on retry, so they END the record
+        // instead of driving the exponential-backoff loop. Beyond the two
+        // dedup codes, PhotoUploadService also throws these permanently-fatal
+        // codes — each used to burn all 5 retry cycles per photo before
+        // settling FAILED (a suspended photographer's 200-shot card = 1000
+        // doomed uploads):
+        //   EVENT_NOT_UPLOADABLE     — event's upload window closed
+        //   ACCOUNT_SUSPENDED        — suspension isn't lifted by retrying
+        //   PHOTOGRAPHER_NOT_VERIFIED — verification is a manual admin step
+        //   WATERMARK_MISSING        — settings problem, not transient
+        //   UNSUPPORTED_MEDIA_TYPE   — the bytes never change
+        //   USER_NOT_FOUND / EVENT_NOT_FOUND — the row references a ghost
         val TERMINAL_UPLOAD_ERROR_CODES = setOf(
             "PHOTO_DUPLICATE_DIFFERENT_EVENT",
             "PHOTO_DUPLICATE_SAME_EVENT",
+            "EVENT_NOT_UPLOADABLE",
+            "ACCOUNT_SUSPENDED",
+            "PHOTOGRAPHER_NOT_VERIFIED",
+            "WATERMARK_MISSING",
+            "UNSUPPORTED_MEDIA_TYPE",
+            "USER_NOT_FOUND",
+            "EVENT_NOT_FOUND",
         )
 
         // Attempts per record across runs (tracked in UploadRecord.retryCount)

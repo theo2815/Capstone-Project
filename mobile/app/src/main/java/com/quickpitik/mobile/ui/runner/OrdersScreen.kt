@@ -27,6 +27,7 @@ import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.download.PhotoDownloader
 import com.quickpitik.mobile.data.remote.OrderListItemDto
 import com.quickpitik.mobile.data.remote.OrderPhotoDetailDto
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
@@ -166,13 +167,12 @@ fun OrdersScreen(
                         }
                     }
                     is OrdersState.Success -> {
-                        // Order history = things the runner actually paid for. PENDING rows
-                        // (abandoned PayMongo sessions) come back from the backend in the
-                        // same list, but they don't belong on a "history" surface — filter
-                        // them out before they reach the spend math or the LazyColumn.
-                        val visibleOrders = remember(state.orders) {
-                            state.orders.filter { it.status == "PAID" || it.status == "FULFILLED" }
-                        }
+                        // Every order, PENDING included — website parity. The web's
+                        // /orders lists an abandoned PayMongo session as a row with
+                        // its status; hiding it here also made this screen's spend
+                        // math disagree with the profile race log's (which never
+                        // filtered), so the same runner saw two lifetime totals.
+                        val visibleOrders = state.orders
                         if (visibleOrders.isEmpty()) {
                             LazyColumn(
                                 modifier = Modifier
@@ -415,7 +415,7 @@ fun OrdersScreen(
                                             ) {
                                                 if (photo.thumbnailUrl != null) {
                                                     AsyncImage(
-                                                        model = photo.thumbnailUrl,
+                                                        model = RetrofitClient.resolveImageUrl(photo.thumbnailUrl),
                                                         contentDescription = "Purchased photo thumbnail",
                                                         modifier = Modifier.fillMaxSize()
                                                     )

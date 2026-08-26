@@ -63,6 +63,13 @@ class QpWebSocket(
     private val _state = MutableStateFlow<WsState>(WsState.Idle)
     val state: StateFlow<WsState> = _state
 
+    // All five fields below are mutated from two threads — the main thread
+    // (connect/close/release, and the reconnect coroutine on viewModelScope)
+    // and OkHttp's callback thread (onClosed/onFailure → scheduleReconnect).
+    // Every mutating section is synchronized(this); the sections are short and
+    // non-blocking (newWebSocket only enqueues), so the lock is uncontended in
+    // practice. @Volatile alone wouldn't do — the check-then-act sequences
+    // (connect's "already open?" guard, the subscriber count) are compound.
     private var socket: WebSocket? = null
     private var reconnectJob: Job? = null
     private var attempts = 0
@@ -97,7 +104,7 @@ class QpWebSocket(
      * Registers interest in [path] (absolute, e.g. "/ws/me/runner/notifications")
      * and opens it if it isn't already. Balanced by [close].
      */
-    fun connect(path: String) {
+    fun connect(path: String) = synchronized(this) {
         subscribers += 1
         if (socket != null || reconnectJob != null) return
         closedByCaller = false
@@ -109,14 +116,14 @@ class QpWebSocket(
      * Releases one subscriber's interest. The socket actually closes only when
      * the last one lets go — see [subscribers].
      */
-    fun close() {
+    fun close(): Unit = synchronized(this) {
         if (subscribers > 0) subscribers -= 1
         if (subscribers > 0) return
         release()
     }
 
     /** Forces the socket shut regardless of subscriber count (ViewModel teardown). */
-    fun release() {
+    fun release(): Unit = synchronized(this) {
         subscribers = 0
         closedByCaller = true
         reconnectJob?.cancel()
@@ -150,7 +157,7 @@ class QpWebSocket(
 
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                attempts = 0
+                synchronized(this@QpWebSocket) { attempts = 0 }
                 _state.value = WsState.Open
             }
 
@@ -168,7 +175,7 @@ class QpWebSocket(
         })
     }
 
-    private fun scheduleReconnect(path: String) {
+    private fun scheduleReconnect(path: String): Unit = synchronized(this) {
         if (closedByCaller) return
         socket = null
         attempts += 1
@@ -176,8 +183,10 @@ class QpWebSocket(
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             delay(backoffMs(attempts))
-            reconnectJob = null
-            if (!closedByCaller) open(path)
+            synchronized(this@QpWebSocket) {
+                reconnectJob = null
+                if (!closedByCaller) open(path)
+            }
         }
     }
 

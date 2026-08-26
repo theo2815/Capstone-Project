@@ -37,6 +37,7 @@ import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.QpWebSocket
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.WsState
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -272,7 +273,7 @@ fun RunnerGalleryScreen(
                         Column(modifier = Modifier.fillMaxWidth()) {
                             if (!activeEvent?.bannerUrl.isNullOrEmpty()) {
                                 AsyncImage(
-                                    model = activeEvent?.bannerUrl,
+                                    model = RetrofitClient.resolveImageUrl(activeEvent?.bannerUrl),
                                     contentDescription = "Event Banner",
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -591,7 +592,7 @@ fun RunnerGalleryScreen(
                                 ) {
                                     if (photo.imageUrl != null) {
                                         AsyncImage(
-                                            model = photo.imageUrl,
+                                            model = RetrofitClient.resolveImageUrl(photo.imageUrl),
                                             contentDescription = "Photo preview",
                                             modifier = Modifier.fillMaxSize(),
                                             contentScale = ContentScale.Crop
@@ -863,7 +864,7 @@ private fun UpcomingEventNotice(
         ) {
             if (!event.bannerUrl.isNullOrEmpty()) {
                 AsyncImage(
-                    model = event.bannerUrl,
+                    model = RetrofitClient.resolveImageUrl(event.bannerUrl),
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
@@ -980,6 +981,14 @@ private fun PhotoAlertCard(
                     style = Typography.bodyMedium,
                     color = SlateSoft,
                 )
+                if (state.message != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = state.message,
+                        style = Typography.bodySmall,
+                        color = ErrorRed,
+                    )
+                }
                 Spacer(Modifier.height(16.dp))
                 if (state.registered) {
                     Row(verticalAlignment = Alignment.CenterVertically) {

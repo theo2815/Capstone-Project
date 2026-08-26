@@ -491,7 +491,12 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     _payoutActionState.value = "Error: ${response.error ?: "Payout request rejected."}"
                 }
             } catch (e: Exception) {
-                _payoutActionState.value = "Error: ${e.localizedMessage ?: "Failed to submit payout request."}"
+                // PAYOUT_NO_ACCOUNT / PAYOUT_BELOW_MINIMUM / PAYOUT_REQUEST_OPEN
+                // arrive as non-2xx — surface the server's reason, not
+                // "HTTP 409 Conflict".
+                val err = RetrofitClient.parseHttpError(e)
+                _payoutActionState.value =
+                    "Error: ${err?.message ?: RetrofitClient.parseError(e)}"
             }
         }
     }
@@ -602,6 +607,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     }
 
 
+    // Batch-progress bookkeeping for observeQueue — see the comment there.
+    private var uploadBatchBaseline = 0
+    private var uploadBatchActive = false
+
     private fun observeQueue() {
         viewModelScope.launch {
             database.uploadQueueDao().getAllRecords().collectLatest { records ->
@@ -616,7 +625,21 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 val failed = records.count { it.uploadStatus == "FAILED" }
                 val total = records.size
 
-                val progress = if (total > 0) synced.toFloat() / total.toFloat() else 0f
+                // Progress is BATCH-relative. COMPLETED rows persist forever as
+                // the card-import dedupe ledger, so `synced/total` over all
+                // history meant a 500-photo race followed by one new queued
+                // photo showed 500/501 ≈ 99% instantly. Baseline = rows already
+                // settled when the current batch began (idle → active edge).
+                val active = queued + uploading > 0
+                if (active && !uploadBatchActive) uploadBatchBaseline = synced + failed
+                uploadBatchActive = active
+                val batchTotal = total - uploadBatchBaseline
+                val batchDone = (synced + failed) - uploadBatchBaseline
+                val progress = when {
+                    !active -> if (total > 0) 1f else 0f
+                    batchTotal > 0 -> batchDone.toFloat() / batchTotal.toFloat()
+                    else -> 0f
+                }
 
                 // Pick the highest-id FAILED row so the displayed message tracks
                 // the most recent attempt (records is unordered from the DAO).
@@ -1440,12 +1463,16 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             }
 
             try {
-                // 1. Update Brand (Name & Bio)
+                // 1. Update Brand (Name & Bio). brandColor passes through the
+                // hydrated value — sending a literal "none" here silently reset
+                // a brand colour the photographer had picked on the website on
+                // every mobile save. (A mobile picker is separate work; until
+                // then mobile must at least not destroy the setting.)
                 val brandResponse = RetrofitClient.apiService.updateBrand(
                     "Bearer $token",
                     com.quickpitik.mobile.data.remote.BrandPatchRequest(
                         brandName = brandName,
-                        brandColor = "none",
+                        brandColor = brandSettings.value?.brandColor ?: "none",
                         bio = bio
                     )
                 )
@@ -1499,7 +1526,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     }
                 }
 
-                // 2. Update GCash Payout
+                // 2. Update GCash Payout — checked like every other step in
+                // this chain. Ignoring the response let a rejected payout
+                // account (bad number format, duplicate) report overall
+                // success while the account was never saved.
                 if (gcashName.isNotBlank() && gcashNumber.isNotBlank()) {
                     val payoutResponse = RetrofitClient.apiService.createPayoutAccount(
                         "Bearer $token",
@@ -1509,7 +1539,12 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                             accountName = gcashName
                         )
                     )
-                    // Payout endpoint returns 200 OK. Continue.
+                    if (!payoutResponse.success) {
+                        _settingsActionState.value =
+                            "Error: " + (payoutResponse.error ?: "Failed to save payout account.")
+                        _isSavingSettings.value = false
+                        return@launch
+                    }
                 }
 
                 // 3. Upload Avatar if chosen
@@ -1552,20 +1587,16 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 fetchVerificationStatus()
                 fetchSettings()
             } catch (e: retrofit2.HttpException) {
-                val rawJson = e.response()?.errorBody()?.string().orEmpty()
-                val parsedMsg = try {
-                    val jsonObj = org.json.JSONObject(rawJson)
-                    val err = jsonObj.optString("error", "")
-                    val msg = jsonObj.optString("message", "")
-                    err.ifBlank { msg }
-                } catch (_: Exception) {
-                    ""
-                }
-                _settingsActionState.value = "Error: " + (parsedMsg.ifBlank {
-                    if (e.code() == 409) "That handle is already taken by another user." else (e.localizedMessage ?: "Connection error.")
-                })
+                // The backend's envelope is {success, errors:[{code,message}]} —
+                // the previous flat {"error"/"message"} parse never matched it,
+                // so HANDLE_TAKEN / RESERVED_HANDLE / INVALID_REGION /
+                // VALIDATION_ERROR all collapsed to a hardcoded 409 guess.
+                val err = RetrofitClient.parseHttpError(e)
+                _settingsActionState.value = "Error: " + (err?.message
+                    ?: if (e.code() == 409) "That handle is already taken by another user."
+                    else (e.localizedMessage ?: "Connection error."))
             } catch (e: Exception) {
-                _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
+                _settingsActionState.value = "Error: " + RetrofitClient.parseError(e)
             } finally {
                 _isSavingSettings.value = false
             }

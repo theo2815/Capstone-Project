@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.quickpitik.mobile.ui.auth.validateEmail
 import com.quickpitik.mobile.ui.theme.*
 
 // Mobile mirror of website `CheckoutModal`. Opens from the CartSheet's
@@ -48,9 +49,9 @@ fun CheckoutSheet(
 
     var emailInput by remember { mutableStateOf(cartViewModel.getLoggedInUserEmail()) }
     var selectedPaymentMethod by remember { mutableStateOf("GCASH") }
-    var cardNumber by remember { mutableStateOf("") }
-    var cardExpiry by remember { mutableStateOf("") }
-    var cardCvv by remember { mutableStateOf("") }
+    // Same gate as the website's checkout identify step (EMAIL_REGEX): the
+    // receipt + download links go to this address, so a typo is a lost order.
+    val emailError = validateEmail(emailInput)
 
     val scrollState = rememberScrollState()
     val context = LocalContext.current
@@ -206,6 +207,14 @@ fun CheckoutSheet(
                     shape = FieldShape,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (emailInput.isNotBlank() && emailError != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = emailError,
+                        style = Typography.bodySmall,
+                        color = ErrorRed,
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(20.dp))
                 Kicker("Payment provider")
@@ -225,62 +234,17 @@ fun CheckoutSheet(
                     onSelect = { selectedPaymentMethod = "MAYA" },
                 )
                 Spacer(modifier = Modifier.height(10.dp))
+                // No card fields here, deliberately: PayMongo's hosted checkout
+                // collects the card. Mobile once rendered number/MM-YY/CVV
+                // fields that were captured and never transmitted — dead UI
+                // that implied we take PAN data. The website never collects
+                // card details either.
                 PaymentOptionCard(
                     title = "Credit / debit card",
-                    subtitle = "Visa, Mastercard, JCB, etc.",
+                    subtitle = "Visa, Mastercard, JCB — entered securely on PayMongo",
                     selected = selectedPaymentMethod == "CARD",
                     onSelect = { selectedPaymentMethod = "CARD" },
-                ) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    TextField(
-                        value = cardNumber,
-                        onValueChange = { cardNumber = it },
-                        placeholder = { Text("Card number", color = SlateSoft) },
-                        singleLine = true,
-                        enabled = !isLoading,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Bone,
-                            unfocusedContainerColor = Bone,
-                            focusedIndicatorColor = Fresh,
-                            unfocusedIndicatorColor = Color.Transparent,
-                        ),
-                        shape = FieldShape,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextField(
-                            value = cardExpiry,
-                            onValueChange = { cardExpiry = it },
-                            placeholder = { Text("MM/YY", color = SlateSoft) },
-                            singleLine = true,
-                            enabled = !isLoading,
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Bone,
-                                unfocusedContainerColor = Bone,
-                                focusedIndicatorColor = Fresh,
-                                unfocusedIndicatorColor = Color.Transparent,
-                            ),
-                            shape = FieldShape,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextField(
-                            value = cardCvv,
-                            onValueChange = { cardCvv = it },
-                            placeholder = { Text("CVV", color = SlateSoft) },
-                            singleLine = true,
-                            enabled = !isLoading,
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Bone,
-                                unfocusedContainerColor = Bone,
-                                focusedIndicatorColor = Fresh,
-                                unfocusedIndicatorColor = Color.Transparent,
-                            ),
-                            shape = FieldShape,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                }
+                )
 
                 if (checkoutState is CheckoutState.Error) {
                     Spacer(modifier = Modifier.height(16.dp))
@@ -332,9 +296,7 @@ fun CheckoutSheet(
                         onClick = { cartViewModel.checkout(emailInput, selectedPaymentMethod) },
                         modifier = Modifier.fillMaxWidth(),
                         loading = isLoading,
-                        enabled = emailInput.isNotBlank() &&
-                            (selectedPaymentMethod != "CARD" ||
-                                (cardNumber.isNotBlank() && cardExpiry.isNotBlank() && cardCvv.isNotBlank())),
+                        enabled = emailError == null,
                     )
                 }
             }
@@ -391,7 +353,6 @@ private fun PaymentOptionCard(
     subtitle: String,
     selected: Boolean,
     onSelect: () -> Unit,
-    expandedContent: @Composable (ColumnScope.() -> Unit)? = null,
 ) {
     Card(
         onClick = onSelect,
@@ -412,9 +373,6 @@ private fun PaymentOptionCard(
                     Text(title, style = Typography.titleSmall, color = Ink)
                     Text(subtitle, style = Typography.bodySmall, color = SlateSoft)
                 }
-            }
-            if (selected && expandedContent != null) {
-                expandedContent()
             }
         }
     }

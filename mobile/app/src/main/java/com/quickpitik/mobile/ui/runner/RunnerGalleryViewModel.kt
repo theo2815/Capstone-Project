@@ -44,7 +44,14 @@ sealed class PhotosSearchState {
 sealed class PhotoAlertUiState {
     object Loading : PhotoAlertUiState()
     object NeedsSelfie : PhotoAlertUiState()
-    data class Ready(val registered: Boolean, val updating: Boolean = false) : PhotoAlertUiState()
+    data class Ready(
+        val registered: Boolean,
+        val updating: Boolean = false,
+        // Set when a toggle attempt failed for a reason other than a missing
+        // selfie (e.g. EVENT_NOT_UPLOADABLE after the alert window closed) —
+        // the card must say why the switch snapped back, not revert silently.
+        val message: String? = null,
+    ) : PhotoAlertUiState()
 }
 
 class RunnerGalleryViewModel(application: Application) : AndroidViewModel(application) {
@@ -242,7 +249,9 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
             _searchState.value = PhotosSearchState.Idle
             return
         }
-        searchByBib("")
+        // Direct, not via searchByBib(): the debounce there exists for
+        // keystrokes; the initial load should not wait 350ms.
+        runBibSearch("", showLoading = true)
     }
 
     fun clearSelectedEvent() {
@@ -256,8 +265,18 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         _newPhotoCount.value = 0
     }
 
+    // Debounced: the cockpit's bib field calls this on every keystroke, and
+    // "1234" must not fire four network searches. Mirrors the live-photo
+    // refresh debounce below; a submitted query still lands within ~a third of
+    // a second of the last key.
+    private var bibSearchJob: Job? = null
+
     fun searchByBib(bib: String) {
-        runBibSearch(bib, showLoading = true)
+        bibSearchJob?.cancel()
+        bibSearchJob = viewModelScope.launch {
+            delay(BIB_SEARCH_DEBOUNCE_MS)
+            runBibSearch(bib, showLoading = true)
+        }
     }
 
     /**
@@ -275,7 +294,12 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
             if (showLoading) _searchState.value = PhotosSearchState.Loading
             try {
                 val query = trimmed.ifEmpty { null }
+                // Bearer when signed in (always, on mobile): the backend uses it
+                // to populate cleanUrl for owned photos and to rate-bucket per
+                // user — see the QuickPitikApi declaration.
+                val token = SessionManager.getInstance(getApplication()).getAccessToken()
                 val response = RetrofitClient.apiService.getEventPhotos(
+                    token = token?.let { "Bearer $it" },
                     slug = event.slug,
                     bib = query
                 )
@@ -296,7 +320,30 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
 
     fun clearFilter() {
         _isFiltered.value = false
-        searchByBib("")
+        // Explicit tap — no reason to sit out the keystroke debounce.
+        bibSearchJob?.cancel()
+        runBibSearch("", showLoading = true)
+    }
+
+    // Website-parity copy for face-search failures (bib-search-panels.tsx
+    // humanizeError). The backend passes ai-api codes through the envelope
+    // specifically so clients can map them to targeted copy; the raw server
+    // message is the fallback, never the raw exception.
+    private fun humanizeFaceSearchError(code: String?, message: String?): String = when (code) {
+        "LOW_CONFIDENCE" -> "We didn't find your face in this event yet. Try another shot."
+        "SELFIE_REJECTED", "LOW_QUALITY", "NO_FACES" ->
+            message ?: "Selfie rejected — try a clearer, frontal shot."
+        "AI_API_UNAVAILABLE" -> "Face search is offline right now. Try again in a few minutes."
+        else -> message ?: "Could not match your face right now. Try again."
+    }
+
+    // For thrown (non-2xx) failures. parseHttpError drains the error body, so
+    // parseError is only consulted when there was no structured error to read
+    // (transport failures — where its human copy is exactly what we want).
+    private fun faceSearchErrorFrom(e: Exception): String {
+        val err = RetrofitClient.parseHttpError(e)
+        return if (err != null) humanizeFaceSearchError(err.code, err.message)
+        else RetrofitClient.parseError(e)
     }
 
     fun searchBySelfie(selfieFile: File) {
@@ -326,10 +373,12 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 if (response.success && response.data != null) {
                     _searchState.value = PhotosSearchState.Success(response.data.items)
                 } else {
-                    _searchState.value = PhotosSearchState.Error(response.error ?: "AI Face Recognition returned error.")
+                    val err = response.errors?.firstOrNull()
+                    _searchState.value =
+                        PhotosSearchState.Error(humanizeFaceSearchError(err?.code, err?.message))
                 }
             } catch (e: Exception) {
-                _searchState.value = PhotosSearchState.Error(RetrofitClient.parseError(e))
+                _searchState.value = PhotosSearchState.Error(faceSearchErrorFrom(e))
             }
         }
     }
@@ -397,10 +446,12 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 if (response.success && response.data != null) {
                     _searchState.value = PhotosSearchState.Success(response.data.items)
                 } else {
-                    _searchState.value = PhotosSearchState.Error(response.error ?: "AI Face search returned an error.")
+                    val err = response.errors?.firstOrNull()
+                    _searchState.value =
+                        PhotosSearchState.Error(humanizeFaceSearchError(err?.code, err?.message))
                 }
             } catch (e: Exception) {
-                _searchState.value = PhotosSearchState.Error(e.localizedMessage ?: "Failed to query event photos with stored selfie.")
+                _searchState.value = PhotosSearchState.Error(faceSearchErrorFrom(e))
             }
         }
     }
@@ -437,7 +488,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     fun togglePhotoAlert(slug: String, register: Boolean) {
         val current = _photoAlert.value as? PhotoAlertUiState.Ready ?: return
         viewModelScope.launch {
-            _photoAlert.value = current.copy(updating = true)
+            _photoAlert.value = current.copy(updating = true, message = null)
             val token = SessionManager.getInstance(getApplication()).getAccessToken()
             if (token == null) {
                 _photoAlert.value = current
@@ -449,18 +500,29 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                         "Bearer $token", slug, PhotoAlertRequest()
                     )
                     _photoAlert.value =
-                        if (resp.success) PhotoAlertUiState.Ready(registered = true) else current
+                        if (resp.success) PhotoAlertUiState.Ready(registered = true)
+                        else current.copy(
+                            updating = false,
+                            message = resp.error ?: "Couldn't turn on photo alerts. Try again.",
+                        )
                 } else {
                     RetrofitClient.apiService.unregisterPhotoAlert("Bearer $token", slug)
                     _photoAlert.value = PhotoAlertUiState.Ready(registered = false)
                 }
             } catch (e: Exception) {
-                // A 400 SELFIE_REQUIRED means the selfie vanished between load and
-                // toggle — route them to add one; anything else just reverts.
-                val msg = RetrofitClient.parseError(e)
-                _photoAlert.value =
-                    if (msg.contains("selfie", ignoreCase = true)) PhotoAlertUiState.NeedsSelfie
-                    else current
+                // Discriminate on the machine-readable code, not the message
+                // text: SELFIE_REQUIRED means the selfie vanished between load
+                // and toggle — route them to add one. Everything else (e.g.
+                // EVENT_NOT_UPLOADABLE once the alert window closes) reverts
+                // WITH the server's reason shown, never silently.
+                val err = RetrofitClient.parseHttpError(e)
+                _photoAlert.value = when (err?.code) {
+                    "SELFIE_REQUIRED" -> PhotoAlertUiState.NeedsSelfie
+                    else -> current.copy(
+                        updating = false,
+                        message = err?.message ?: RetrofitClient.parseError(e),
+                    )
+                }
             }
         }
     }
@@ -469,5 +531,9 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         // Long enough to collapse a burst upload into one refetch, short enough
         // that a single shot still feels immediate.
         const val LIVE_REFRESH_DEBOUNCE_MS = 1_500L
+
+        // Keystroke debounce for the bib field — collapses "1234" into one
+        // request without making a submitted search feel laggy.
+        const val BIB_SEARCH_DEBOUNCE_MS = 350L
     }
 }

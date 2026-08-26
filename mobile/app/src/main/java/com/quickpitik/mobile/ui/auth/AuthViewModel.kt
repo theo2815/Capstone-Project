@@ -3,13 +3,11 @@ package com.quickpitik.mobile.ui.auth
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.gson.Gson
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import retrofit2.HttpException
 
 sealed class AuthState {
     object Idle : AuthState()
@@ -58,10 +56,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     _authState.value = AuthState.Error(envelope.error ?: "Login failed. Please check credentials.")
                 }
-            } catch (e: HttpException) {
-                _authState.value = AuthState.Error(parseHttpError(e))
             } catch (e: Exception) {
-                _authState.value = AuthState.Error(e.localizedMessage ?: "Login failed. Please try again.")
+                // RetrofitClient.parseError surfaces the backend envelope
+                // message (e.g. the ACCOUNT_LOCKED "try again in N minutes"
+                // copy) and maps transport failures to human copy — a login
+                // timeout must not read "java.net.SocketTimeoutException".
+                _authState.value = AuthState.Error(RetrofitClient.parseError(e))
             }
         }
     }
@@ -88,10 +88,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     _authState.value = AuthState.Error(envelope.error ?: "Registration failed.")
                 }
-            } catch (e: HttpException) {
-                _authState.value = AuthState.Error(parseHttpError(e))
             } catch (e: Exception) {
-                _authState.value = AuthState.Error(e.localizedMessage ?: "Registration failed. Please try again.")
+                _authState.value = AuthState.Error(RetrofitClient.parseError(e))
             }
         }
     }
@@ -152,16 +150,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetPasswordResetState() {
         _passwordResetState.value = PasswordResetState.Idle
-    }
-
-    private fun parseHttpError(e: HttpException): String {
-        return try {
-            val errorBody = e.response()?.errorBody()?.string()
-            val parsedError = Gson().fromJson(errorBody, ApiErrorEnvelope::class.java)
-            parsedError?.errors?.firstOrNull()?.message ?: "Operation failed. Please try again."
-        } catch (ex: Exception) {
-            "Connection failed. Please try again."
-        }
     }
 
     fun resetState() {

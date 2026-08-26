@@ -250,6 +250,50 @@ class PhotoUploadWorkerTest {
         assertTrue(result is ListenableWorker.Result.Success)
     }
 
+    /**
+     * The non-duplicate permanently-fatal codes (suspension, closed upload
+     * window, missing watermark…) joined TERMINAL_UPLOAD_ERROR_CODES on
+     * 2026-08-26 — before that, each burned all 5 backoff cycles per photo.
+     */
+    @Test
+    fun `a 422 event-not-uploadable is terminal and does not drive a retry`() = runTest {
+        signIn()
+        val http = startServer(
+            MockResponse()
+                .setResponseCode(422)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"success":false,"errors":[{"code":"EVENT_NOT_UPLOADABLE","message":"Upload window closed."}]}""")
+        )
+        val id = enqueue(filePath = realJpeg().absolutePath)
+
+        val result = runWorker()
+
+        val stored = requireNotNull(db.uploadQueueDao().getRecordById(id))
+        assertEquals("FAILED", stored.uploadStatus)
+        assertEquals(0, stored.retryCount)
+        assertTrue(result is ListenableWorker.Result.Success)
+        assertEquals(1, http.requestCount)
+    }
+
+    /**
+     * A completed upload's spool copy in OUR cacheDir is deleted (the server
+     * has the bytes); the Room row survives as the re-import dedupe ledger.
+     */
+    @Test
+    fun `a completed upload deletes its cacheDir spool file`() = runTest {
+        signIn()
+        startServer(ok())
+        val spooled = File(context.cacheDir, "gallery_upload_test.jpg").apply {
+            writeBytes(ByteArray(64) { 0xFF.toByte() })
+        }
+        val id = enqueue(filePath = spooled.absolutePath)
+
+        runWorker()
+
+        assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
+        assertTrue(!spooled.exists())
+    }
+
     @Test
     fun `a 500 requeues the record and asks WorkManager to come back`() = runTest {
         signIn()

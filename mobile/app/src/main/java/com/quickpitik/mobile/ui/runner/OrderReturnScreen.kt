@@ -52,6 +52,7 @@ import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.download.PhotoDownloader
 import com.quickpitik.mobile.data.remote.OrderPhotoDetailDto
 import com.quickpitik.mobile.data.remote.OrderDetailDto
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.ErrorRed
@@ -368,7 +369,7 @@ private fun PhotoReturnCard(
         ) {
             if (previewSrc != null) {
                 AsyncImage(
-                    model = previewSrc,
+                    model = RetrofitClient.resolveImageUrl(previewSrc),
                     contentDescription = label,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -491,7 +492,7 @@ private fun TimeoutBody(orderId: String, onNavigateToOrders: () -> Unit) {
         )
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "PayMongo confirmed your payment, but the receipt hasn't reached us yet. Check your email in a minute — we'll send the download links the moment it lands.",
+            text = "We haven't received the payment confirmation yet — banks sometimes take a few minutes. If you completed the payment, check your email shortly; the download links arrive the moment it clears. Your order status is on the orders page.",
             style = Typography.bodyMedium,
             color = SlateSoft,
             textAlign = TextAlign.Center,

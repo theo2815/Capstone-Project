@@ -32,6 +32,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.EventDto
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 
 // Date-filter chips, mirroring the website's date dropdown. Each (except ANY) maps
@@ -499,7 +500,7 @@ private fun EventTile(
             ) {
                 if (!event.bannerUrl.isNullOrEmpty()) {
                     AsyncImage(
-                        model = event.bannerUrl,
+                        model = RetrofitClient.resolveImageUrl(event.bannerUrl),
                         contentDescription = event.name,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
