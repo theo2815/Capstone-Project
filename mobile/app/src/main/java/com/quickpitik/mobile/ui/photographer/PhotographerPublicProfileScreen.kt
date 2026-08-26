@@ -29,6 +29,11 @@ import com.quickpitik.mobile.data.remote.CoverSourceDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotographerEventCoverageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.quickpitik.mobile.ui.runner.CartViewModel
+import com.quickpitik.mobile.ui.runner.PhotoPreview
+import com.quickpitik.mobile.ui.runner.rememberIsTrueRunner
+import com.quickpitik.mobile.ui.runner.toPreviewData
 import com.quickpitik.mobile.ui.theme.*
 
 // Mobile mirror of website /{handle} (public photographer profile) and
@@ -44,7 +49,11 @@ import com.quickpitik.mobile.ui.theme.*
 fun PhotographerPublicProfileScreen(
     handle: String?,
     viewModel: PublicPhotographerViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    // Present only in RUNNER contexts (the photographer/{handle} route) —
+    // enables the gallery's add-to-cart flow. The studio's own profile
+    // preview passes nothing and stays a viewer.
+    cartViewModel: CartViewModel? = null,
 ) {
     val profileState by viewModel.publicProfileState.collectAsState()
     val resolvedHandle = handle?.takeIf { it.isNotBlank() }
@@ -60,7 +69,8 @@ fun PhotographerPublicProfileScreen(
             viewModel = viewModel,
             handle = resolvedHandle,
             slug = gallerySlug,
-            onBack = { selectedEventSlug = null }
+            onBack = { selectedEventSlug = null },
+            cartViewModel = cartViewModel,
         )
         return
     }
@@ -108,6 +118,25 @@ fun PhotographerPublicProfileScreen(
                     if (!profile.bio.isNullOrBlank()) {
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(profile.bio, style = Typography.bodyMedium, color = InkSoft)
+                    }
+
+                    // Stat row — web public-profile parity (Events / Photos /
+                    // On QuickPitik; deliberately NO sales figure on a public
+                    // surface).
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+                        StatNumber(
+                            value = "${profile.events.size}",
+                            label = "Events",
+                        )
+                        StatNumber(
+                            value = "%,d".format(profile.events.sumOf { it.photoCount }),
+                            label = "Photos",
+                        )
+                        StatNumber(
+                            value = profile.memberSince ?: "2026",
+                            label = "On QuickPitik",
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(24.dp))
@@ -197,8 +226,10 @@ private fun EventCoverageCard(coverage: PhotographerEventCoverageDto, onClick: (
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
+        // No sales figure on a PUBLIC surface (web deliberately hides it —
+        // this page is what runners see, including via the lightbox byline).
         Text(
-            text = "${coverage.photoCount} photos  ·  ${coverage.salesCount} sold",
+            text = "${coverage.photoCount} photos",
             style = Typography.bodySmall,
             color = SlateSoft
         )
@@ -213,12 +244,24 @@ private fun ProfileEventGalleryView(
     viewModel: PublicPhotographerViewModel,
     handle: String,
     slug: String,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    cartViewModel: CartViewModel? = null,
 ) {
     val photosState by viewModel.profileEventPhotosState.collectAsState()
+    val eventDetail by viewModel.galleryEventDetail.collectAsState()
     var selectedPhoto by remember { mutableStateOf<PhotoDto?>(null) }
+    var bibFilter by rememberSaveable { mutableStateOf("") }
 
-    LaunchedEffect(slug) { viewModel.fetchProfileEventPhotos(handle, slug) }
+    LaunchedEffect(slug) {
+        viewModel.fetchProfileEventPhotos(handle, slug)
+        // Real event name + the event id add-to-cart needs — the coverage row
+        // only carries the slug.
+        viewModel.fetchGalleryEventDetail(slug)
+    }
+
+    // Commerce needs a true-runner session, a cart, and the event id.
+    val commerce = cartViewModel != null && rememberIsTrueRunner() && eventDetail != null
+    val cartItems = cartViewModel?.cartItems?.collectAsState()?.value.orEmpty()
 
     Surface(modifier = Modifier.fillMaxSize(), color = Bone) {
         Column(
@@ -231,8 +274,32 @@ private fun ProfileEventGalleryView(
         ) {
             BackRow(label = "BACK TO PROFILE", onBack = onBack)
             Spacer(modifier = Modifier.height(16.dp))
-            Text(formatSlug(slug), style = Typography.titleLarge, fontWeight = FontWeight.Bold, color = Ink)
+            Text(
+                text = eventDetail?.name ?: formatSlug(slug),
+                style = Typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = Ink,
+            )
             Text("@$handle", style = Typography.bodyMedium, color = SlateSoft)
+            Spacer(modifier = Modifier.height(12.dp))
+            // Client-side bib filter — web /{handle}/events/[slug] parity
+            // (that page also filters the loaded set client-side).
+            TextField(
+                value = bibFilter,
+                onValueChange = { bibFilter = it },
+                placeholder = { Text("Filter by bib number…", color = SlateSoft) },
+                singleLine = true,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = BoneDeep,
+                    unfocusedContainerColor = BoneDeep,
+                    focusedIndicatorColor = Fresh,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    focusedTextColor = Ink,
+                    unfocusedTextColor = InkSoft,
+                ),
+                shape = FieldShape,
+                modifier = Modifier.fillMaxWidth(),
+            )
             Spacer(modifier = Modifier.height(20.dp))
 
             when (val state = photosState) {
@@ -247,12 +314,23 @@ private fun ProfileEventGalleryView(
                     }
                 }
                 is ProfileEventPhotosState.Success -> {
-                    if (state.photos.isEmpty()) {
+                    val visiblePhotos = remember(state.photos, bibFilter) {
+                        val q = bibFilter.trim()
+                        if (q.isEmpty()) state.photos
+                        else state.photos.filter { it.bib?.contains(q, ignoreCase = true) == true }
+                    }
+                    if (visiblePhotos.isEmpty()) {
                         Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
-                            Text("No photos in this gallery yet.", color = SlateSoft, textAlign = TextAlign.Center, style = Typography.bodyMedium)
+                            Text(
+                                text = if (bibFilter.isBlank()) "No photos in this gallery yet."
+                                else "No photos for bib ${bibFilter.trim()} in this gallery.",
+                                color = SlateSoft,
+                                textAlign = TextAlign.Center,
+                                style = Typography.bodyMedium,
+                            )
                         }
                     } else {
-                        state.photos.chunked(2).forEach { rowPhotos ->
+                        visiblePhotos.chunked(2).forEach { rowPhotos ->
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 rowPhotos.forEach { photo ->
                                     Box(
@@ -299,38 +377,50 @@ private fun ProfileEventGalleryView(
         }
     }
 
+    // The shared runner lightbox replaces the old 220dp AlertDialog "Price:
+    // ₱X / CLOSE" preview — with a pager, the photographer credit suppressed
+    // (we're on their page), and, for a true runner with the event id loaded,
+    // the full Add-to-cart / Buy-now flow. This is the web's transactional
+    // /{handle}/events/[slug] gallery, not just a viewer.
     val preview = selectedPhoto
-    if (preview != null) {
-        AlertDialog(
-            onDismissRequest = { selectedPhoto = null },
-            title = { Text("Photo", fontWeight = FontWeight.Bold, color = Ink) },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(BoneDeep),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val url = resolveProfileImageUrl(preview.imageUrl)
-                        if (url != null) {
-                            AsyncImage(model = url, contentDescription = "Preview", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                        }
+    val allPhotos = (photosState as? ProfileEventPhotosState.Success)?.photos.orEmpty()
+    if (preview != null && allPhotos.isNotEmpty()) {
+        val previewPhotos = allPhotos.map { it.toPreviewData(eventDetail?.name ?: formatSlug(slug)) }
+        val currentIndex = previewPhotos.indexOfFirst { it.id == preview.id }
+        if (currentIndex >= 0) {
+            PhotoPreview(
+                photos = previewPhotos,
+                currentIndex = currentIndex,
+                commerceEnabled = commerce,
+                isInCart = { data -> cartItems.any { it.photoId == data.id } },
+                onToggleCart = onToggleCart@{ data ->
+                    val cart = cartViewModel ?: return@onToggleCart
+                    val detail = eventDetail ?: return@onToggleCart
+                    val photo = allPhotos.firstOrNull { it.id == data.id } ?: return@onToggleCart
+                    if (cartItems.any { it.photoId == data.id }) {
+                        cart.removeFromCart(data.id)
+                    } else {
+                        cart.addToCart(photo, detail.id, detail.slug, detail.name)
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(String.format("Price: ₱%,.2f", preview.price), style = Typography.bodyMedium, color = Ink)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { selectedPhoto = null }) {
-                    Text("CLOSE", color = Ink, fontWeight = FontWeight.Bold)
-                }
-            },
-            containerColor = Bone,
-            shape = RoundedCornerShape(16.dp)
-        )
+                },
+                onBuyNow = onBuyNow@{ data ->
+                    val cart = cartViewModel ?: return@onBuyNow
+                    val detail = eventDetail ?: return@onBuyNow
+                    val photo = allPhotos.firstOrNull { it.id == data.id } ?: return@onBuyNow
+                    if (cartItems.any { it.photoId == data.id }) {
+                        cart.openCheckoutSheet()
+                    } else {
+                        cart.triggerExpressCheckout()
+                        cart.addToCart(photo, detail.id, detail.slug, detail.name)
+                    }
+                    selectedPhoto = null
+                },
+                onClose = { selectedPhoto = null },
+                onIndexChange = { newIndex ->
+                    allPhotos.getOrNull(newIndex)?.let { selectedPhoto = it }
+                },
+            )
+        }
     }
 }
 

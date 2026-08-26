@@ -230,6 +230,15 @@ interface QuickPitikApi {
         @Header("Authorization") token: String
     ): ApiResponseEnvelope<PhotographerPayoutDto>
 
+    // Photographer cancels a HELD payout request after fixing what the admin
+    // flagged; the backend hard-deletes the cycle so a fresh request can be
+    // filed immediately. Body is empty ({success:true, data:null}).
+    @POST("api/v1/me/photographer/payouts/{id}/withdraw")
+    suspend fun withdrawPayout(
+        @Header("Authorization") token: String,
+        @Path("id") id: String
+    ): ApiResponseEnvelope<Any?>
+
     @GET("api/v1/me/photographer/billing/transactions")
     suspend fun getTransactionsLedger(
         @Header("Authorization") token: String,

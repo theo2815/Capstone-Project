@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -53,6 +54,8 @@ import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.ErrorView
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.GhostCta
+import com.quickpitik.mobile.ui.theme.PrimaryCta
+import com.quickpitik.mobile.ui.theme.QpCardShape
 import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.Kicker
 import com.quickpitik.mobile.ui.theme.Line
@@ -98,8 +101,10 @@ fun PhotographerEarningsScreen(
                 overview = state.overview,
                 balance = state.balance,
                 transactions = state.transactions,
+                monthTotals = state.monthTotals,
                 payoutActionState = payoutActionState,
                 onRequestPayout = { viewModel.submitPayoutRequest() },
+                onWithdrawPayout = { viewModel.withdrawPayoutRequest(it) },
                 onClearActionState = { viewModel.clearPayoutActionState() },
             )
         }
@@ -112,8 +117,10 @@ private fun EarningsContent(
     overview: EarningsOverviewDto,
     balance: PayoutBalanceDto,
     transactions: List<PhotographerTransactionDto>,
+    monthTotals: Map<String, Double>,
     payoutActionState: String?,
     onRequestPayout: () -> Unit,
+    onWithdrawPayout: (String) -> Unit,
     onClearActionState: () -> Unit,
 ) {
     var showHistory by remember { mutableStateOf(false) }
@@ -143,6 +150,7 @@ private fun EarningsContent(
                 balance = balance,
                 payoutActionState = payoutActionState,
                 onRequestPayout = onRequestPayout,
+                onWithdrawPayout = onWithdrawPayout,
                 onClearActionState = onClearActionState,
             )
         }
@@ -163,7 +171,7 @@ private fun EarningsContent(
             sheetState = sheetState,
             containerColor = Bone,
         ) {
-            TransactionsSheet(transactions = transactions)
+            TransactionsSheet(transactions = transactions, monthTotals = monthTotals)
         }
     }
 }
@@ -355,8 +363,42 @@ private fun WalletSlab(
     balance: PayoutBalanceDto,
     payoutActionState: String?,
     onRequestPayout: () -> Unit,
+    onWithdrawPayout: (String) -> Unit,
     onClearActionState: () -> Unit,
 ) {
+    // Web RequestPayoutModal parity: confirm the amount before filing —
+    // one open request at a time makes an accidental tap expensive.
+    var confirmRequest by remember { mutableStateOf(false) }
+    if (confirmRequest) {
+        AlertDialog(
+            onDismissRequest = { confirmRequest = false },
+            title = { Text("Request this payout?", color = Ink, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    text = "₱%,.2f".format(balance.unpaidBalance) +
+                        " will be queued for review. You can only have one open request at a time.",
+                    color = Slate,
+                    style = Typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                PrimaryCta(
+                    text = "Request payout",
+                    onClick = {
+                        confirmRequest = false
+                        onRequestPayout()
+                    },
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRequest = false }) {
+                    Text("Cancel", color = Slate)
+                }
+            },
+            containerColor = Bone,
+            shape = QpCardShape,
+        )
+    }
     // The kicker + CTA name the ACTUAL primary payout method from the
     // backend-authoritative balance snapshot — this card used to hardcode
     // "GCash" whatever the account was, and offered the CTA even when no
@@ -384,7 +426,12 @@ private fun WalletSlab(
 
         val hasOpen = balance.hasOpenRequest || balance.openRequest != null
         if (hasOpen) {
-            OpenRequestBlock(openRequest = balance.openRequest, fallbackAmount = balance.unpaidBalance)
+            OpenRequestBlock(
+                openRequest = balance.openRequest,
+                fallbackAmount = balance.unpaidBalance,
+                processing = payoutActionState == "processing",
+                onWithdraw = onWithdrawPayout,
+            )
         } else {
             val hasAccount = balance.primaryAccount != null
             val canWithdraw = hasAccount && balance.unpaidBalance >= balance.minimum
@@ -395,7 +442,7 @@ private fun WalletSlab(
                     methodLabel != null -> "Request payout to $methodLabel"
                     else -> "Request payout"
                 },
-                onClick = onRequestPayout,
+                onClick = { confirmRequest = true },
                 enabled = canWithdraw && !isProcessing,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -430,6 +477,8 @@ private fun WalletSlab(
 private fun OpenRequestBlock(
     openRequest: PhotographerPayoutDto?,
     fallbackAmount: Double,
+    processing: Boolean = false,
+    onWithdraw: (String) -> Unit = {},
 ) {
     val status = openRequest?.status?.uppercase() ?: "PENDING_REVIEW"
     val tone = when (status) {
@@ -456,6 +505,12 @@ private fun OpenRequestBlock(
                 color = Ink,
             )
         }
+        // The field clients should render (weekOf is deprecated backend-side).
+        val requestedOn = openRequest?.requestedAt?.take(10)
+        if (!requestedOn.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Kicker(text = "Requested · $requestedOn", color = SlateSoft)
+        }
         if (status == "HELD" && !openRequest?.holdReason.isNullOrBlank()) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
@@ -463,6 +518,48 @@ private fun OpenRequestBlock(
                 color = ErrorRed,
                 style = Typography.bodySmall,
             )
+        }
+        // A HELD request can be withdrawn so a corrected one can be filed —
+        // web WithdrawPayoutModal parity, confirm-gated (it hard-deletes the
+        // cycle).
+        if (status == "HELD" && openRequest != null) {
+            var confirmWithdraw by remember { mutableStateOf(false) }
+            Spacer(modifier = Modifier.height(12.dp))
+            GhostCta(
+                text = if (processing) "Withdrawing…" else "Withdraw request",
+                enabled = !processing,
+                onClick = { confirmWithdraw = true },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (confirmWithdraw) {
+                AlertDialog(
+                    onDismissRequest = { confirmWithdraw = false },
+                    title = { Text("Withdraw this request?", color = Ink, fontWeight = FontWeight.Bold) },
+                    text = {
+                        Text(
+                            text = "The held request is deleted and your balance is freed — you can file a new request right away.",
+                            color = Slate,
+                            style = Typography.bodyMedium,
+                        )
+                    },
+                    confirmButton = {
+                        PrimaryCta(
+                            text = "Withdraw",
+                            onClick = {
+                                confirmWithdraw = false
+                                onWithdraw(openRequest.id)
+                            },
+                        )
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmWithdraw = false }) {
+                            Text("Keep it", color = Slate)
+                        }
+                    },
+                    containerColor = Bone,
+                    shape = QpCardShape,
+                )
+            }
         }
     }
 }
@@ -525,7 +622,10 @@ private fun TransactionsLink(count: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TransactionsSheet(transactions: List<PhotographerTransactionDto>) {
+private fun TransactionsSheet(
+    transactions: List<PhotographerTransactionDto>,
+    monthTotals: Map<String, Double>,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -545,19 +645,56 @@ private fun TransactionsSheet(transactions: List<PhotographerTransactionDto>) {
                 textAlign = TextAlign.Center,
             )
         } else {
+            // Month-grouped ledger (web billing parity). The subtotal is the
+            // SERVER's per-month figure over all transactions, so it stays
+            // correct even when the loaded page only holds part of a month.
+            val groups = remember(transactions) {
+                transactions.groupBy { it.paidAt.take(7) } // "YYYY-MM"
+                    .toSortedMap(compareByDescending { it })
+            }
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(420.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(transactions, key = { it.id }) { tx ->
-                    TransactionRow(transaction = tx)
+                groups.forEach { (monthKey, rows) ->
+                    item(key = "month-$monthKey") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp, bottom = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Kicker(text = formatMonthLabel(monthKey), color = Slate)
+                            val subtotal = monthTotals[monthKey]
+                            if (subtotal != null) {
+                                Text(
+                                    text = "+₱%,.0f".format(subtotal),
+                                    style = NumeralStyle.copy(fontSize = 13.sp),
+                                    color = Ink,
+                                )
+                            }
+                        }
+                    }
+                    items(rows, key = { it.id }) { tx ->
+                        TransactionRow(transaction = tx)
+                    }
                 }
             }
         }
     }
 }
+
+private fun formatMonthLabel(monthKey: String): String = try {
+    val (year, month) = monthKey.split("-")
+    val names = listOf(
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    )
+    "${names[month.toInt() - 1]} $year"
+} catch (e: Exception) { monthKey }
 
 @Composable
 private fun TransactionRow(transaction: PhotographerTransactionDto) {

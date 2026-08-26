@@ -611,6 +611,9 @@ class MainActivity : ComponentActivity() {
                                     handle = entry.arguments?.getString("handle"),
                                     viewModel = publicPhotographerViewModel,
                                     onBack = { navController.popBackStack() },
+                                    // Runner context — the per-event gallery is
+                                    // transactional here (web parity).
+                                    cartViewModel = cartViewModel,
                                 )
                             }
                             composable("profile") {

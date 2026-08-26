@@ -15,7 +15,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -106,7 +109,34 @@ fun PhotographerEventsScreen(
                 },
             )
         } else {
-            val buckets = remember(all, today) { all.groupBy { it.filterBucket(today) } }
+            // Name filter — web EventFilterBar parity (its date dropdown is
+            // covered by the status chips below; the search is what's needed
+            // to find one event in a long roster).
+            var nameQuery by rememberSaveable { mutableStateOf("") }
+            TextField(
+                value = nameQuery,
+                onValueChange = { nameQuery = it },
+                placeholder = { Text("Search events by name…", color = SlateSoft) },
+                singleLine = true,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = BoneDeep,
+                    unfocusedContainerColor = BoneDeep,
+                    focusedIndicatorColor = Fresh,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    focusedTextColor = Ink,
+                    unfocusedTextColor = InkSoft,
+                ),
+                shape = FieldShape,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            val filteredAll = remember(all, nameQuery) {
+                val q = nameQuery.trim()
+                if (q.isEmpty()) all
+                else all.filter { it.name.contains(q, ignoreCase = true) }
+            }
+            val buckets = remember(filteredAll, today) { filteredAll.groupBy { it.filterBucket(today) } }
             val liveCount = buckets[StatusFilter.LIVE]?.size ?: 0
             val upcomingCount = buckets[StatusFilter.UPCOMING]?.size ?: 0
             val completedCount = buckets[StatusFilter.COMPLETED]?.size ?: 0

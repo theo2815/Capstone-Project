@@ -38,13 +38,18 @@ data class EarningsOverviewDto(
 
 data class PhotographerPayoutDto(
     val id: String,
+    // Deprecated backend-side in favour of requestedAt — parsed for
+    // compatibility, never rendered.
     val weekOf: String,
     val amount: Double,
     val status: String,
     val settledAt: String?,
     val method: String,
     val reference: String?,
-    val holdReason: String?
+    val holdReason: String?,
+    // When the photographer filed this request (the field clients should
+    // render — backend EarningsDtos doc-comment).
+    val requestedAt: String? = null,
 )
 
 data class PayoutBalanceDto(

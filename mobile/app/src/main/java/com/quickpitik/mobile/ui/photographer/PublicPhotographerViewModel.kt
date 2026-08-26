@@ -2,6 +2,7 @@ package com.quickpitik.mobile.ui.photographer
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.quickpitik.mobile.data.remote.EventDetailDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotographerProfileDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
@@ -37,6 +38,23 @@ class PublicPhotographerViewModel : ViewModel() {
 
     private val _profileEventPhotosState = MutableStateFlow<ProfileEventPhotosState>(ProfileEventPhotosState.Loading)
     val profileEventPhotosState: StateFlow<ProfileEventPhotosState> = _profileEventPhotosState
+
+    // The coverage row from /public/photographers/{handle} carries only the
+    // SLUG — the real event name and the event id (which add-to-cart needs)
+    // come from the public GET /events/{slug}. Best-effort: null just means
+    // the title falls back to the prettified slug and commerce stays off.
+    private val _galleryEventDetail = MutableStateFlow<EventDetailDto?>(null)
+    val galleryEventDetail: StateFlow<EventDetailDto?> = _galleryEventDetail
+
+    fun fetchGalleryEventDetail(slug: String) {
+        _galleryEventDetail.value = null
+        viewModelScope.launch {
+            runCatching { RetrofitClient.apiService.getEventDetail(slug) }
+                .getOrNull()
+                ?.takeIf { it.success && it.data != null }
+                ?.let { _galleryEventDetail.value = it.data }
+        }
+    }
 
     fun fetchPublicProfile(handle: String) {
         viewModelScope.launch {

@@ -588,6 +588,10 @@ private fun GlobalUploadBanner(queueStats: QueueStats) {
     }
 }
 
+// A ModalBottomSheet, not an AlertDialog — consistent with the runner inbox,
+// whose header comment already states the rule: a scrolling message list is
+// exactly the case a dialog handles badly on a phone.
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NotificationsInboxDialog(
     messages: List<PhotographerMessageDto>,
@@ -598,90 +602,79 @@ private fun NotificationsInboxDialog(
 ) {
     var removeTarget by remember { mutableStateOf<PhotographerMessageDto?>(null) }
     val unreadCount = messages.count { it.readAt == null }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        confirmButton = {
-            OutlinedButton(
-                onClick = onDismiss,
-                shape = PillShape,
-                border = BorderStroke(1.dp, Ink),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
-                modifier = Modifier.height(40.dp),
-            ) {
-                Text(
-                    text = "CLOSE",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.5.sp,
-                )
-            }
-        },
-        title = {
+        sheetState = sheetState,
+        containerColor = Bone,
+        dragHandle = null,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(top = 20.dp, bottom = 28.dp),
+        ) {
             Text(
                 text = "Inbox",
                 color = Ink,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
             )
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Kicker(
+                    text = if (unreadCount > 0) "$unreadCount unread · ${messages.size} total"
+                           else "${messages.size} total",
+                    color = SlateSoft,
+                )
+                if (unreadCount > 0) {
+                    Text(
+                        text = "MARK ALL READ",
+                        color = Slate,
+                        style = Typography.labelMedium,
+                        modifier = Modifier
+                            .clickable { onMarkAllRead() }
+                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                    )
+                }
+            }
+            if (messages.isEmpty()) {
+                Text(
+                    text = "No messages yet. Admin actions on your account will land here.",
+                    color = SlateSoft,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(vertical = 32.dp),
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(rememberScrollState()),
                 ) {
-                    Kicker(
-                        text = if (unreadCount > 0) "$unreadCount unread · ${messages.size} total"
-                               else "${messages.size} total",
-                        color = SlateSoft,
-                    )
-                    if (unreadCount > 0) {
-                        Text(
-                            text = "MARK ALL READ",
-                            color = Slate,
-                            style = Typography.labelMedium,
-                            modifier = Modifier
-                                .clickable { onMarkAllRead() }
-                                .padding(horizontal = 4.dp, vertical = 4.dp),
+                    messages.forEachIndexed { index, msg ->
+                        if (index > 0) Divider(color = Line)
+                        InboxRow(
+                            message = msg,
+                            onMarkRead = { onMarkRead(msg.id) },
+                            onRemove = { removeTarget = msg },
                         )
                     }
                 }
-                if (messages.isEmpty()) {
-                    Text(
-                        text = "No messages yet. Admin actions on your account will land here.",
-                        color = SlateSoft,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 32.dp),
-                    )
-                } else {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 440.dp)
-                            .verticalScroll(rememberScrollState()),
-                    ) {
-                        messages.forEachIndexed { index, msg ->
-                            if (index > 0) Divider(color = Line)
-                            InboxRow(
-                                message = msg,
-                                onMarkRead = { onMarkRead(msg.id) },
-                                onRemove = { removeTarget = msg },
-                            )
-                        }
-                    }
-                }
             }
-        },
-        containerColor = Bone,
-        shape = QpCardShape,
-    )
+        }
+    }
 
     val target = removeTarget
     if (target != null) {

@@ -44,8 +44,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.border
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -224,6 +226,7 @@ fun PhotographerSettingsScreen(
     // Batched form inputs (Save button)
     var brandName by remember { mutableStateOf("") }
     var bio by remember { mutableStateOf("") }
+    var brandColor by remember { mutableStateOf("none") }
     var handle by remember { mutableStateOf("") }
     var regionCode by remember { mutableStateOf("") }
     var provinceCode by remember { mutableStateOf("") }
@@ -306,6 +309,7 @@ fun PhotographerSettingsScreen(
         formHydrated = true
         brandName = s.brandName.orEmpty()
         bio = s.bio.orEmpty()
+        brandColor = s.brandColor?.takeIf { it.isNotBlank() } ?: "none"
         handle = s.handle.orEmpty()
         regionCode = s.regionCode.orEmpty()
         provinceCode = s.provinceCode.orEmpty()
@@ -356,6 +360,8 @@ fun PhotographerSettingsScreen(
                 onBrandNameChange = { brandName = it },
                 bio = bio,
                 onBioChange = { bio = it },
+                brandColor = brandColor,
+                onBrandColorChange = { brandColor = it },
                 onPickAvatar = {
                     avatarPickerLauncher.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -442,6 +448,7 @@ fun PhotographerSettingsScreen(
                         avatarBytes = avatarBytes,
                         coverBytes = coverBytes,
                         watermarkBytes = watermarkBytes,
+                        brandColor = brandColor,
                     )
                 },
                 onSignOut = onLogout,
@@ -586,18 +593,20 @@ private fun VerificationSlab(
                 }
                 Text(text = body, color = Slate, style = Typography.bodyMedium)
 
+                // Requirement set aligned with the website's
+                // useAllRequiredFilled (and the backend's missing[]): COVER is
+                // required, BIO is optional. Mobile had these inverted, so the
+                // two clients disagreed about what blocks submission.
                 val localMissing = buildList {
                     if (brandSettings?.avatarUrl.isNullOrBlank() && avatarUri == null) add("Avatar")
+                    if (brandSettings?.coverUrl.isNullOrBlank() && coverUri == null) add("Cover photo")
                     if (brandName.isBlank()) add("Brand name")
-                    if (bio.isBlank()) add("Bio")
                     if (handle.isBlank()) add("Public handle")
                     if (regionCode.isBlank()) add("Region")
                     if (socials.isEmpty()) add("Social link")
                     if (payoutAccounts.isEmpty()) add("Payout method")
                 }
-                val allMissing = (data.missing.orEmpty() + localMissing)
-                    .filterNot { it.contains("cover", ignoreCase = true) }
-                    .distinct()
+                val allMissing = (data.missing.orEmpty() + localMissing).distinct()
                 val isComplete = allMissing.isEmpty()
 
                 var showIncompleteDialog by remember { mutableStateOf(false) }
@@ -630,10 +639,47 @@ private fun VerificationSlab(
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
+                // Withdrawing takes you out of the admin's queue — confirm
+                // first (web gates this behind a danger confirm too).
+                var confirmWithdrawReview by remember { mutableStateOf(false) }
+                if (confirmWithdrawReview) {
+                    AlertDialog(
+                        onDismissRequest = { confirmWithdrawReview = false },
+                        containerColor = Bone,
+                        title = {
+                            Text(
+                                text = "Withdraw from review?",
+                                color = Ink,
+                                style = Typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = "Your submission leaves the admin queue and you'll need to submit again when ready.",
+                                color = Slate,
+                                style = Typography.bodyMedium,
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                confirmWithdrawReview = false
+                                onWithdraw()
+                            }) {
+                                Text("WITHDRAW", color = ErrorRed, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { confirmWithdrawReview = false }) {
+                                Text("KEEP IT", color = Ink, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                    )
+                }
                 when (status) {
                     "pending" -> GhostCta(
                         text = "Withdraw review",
-                        onClick = onWithdraw,
+                        onClick = { confirmWithdrawReview = true },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     "approved" -> Unit
@@ -667,12 +713,16 @@ private fun PublicProfileSlab(
     onBrandNameChange: (String) -> Unit,
     bio: String,
     onBioChange: (String) -> Unit,
+    brandColor: String,
+    onBrandColorChange: (String) -> Unit,
     onPickAvatar: () -> Unit,
     onPickCover: () -> Unit,
     showValidation: Boolean = false,
 ) {
+    // Bio is optional; the cover is required (web requirement set).
     val isMissing = (avatarRemoteUrl.isNullOrBlank() && avatarStagedUri == null) ||
-            brandName.isBlank() || bio.isBlank()
+            (coverRemoteUrl.isNullOrBlank() && coverStagedUri == null) ||
+            brandName.isBlank()
     val isError = showValidation && isMissing
     Column {
         Kicker(
@@ -700,7 +750,9 @@ private fun PublicProfileSlab(
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
-                Text(text = "TAP TO ADD COVER (OPTIONAL)", color = SlateSoft, style = Typography.labelMedium)
+                // Cover is REQUIRED for verification (web parity — mobile
+                // used to call it optional while requiring the optional bio).
+                Text(text = "TAP TO ADD COVER", color = SlateSoft, style = Typography.labelMedium)
             }
         }
 
@@ -759,12 +811,55 @@ private fun PublicProfileSlab(
             label = "Bio",
             value = bio,
             onChange = onBioChange,
-            placeholder = "A short line runners see on your profile.",
+            placeholder = "A short line runners see on your profile (optional).",
             singleLine = false,
             minLines = 3,
         )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Brand accent — the color the public profile renders as the cover
+        // fallback + hairline (web COLOR_ORDER / BRAND_COLOR_HEX). Mobile
+        // could RENDER a brand color but never set one; every save used to
+        // hardcode "none" and wipe a website-chosen accent.
+        Kicker(text = "Brand accent", color = SlateSoft)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            BRAND_COLOR_SWATCHES.forEach { (wire, hex) ->
+                val selected = brandColor == wire
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(if (wire == "none") Bone else hex)
+                        .border(
+                            width = if (selected) 2.dp else 1.dp,
+                            color = if (selected) Ink else Line,
+                            shape = CircleShape,
+                        )
+                        .clickable { onBrandColorChange(wire) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (wire == "none") {
+                        Text(text = "—", color = SlateSoft, style = Typography.labelMedium)
+                    }
+                }
+            }
+        }
     }
 }
+
+// Wire value → swatch fill, mirroring the website's BRAND_COLOR_HEX (the wire
+// values are the backend's ALLOWED_BRAND_COLORS; hexes are the website's, so
+// the two clients preview identically).
+private val BRAND_COLOR_SWATCHES: List<Pair<String, Color>> = listOf(
+    "none" to Color.Transparent,
+    "fresh" to Color(0xFF2D9E5E),
+    "amber" to Color(0xFFD97706),
+    "indigo" to Color(0xFF4F46E5),
+    "rose" to Color(0xFFE11D48),
+    "ink" to Color(0xFF111111),
+)
 
 // ─── Slab: Watermark ─────────────────────────────────────────────────────────
 

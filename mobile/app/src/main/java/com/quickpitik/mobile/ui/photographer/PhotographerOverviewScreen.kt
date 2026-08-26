@@ -149,6 +149,7 @@ fun PhotographerOverviewScreen(
                 is EarningsUiState.Success -> ApprovedHomeBody(
                     events = events,
                     earnings = earnings,
+                    balance = (earningsUiState as? EarningsUiState.Success)?.balance,
                     transactions = transactions,
                     onCapture = { onNavigateToTab("studio/capture") },
                     onOpenEvent = { onNavigateToTab("studio/events") },
@@ -192,6 +193,7 @@ private fun buildSetupItems(missingList: List<String>): List<SetupStep> {
 private fun ApprovedHomeBody(
     events: List<PhotographerEventSummaryDto>,
     earnings: EarningsOverviewDto?,
+    balance: PayoutBalanceDto?,
     transactions: List<PhotographerTransactionDto>,
     onCapture: () -> Unit,
     onOpenEvent: () -> Unit,
@@ -274,30 +276,46 @@ private fun ApprovedHomeBody(
                     lineHeight = 16.sp,
                 )
             } else {
-                val event = upcomingEvents.first()
-                Text(
-                    text = event.date,
-                    color = SlateSoft,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = event.name,
-                    color = Ink,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    lineHeight = 22.sp,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = event.location,
-                    color = SlateSoft,
-                    fontSize = 12.sp,
-                )
+                // Every upcoming event, not just the soonest (web "Next up"
+                // slab parity) — capped at 3 rows with a "+N more" line
+                // instead of load-more machinery; the Events tab has the rest.
+                upcomingEvents.take(3).forEachIndexed { index, event ->
+                    if (index > 0) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Divider(color = Line)
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+                    Text(
+                        text = event.date,
+                        color = SlateSoft,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = event.name,
+                        color = Ink,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 22.sp,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = event.location,
+                        color = SlateSoft,
+                        fontSize = 12.sp,
+                    )
+                }
+                if (upcomingEvents.size > 3) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Kicker(
+                        text = "+${upcomingEvents.size - 3} more upcoming",
+                        color = SlateSoft,
+                    )
+                }
                 Spacer(modifier = Modifier.height(14.dp))
                 GhostCta(
-                    text = "Open event",
+                    text = "Open events",
                     onClick = onOpenEvent,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -338,6 +356,46 @@ private fun ApprovedHomeBody(
                 hint = "kept",
                 modifier = Modifier.weight(1f),
             )
+        }
+
+        // Billing glance — web dashboard parity: the payout request's state is
+        // visible from Home, so a held request isn't discovered days later
+        // deep in the Earnings tab. Three states: open request / ready to
+        // request / balance building.
+        if (balance != null) {
+            QpCard(padding = 16.dp) {
+                Kicker(text = "Billing", color = SlateSoft)
+                Spacer(modifier = Modifier.height(8.dp))
+                val open = balance.openRequest
+                val (line, tone) = when {
+                    open != null && open.status.uppercase() == "HELD" ->
+                        "Payout held — action needed" to StatusTone.Danger
+                    open != null ->
+                        "Payout ${open.status.lowercase().replace('_', ' ')}" to StatusTone.Warning
+                    balance.unpaidBalance >= balance.minimum ->
+                        "Ready to request" to StatusTone.Approved
+                    else ->
+                        "Balance building" to StatusTone.Neutral
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    StatusChip(text = line, tone = tone)
+                    Text(
+                        text = "₱%,.2f".format(open?.amount ?: balance.unpaidBalance),
+                        style = NumeralStyle.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
+                        color = Ink,
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                ArrowLabel(
+                    text = "Open earnings →",
+                    color = Ink,
+                    modifier = Modifier.clickable { onOpenEarnings() },
+                )
+            }
         }
 
         // Recent sales — last 3 transactions, empty state if none.

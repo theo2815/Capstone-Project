@@ -75,7 +75,10 @@ sealed class EarningsUiState {
     data class Success(
         val overview: EarningsOverviewDto,
         val balance: PayoutBalanceDto,
-        val transactions: List<PhotographerTransactionDto>
+        val transactions: List<PhotographerTransactionDto>,
+        // Server-computed per-month totals over ALL transactions (not just the
+        // loaded page) — drives the ledger's month subtotals.
+        val monthTotals: Map<String, Double> = emptyMap(),
     ) : EarningsUiState()
     data class Error(val message: String) : EarningsUiState()
 }
@@ -478,7 +481,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     _earningsUiState.value = EarningsUiState.Success(
                         overview = overviewResponse.data,
                         balance = balanceResponse.data,
-                        transactions = transactionsResponse.data.items
+                        transactions = transactionsResponse.data.items,
+                        monthTotals = transactionsResponse.data.monthTotals,
                     )
                 } else {
                     val errMsg = overviewResponse.error 
@@ -523,6 +527,33 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     fun clearPayoutActionState() {
         _payoutActionState.value = null
+    }
+
+    /** Withdraws a HELD payout request (web WithdrawPayoutModal parity). */
+    fun withdrawPayoutRequest(cycleId: String) {
+        viewModelScope.launch {
+            _payoutActionState.value = "processing"
+            val token = sessionManager.getAccessToken()
+            if (token == null) {
+                _payoutActionState.value = "Error: No active login session."
+                return@launch
+            }
+            try {
+                val response = RetrofitClient.apiService.withdrawPayout("Bearer $token", cycleId)
+                if (response.success) {
+                    _payoutActionState.value =
+                        "Success: Request withdrawn — you can file a new one when ready."
+                    fetchEarningsAndTransactions()
+                } else {
+                    _payoutActionState.value =
+                        "Error: ${response.error ?: "Couldn't withdraw the request."}"
+                }
+            } catch (e: Exception) {
+                val err = RetrofitClient.parseHttpError(e)
+                _payoutActionState.value =
+                    "Error: ${err?.message ?: RetrofitClient.parseError(e)}"
+            }
+        }
     }
 
     // Returns the Job so pull-to-refresh can join() it (fire-and-forget
@@ -1475,7 +1506,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         socialUrl: String,
         avatarBytes: ByteArray?,
         coverBytes: ByteArray?,
-        watermarkBytes: ByteArray?
+        watermarkBytes: ByteArray?,
+        // Wire value from ALLOWED_BRAND_COLORS (none/fresh/amber/indigo/rose/
+        // ink). Null = leave whatever is on the server untouched.
+        brandColor: String? = null,
     ) {
         viewModelScope.launch {
             _isSavingSettings.value = true
@@ -1497,7 +1531,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     "Bearer $token",
                     com.quickpitik.mobile.data.remote.BrandPatchRequest(
                         brandName = brandName,
-                        brandColor = brandSettings.value?.brandColor ?: "none",
+                        brandColor = brandColor ?: brandSettings.value?.brandColor ?: "none",
                         bio = bio
                     )
                 )
