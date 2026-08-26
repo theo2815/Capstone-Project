@@ -278,6 +278,28 @@ interface QuickPitikApi {
         @Body request: SearchByFaceJsonRequest
     ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
 
+    // "Notify me when my photos are ready" opt-in (RUNNER). The backend matches
+    // the runner's selfie against the event during its date-based sweep and
+    // emails once when photos of them appear. See PhotoAlertDtos.
+    @GET("api/v1/events/{slug}/photo-alert")
+    suspend fun getPhotoAlertStatus(
+        @Header("Authorization") token: String,
+        @Path("slug") slug: String
+    ): ApiResponseEnvelope<PhotoAlertStatusDto>
+
+    @POST("api/v1/events/{slug}/photo-alert")
+    suspend fun registerPhotoAlert(
+        @Header("Authorization") token: String,
+        @Path("slug") slug: String,
+        @Body request: PhotoAlertRequest
+    ): ApiResponseEnvelope<PhotoAlertStatusDto>
+
+    @DELETE("api/v1/events/{slug}/photo-alert")
+    suspend fun unregisterPhotoAlert(
+        @Header("Authorization") token: String,
+        @Path("slug") slug: String
+    ): ApiResponseEnvelope<RemovedResponse>
+
     @GET("api/v1/me/cart")
     suspend fun getCart(
         @Header("Authorization") token: String

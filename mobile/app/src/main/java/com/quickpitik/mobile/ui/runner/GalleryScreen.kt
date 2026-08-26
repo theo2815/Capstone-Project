@@ -88,6 +88,7 @@ fun RunnerGalleryScreen(
     val isFiltered by viewModel.isFiltered.collectAsState()
     val newPhotoCount by viewModel.newPhotoCount.collectAsState()
     val liveState by viewModel.liveState.collectAsState()
+    val photoAlert by viewModel.photoAlert.collectAsState()
     // Hoisted so the live-photos pill can jump the runner back to the top when
     // new shots land while they're scrolled down the grid.
     val gridState = rememberLazyGridState()
@@ -136,7 +137,15 @@ fun RunnerGalleryScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let { viewModel.searchBySelfieUri(it) }
-    }    // Lock the Runner Dashboard to the uniform Light Warm Cream Brand Theme
+    }
+
+    // Load the "notify me when ready" opt-in state whenever a new event is
+    // selected (any lifecycle state — upcoming events are the main use case).
+    LaunchedEffect(activeEvent?.slug) {
+        activeEvent?.slug?.let { viewModel.loadPhotoAlert(it) }
+    }
+
+    // Lock the Runner Dashboard to the uniform Light Warm Cream Brand Theme
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = Bone
@@ -240,6 +249,17 @@ fun RunnerGalleryScreen(
                         },
                     )
                 }
+                // Pre-event opt-in — "notify me when my photos are ready" is most
+                // useful before race day, when there's nothing to search yet.
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    PhotoAlertCard(
+                        state = photoAlert,
+                        onToggle = { register ->
+                            activeEvent?.slug?.let { viewModel.togglePhotoAlert(it, register) }
+                        },
+                        onAddSelfie = onNavigateToProfile,
+                    )
+                }
             } else {
                 // SELECTED EVENT GALLERY VIEW
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -303,6 +323,16 @@ fun RunnerGalleryScreen(
                             }
                         }
                     }
+                }
+                // Pre-event opt-in — mirrors the website cockpit's PhotoAlertToggle.
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    PhotoAlertCard(
+                        state = photoAlert,
+                        onToggle = { register ->
+                            activeEvent?.slug?.let { viewModel.togglePhotoAlert(it, register) }
+                        },
+                        onAddSelfie = onNavigateToProfile,
+                    )
                 }
                 // Pre-purchase refund disclosure — port of the web cockpit's
                 // "Refund Policy →" kicker (event-cockpit.tsx). Read-only.
@@ -482,6 +512,21 @@ fun RunnerGalleryScreen(
                                     .clickable {
                                         bibSearchQuery = ""
                                         viewModel.clearFilter()
+                                    }
+                            )
+                        } else {
+                            // Back to My Photos — one tap re-runs the stored-selfie
+                            // face match (mirrors the website's "My photos" control).
+                            Text(
+                                text = "My photos",
+                                style = Typography.labelMedium,
+                                color = Fresh,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .padding(start = 12.dp, top = 2.dp)
+                                    .clickable {
+                                        bibSearchQuery = ""
+                                        viewModel.searchByStoredSelfie()
                                     }
                             )
                         }
@@ -871,6 +916,96 @@ private fun formatUpcomingDate(iso: String): String = try {
     )
 } catch (e: Exception) {
     iso
+}
+
+// Runner opt-in card — "Get notified when your photos are ready". Mirrors the
+// website's PhotoAlertToggle. GhostCta (not PrimaryCta) keeps the single Fresh
+// accent for the page's real highlight; the registered state uses a
+// SuccessGreen StatusChip, a distinct token from the Fresh CTA.
+@Composable
+private fun PhotoAlertCard(
+    state: PhotoAlertUiState,
+    onToggle: (Boolean) -> Unit,
+    onAddSelfie: () -> Unit,
+) {
+    when (state) {
+        is PhotoAlertUiState.Loading -> {
+            LoadingSkeleton(
+                shape = QpCardShape,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(96.dp),
+            )
+        }
+        is PhotoAlertUiState.NeedsSelfie -> {
+            QpCard(modifier = Modifier.fillMaxWidth()) {
+                Kicker("Photo alerts", color = Slate)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Get notified when your photos are ready",
+                    style = Typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Add a selfie and we'll email you the moment we spot you.",
+                    style = Typography.bodyMedium,
+                    color = SlateSoft,
+                )
+                Spacer(Modifier.height(16.dp))
+                GhostCta(
+                    text = "Add a selfie →",
+                    onClick = onAddSelfie,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        is PhotoAlertUiState.Ready -> {
+            QpCard(modifier = Modifier.fillMaxWidth()) {
+                Kicker("Photo alerts", color = Slate)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Get notified when your photos are ready",
+                    style = Typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = if (state.registered)
+                        "You're on the list — we'll email you when your photos land."
+                    else
+                        "We'll email you the moment your photos land.",
+                    style = Typography.bodyMedium,
+                    color = SlateSoft,
+                )
+                Spacer(Modifier.height(16.dp))
+                if (state.registered) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StatusChip(text = "Notifications on", tone = StatusTone.Approved)
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            text = "Turn off",
+                            style = Typography.labelMedium,
+                            color = Slate,
+                            modifier = Modifier
+                                .clip(PillShape)
+                                .clickable(enabled = !state.updating) { onToggle(false) }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                        )
+                    }
+                } else {
+                    GhostCta(
+                        text = "Notify me when ready",
+                        onClick = { onToggle(true) },
+                        enabled = !state.updating,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+    }
 }
 
 // Compact pill rendered on each photo tile (bottom-right) for inline cart

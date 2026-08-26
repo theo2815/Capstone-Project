@@ -1,6 +1,6 @@
 # CLAUDE.md — Backend (Kotlin + Spring Boot)
 
-**Status:** All phases shipped and hardened (last reconciled 2026-08-19). 30 controllers under `controller/`; all four roles locked; suite at 228 unit + 15 integration (`./gradlew test` is Docker-free; `integrationTest` needs Docker). Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
+**Status:** All phases shipped and hardened (last reconciled 2026-08-19). 31 controllers under `controller/` (photo-alert opt-in added 2026-08-26); all four roles locked; suite at 228 unit + 15 integration (`./gradlew test` is Docker-free; `integrationTest` needs Docker) — plus 3 new `service/events/` photo-alert suites (2026-08-26). Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
 
 The live route reference — every endpoint, its auth, and **which clients consume it** — is vault `backend/api-surface.md`. Read that before adding an endpoint or assuming one is missing.
 

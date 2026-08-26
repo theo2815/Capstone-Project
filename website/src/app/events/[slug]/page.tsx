@@ -6,6 +6,7 @@ import { fetchEventDetail } from "@/lib/api-events";
 import { fetchEventPhotos } from "@/lib/api-photos";
 import { deriveEventState } from "@/lib/event-catalog";
 import { EventCockpit } from "./event-cockpit";
+import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
 import type { EventDetail } from "@/types/event";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 
@@ -114,6 +115,9 @@ function UpcomingEventNotice({ event }: { event: EventDetail }) {
             a four-day window from race day to upload — check back then to
             find your photos.
           </p>
+          <div className="mt-2 max-w-md">
+            <PhotoAlertToggle eventSlug={event.slug} />
+          </div>
         </div>
       </div>
     </section>

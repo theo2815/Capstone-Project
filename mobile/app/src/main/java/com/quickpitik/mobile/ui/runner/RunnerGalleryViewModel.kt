@@ -10,6 +10,7 @@ import com.quickpitik.mobile.data.remote.QpWebSocket
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SelfieRefDto
 import com.quickpitik.mobile.data.remote.SearchByFaceJsonRequest
+import com.quickpitik.mobile.data.remote.PhotoAlertRequest
 import com.quickpitik.mobile.data.remote.WsFrameEnvelope
 import com.quickpitik.mobile.data.remote.WsState
 import com.quickpitik.mobile.data.local.SessionManager
@@ -37,6 +38,15 @@ sealed class PhotosSearchState {
     data class Error(val message: String) : PhotosSearchState()
 }
 
+// "Notify me when my photos are ready" opt-in state for the active event.
+// Mobile is always authed here, so the only fork is has-selfie (togglable) vs
+// no-selfie (prompt to add one).
+sealed class PhotoAlertUiState {
+    object Loading : PhotoAlertUiState()
+    object NeedsSelfie : PhotoAlertUiState()
+    data class Ready(val registered: Boolean, val updating: Boolean = false) : PhotoAlertUiState()
+}
+
 class RunnerGalleryViewModel(application: Application) : AndroidViewModel(application) {
     private val _eventsState = MutableStateFlow<RunnerEventsState>(RunnerEventsState.Loading)
     val eventsState: StateFlow<RunnerEventsState> = _eventsState
@@ -49,6 +59,9 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
 
     private val _isFiltered = MutableStateFlow(false)
     val isFiltered: StateFlow<Boolean> = _isFiltered
+
+    private val _photoAlert = MutableStateFlow<PhotoAlertUiState>(PhotoAlertUiState.Loading)
+    val photoAlert: StateFlow<PhotoAlertUiState> = _photoAlert
 
     // ---- Live photo arrival (/ws/events/{id}/photos) ------------------------
     //
@@ -388,6 +401,66 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 }
             } catch (e: Exception) {
                 _searchState.value = PhotosSearchState.Error(e.localizedMessage ?: "Failed to query event photos with stored selfie.")
+            }
+        }
+    }
+
+    // Loads the opt-in state for the active event. Reuses the selfie library the
+    // face search does: no selfie → NeedsSelfie (prompt to add one); otherwise
+    // Ready(registered) from GET /photo-alert.
+    fun loadPhotoAlert(slug: String) {
+        viewModelScope.launch {
+            _photoAlert.value = PhotoAlertUiState.Loading
+            val token = SessionManager.getInstance(getApplication()).getAccessToken()
+            if (token == null) {
+                _photoAlert.value = PhotoAlertUiState.NeedsSelfie
+                return@launch
+            }
+            try {
+                val selfies = RetrofitClient.apiService.getSelfies("Bearer $token")
+                val hasSelfie = selfies.success && !selfies.data.isNullOrEmpty()
+                if (!hasSelfie) {
+                    _photoAlert.value = PhotoAlertUiState.NeedsSelfie
+                    return@launch
+                }
+                val status = RetrofitClient.apiService.getPhotoAlertStatus("Bearer $token", slug)
+                val registered = status.success && status.data?.registered == true
+                _photoAlert.value = PhotoAlertUiState.Ready(registered = registered)
+            } catch (e: Exception) {
+                // Couldn't confirm — still let the runner try; a genuinely
+                // selfie-less register surfaces as NeedsSelfie in togglePhotoAlert.
+                _photoAlert.value = PhotoAlertUiState.Ready(registered = false)
+            }
+        }
+    }
+
+    fun togglePhotoAlert(slug: String, register: Boolean) {
+        val current = _photoAlert.value as? PhotoAlertUiState.Ready ?: return
+        viewModelScope.launch {
+            _photoAlert.value = current.copy(updating = true)
+            val token = SessionManager.getInstance(getApplication()).getAccessToken()
+            if (token == null) {
+                _photoAlert.value = current
+                return@launch
+            }
+            try {
+                if (register) {
+                    val resp = RetrofitClient.apiService.registerPhotoAlert(
+                        "Bearer $token", slug, PhotoAlertRequest()
+                    )
+                    _photoAlert.value =
+                        if (resp.success) PhotoAlertUiState.Ready(registered = true) else current
+                } else {
+                    RetrofitClient.apiService.unregisterPhotoAlert("Bearer $token", slug)
+                    _photoAlert.value = PhotoAlertUiState.Ready(registered = false)
+                }
+            } catch (e: Exception) {
+                // A 400 SELFIE_REQUIRED means the selfie vanished between load and
+                // toggle — route them to add one; anything else just reverts.
+                val msg = RetrofitClient.parseError(e)
+                _photoAlert.value =
+                    if (msg.contains("selfie", ignoreCase = true)) PhotoAlertUiState.NeedsSelfie
+                    else current
             }
         }
     }

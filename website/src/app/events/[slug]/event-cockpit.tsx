@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
@@ -30,9 +31,13 @@ import { RefundModal } from "@/components/orders/refund-modal";
 import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
 import { useEventPhotos } from "@/hooks/use-event-photos";
 import { useEventLivePhotos } from "@/hooks/use-event-live-photos";
-import type { EventPhotosResult } from "@/lib/api-photos";
+import { searchEventByFace, type EventPhotosResult } from "@/lib/api-photos";
 import { deriveEventState } from "@/lib/event-catalog";
 import { PAGE_SIZE } from "@/lib/pagination-config";
+import { useAuthStore } from "@/store/auth-store";
+import { useSelfiesList } from "@/hooks/use-selfies";
+import { ApiError } from "@/lib/api";
+import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
 
 type Mode = "cockpit" | "browse";
 
@@ -47,14 +52,25 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   });
   const [browseFlag] = useUrlState<string>("browse", "");
   const [faceFlag] = useUrlState<string>("face", "");
+  const [mineFlag] = useUrlState<string>("mine", "");
   const setUrlBatch = useUrlStateBatch();
 
   const isFaceMode = faceFlag === "1";
+  const isMine = mineFlag === "1";
   const mode: Mode =
     bibFilter || browseFlag === "1" || isFaceMode ? "browse" : "cockpit";
 
   const [panelMode, setPanelMode] = useState<SearchPanelMode>("bib");
   const [bibInput, setBibInput] = useState(bibFilter);
+
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const { selfies, isLoading: selfiesLoading } = useSelfiesList();
+  const primarySelfieId = useMemo(
+    () => selfies.find((s) => s.isPrimary)?.id ?? selfies[0]?.id ?? null,
+    [selfies],
+  );
+  const [myPhotosLoading, setMyPhotosLoading] = useState(false);
+  const [myPhotosError, setMyPhotosError] = useState<string | null>(null);
 
   // Q-011: bib-keyed cache. Active in cockpit (no filter) and bib-mode browse.
   const bibPhotos = useEventPhotos({
@@ -113,10 +129,65 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const handleFaceSearchSuccess = useCallback(
     (result: EventPhotosResult) => {
       setFaceSearchResult(result);
-      setUrlBatch({ face: "1", browse: "1", bib: null });
+      setUrlBatch({ face: "1", browse: "1", bib: null, mine: null });
     },
     [setUrlBatch],
   );
+
+  // Runs the stored-selfie face search and drops into face mode — powers both
+  // the "My photos" control and the ?mine=1 email deep-link. Reuses the same
+  // one-shot search-by-face the selfie panel uses; the backend scopes matches to
+  // the caller's own selfie, so a runner only ever sees their own photos.
+  const runMyPhotos = useCallback(async () => {
+    if (!primarySelfieId) return;
+    setMyPhotosError(null);
+    setMyPhotosLoading(true);
+    try {
+      const result = await searchEventByFace(event.slug, {
+        selfieId: primarySelfieId,
+      });
+      handleFaceSearchSuccess(result);
+    } catch (err) {
+      setMyPhotosError(myPhotosErrorMessage(err));
+      // Drop the deep-link flag so a failed auto-fire doesn't retry on refresh.
+      setUrlBatch({ mine: null });
+    } finally {
+      setMyPhotosLoading(false);
+    }
+  }, [primarySelfieId, event.slug, handleFaceSearchSuccess, setUrlBatch]);
+
+  // Auto-fire once when a runner arrives from the "your photos are ready" email
+  // (/events/{slug}?mine=1). Waits for the selfie library to load so
+  // primarySelfieId is known; a signed-out or selfie-less runner falls through
+  // to the cockpit, which prompts sign-in / add-a-selfie.
+  const mineFiredRef = useRef(false);
+  useEffect(() => {
+    if (
+      isMine &&
+      isAuthenticated &&
+      primarySelfieId &&
+      !mineFiredRef.current &&
+      !myPhotosLoading
+    ) {
+      mineFiredRef.current = true;
+      void runMyPhotos();
+    }
+  }, [isMine, isAuthenticated, primarySelfieId, myPhotosLoading, runMyPhotos]);
+
+  // Email-link landing gate: hold a loading state while the auto-fire resolves
+  // so the runner doesn't flash the cockpit or the full wall before their
+  // matches. Ends when a guest/selfie-less case is known (falls to cockpit) or
+  // the search resolves (handleFaceSearchSuccess clears ?mine).
+  const mineResolving =
+    isMine &&
+    isAuthenticated &&
+    faceSearchResult === null &&
+    myPhotosError === null &&
+    (selfiesLoading || myPhotosLoading || primarySelfieId !== null);
+
+  if (mineResolving) {
+    return <MyPhotosGate eventName={event.name} />;
+  }
 
   if (mode === "browse") {
     return (
@@ -126,6 +197,10 @@ export function EventCockpit({ event, initialPhotos }: Props) {
         total={visibleTotal}
         bibFilter={bibFilter}
         isFaceMode={isFaceMode}
+        canShowMyPhotos={isAuthenticated && !!primarySelfieId}
+        myPhotosLoading={myPhotosLoading}
+        myPhotosError={myPhotosError}
+        onShowMyPhotos={runMyPhotos}
         onBackToCockpit={switchToCockpit}
         onSubmitBib={submitBib}
         onClearBib={clearBib}
@@ -246,6 +321,8 @@ function CockpitMode({
                 />
               )}
             </div>
+
+            <PhotoAlertToggle eventSlug={event.slug} />
           </div>
 
           <Kicker
@@ -380,6 +457,10 @@ function BrowseMode({
   total,
   bibFilter,
   isFaceMode,
+  canShowMyPhotos,
+  myPhotosLoading,
+  myPhotosError,
+  onShowMyPhotos,
   onBackToCockpit,
   onSubmitBib,
   onClearBib,
@@ -391,6 +472,10 @@ function BrowseMode({
   total: number;
   bibFilter: string;
   isFaceMode: boolean;
+  canShowMyPhotos: boolean;
+  myPhotosLoading: boolean;
+  myPhotosError: string | null;
+  onShowMyPhotos: () => void;
   onBackToCockpit: () => void;
   onSubmitBib: (b: string) => void;
   onClearBib: () => void;
@@ -565,6 +650,18 @@ function BrowseMode({
               <span>Clear filter</span>
               <span aria-hidden="true">✕</span>
             </button>
+          ) : canShowMyPhotos ? (
+            <button
+              type="button"
+              onClick={onShowMyPhotos}
+              disabled={myPhotosLoading}
+              className="shrink-0 inline-flex items-center gap-2 rounded-full border border-ink px-3.5 py-2.5 font-sans text-sm font-medium text-ink hover:bg-ink hover:text-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            >
+              <FaceGlyph />
+              <span className="whitespace-nowrap">
+                {myPhotosLoading ? "Finding…" : "My photos"}
+              </span>
+            </button>
           ) : (
             <Kicker tone="soft" className="shrink-0 hidden sm:inline">
               <span className="tnum text-ink">{total || visible.length}</span>{" "}
@@ -572,6 +669,13 @@ function BrowseMode({
             </Kicker>
           )}
         </div>
+        {myPhotosError && (
+          <div className="max-w-7xl mx-auto px-6 md:px-10 pb-3">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-error">
+              {myPhotosError}
+            </p>
+          </div>
+        )}
         {liveState === "live" && (live.newCount > 0 || live.reconnectFailed) && (
           <div className="max-w-7xl mx-auto px-6 md:px-10 pb-3">
             {live.reconnectFailed ? (
@@ -829,4 +933,56 @@ function formatLongDate(iso: string) {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function myPhotosErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const code = err.errors[0]?.code;
+    if (code === "AI_API_UNAVAILABLE") {
+      return "Photo matching is offline right now. Try again in a few minutes.";
+    }
+    if (code === "LOW_CONFIDENCE") {
+      return "We couldn't find you in this event yet. Try again as more photos land.";
+    }
+    return err.message || "Couldn't load your photos right now.";
+  }
+  return "Couldn't load your photos right now. Try again.";
+}
+
+// Loading gate shown while a ?mine=1 email deep-link resolves the runner's
+// matches, so they never flash the cockpit or the full wall first.
+function MyPhotosGate({ eventName }: { eventName: string }) {
+  return (
+    <section className="bg-bone min-h-[70vh] flex items-center justify-center px-6">
+      <div className="text-center">
+        <Kicker as="p" className="mb-3">
+          {eventName}
+        </Kicker>
+        <p className="font-display font-extrabold text-3xl md:text-4xl text-ink tracking-tight">
+          Finding your photos…
+        </p>
+        <p className="mt-3 font-sans text-base text-slate">
+          Matching your selfie against this event.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function FaceGlyph() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="size-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="5.5" r="2.75" />
+      <path d="M3 13.5c0-2.4 2.2-4 5-4s5 1.6 5 4" />
+    </svg>
+  );
 }
