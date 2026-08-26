@@ -35,7 +35,7 @@ export function DashboardActionGrid() {
 
   return (
     <section className="pb-12 md:pb-16">
-      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate tnum">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
         Overview · Cebu
       </p>
       <h2 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink leading-[1.05] mt-4">
@@ -225,7 +225,7 @@ function EventsCard() {
 
   return (
     <CardShell href={ROUTES.DASHBOARD_EVENTS}>
-      <ul className="space-y-2 font-mono uppercase tracking-[0.25em] text-[12px] text-slate tnum">
+      <ul className="space-y-2 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
         <li className="flex items-center gap-2.5">
           <span
             aria-hidden="true"

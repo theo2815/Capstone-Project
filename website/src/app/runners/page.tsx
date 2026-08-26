@@ -60,7 +60,7 @@ function Kicker({ children }: { children: React.ReactNode }) {
         <span className="bg-fresh-deep" />
         <span className="bg-ink" />
       </span>
-      <p className="font-mono uppercase tracking-[0.26em] text-[12px] text-slate">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
         {children}
       </p>
     </div>
@@ -128,7 +128,7 @@ function Hero() {
             </a>
             <a
               href="#cta"
-              className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
             >
               Skip to search
             </a>
@@ -217,7 +217,7 @@ function StepSection({ n, title, sub, screen, bg, flip = false }: StepSectionPro
       <div className="max-w-7xl mx-auto w-full grid md:grid-cols-2 gap-12 md:gap-20 items-center">
         <div className={flip ? "md:order-2" : ""}>{screen && <DeviceMock>{screen}</DeviceMock>}</div>
         <div className={`space-y-5 ${flip ? "md:order-1" : ""}`}>
-          <p className="font-mono uppercase tracking-[0.26em] text-[12px] text-slate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
             Step
           </p>
           <p className="font-hero text-fresh text-8xl md:text-9xl leading-[0.8] tnum">
@@ -255,10 +255,10 @@ function EventListScreen() {
   return (
     <div className="h-full p-5 flex flex-col">
       <div className="flex items-center justify-between mb-5">
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-slate">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-slate">
           Events
         </span>
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-slate-soft">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-slate-soft">
           This week
         </span>
       </div>
@@ -294,13 +294,13 @@ function EventListScreen() {
 function ScanScreen() {
   return (
     <div className="h-full p-5 flex flex-col items-center justify-center text-center">
-      <span className="font-mono uppercase tracking-[0.25em] text-[9px] text-slate mb-6">
+      <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-slate mb-6">
         Scan your face
       </span>
       <div className="relative size-32 md:size-36 mb-6 rounded-full border-2 border-dashed border-slate flex items-center justify-center">
         <div className="size-20 md:size-24 rounded-full border-[3px] border-fresh breathe" />
       </div>
-      <span className="font-mono uppercase tracking-[0.2em] text-[8px] text-slate-soft mb-3">
+      <span className="font-mono uppercase tracking-[0.14em] text-[8px] text-slate-soft mb-3">
         — or —
       </span>
       <div className="border border-line rounded-lg px-4 py-2 font-mono text-sm tracking-widest text-ink tnum">
@@ -314,7 +314,7 @@ function PhotosScreen() {
   return (
     <div className="h-full p-5 flex flex-col">
       <div className="flex items-center justify-between mb-4">
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-slate tnum">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-slate tnum">
           12 photos found
         </span>
         <span className="size-2 rounded-full bg-fresh" />
@@ -335,7 +335,7 @@ function PhotosScreen() {
           );
         })}
       </div>
-      <button className="mt-4 bg-fresh text-surface py-2.5 rounded-full font-mono uppercase tracking-[0.2em] text-[10px]">
+      <button className="mt-4 bg-fresh text-surface py-2.5 rounded-full font-mono uppercase tracking-[0.14em] text-[10px]">
         Save all →
       </button>
     </div>
@@ -352,7 +352,7 @@ function PhotoTeaser() {
             <span className="bg-fresh-deep" />
             <span className="bg-ink" />
           </div>
-          <p className="font-mono uppercase tracking-[0.26em] text-[12px] text-slate mb-4">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-4">
             Your moments. Captured.
           </p>
           <h2 className="font-hero text-ink text-5xl md:text-7xl lg:text-8xl">
@@ -399,7 +399,7 @@ function FinalCta() {
           <span className="bg-fresh-deep" />
           <span className="bg-ink" />
         </div>
-        <p className="font-mono uppercase tracking-[0.26em] text-[12px] text-slate mb-4">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-4">
           Ready when you are
         </p>
         <h2 className="font-hero text-ink text-5xl md:text-7xl lg:text-8xl">
@@ -414,7 +414,7 @@ function FinalCta() {
           <PrimaryCta href={ROUTES.EVENTS}>Find my photos</PrimaryCta>
           <Link
             href={ROUTES.PHOTOGRAPHERS}
-            className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
           >
             I&apos;m a photographer instead
           </Link>
@@ -427,10 +427,10 @@ function FinalCta() {
 function Footer() {
   return (
     <footer className="px-6 md:px-10 py-8 pb-24 md:pb-8 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-paper">
-      <p className="font-mono uppercase tracking-[0.28em] text-[12px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         QuickPitik &middot; Cebu, Philippines
       </p>
-      <p className="font-mono uppercase tracking-[0.28em] text-[12px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         © 2026
       </p>
     </footer>

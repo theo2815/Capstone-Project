@@ -72,7 +72,7 @@ export function BuyAllBar({
           />
         )}
         <div className="flex items-center justify-between gap-3 md:gap-4">
-          <div className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate hidden sm:flex items-center gap-3">
+          <div className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate hidden sm:flex items-center gap-3">
             <span>
               <span className="tnum text-ink">{photos.length}</span>{" "}
               {photos.length === 1 ? "photo" : "photos"}

@@ -127,7 +127,7 @@ export function RegisterForm() {
 
   return (
     <form onSubmit={handleSubmit} noValidate className="stagger-children space-y-7">
-      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
         Create account
       </p>
 
@@ -280,7 +280,7 @@ export function RegisterForm() {
       </button>
 
       <div className="border-t border-line pt-6">
-        <p className="text-center font-mono uppercase tracking-[0.2em] text-[12px] text-slate">
+        <p className="text-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
           Already have an account?{" "}
           <Link
             href={

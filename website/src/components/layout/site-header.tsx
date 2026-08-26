@@ -64,7 +64,7 @@ export function SiteHeader({
             href={ROUTES.EVENTS}
             aria-current={isEventsActive ? "page" : undefined}
             className={cn(
-              "relative inline-flex items-center gap-2 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors",
+              "relative inline-flex items-center gap-2 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors",
               isEventsActive ? "text-ink" : "nav-link text-slate hover:text-ink",
             )}
           >
@@ -96,7 +96,7 @@ export function SiteHeader({
           ) : rightLink ? (
             <Link
               href={rightLink.href}
-              className="nav-link font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink hover:text-fresh transition-colors"
+              className="nav-link font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors"
             >
               {rightLink.label}
             </Link>

@@ -80,7 +80,7 @@ export default function PhotographersPage() {
             href={BATCH_MY_PHOTOS_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 bg-ink hover:bg-ink-soft text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+            className="inline-flex items-center gap-2 bg-ink hover:bg-ink-soft text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
           >
             Get the desktop app
             <svg
@@ -125,7 +125,7 @@ function Kicker({
         <span className="bg-ink" />
       </span>
       <p
-        className={`font-mono uppercase tracking-[0.26em] text-[12px] ${
+        className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] ${
           color === "fresh" ? "text-fresh" : "text-slate"
         }`}
       >
@@ -183,7 +183,7 @@ function Hero() {
               <span className="bg-fresh-deep" />
               <span className="bg-ink" />
             </span>
-            <p className="font-mono uppercase tracking-[0.26em] text-[12px] text-slate">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
               For photographers
             </p>
           </div>
@@ -205,7 +205,7 @@ function Hero() {
             </a>
             <a
               href="#cta"
-              className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
             >
               Skip to signup
             </a>
@@ -364,7 +364,7 @@ function StepSection({
           <Mock>{screen}</Mock>
         </div>
         <div className={`space-y-5 ${flip ? "md:order-1" : ""}`}>
-          <p className="font-mono uppercase tracking-[0.26em] text-[12px] text-slate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
             Step
           </p>
           <p className="font-hero text-fresh text-8xl md:text-9xl leading-[0.8] tnum">
@@ -415,7 +415,7 @@ function ConnectScreen() {
   return (
     <div className="h-full p-5 flex flex-col">
       <div className="flex items-center justify-between mb-4">
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-fresh flex items-center gap-1.5">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-fresh flex items-center gap-1.5">
           <span className="size-1.5 rounded-full bg-fresh breathe" />
           Tethered
         </span>
@@ -506,7 +506,7 @@ function ConnectScreen() {
       </div>
 
       <div className="mt-4 px-3 py-2 rounded-lg bg-fresh/10 border border-fresh/30 flex items-center justify-between">
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-fresh">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-fresh">
           Connected
         </span>
         <span className="font-mono text-[10px] text-ink">Canon R5</span>
@@ -519,14 +519,14 @@ function StreamScreen() {
   return (
     <div className="h-full p-5 flex flex-col">
       <div className="flex items-center justify-between mb-4">
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-fresh flex items-center gap-1.5">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-fresh flex items-center gap-1.5">
           <span className="size-1.5 rounded-full bg-fresh" />
           Live
         </span>
         <span className="font-mono text-[10px] text-slate tnum">412 ↗</span>
       </div>
 
-      <span className="font-mono uppercase tracking-[0.2em] text-[8px] text-slate mb-2">
+      <span className="font-mono uppercase tracking-[0.14em] text-[8px] text-slate mb-2">
         Streaming to marketplace
       </span>
 
@@ -573,7 +573,7 @@ function StreamScreen() {
         className="px-3 py-2 rounded-lg bg-fresh/10 border border-fresh/30 flex items-center justify-between"
         style={{ animation: "fade-up 0.5s 0.9s both" }}
       >
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-fresh">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-fresh">
           On marketplace
         </span>
         <span className="font-mono text-[10px] text-ink tnum">412 listed</span>
@@ -586,14 +586,14 @@ function EarnScreen() {
   return (
     <div className="h-full p-5 flex flex-col">
       <div className="flex items-center justify-between mb-4">
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-slate">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-slate">
           This week
         </span>
         <span className="font-mono text-[10px] text-slate-soft tnum">+12 sold</span>
       </div>
 
       <div className="mb-5">
-        <p className="font-mono uppercase tracking-[0.3em] text-[8px] text-slate mb-1">
+        <p className="font-mono uppercase tracking-[0.14em] text-[8px] text-slate mb-1">
           Earnings
         </p>
         <p
@@ -630,7 +630,7 @@ function EarnScreen() {
         ))}
       </div>
 
-      <button className="mt-4 bg-ink text-bone py-2.5 rounded-full font-mono uppercase tracking-[0.2em] text-[10px]">
+      <button className="mt-4 bg-ink text-bone py-2.5 rounded-full font-mono uppercase tracking-[0.14em] text-[10px]">
         View payouts →
       </button>
     </div>
@@ -684,7 +684,7 @@ function UploadScreen() {
               strokeLinejoin="round"
             />
           </svg>
-          <span className="font-mono uppercase tracking-[0.25em] text-[8px] md:text-[9px] text-slate mb-0.5">
+          <span className="font-mono uppercase tracking-[0.14em] text-[8px] md:text-[9px] text-slate mb-0.5">
             Drag photos here
           </span>
           <span className="font-mono text-[7px] md:text-[8px] text-slate-soft tracking-wider">
@@ -695,7 +695,7 @@ function UploadScreen() {
         {/* progress */}
         <div className="mt-2.5">
           <div className="flex items-center justify-between mb-1">
-            <span className="font-mono uppercase tracking-[0.2em] text-[7px] md:text-[8px] text-slate">
+            <span className="font-mono uppercase tracking-[0.14em] text-[7px] md:text-[8px] text-slate">
               Per upload limit
             </span>
             <span className="font-mono text-[9px] text-ink tnum">500 max</span>
@@ -720,7 +720,7 @@ function BatchScreen() {
         <div className="size-1.5 rounded-full bg-fresh" />
         <div className="size-1.5 rounded-full bg-slate-soft/40" />
         <div className="size-1.5 rounded-full bg-slate-soft/40" />
-        <span className="ml-3 font-mono uppercase tracking-[0.25em] text-[7px] text-bone/60">
+        <span className="ml-3 font-mono uppercase tracking-[0.14em] text-[7px] text-bone/60">
           BatchMyPhotos
         </span>
         <span className="ml-auto font-mono text-[8px] text-fresh tnum flex items-center gap-1">
@@ -733,7 +733,7 @@ function BatchScreen() {
       <div className="flex-1 p-3 grid grid-cols-[1fr_auto_1fr] gap-2 md:gap-3 items-stretch">
         {/* source */}
         <div className="flex flex-col">
-          <p className="font-mono uppercase tracking-[0.25em] text-[7px] text-slate mb-1">
+          <p className="font-mono uppercase tracking-[0.14em] text-[7px] text-slate mb-1">
             Source
           </p>
           <p
@@ -784,7 +784,7 @@ function BatchScreen() {
 
         {/* sorted folders */}
         <div className="flex flex-col">
-          <p className="font-mono uppercase tracking-[0.25em] text-[7px] text-slate mb-1">
+          <p className="font-mono uppercase tracking-[0.14em] text-[7px] text-slate mb-1">
             Sorted
           </p>
           <p
@@ -835,7 +835,7 @@ function BatchScreen() {
         className="px-3 py-1.5 bg-bone-deep border-t border-line flex items-center justify-between"
         style={{ animation: "fade-up 0.5s 1.2s both" }}
       >
-        <span className="font-mono uppercase tracking-[0.25em] text-[7px] text-slate">
+        <span className="font-mono uppercase tracking-[0.14em] text-[7px] text-slate">
           Manual sort
         </span>
         <span className="font-mono text-[9px] text-slate-soft tnum line-through">
@@ -866,7 +866,7 @@ function FinalCta() {
           <PrimaryCta href={REGISTER_AS_PHOTOGRAPHER}>Start selling</PrimaryCta>
           <Link
             href={ROUTES.RUNNERS}
-            className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
           >
             I&apos;m a runner instead
           </Link>
@@ -879,10 +879,10 @@ function FinalCta() {
 function Footer() {
   return (
     <footer className="px-6 md:px-10 py-8 pb-24 md:pb-8 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-paper">
-      <p className="font-mono uppercase tracking-[0.28em] text-[12px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         QuickPitik &middot; Cebu, Philippines
       </p>
-      <p className="font-mono uppercase tracking-[0.28em] text-[12px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         © 2026
       </p>
     </footer>

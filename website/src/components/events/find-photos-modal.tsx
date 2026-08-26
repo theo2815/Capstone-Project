@@ -162,7 +162,7 @@ export function FindPhotosModal({
           </svg>
         </button>
         <div className="rounded-2xl bg-bone border border-line shadow-[0_24px_60px_-20px_rgba(17,17,17,0.45)] p-8 md:p-10 max-h-[85vh] overflow-y-auto">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-5">
+          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-5">
             {eyebrow}
           </p>
           <h2 className="font-display text-4xl md:text-5xl font-medium tracking-tight leading-[0.95]">

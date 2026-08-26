@@ -100,7 +100,7 @@ function PayoutQrBlock({
         <button
           type="button"
           onClick={handleDownload}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 inline-flex items-center gap-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 inline-flex items-center gap-2"
         >
           Download QR
           <span aria-hidden="true">↓</span>

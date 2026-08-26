@@ -36,7 +36,7 @@ export function AdminStatTile({
     <>
       <p
         className={cn(
-          "font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px]",
+          "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px]",
           isMuted ? "text-slate-soft" : "text-slate-soft",
         )}
       >
@@ -61,7 +61,7 @@ export function AdminStatTile({
         </p>
       )}
       {isInteractive && (
-        <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors mt-6">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors mt-6">
           Open →
         </p>
       )}

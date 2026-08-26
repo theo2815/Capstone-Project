@@ -40,7 +40,7 @@ export function DesktopNudge() {
           aria-hidden="true"
           className="size-1.5 rounded-full bg-slate-soft shrink-0"
         />
-        <p className="flex-1 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate leading-relaxed">
+        <p className="flex-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate leading-relaxed">
           For the best experience, please open this on a desktop.
         </p>
         <button

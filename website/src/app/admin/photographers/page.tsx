@@ -151,7 +151,7 @@ export default function AdminPhotographersPage() {
           className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
         />
         {query.trim().length > 0 && (
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-3 tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3 tnum">
             {filtered.length} match{filtered.length === 1 ? "" : "es"}
           </p>
         )}

@@ -260,7 +260,7 @@ export function FlagsQueue() {
           className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
         />
         {query.trim().length > 0 && (
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-3 tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3 tnum">
             {filtered.length} match{filtered.length === 1 ? "" : "es"}
           </p>
         )}
@@ -476,7 +476,7 @@ function FlagSubtitle({ flag }: { flag: Flag }) {
   const event = getEventById(flag.eventId);
   const eventName = event?.name ?? `Event ${flag.eventId}`;
   return (
-    <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
       {flag.reportedBy === "system" ? "System" : `@${flag.reportedBy}`}
       <span className="text-slate-soft"> · </span>
       @{flag.photographerHandle}
@@ -519,14 +519,14 @@ function FlagDrawerActions({
         <button
           type="button"
           onClick={onToggleConfirmDismiss}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
         >
           Cancel
         </button>
         <button
           type="button"
           onClick={onConfirmDismiss}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
         >
           Confirm dismiss
         </button>
@@ -539,21 +539,21 @@ function FlagDrawerActions({
       <button
         type="button"
         onClick={onEscalate}
-        className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
+        className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
       >
         Escalate…
       </button>
       <button
         type="button"
         onClick={onToggleConfirmDismiss}
-        className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
+        className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
       >
         Dismiss
       </button>
       <button
         type="button"
         onClick={onHide}
-        className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+        className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
       >
         Hide…
       </button>
@@ -653,13 +653,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         {label}
       </dt>
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink tnum"
+            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >

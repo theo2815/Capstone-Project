@@ -64,13 +64,13 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
         style={{ animation: "fade-up 0.25s ease-out both" }}
       >
         <div className="sticky top-0 z-10 flex items-baseline justify-between gap-6 px-6 md:px-8 pt-6 md:pt-8 pb-4 bg-bone border-b border-line">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
             Platform cut
           </p>
           <button
             type="button"
             onClick={onClose}
-            className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-ink transition-colors"
             aria-label="Close"
           >
             Close ×
@@ -97,7 +97,7 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
           <section aria-labelledby="per-photo-heading">
             <p
               id="per-photo-heading"
-              className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
+              className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft"
             >
               One ₱{PRICE} photo
             </p>
@@ -124,7 +124,7 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
           <section aria-labelledby="scale-heading">
             <p
               id="scale-heading"
-              className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
+              className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft"
             >
               At your pace
             </p>
@@ -150,7 +150,7 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
                 );
               })}
             </ul>
-            <p className="mt-3 font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft">
+            <p className="mt-3 font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
               Based on ₱{PRICE} per photo · weekly payout
             </p>
           </section>
@@ -158,7 +158,7 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
           <section aria-labelledby="covers-heading">
             <p
               id="covers-heading"
-              className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
+              className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft"
             >
               What the 25% covers
             </p>

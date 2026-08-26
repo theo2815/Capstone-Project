@@ -150,7 +150,7 @@ function OpenRequestGlance({
 
   return (
     <>
-      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft flex items-center gap-2 flex-wrap">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft flex items-center gap-2 flex-wrap">
         <span>Payout request</span>
         <span className="text-slate-soft">·</span>
         <span className={stageTone[stage]}>{stageLabel[stage]}</span>
@@ -159,7 +159,7 @@ function OpenRequestGlance({
         ₱{request.amount.toLocaleString()}
       </p>
       {stage === "approved" && request.settledAt && (
-        <p className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate mt-4 tnum">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-4 tnum">
           Approved {formatLongDate(request.settledAt)}
         </p>
       )}
@@ -198,7 +198,7 @@ function AvailableGlance({
 
   return (
     <>
-      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         Available to request
       </p>
       <p
@@ -315,7 +315,7 @@ function FeaturedEventRow({ event }: { event: PhotographerEventSummary }) {
     >
       <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
         <div className="flex-1 min-w-0">
-          <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate tnum flex items-center gap-2 flex-wrap">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum flex items-center gap-2 flex-wrap">
             <span>{formatLongDate(event.date, true)}</span>
             <span className="text-slate-soft">·</span>
             <StateChip state={event.state} />

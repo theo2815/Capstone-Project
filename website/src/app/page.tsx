@@ -8,7 +8,7 @@ export default function SplashPage() {
       <header className="border-b border-line">
         <div className="max-w-6xl mx-auto w-full px-5 md:px-10 h-16 flex items-center justify-between">
           <Logo />
-          <p className="hidden sm:block font-mono uppercase tracking-[0.26em] text-[12px] text-slate">
+          <p className="hidden sm:block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
             Cebu · Philippines
           </p>
         </div>
@@ -31,7 +31,7 @@ export default function SplashPage() {
               <span className="bg-fresh-deep" />
               <span className="bg-ink" />
             </span>
-            <p className="font-mono uppercase tracking-[0.26em] text-[12px] text-slate">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
               Race photo marketplace
             </p>
           </div>
@@ -59,10 +59,10 @@ export default function SplashPage() {
       </section>
 
       <footer className="px-5 md:px-10 py-7 max-w-6xl mx-auto w-full flex items-center justify-between border-t border-line">
-        <p className="font-mono uppercase tracking-[0.28em] text-[12px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           QuickPitik · 2026
         </p>
-        <p className="font-mono uppercase tracking-[0.28em] text-[12px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Cebu · PH
         </p>
       </footer>
@@ -80,7 +80,7 @@ function RunnerCard() {
       style={{ animation: "fade-up 0.7s 0.15s both" }}
     >
       <div className="flex items-start justify-between">
-        <p className="font-mono uppercase tracking-[0.24em] text-[12px] text-fresh">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh">
           For runners
         </p>
         <span className="text-fresh">
@@ -119,7 +119,7 @@ function PhotographerCard() {
       style={{ animation: "fade-up 0.7s 0.25s both" }}
     >
       <div className="flex items-start justify-between">
-        <p className="font-mono uppercase tracking-[0.24em] text-[12px] text-fresh-deep">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh-deep">
           For photographers
         </p>
         <span className="text-pine">

@@ -447,7 +447,7 @@ function OpenRequestHero({
           <button
             type="button"
             onClick={onWithdraw}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-error border border-error hover:bg-error hover:text-bone transition-colors rounded-full px-5 py-2"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-error border border-error hover:bg-error hover:text-bone transition-colors rounded-full px-5 py-2"
           >
             Withdraw request
           </button>

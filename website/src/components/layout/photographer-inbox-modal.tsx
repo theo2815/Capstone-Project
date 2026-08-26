@@ -72,7 +72,7 @@ export function PhotographerInboxModal({
           <button
             type="button"
             onClick={() => void markAllRead()}
-            className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
           >
             Mark all read
           </button>
@@ -102,7 +102,7 @@ export function PhotographerInboxModal({
         <button
           type="button"
           onClick={onClose}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
         >
           Close
         </button>
@@ -165,7 +165,7 @@ function InboxRow({ message, onMarkRead, onRemove }: InboxRowProps) {
             onRemove();
           }}
           aria-label="Remove notification"
-          className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft hover:text-error transition-colors"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft hover:text-error transition-colors"
         >
           Remove
         </button>

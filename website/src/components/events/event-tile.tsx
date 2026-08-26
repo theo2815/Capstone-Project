@@ -81,7 +81,7 @@ export function EventTile(props: EventTileProps) {
                 {event.name}
               </span>
             </div>
-            <span className="absolute bottom-3 right-3 font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/35">
+            <span className="absolute bottom-3 right-3 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/35">
               Banner · soon
             </span>
           </>
@@ -105,7 +105,7 @@ export function EventTile(props: EventTileProps) {
         )}
       </div>
       <div className="p-6 md:p-7">
-        <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-3">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-3">
           <span className="tnum">{dateLabel}</span> · {cityUpper}
         </p>
         <h3 className="font-display text-2xl md:text-3xl font-extrabold tracking-tight leading-tight text-ink">
@@ -194,11 +194,11 @@ function BrowseFooter({ isUpcoming }: { isUpcoming: boolean }) {
   return (
     <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
       {isUpcoming ? (
-        <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
           Opens on race day
         </span>
       ) : (
-        <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors">
+        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors">
           Open →
         </span>
       )}
@@ -237,8 +237,8 @@ function UploadFooter({
       <span
         className={
           muted
-            ? "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate"
-            : "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors"
+            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate"
+            : "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors"
         }
       >
         {cta}
@@ -250,7 +250,7 @@ function UploadFooter({
 function ManageFooter() {
   return (
     <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
-      <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors">
+      <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors">
         Open →
       </span>
     </div>
@@ -265,7 +265,7 @@ export function StatusChip({ state }: { state: EventState }) {
           aria-hidden="true"
           className="size-1.5 rounded-full bg-fresh breathe"
         />
-        <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-fresh">
+        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh">
           Photos uploading
         </span>
       </div>
@@ -275,7 +275,7 @@ export function StatusChip({ state }: { state: EventState }) {
     return (
       <div className="absolute top-4 left-5 flex items-center gap-2.5">
         <span aria-hidden="true" className="size-1.5 rounded-full bg-fresh" />
-        <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/85">
+        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/85">
           Save the date
         </span>
       </div>
@@ -285,7 +285,7 @@ export function StatusChip({ state }: { state: EventState }) {
     return (
       <div className="absolute top-4 left-5 flex items-center gap-2.5">
         <span aria-hidden="true" className="size-1.5 rounded-full bg-bone/85" />
-        <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/85">
+        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/85">
           Photos ready
         </span>
       </div>
@@ -294,7 +294,7 @@ export function StatusChip({ state }: { state: EventState }) {
   return (
     <div className="absolute top-4 left-5 flex items-center gap-2.5">
       <span aria-hidden="true" className="size-1.5 rounded-full bg-bone/40" />
-      <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/55">
+      <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/55">
         Archive
       </span>
     </div>

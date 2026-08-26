@@ -127,7 +127,7 @@ export function SaveButton({
               : "Save this event"
         }
         className={cn(
-          "group inline-flex items-center gap-2 font-mono uppercase tracking-[0.3em] text-[10px] transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+          "group inline-flex items-center gap-2 font-mono uppercase tracking-[0.14em] text-[10px] transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
           disabled
             ? "text-slate opacity-50 cursor-not-allowed"
             : isSaved

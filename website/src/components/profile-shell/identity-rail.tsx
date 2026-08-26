@@ -72,7 +72,7 @@ export function IdentityRail({
       <div className="flex items-start gap-5 md:block">
         <AvatarDisc name={user.name} size="md" />
         <div className="flex-1 min-w-0 md:mt-7">
-          <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
             {kicker}
           </p>
           <h1
@@ -93,7 +93,7 @@ export function IdentityRail({
 
       {jumpSections.length > 0 && (
         <nav aria-label="Jump to section" className="hidden md:block mt-10">
-          <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
             Jump to
           </p>
           <ul className="mt-4 space-y-3">
@@ -128,7 +128,7 @@ export function IdentityRail({
       )}
 
       <div className="mt-8 md:mt-10">
-        <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           More
         </p>
         <ul className="mt-4 space-y-3">

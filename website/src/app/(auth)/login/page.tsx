@@ -21,7 +21,7 @@ export default function LoginPage() {
 function LoginSkeleton() {
   return (
     <div className="space-y-7" aria-hidden="true">
-      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
         Log in
       </p>
       <h1 className="font-hero text-5xl md:text-6xl">

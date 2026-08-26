@@ -272,7 +272,7 @@ function PaletteRow({
     >
       <span
         className={cn(
-          "shrink-0 inline-flex items-center font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full border px-2 py-0.5",
+          "shrink-0 inline-flex items-center font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border px-2 py-0.5",
           active ? "border-ink text-ink" : "border-line text-slate",
         )}
       >

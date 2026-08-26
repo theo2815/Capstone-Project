@@ -265,7 +265,7 @@ export function CartModal({
       >
         <header className="flex items-start justify-between gap-3 px-6 md:px-7 pt-6 pb-5 border-b border-line">
           <div>
-            <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-1.5">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-1.5">
               Your cart
             </p>
             <p className="font-display text-2xl md:text-3xl font-medium text-ink tracking-tight leading-tight">
@@ -317,14 +317,14 @@ export function CartModal({
 
             <footer className="border-t border-line bg-bone-deep px-6 md:px-7 py-5 md:py-6">
               <div className="flex items-baseline justify-between gap-3 mb-4">
-                <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+                <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
                   Subtotal
                 </span>
                 <span className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight tnum">
                   {formatPrice(total)}
                 </span>
               </div>
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-5">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mb-5">
                 Watermarked previews are free. Pay once, download forever.
               </p>
               <button
@@ -344,7 +344,7 @@ export function CartModal({
                 <button
                   type="button"
                   onClick={handleKeepBrowsing}
-                  className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors text-left sm:max-w-[60%] sm:truncate"
+                  className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors text-left sm:max-w-[60%] sm:truncate"
                   title={browseTarget.label}
                 >
                   ← {browseTarget.label}
@@ -352,7 +352,7 @@ export function CartModal({
                 <button
                   type="button"
                   onClick={handleClearCart}
-                  className="self-start sm:self-auto font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft hover:text-fresh transition-colors shrink-0"
+                  className="self-start sm:self-auto font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft hover:text-fresh transition-colors shrink-0"
                 >
                   Clear cart
                 </button>
@@ -435,26 +435,26 @@ function CartRow({
               draggable={false}
             />
           ) : (
-            <span className="absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.2em] text-[8px] text-bone/40 rotate-[-18deg]">
+            <span className="absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.14em] text-[8px] text-bone/40 rotate-[-18deg]">
               QuickPitik
             </span>
           )}
           <span className="absolute inset-0 bg-ink/0 group-hover:bg-ink/25 transition-colors duration-200 flex items-center justify-center">
-            <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/0 group-hover:text-bone/95 transition-colors duration-200">
+            <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/0 group-hover:text-bone/95 transition-colors duration-200">
               View
             </span>
           </span>
         </div>
 
         <div className="flex-1 min-w-0">
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate truncate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate truncate">
             {item.eventName ?? "QuickPitik"}
           </p>
           <p className="mt-1 font-display text-lg font-medium text-ink tracking-tight tnum truncate group-hover:text-fresh transition-colors">
             {item.bib ?? "Untagged"}
           </p>
           {item.time ? (
-            <p className="mt-1 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+            <p className="mt-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
               {item.time}
             </p>
           ) : null}
@@ -474,7 +474,7 @@ function CartRow({
           onRemove();
         }}
         aria-label={`Remove ${item.bib ?? "untagged photo"} from cart`}
-        className="absolute right-6 md:right-7 bottom-5 inline-flex items-center gap-1 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft hover:text-fresh transition-colors focus:outline-none focus-visible:text-fresh"
+        className="absolute right-6 md:right-7 bottom-5 inline-flex items-center gap-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft hover:text-fresh transition-colors focus:outline-none focus-visible:text-fresh"
       >
         <span aria-hidden="true">✕</span>
         <span>Remove</span>
@@ -514,7 +514,7 @@ function EmptyCart({ onClose }: { onClose: () => void }) {
         onClick={onClose}
         className={cn(
           "inline-flex items-center bg-ink hover:bg-ink-soft text-bone px-6 py-3 rounded-full",
-          "font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors",
+          "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors",
         )}
       >
         Browse events →

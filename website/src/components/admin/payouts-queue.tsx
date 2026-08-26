@@ -674,7 +674,7 @@ function PayoutSlab({
 // the deprecated `weekOf`. No `dateOnly` flag: this is a full ISO timestamp.
 function PayoutSubtitle({ cycle }: { cycle: AdminPayoutCycle }) {
   return (
-    <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
       {cycle.handle ? `@${cycle.handle}` : "—"}
       <span className="text-slate-soft"> · </span>
       {formatLongDate(cycle.submittedAt)}
@@ -709,7 +709,7 @@ function PayoutDrawerActions({
         <button
           type="button"
           onClick={onHold}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
         >
           Hold…
         </button>
@@ -718,7 +718,7 @@ function PayoutDrawerActions({
         <button
           type="button"
           onClick={onMarkPaid}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
         >
           Mark paid…
         </button>
@@ -727,7 +727,7 @@ function PayoutDrawerActions({
         <button
           type="button"
           onClick={onApprove}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
         >
           Approve
         </button>
@@ -789,7 +789,7 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
               {cycle.brandName ?? cycle.photographerName}
             </p>
             {cycle.handle && (
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mt-1">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-1">
                 @{cycle.handle}
               </p>
             )}
@@ -808,7 +808,7 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
               {cycle.holdReason}
             </p>
             {cycle.reviewedAt && (
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-2 tnum">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2 tnum">
                 Held {formatLongDate(cycle.reviewedAt)}
               </p>
             )}
@@ -865,13 +865,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         {label}
       </dt>
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink tnum"
+            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >

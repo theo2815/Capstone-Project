@@ -25,7 +25,7 @@ export const BTN_GHOST =
 
 export const BTN_SIZE = {
   /** Page-level CTAs (canonical hero pill). */
-  md: "px-6 py-3.5 text-[15px]",
+  md: "px-6 py-3.5 text-[16px]",
   /** Dense contexts: admin asides, bulk bars, inline rows. */
   sm: "px-5 py-2.5 text-sm min-h-[44px]",
 } as const;

@@ -500,7 +500,7 @@ function DisputeSlab({
 function DisputeSubtitle({ dispute }: { dispute: Dispute }) {
   const eventName = dispute.eventName ?? "Event archived";
   return (
-    <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
       {eventName}
       <span className="text-slate-soft"> · </span>
       {formatPrice(dispute.orderSnapshot.total)}
@@ -539,7 +539,7 @@ function DisputeDrawerActions({
         <button
           type="button"
           onClick={onEscalate}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
         >
           Escalate…
         </button>
@@ -548,7 +548,7 @@ function DisputeDrawerActions({
         <button
           type="button"
           onClick={onDeny}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
         >
           Deny…
         </button>
@@ -557,7 +557,7 @@ function DisputeDrawerActions({
         <button
           type="button"
           onClick={onResolve}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
         >
           Resolve…
         </button>
@@ -602,7 +602,7 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
         <Kicker as="p" tone="soft" className="mb-3">
           Claim
         </Kicker>
-        <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Reason: {DISPUTE_REASON_LABEL[dispute.reason]}
         </p>
         <p className="font-sans text-sm md:text-base text-ink-soft mt-3 whitespace-pre-line">
@@ -661,7 +661,7 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
         </Kicker>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="rounded-2xl border border-line bg-bone-deep p-4">
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
               Runner
             </p>
             <p className="font-display text-lg text-ink mt-2">
@@ -669,7 +669,7 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
             </p>
           </div>
           <div className="rounded-2xl border border-line bg-bone-deep p-4">
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
               Photographer
             </p>
             <p className="font-display text-lg text-ink mt-2">
@@ -768,13 +768,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         {label}
       </dt>
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink tnum"
+            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >
@@ -796,7 +796,7 @@ function ResolutionNote({
   if (!resolution) return null;
   return (
     <div className="rounded-xl border border-line bg-bone-deep p-4 mb-4">
-      <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         Closed before live decision logging started
       </p>
       <p className="font-sans text-sm text-ink-soft mt-2">

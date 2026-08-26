@@ -302,7 +302,7 @@ function CoverField({
             />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center">
-              <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/45">
+              <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/45">
                 No cover yet
               </span>
             </div>
@@ -311,7 +311,7 @@ function CoverField({
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3 border-t border-line">
           <label
             className={cn(
-              "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink hover:text-fresh transition-colors cursor-pointer",
+              "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors cursor-pointer",
             )}
           >
             {bannerUrl ? "Replace cover" : "Upload cover"}
@@ -327,7 +327,7 @@ function CoverField({
             <button
               type="button"
               onClick={onRemove}
-              className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-error transition-colors"
+              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-error transition-colors"
             >
               Remove
             </button>

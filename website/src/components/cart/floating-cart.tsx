@@ -189,14 +189,14 @@ export function FloatingCart() {
             </span>
           </span>
           <span className="hidden md:flex flex-col items-start leading-tight">
-            <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/70">
+            <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/70">
               Cart
             </span>
-            <span className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[12px] tnum">
+            <span className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tnum">
               {formatPrice(total)}
             </span>
           </span>
-          <span className="md:hidden font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] tnum">
+          <span className="md:hidden font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] tnum">
             {formatPrice(total)}
           </span>
         </button>

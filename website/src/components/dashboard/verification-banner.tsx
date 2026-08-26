@@ -33,7 +33,7 @@ export function VerificationBanner({
   if (gate.kind === "suspended") {
     return (
       <div className="border border-ink rounded-2xl px-5 py-5 bg-bone-deep/60 mb-8">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-ink">
+        <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-ink">
           Account suspended
         </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
@@ -66,7 +66,7 @@ export function VerificationBanner({
           aria-hidden="true"
           className="size-1.5 rounded-full bg-fresh shrink-0"
         />
-        <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate">
+        <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate">
           Verified · uploads enabled
         </p>
       </div>
@@ -76,7 +76,7 @@ export function VerificationBanner({
   if (gate.kind === "pending") {
     return (
       <div className="border border-line rounded-2xl px-5 py-4 bg-bone-deep/40 mb-8">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+        <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate">
           Awaiting review
         </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
@@ -93,7 +93,7 @@ export function VerificationBanner({
   // incomplete
   return (
     <div className="border border-line rounded-2xl px-5 py-5 bg-bone-deep/40 mb-8">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate">
         Finish your settings
       </p>
       <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">

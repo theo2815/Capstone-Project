@@ -64,7 +64,7 @@ function LifetimeSlab() {
       caption="After platform cut"
     >
       <div>
-        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Lifetime kept
         </p>
         <p className="font-display text-5xl md:text-7xl font-semibold tracking-tight text-fresh tnum mt-3 leading-none">
@@ -88,10 +88,10 @@ function LifetimeSlab() {
       </div>
 
       <div className="mt-10">
-        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           12-week trend
         </p>
-        <p className="font-mono uppercase tracking-[0.2em] text-[12px] text-slate-soft mt-1.5">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1.5">
           Hover or tap a bar for week details
         </p>
         <div className="mt-4">
@@ -182,7 +182,7 @@ function BreakdownStat({
 }) {
   return (
     <div className="border-l border-line pl-4 md:pl-6 first:border-0 first:pl-0">
-      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
         {kicker}
       </p>
       <p className="font-display font-medium tracking-tight tnum text-2xl md:text-4xl text-ink mt-3 leading-none">
@@ -300,7 +300,7 @@ function PerEventRow({
     >
       <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
         <div className="flex-1 min-w-0">
-          <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
             {formatLongDate(event.date, true)}
           </p>
           <h3 className="font-display text-lg md:text-xl font-medium tracking-tight text-ink mt-2 truncate group-hover:text-ink-soft transition-colors">
@@ -327,7 +327,7 @@ function PerEventRow({
                 style={{ width: `${Math.max(2, sharePct)}%` }}
               />
             </div>
-            <p className="font-mono text-[12px] tracking-[0.15em] text-slate-soft tnum uppercase shrink-0">
+            <p className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.15em] text-slate-soft tnum uppercase shrink-0">
               {sharePct.toFixed(0)}%
             </p>
           </div>

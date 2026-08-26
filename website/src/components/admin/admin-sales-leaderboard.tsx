@@ -96,7 +96,7 @@ function PhotographerRow({
         className="group flex items-baseline justify-between gap-4 py-4 md:py-5 transition-colors"
       >
         <div className="flex items-baseline gap-4 min-w-0">
-          <span className="font-mono tnum text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft shrink-0">
+          <span className="font-mono tnum text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft shrink-0">
             {rank.toString().padStart(2, "0")}
           </span>
           <div className="min-w-0">
@@ -126,7 +126,7 @@ function EventRow({ rank, row }: { rank: number; row: SalesEventRow }) {
         className="group flex items-baseline justify-between gap-4 py-4 md:py-5 transition-colors"
       >
         <div className="flex items-baseline gap-4 min-w-0">
-          <span className="font-mono tnum text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft shrink-0">
+          <span className="font-mono tnum text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft shrink-0">
             {rank.toString().padStart(2, "0")}
           </span>
           <div className="min-w-0">

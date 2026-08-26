@@ -657,7 +657,7 @@ function PhotoStrip({
           aria-label={`View ${overflow} more photo${overflow === 1 ? "" : "s"}`}
           className="aspect-[4/3] bg-bone-deep border border-line rounded-md flex items-center justify-center overflow-hidden hover:border-ink hover:shadow-[var(--shadow-card)] transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
         >
-          <span className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[12px] tracking-[0.18em] text-ink uppercase tnum">
+          <span className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.18em] text-ink uppercase tnum">
             +{overflow}
           </span>
         </button>

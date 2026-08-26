@@ -316,7 +316,7 @@ export function VerificationsQueue() {
   return (
     <>
       {(showFirstLoad || showError) && (
-        <div className="rounded-2xl border border-line bg-bone-deep/40 px-5 py-4 font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+        <div className="rounded-2xl border border-line bg-bone-deep/40 px-5 py-4 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           {showFirstLoad
             ? "Loading admin queue…"
             : (
@@ -384,13 +384,13 @@ export function VerificationsQueue() {
                     <p className="font-display text-base text-ink truncate">
                       {row.brandName ?? row.name}
                     </p>
-                    <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1">
+                    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1">
                       {row.handle ? `@${row.handle}` : "No handle yet"}
                       <span className="text-slate-soft"> · </span>
                       <CompletenessFraction snapshot={row.settingsSnapshot} />
                     </p>
                   </div>
-                  <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft shrink-0">
+                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft shrink-0">
                     Self-serve
                   </span>
                 </li>
@@ -433,7 +433,7 @@ export function VerificationsQueue() {
                       <p className="font-display text-base text-ink truncate">
                         {target?.brandName ?? target?.name ?? entry.userId}
                       </p>
-                      <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+                      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
                         {formatDecidedAt(entry.decidedAt)}
                         {entry.reason && (
                           <>
@@ -444,7 +444,7 @@ export function VerificationsQueue() {
                       </p>
                     </div>
                     <span
-                      className={`font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] shrink-0 ${
+                      className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] shrink-0 ${
                         entry.decision === "approved"
                           ? "text-fresh"
                           : "text-slate"
@@ -492,12 +492,12 @@ export function VerificationsQueue() {
           kicker="Verification"
           title={openRow.brandName ?? openRow.name}
           rightHeader={
-            <span className="inline-flex items-center font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full border border-line text-slate px-3 py-0.5">
+            <span className="inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border border-line text-slate px-3 py-0.5">
               Pending
             </span>
           }
           subtitle={
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
               {openRow.handle ? `@${openRow.handle}` : "No handle yet"}
               <span className="text-slate-soft"> · </span>
               {openRow.region ?? openRow.city}
@@ -635,11 +635,11 @@ function PendingRow({
                 <h3 className="font-display text-xl md:text-2xl font-medium text-ink truncate">
                   {row.brandName ?? row.name}
                 </h3>
-                <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+                <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
                   @{row.handle ?? "—"}
                 </p>
               </div>
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-2">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2">
                 {row.region ?? row.city}
                 <span className="text-slate-soft"> · </span>
                 <span className="tnum">
@@ -649,11 +649,11 @@ function PendingRow({
 
               <div className="mt-5 flex items-center gap-3 flex-wrap">
                 <CompletenessStrip snapshot={liveSnapshot} />
-                <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+                <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
                   {completeness.filled}/{completeness.total} fields
                 </span>
                 {liveSnapshot && (
-                  <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
                     ·{" "}
                     <span className="tnum">{liveSnapshot.socialCount}</span>{" "}
                     social ·{" "}
@@ -741,7 +741,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
           <p className="font-display text-lg md:text-xl text-ink truncate">
             {row.brandName ?? row.name}
           </p>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft truncate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft truncate">
             {row.email}
           </p>
         </div>
@@ -809,7 +809,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
         <div className="rounded-2xl border border-line bg-bone-deep p-5 md:p-6 space-y-4">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <CompletenessStrip snapshot={liveSnapshot} />
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
               {completeness.filled}/{completeness.total} fields
             </p>
           </div>
@@ -823,7 +823,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
                 >
                   <span className="text-ink">{field.label}</span>
                   <span
-                    className={`font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] ${
+                    className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] ${
                       filled ? "text-fresh" : "text-slate-soft"
                     }`}
                   >
@@ -836,13 +836,13 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
               <>
                 <li className="flex items-center justify-between gap-4 font-sans text-sm pt-2 border-t border-line">
                   <span className="text-ink">Social profiles</span>
-                  <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate tnum">
+                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
                     {liveSnapshot.socialCount} linked
                   </span>
                 </li>
                 <li className="flex items-center justify-between gap-4 font-sans text-sm">
                   <span className="text-ink">Payout methods</span>
-                  <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate tnum">
+                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
                     {liveSnapshot.payoutCount} on file
                   </span>
                 </li>
@@ -917,7 +917,7 @@ function PublicUrlSection({ handle }: { handle: string }) {
         href={`/${handle}`}
         target="_blank"
         rel="noopener"
-        className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+        className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
       >
         Open ↗
       </Link>
@@ -998,7 +998,7 @@ function SocialsSection({
             href={social.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+            className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
           >
             Open ↗
           </a>
@@ -1032,12 +1032,12 @@ function PayoutsSection({
             <p className="font-display text-base text-ink truncate">
               {PAYOUT_METHOD_LABEL[p.method]}
               {p.isPrimary && (
-                <span className="ml-2 font-mono uppercase tracking-[0.18em] text-[12px] text-fresh tnum">
+                <span className="ml-2 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh tnum">
                   Primary
                 </span>
               )}
             </p>
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
               {formatPayoutNumber(p.method, p.accountNumber)}
             </p>
           </div>
@@ -1061,13 +1061,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         {label}
       </dt>
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink tnum"
+            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >
@@ -1118,7 +1118,7 @@ function VerificationsBulkBar({
           <button
             type="button"
             onClick={onClear}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-3 py-2"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-2"
           >
             Clear
           </button>

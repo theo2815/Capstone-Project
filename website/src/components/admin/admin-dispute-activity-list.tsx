@@ -99,7 +99,7 @@ export function AdminDisputeActivityList({
           className="flex items-start justify-between gap-4 border-b border-line pb-3"
         >
           <div className="min-w-0 flex-1">
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
               {formatDecidedAt(entry.decidedAt)}
               {entry.resolution &&
                 ` · ${DISPUTE_RESOLUTION_LABEL[entry.resolution]}`}
@@ -113,7 +113,7 @@ export function AdminDisputeActivityList({
             )}
           </div>
           <span
-            className={`font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] shrink-0 mt-1 ${decisionTone(entry.decision)}`}
+            className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] shrink-0 mt-1 ${decisionTone(entry.decision)}`}
           >
             {DECISION_LABEL[entry.decision]}
           </span>

@@ -61,7 +61,7 @@ export function ForgotPasswordForm() {
   if (status === "sent") {
     return (
       <div className="stagger-children space-y-7">
-        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
           Reset access
           <span className="ml-2 text-fresh">&middot; Sent</span>
         </p>
@@ -99,7 +99,7 @@ export function ForgotPasswordForm() {
           <p className="text-center">
             <Link
               href={ROUTES.LOGIN}
-              className="font-mono uppercase tracking-[0.2em] text-[12px] text-slate hover:text-ink transition-colors"
+              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
             >
               ← Back to sign in
             </Link>
@@ -111,7 +111,7 @@ export function ForgotPasswordForm() {
 
   return (
     <form onSubmit={handleSubmit} noValidate className="stagger-children space-y-7">
-      <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
         Reset access
       </p>
 
@@ -166,7 +166,7 @@ export function ForgotPasswordForm() {
         <p className="text-center">
           <Link
             href={ROUTES.LOGIN}
-            className="font-mono uppercase tracking-[0.2em] text-[12px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
           >
             ← Back to sign in
           </Link>

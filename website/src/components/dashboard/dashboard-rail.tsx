@@ -106,7 +106,7 @@ export function DashboardRail() {
       <div className="flex items-start gap-5 md:block">
         <AvatarDisc name={user.name} size="md" />
         <div className="flex-1 min-w-0 md:mt-7">
-          <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
             Photographer · Cebu
             <span className="text-slate-soft"> · </span>
             <span className="tnum">Since {memberSince}</span>
@@ -122,14 +122,14 @@ export function DashboardRail() {
 
       <nav aria-label="Dashboard sections" className="hidden md:block mt-10">
         <div className="flex items-baseline justify-between gap-3">
-          <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
             Sections
           </p>
           <button
             type="button"
             onClick={toggleTipsDisabled}
             aria-pressed={tipsDisabled}
-            className="font-mono uppercase tracking-[0.25em] text-[12px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             {tipsDisabled ? "Show tips" : "Hide tips"}
           </button>
@@ -155,7 +155,7 @@ export function DashboardRail() {
       </nav>
 
       <div className="mt-8 md:mt-10">
-        <p className="font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           More
         </p>
         <ul className="mt-4 space-y-3">

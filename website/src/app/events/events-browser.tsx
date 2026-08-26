@@ -213,7 +213,7 @@ function HeroVisual() {
         className="absolute top-20 left-20 w-56 h-40 rounded-2xl bg-bone border-2 border-fresh shadow-[0_24px_40px_-12px_rgba(17,17,17,0.22)] overflow-hidden"
         style={{ animation: "fade-up 0.6s 1.35s both", opacity: 0 }}
       >
-        <span className="absolute top-3 left-4 font-mono uppercase tracking-[0.25em] text-[9px] text-fresh">
+        <span className="absolute top-3 left-4 font-mono uppercase tracking-[0.14em] text-[9px] text-fresh">
           Match · 98%
         </span>
         <span className="absolute bottom-3 right-3 size-2.5 rounded-full bg-fresh breathe" />
@@ -244,13 +244,13 @@ function HeroVisual() {
       </div>
 
       <div
-        className="absolute top-[268px] left-[120px] font-mono uppercase tracking-[0.3em] text-[10px] text-slate"
+        className="absolute top-[268px] left-[120px] font-mono uppercase tracking-[0.14em] text-[10px] text-slate"
         style={{ animation: "fade-in 0.6s 1.6s both", opacity: 0 }}
       >
         BIB · 4082
       </div>
       <div
-        className="absolute top-[88px] right-[16px] font-mono uppercase tracking-[0.3em] text-[10px] text-slate"
+        className="absolute top-[88px] right-[16px] font-mono uppercase tracking-[0.14em] text-[10px] text-slate"
         style={{ animation: "fade-in 0.6s 1.75s both", opacity: 0 }}
       >
         00:34:21

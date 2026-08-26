@@ -83,7 +83,7 @@ export function AdminTrendChart({
         })}
       </div>
 
-      <div className="mt-3 h-4 flex items-center font-mono text-[13px] min-[400px]:text-[14px] md:text-[12px] tracking-[0.15em] uppercase tnum">
+      <div className="mt-3 h-4 flex items-center font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.15em] uppercase tnum">
         {active ? (
           <p className="flex-1 text-center text-slate">
             <span>{renderLabel(active.date)}</span>

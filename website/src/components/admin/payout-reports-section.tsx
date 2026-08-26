@@ -185,7 +185,7 @@ export function PayoutReportsSection() {
             />
           }
           subtitle={
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
               {openReport.handle ? `@${openReport.handle}` : "—"}
               <span className="text-slate-soft"> · </span>
               {PAYOUT_REPORT_REASON_LABEL[openReport.reason]}
@@ -250,7 +250,7 @@ function ReportRow({ report, cycleAmount, onOpen }: ReportRowProps) {
           <p className="font-display text-base md:text-lg text-ink mt-2">
             {report.photographerName}
             {report.handle && (
-              <span className="font-mono uppercase tracking-[0.22em] text-[12px] text-slate-soft ml-2">
+              <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft ml-2">
                 @{report.handle}
               </span>
             )}
@@ -302,7 +302,7 @@ function ReportActions({ report, onAcknowledge, onResolve }: ReportActionsProps)
         <button
           type="button"
           onClick={onAcknowledge}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
         >
           Acknowledge…
         </button>
@@ -310,7 +310,7 @@ function ReportActions({ report, onAcknowledge, onResolve }: ReportActionsProps)
       <button
         type="button"
         onClick={onResolve}
-        className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
+        className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
       >
         Resolve…
       </button>
@@ -331,7 +331,7 @@ function ReportDetailBody({ report, cycleAmount }: ReportDetailBodyProps) {
           Cycle
         </Kicker>
         <div className="rounded-2xl border border-line bg-bone-deep p-4">
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
             {report.payoutCycleId}
           </p>
           {cycleAmount !== undefined && (

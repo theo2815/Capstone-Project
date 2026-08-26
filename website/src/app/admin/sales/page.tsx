@@ -159,7 +159,7 @@ function RefundPulseSummary() {
 
       <Link
         href={ROUTES.ADMIN_DISPUTES}
-        className="inline-flex items-center gap-2 self-start font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink hover:text-fresh transition-colors"
+        className="inline-flex items-center gap-2 self-start font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors"
       >
         Open disputes queue →
       </Link>

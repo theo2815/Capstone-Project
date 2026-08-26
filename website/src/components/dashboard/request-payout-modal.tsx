@@ -123,7 +123,7 @@ export function RequestPayoutModal({
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink disabled:opacity-50 disabled:cursor-not-allowed transition-colors px-4 py-2"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink disabled:opacity-50 disabled:cursor-not-allowed transition-colors px-4 py-2"
           >
             Cancel
           </button>

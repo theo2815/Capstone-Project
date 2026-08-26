@@ -58,7 +58,7 @@ export function AdminInboxFilterChips({
             aria-selected={active}
             onClick={() => onChange(type)}
             className={cn(
-              "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full px-4 py-2 transition-colors",
+              "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 transition-colors",
               active
                 ? "bg-ink text-bone border border-ink"
                 : "bg-bone text-slate border border-line hover:text-ink hover:border-ink",

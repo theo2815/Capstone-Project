@@ -49,7 +49,7 @@ export function AdminPayoutBulkBar({
             total
           </Kicker>
           {approveDisabled && approveDisabledReason && (
-            <p className="font-mono uppercase tracking-[0.18em] text-[12px] text-amber-700 mt-1.5">
+            <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-amber-700 mt-1.5">
               {approveDisabledReason}
             </p>
           )}

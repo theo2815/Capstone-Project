@@ -41,7 +41,7 @@ export function BibPanel({
 }) {
   return (
     <form onSubmit={onSubmit} className="mt-8">
-      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate mb-3">
+      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-3">
         Your bib number
       </p>
       <label className="block">
@@ -56,7 +56,7 @@ export function BibPanel({
           value={bibInput}
           onChange={(e) => onBibChange(e.target.value)}
           placeholder="B-4082"
-          className="block w-full border-b border-line bg-transparent focus:border-fresh outline-none font-mono tracking-[0.25em] text-lg py-3 placeholder:text-slate-soft text-ink"
+          className="block w-full border-b border-line bg-transparent focus:border-fresh outline-none font-mono tracking-[0.14em] text-lg py-3 placeholder:text-slate-soft text-ink"
         />
       </label>
       <button
@@ -68,7 +68,7 @@ export function BibPanel({
 
       <div className="mt-7 flex items-center gap-3">
         <span className="h-px flex-1 bg-line" />
-        <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-slate-soft">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-slate-soft">
           or
         </span>
         <span className="h-px flex-1 bg-line" />
@@ -77,12 +77,12 @@ export function BibPanel({
       <button
         type="button"
         onClick={onSwitchToSelfie}
-        className="mt-7 inline-flex items-center border border-ink hover:bg-ink hover:text-bone text-ink px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+        className="mt-7 inline-flex items-center border border-ink hover:bg-ink hover:text-bone text-ink px-6 py-3 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
       >
         Match by selfie →
       </button>
 
-      <p className="mt-7 font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+      <p className="mt-7 font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
         <span className="tnum">{photoCount.toLocaleString()}</span>{" "}
         {photoCount === 1 ? "photo" : "photos"}
         {eventPhotoCount > photoCount ? (
@@ -190,7 +190,7 @@ export function SelfieSearchPanel({
 
   return (
     <div className="mt-8" style={{ animation: "fade-in 0.3s ease-out both" }}>
-      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate mb-4">
+      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-4">
         Selfie match
       </p>
 
@@ -239,7 +239,7 @@ export function SelfieSearchPanel({
       {isSearching && (
         <p
           role="status"
-          className="mt-4 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh"
+          className="mt-4 font-mono uppercase tracking-[0.14em] text-[10px] text-fresh"
         >
           Matching…
         </p>
@@ -277,7 +277,7 @@ export function SelfieSearchPanel({
       <button
         type="button"
         onClick={onSwitchToBib}
-        className="mt-6 inline-flex items-center font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-fresh transition-colors"
+        className="mt-6 inline-flex items-center font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-fresh transition-colors"
       >
         ← Use bib instead
       </button>

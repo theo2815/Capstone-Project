@@ -71,14 +71,14 @@ export function AdminDisputeCard({
               <span className="text-slate-soft"> vs </span>
               @{dispute.photographerHandle}
             </h3>
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
               {dispute.id}
             </p>
           </div>
           <p className="font-sans text-sm text-slate mt-2 truncate">
             {DISPUTE_REASON_LABEL[dispute.reason]}
           </p>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
             Order {dispute.orderId}
             <span className="text-slate-soft"> · </span>
             {formatAge(dispute.reportedAt)}
@@ -89,7 +89,7 @@ export function AdminDisputeCard({
             label={STATUS_LABEL[dispute.status]}
             tone={statusTone(dispute.status)}
           />
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
             {formatPrice(showAmount)}
           </p>
         </div>

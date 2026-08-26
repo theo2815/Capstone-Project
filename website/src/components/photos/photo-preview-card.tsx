@@ -205,10 +205,10 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
         style={{ animation: "fade-up 0.4s ease-out both" }}
       >
         <div className="flex items-center justify-between gap-3 px-5 md:px-7 py-4 border-b border-line">
-          <p className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate truncate">
+          <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate truncate">
             <span className="text-ink">{eventName}</span>
           </p>
-          <p className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum hidden sm:block whitespace-nowrap">
+          <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum hidden sm:block whitespace-nowrap">
             <span className="text-ink">{index}</span> / {total}
           </p>
           <button
@@ -262,7 +262,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                 className="size-3.5 rounded-sm bg-bone/35"
                 aria-hidden="true"
               />
-              <span className="font-mono uppercase tracking-[0.3em] text-[10px] sm:text-[11px] text-bone/55">
+              <span className="font-mono uppercase tracking-[0.14em] text-[10px] sm:text-[11px] text-bone/55">
                 QuickPitik
               </span>
             </div>
@@ -300,7 +300,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           )}
 
           {props.mode !== "owned" && props.mode !== "review" && props.inCart && (
-            <div className="absolute top-4 right-4 inline-flex items-center gap-2 bg-fresh text-surface rounded-full px-3 py-1 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] z-10">
+            <div className="absolute top-4 right-4 inline-flex items-center gap-2 bg-fresh text-surface rounded-full px-3 py-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] z-10">
               <span
                 className="size-1.5 rounded-full bg-surface"
                 aria-hidden="true"
@@ -320,7 +320,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           )}
           {props.mode === "owned" ? (
             <>
-              <p className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-3 sm:mb-4 text-center">
+              <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mb-3 sm:mb-4 text-center">
                 Yours to keep
               </p>
               <button
@@ -333,13 +333,13 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               </button>
             </>
           ) : props.mode === "review" ? (
-            <p className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft text-center">
+            <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft text-center">
               {props.footerLabel ?? "Admin · Review only"}
             </p>
           ) : (
             <>
               {!props.inCart && (
-                <p className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-3 sm:mb-4 text-center">
+                <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mb-3 sm:mb-4 text-center">
                   Pay once, download forever
                 </p>
               )}
@@ -371,7 +371,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                 </button>
               </div>
               {props.inCart && (
-                <p className="mt-3 sm:mt-4 font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-fresh text-center">
+                <p className="mt-3 sm:mt-4 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh text-center">
                   <span aria-hidden="true">✓</span> In cart
                   {props.onViewCart && (
                     <>
@@ -407,7 +407,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             >
               <span aria-hidden="true">←</span> Prev
             </button>
-            <span className="font-mono uppercase tracking-[0.18em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum whitespace-nowrap">
+            <span className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum whitespace-nowrap">
               <span className="text-ink">{index}</span> / {total}
             </span>
             <button

@@ -60,12 +60,12 @@ export function AdminPhotographerCard({
               {row.brandName ?? row.name}
             </h3>
             {row.handle && (
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
                 @{row.handle}
               </p>
             )}
           </div>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-2 truncate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2 truncate">
             {row.region ?? "Region not set"}
             <span className="text-slate-soft"> · </span>
             {row.city}
@@ -84,7 +84,7 @@ export function AdminPhotographerCard({
                   : "slate"
             }
           />
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
             {completeness.filled}/{completeness.total} fields
           </p>
         </div>
@@ -118,7 +118,7 @@ function StatusPill({
   return (
     <span
       className={cn(
-        "inline-flex items-center font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full border px-3 py-0.5",
+        "inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border px-3 py-0.5",
         toneClass,
       )}
     >

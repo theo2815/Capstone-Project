@@ -578,7 +578,7 @@ function BrowseMode({
               <button
                 type="button"
                 onClick={live.refresh}
-                className="font-mono uppercase tracking-[0.25em] text-[12px] text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
+                className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
               >
                 Connection lost · Refresh ↻
               </button>
@@ -591,7 +591,7 @@ function BrowseMode({
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }
                 }}
-                className="font-mono uppercase tracking-[0.25em] text-[12px] text-fresh hover:text-fresh-deep underline decoration-fresh/40 underline-offset-4 hover:decoration-fresh-deep"
+                className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh hover:text-fresh-deep underline decoration-fresh/40 underline-offset-4 hover:decoration-fresh-deep"
               >
                 <span className="tnum">{live.newCount}</span> new photo
                 {live.newCount === 1 ? "" : "s"} · jump to top ↑
@@ -636,7 +636,7 @@ function BrowseMode({
                 }
               />
               {!isBibFilter && !isFaceMode && total > visible.length && (
-                <p className="mt-4 text-center font-mono uppercase tracking-[0.25em] text-[12px] text-slate-soft">
+                <p className="mt-4 text-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
                   Showing first <span className="tnum text-ink">{visible.length}</span> of <span className="tnum text-ink">{total}</span> · search by bib or selfie to find yours
                 </p>
               )}

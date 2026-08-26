@@ -560,7 +560,7 @@ function DevRoleSlab({ user, number }: { user: User; number: string }) {
                 type="button"
                 onClick={() => setRole(role.value)}
                 disabled={isActive}
-                className={`font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full px-5 py-2 border transition-colors ${
+                className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-5 py-2 border transition-colors ${
                   isActive
                     ? "border-ink text-ink bg-ink/5 cursor-default"
                     : "border-line text-slate hover:text-ink hover:border-ink"

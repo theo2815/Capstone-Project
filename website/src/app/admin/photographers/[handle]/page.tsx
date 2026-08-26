@@ -91,7 +91,7 @@ export default function AdminPhotographerDetailPage() {
       <div className="pb-2">
         <Link
           href={ROUTES.ADMIN_PHOTOGRAPHERS}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
         >
           ← Photographers
         </Link>
@@ -218,12 +218,12 @@ function Hero({
             </h1>
             <StatusPill label={statusLabel} tone={statusTone} />
           </div>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-3">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3">
             {handle ? `@${handle}` : "No handle yet"}
             <span className="text-slate-soft"> · </span>
             <span className="tnum">since {formatMemberSince(memberSince)}</span>
           </p>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-2">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2">
             {region ?? "Region not set"}
             <span className="text-slate-soft"> · </span>
             {city}
@@ -252,7 +252,7 @@ function StatusPill({
         : "border-line text-slate";
   return (
     <span
-      className={`inline-flex items-center font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full border px-3 py-0.5 ${toneClass}`}
+      className={`inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border px-3 py-0.5 ${toneClass}`}
     >
       {label}
     </span>
@@ -349,7 +349,7 @@ function CompletenessRow({
         />
         <p className="font-sans text-sm text-ink-soft truncate">{label}</p>
       </div>
-      <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum shrink-0">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum shrink-0">
         {detail ?? (filled ? "set" : "missing")}
       </p>
     </li>
@@ -409,7 +409,7 @@ function DefRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         {label}
       </dt>
       <dd
@@ -455,7 +455,7 @@ function PublicUrlSlab({ handle }: { handle: string }) {
           href={`/${handle}`}
           target="_blank"
           rel="noopener"
-          className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+          className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
         >
           Open ↗
         </Link>
@@ -555,7 +555,7 @@ function SocialsSlab({
                 href={social.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+                className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
               >
                 Open ↗
               </a>
@@ -603,7 +603,7 @@ function PayoutsSlab({
                     </Kicker>
                   )}
                 </p>
-                <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+                <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
                   {formatPayoutNumber(p.method, p.accountNumber)}
                 </p>
               </div>
@@ -658,7 +658,7 @@ function EventsCoveredSlab({
                   <p className="font-display text-base text-ink truncate">
                     {eventName}
                   </p>
-                  <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+                  <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
                     {coverage.state.toUpperCase()}
                     <span className="text-slate-soft"> · </span>
                     <span>{coverage.photoCount.toLocaleString()} photos</span>

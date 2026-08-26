@@ -76,13 +76,13 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
         style={{ animation: "fade-up 0.25s ease-out both" }}
       >
         <div className="sticky top-0 z-10 flex items-baseline justify-between gap-6 px-6 md:px-8 pt-6 md:pt-8 pb-4 bg-bone border-b border-line">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
             Payouts
           </p>
           <button
             type="button"
             onClick={onClose}
-            className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-ink transition-colors"
             aria-label="Close"
           >
             Close ×
@@ -123,7 +123,7 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
           <section aria-labelledby="flow-heading">
             <p
               id="flow-heading"
-              className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
+              className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft"
             >
               The flow
             </p>
@@ -133,14 +133,14 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
           <section aria-labelledby="lands-heading">
             <p
               id="lands-heading"
-              className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
+              className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft"
             >
               Where it lands
             </p>
             <div className="mt-4 border border-line rounded-md p-5 md:p-6 bg-bone-deep/30">
               {primary ? (
                 <>
-                  <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+                  <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
                     Primary account
                   </p>
                   <p className="font-display text-lg md:text-xl text-ink mt-2 tnum">
@@ -159,7 +159,7 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
                 </>
               ) : (
                 <>
-                  <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+                  <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
                     No primary account yet
                   </p>
                   <p className="font-sans text-sm text-slate mt-2">
@@ -192,7 +192,7 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
           <section aria-labelledby="processing-heading">
             <p
               id="processing-heading"
-              className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
+              className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft"
             >
               Processing time
             </p>
@@ -210,7 +210,7 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
           <section aria-labelledby="holds-heading">
             <p
               id="holds-heading"
-              className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
+              className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft"
             >
               Holds and withdrawals
             </p>
@@ -276,10 +276,10 @@ function FlowNode({
             : "block w-3 h-3 rounded-full bg-ink-soft ring-4 ring-bone"
         }
       />
-      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-ink tnum text-center">
+      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-ink tnum text-center">
         {label}
       </p>
-      <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft text-center">
+      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft text-center">
         {sub}
       </p>
     </div>

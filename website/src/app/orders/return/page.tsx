@@ -274,7 +274,7 @@ function PaidState({
               {hasAccount && (
                 <Link
                   href={ROUTES.ORDERS}
-                  className="inline-flex w-full sm:w-auto items-center justify-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+                  className="inline-flex w-full sm:w-auto items-center justify-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
                 >
                   View your orders →
                 </Link>
@@ -283,7 +283,7 @@ function PaidState({
               <Link
                 href={ROUTES.EVENTS}
                 className={cn(
-                  "inline-flex w-full sm:w-auto items-center justify-center px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+                  "inline-flex w-full sm:w-auto items-center justify-center px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
                   hasAccount
                     ? "border border-line hover:bg-bone-deep text-ink"
                     : "bg-ink hover:bg-ink-soft text-bone",
@@ -333,7 +333,7 @@ function PhotoCard({
             draggable={false}
           />
         ) : (
-          <span className="absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.3em] text-[10px] text-bone/40 -rotate-[18deg]">
+          <span className="absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.14em] text-[10px] text-bone/40 -rotate-[18deg]">
             QuickPitik
           </span>
         )}
@@ -368,7 +368,7 @@ function PhotoCard({
       ) : (
         <button
           disabled
-          className="inline-flex w-full items-center justify-center gap-2 bg-bone-deep text-slate-soft px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] cursor-not-allowed"
+          className="inline-flex w-full items-center justify-center gap-2 bg-bone-deep text-slate-soft px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] cursor-not-allowed"
         >
           Preparing · {label}
         </button>
@@ -476,7 +476,7 @@ function UpsellCard({ recipientEmail }: { recipientEmail: string }) {
       </p>
       <Link
         href={`${ROUTES.REGISTER}${prefill}`}
-        className="inline-flex items-center font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-fresh hover:text-fresh-deep transition-colors"
+        className="inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh hover:text-fresh-deep transition-colors"
       >
         Create account →
       </Link>
@@ -533,11 +533,11 @@ function TimeoutState({
         <button
           type="button"
           onClick={() => window.location.reload()}
-          className="inline-flex items-center border border-line hover:bg-bone-deep text-ink px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+          className="inline-flex items-center border border-line hover:bg-bone-deep text-ink px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
         >
           Check again ↻
         </button>
-        <p className="mt-6 font-mono uppercase tracking-[0.25em] text-[12px] text-slate-soft">
+        <p className="mt-6 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Reference ·{" "}
           <span className="text-ink tnum">{orderId.slice(0, 8).toUpperCase()}</span>
           {token ? " · Guest link" : ""}
@@ -563,7 +563,7 @@ function FailedState() {
         </p>
         <Link
           href={ROUTES.EVENTS}
-          className="inline-flex items-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+          className="inline-flex items-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
         >
           Browse events →
         </Link>
@@ -585,7 +585,7 @@ function MissingOrder() {
         </p>
         <Link
           href={ROUTES.EVENTS}
-          className="inline-flex items-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+          className="inline-flex items-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
         >
           Browse events →
         </Link>

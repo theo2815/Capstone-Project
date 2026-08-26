@@ -135,6 +135,21 @@
   --animate-count-up: count-up 0.8s ease-out both;
 }
 
+/* Type scale — Finish Line readability retune (2026-08-26).
+   Body copy is pinned at explicit text-sm/text-base across ~130 files, so
+   overriding these scale tokens is the site-wide lever (not the body{}
+   font-size below). Shifts the readable range up ~6%; the default unitless
+   line-height ratios ride the new sizes, so leading stays proportional, and
+   the ratios between rungs hold, so hierarchy is preserved. Headings
+   (text-2xl+, .font-hero) stay at Tailwind defaults — already large, and
+   holding them keeps their lead over the now-larger body. */
+@theme {
+  --text-sm: 0.9375rem;   /* 15px (was 14) */
+  --text-base: 1.0625rem; /* 17px (was 16) */
+  --text-lg: 1.1875rem;   /* 19px (was 18) */
+  --text-xl: 1.3125rem;   /* 21px (was 20) */
+}
+
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(24px); }
   to { opacity: 1; transform: translateY(0); }
@@ -223,7 +238,7 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
-  font-size: 16px;      /* readable base (was implicit 16 but pin it) */
+  font-size: 17px;      /* readable base — Finish Line retune 2026-08-26 (was 16) */
   line-height: 1.55;    /* comfortable body leading */
   letter-spacing: -0.006em;
 }
@@ -311,20 +326,21 @@ body {
 
 /* ── Kicker (mono uppercase eyebrow) ──
    Escape-hatch utility; prefer <Kicker> from src/components/ui/kicker.tsx.
-   Comfort floor: 13px (≤390 SE-class) / 14px (≥400 big phones) / 12px (≥768 desktop)
-   / 0.18em / slate. */
+   Comfort floor (retuned 2026-08-26): 14px (≤390 SE-class) / 15px (≥400 big phones)
+   / 13px (≥768 desktop) / 0.14em / slate. Size up + tracking down = more legible
+   and still width-safe at 375px (KICKER_SIZE_CLASS.sm moves in lockstep). */
 .kicker {
   font-family: var(--font-mono), ui-monospace, monospace;
   text-transform: uppercase;
-  font-size: 13px;
-  letter-spacing: 0.18em;
+  font-size: 14px;
+  letter-spacing: 0.14em;
   color: var(--slate);
 }
 @media (min-width: 400px) {
-  .kicker { font-size: 14px; }
+  .kicker { font-size: 15px; }
 }
 @media (min-width: 768px) {
-  .kicker { font-size: 12px; }
+  .kicker { font-size: 13px; }
 }
 
 /* ── Idle breathing (splash chooser cards) ── */

@@ -269,7 +269,7 @@ function SelfieTile({
       />
 
       {selfie.isPrimary && (
-        <span className="absolute top-2 left-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-fresh text-surface font-mono uppercase tracking-[0.2em] text-[9px]">
+        <span className="absolute top-2 left-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-fresh text-surface font-mono uppercase tracking-[0.14em] text-[9px]">
           <span aria-hidden="true" className="size-1 rounded-full bg-bone" />
           Primary
         </span>
@@ -282,7 +282,7 @@ function SelfieTile({
       {selfie.qualityTestStatus !== "passed" && (
         <span
           title="Uploaded before face matching was switched on — re-upload if search misses you."
-          className="absolute top-2 right-2 px-2 py-1 rounded-full bg-ink/70 backdrop-blur text-bone font-mono uppercase tracking-[0.2em] text-[9px]"
+          className="absolute top-2 right-2 px-2 py-1 rounded-full bg-ink/70 backdrop-blur text-bone font-mono uppercase tracking-[0.14em] text-[9px]"
         >
           Not checked
         </span>
@@ -293,7 +293,7 @@ function SelfieTile({
           <button
             type="button"
             onClick={onSetPrimary}
-            className="font-mono uppercase tracking-[0.2em] text-[9px] bg-bone/90 backdrop-blur text-ink px-2 py-1 rounded-full hover:bg-bone transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[9px] bg-bone/90 backdrop-blur text-ink px-2 py-1 rounded-full hover:bg-bone transition-colors"
           >
             Make primary
           </button>
@@ -304,7 +304,7 @@ function SelfieTile({
           type="button"
           onClick={onRemove}
           aria-label="Remove selfie"
-          className="font-mono uppercase tracking-[0.2em] text-[9px] bg-bone/90 backdrop-blur text-ink px-2 py-1 rounded-full hover:bg-error hover:text-bone transition-colors"
+          className="font-mono uppercase tracking-[0.14em] text-[9px] bg-bone/90 backdrop-blur text-ink px-2 py-1 rounded-full hover:bg-error hover:text-bone transition-colors"
         >
           Remove
         </button>
@@ -330,7 +330,7 @@ function SelfieAddTile({
       <span aria-hidden="true" className="text-2xl leading-none">
         +
       </span>
-      <span className="font-mono uppercase tracking-[0.25em] text-[10px]">
+      <span className="font-mono uppercase tracking-[0.14em] text-[10px]">
         {busy ? "Processing" : "Add selfie"}
       </span>
       <input

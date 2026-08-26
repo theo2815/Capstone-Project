@@ -56,10 +56,10 @@ export function Footer() {
         </div>
 
         <div className="mt-12 border-t border-line pt-8 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="font-mono uppercase tracking-[0.24em] text-[12px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
             &copy; {new Date().getFullYear()} QuickPitik · All rights reserved
           </p>
-          <p className="font-mono uppercase tracking-[0.24em] text-[12px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
             Cebu · Philippines
           </p>
         </div>

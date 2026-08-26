@@ -39,7 +39,7 @@ export function AuthShell({
         </div>
         {showFooter && (
           <div className="relative z-10 px-6 md:px-10 pb-10">
-            <p className="text-center font-mono uppercase tracking-[0.3em] text-[12px] text-slate-soft">
+            <p className="text-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
               Cebu &middot; PH &middot; 2026
             </p>
           </div>

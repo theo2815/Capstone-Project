@@ -101,12 +101,12 @@ export function AdminPayoutRow({
               {subjectLabel}
             </h3>
             {cycle.handle && (
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
                 @{cycle.handle}
               </p>
             )}
           </div>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-2 tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2 tnum">
             {cycle.id}
             <span className="text-slate-soft"> · </span>
             {/* Request time, matching the photographer's own view — see the
@@ -117,14 +117,14 @@ export function AdminPayoutRow({
           </p>
           {cycle.status === "held" && cycle.holdReason && (
             <p className="font-sans text-sm text-slate mt-2">
-              <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft mr-2">
+              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mr-2">
                 Hold:
               </span>
               {cycle.holdReason}
             </p>
           )}
           {cycle.status === "paid" && cycle.paymentReference && (
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mt-2 tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-2 tnum">
               Ref: {cycle.paymentReference}
               {cycle.paidAt && (
                 <>
@@ -143,7 +143,7 @@ export function AdminPayoutRow({
           <p className="font-display text-lg text-ink tnum">
             {formatPrice(cycle.amount)}
           </p>
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
             {payoutMethodLabel(cycle.method)}
           </p>
         </div>
@@ -199,7 +199,7 @@ function RowActions({
         <button
           type="button"
           onClick={onApprove}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-1.5"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-1.5"
         >
           Approve
         </button>
@@ -208,7 +208,7 @@ function RowActions({
         <button
           type="button"
           onClick={onMarkPaid}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-1.5"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-1.5"
         >
           Mark paid…
         </button>
@@ -217,7 +217,7 @@ function RowActions({
         <button
           type="button"
           onClick={onHold}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-3 py-1.5"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-1.5"
         >
           Hold…
         </button>

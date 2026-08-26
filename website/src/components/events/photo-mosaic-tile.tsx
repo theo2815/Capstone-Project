@@ -131,7 +131,7 @@ export function PhotoMosaicTile({
             aria-hidden="true"
             className="absolute inset-0 flex items-center justify-center bg-ink/0 group-hover:bg-ink/30 transition-colors duration-300"
           >
-            <span className="font-mono uppercase tracking-[0.3em] text-[10px] text-bone/0 group-hover:text-bone/95 transition-colors duration-300">
+            <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-bone/0 group-hover:text-bone/95 transition-colors duration-300">
               View →
             </span>
           </span>

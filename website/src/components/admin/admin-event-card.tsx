@@ -56,7 +56,7 @@ export function AdminEventCard({
         <StatusChip state={event.state} />
       </div>
       <div className="p-6 md:p-7">
-        <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-3">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-3">
           <span className="tnum">{dateLabel}</span> · {cityUpper}
         </p>
         <h3 className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-tight text-ink">
@@ -88,7 +88,7 @@ export function AdminEventCard({
             href={`/events/${event.slug}`}
             target="_blank"
             rel="noreferrer"
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
           >
             View ↗
           </Link>
@@ -99,7 +99,7 @@ export function AdminEventCard({
 }
 
 const actionBtn =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink hover:text-fresh transition-colors";
+  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors";
 
 function formatShortDate(iso: string) {
   const d = new Date(iso + "T00:00:00");

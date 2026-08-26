@@ -130,7 +130,7 @@ export function AdminFlagCard({
       <div className="p-5 md:p-6 space-y-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
               {flag.id}
             </p>
             <h3 className="font-display text-lg md:text-xl font-medium text-ink mt-1">
@@ -145,7 +145,7 @@ export function AdminFlagCard({
 
         <p className="font-sans text-sm text-ink-soft">{flag.note}</p>
 
-        <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
           {flag.reportedBy === "system"
             ? "System"
             : `@${flag.reportedBy}`}
@@ -159,7 +159,7 @@ export function AdminFlagCard({
 
         {!isOpen && flag.reviewerNote && (
           <div className="rounded-xl border border-line bg-bone-deep p-4">
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
               Reviewer note
             </p>
             <p className="font-sans text-sm text-ink-soft mt-1">

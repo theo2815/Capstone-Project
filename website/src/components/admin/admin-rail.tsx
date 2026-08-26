@@ -346,7 +346,7 @@ function RailRow({
           <span
             aria-hidden="true"
             className={cn(
-              "font-mono tnum text-[13px] min-[400px]:text-[14px] md:text-[12px] shrink-0 transition-colors",
+              "font-mono tnum text-[14px] min-[400px]:text-[15px] md:text-[13px] shrink-0 transition-colors",
               isActive
                 ? "text-fresh"
                 : "text-slate-soft group-hover:text-slate",
@@ -367,7 +367,7 @@ function RailRow({
             {showCount && (
               <span
                 className={cn(
-                  "font-mono tnum text-[13px] min-[400px]:text-[14px] md:text-[12px]",
+                  "font-mono tnum text-[14px] min-[400px]:text-[15px] md:text-[13px]",
                   isActive ? "text-ink" : "text-slate",
                 )}
                 aria-label={`${count} open`}

@@ -178,7 +178,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
 
       {isSuspended && row.suspensionReason && (
         <div className="mt-6 pt-5 border-t border-line">
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
             Suspension reason
           </p>
           <p className="font-sans text-sm text-ink-soft mt-2">

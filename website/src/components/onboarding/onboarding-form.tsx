@@ -41,7 +41,7 @@ export function OnboardingForm() {
       className="grid gap-10 md:grid-cols-2 md:gap-12 lg:gap-20"
     >
       <div className="stagger-children space-y-8">
-        <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+        <p className="font-mono uppercase tracking-[0.14em] text-[11px] text-slate">
           Welcome
         </p>
 
@@ -55,14 +55,14 @@ export function OnboardingForm() {
           <p className="font-sans text-base text-ink-soft">
             How will you use QuickPitik?
           </p>
-          <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate">
             This choice is permanent.
           </p>
         </div>
 
         <div className="flex items-center justify-between gap-3 border-y border-line py-3">
           <div className="flex items-center gap-3 min-w-0">
-            <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft shrink-0">
+            <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft shrink-0">
               Signed in
             </span>
             <span className="font-sans text-sm text-ink truncate">
@@ -72,7 +72,7 @@ export function OnboardingForm() {
           <button
             type="button"
             onClick={handleSignOut}
-            className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors shrink-0"
+            className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-ink transition-colors shrink-0"
           >
             Not you?
           </button>
@@ -168,7 +168,7 @@ function RoleCard({
         )}
       />
 
-      <p className="mt-5 font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <p className="mt-5 font-mono uppercase tracking-[0.14em] text-[10px] text-slate">
         {label}
       </p>
 
@@ -181,7 +181,7 @@ function RoleCard({
       </p>
 
       {tag && (
-        <p className="mt-auto pt-5 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh-deep">
+        <p className="mt-auto pt-5 font-mono uppercase tracking-[0.14em] text-[10px] text-fresh-deep">
           {tag}
         </p>
       )}
