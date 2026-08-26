@@ -137,7 +137,9 @@ fun EventsDiscoveryScreen(
         ) {
             // ---- Header: brand + cart + avatar menu (same chrome as the gallery) ----
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {

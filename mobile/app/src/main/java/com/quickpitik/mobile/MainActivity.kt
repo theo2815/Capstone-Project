@@ -151,7 +151,7 @@ class MainActivity : ComponentActivity() {
 
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
-                val showBottomBar = currentRoute in listOf("events", "gallery", "profile", "settings", "orders")
+                val showBottomBar = currentRoute?.startsWith("orders") == true || currentRoute in listOf("events", "gallery", "profile", "settings")
 
                 Scaffold(
                     containerColor = Bone,

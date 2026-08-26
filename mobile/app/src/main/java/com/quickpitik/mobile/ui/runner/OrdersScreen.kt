@@ -141,28 +141,29 @@ fun OrdersScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp)
                 .statusBarsPadding()
                 .navigationBarsPadding()
+                .padding(24.dp)
         ) {
             if (selectedOrderId == null) {
                 // Main Orders List View
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(
-                        onClick = onNavigateBack,
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = BoneDeep)
-                    ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Ink)
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
                     Column {
-                        Kicker("Marketplace")
                         Text(
-                            text = "Order history",
-                            style = Typography.headlineSmall,
+                            text = "ORDER HISTORY",
+                            style = Typography.labelMedium,
+                            color = Slate
+                        )
+                        Text(
+                            text = "QuickPitik",
+                            style = Typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
                             color = Ink
                         )
                     }
@@ -283,7 +284,9 @@ fun OrdersScreen(
             } else {
                 // Order Detail & High-Res Download View
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
