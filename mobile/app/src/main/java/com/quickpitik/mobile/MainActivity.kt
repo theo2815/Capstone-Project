@@ -332,6 +332,13 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onBrowseEvents = {
                                         navController.navigate("events")
+                                    },
+                                    onLogout = {
+                                        authViewModel.logout()
+                                        cartViewModel.clearCart()
+                                        navController.navigate("login") {
+                                            popUpTo("events") { inclusive = true }
+                                        }
                                     }
                                 )
                             }
@@ -366,6 +373,13 @@ class MainActivity : ComponentActivity() {
                                         navController.popBackStack()
                                     },
                                     initialOrderId = entry.arguments?.getString("orderId"),
+                                    onLogout = {
+                                        authViewModel.logout()
+                                        cartViewModel.clearCart()
+                                        navController.navigate("login") {
+                                            popUpTo("events") { inclusive = true }
+                                        }
+                                    }
                                 )
                             }
                             composable(

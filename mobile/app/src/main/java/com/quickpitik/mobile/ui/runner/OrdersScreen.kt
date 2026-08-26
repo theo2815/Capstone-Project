@@ -41,12 +41,9 @@ private const val RECEIPT_PAGE = 10
 @Composable
 fun OrdersScreen(
     viewModel: CartViewModel,
-    onNavigateBack: () -> Unit,
-    // Deep-link target from the runner inbox: a dispute-outcome message carries
-    // an orderId, and tapping it should land on that order's detail with the
-    // refund timeline already open (the website does this via /orders?expand=).
-    // Seeding selectedOrderId is enough — the LaunchedEffect below fetches it.
+    onNavigateBack: () -> Unit = {},
     initialOrderId: String? = null,
+    onLogout: () -> Unit = {}
 ) {
     val ordersState by viewModel.ordersState.collectAsState()
     val orderDetailState by viewModel.orderDetailState.collectAsState()
@@ -143,31 +140,14 @@ fun OrdersScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(24.dp)
+                .padding(top = 24.dp)
         ) {
             if (selectedOrderId == null) {
                 // Main Orders List View
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "ORDER HISTORY",
-                            style = Typography.labelMedium,
-                            color = Slate
-                        )
-                        Text(
-                            text = "QuickPitik",
-                            style = Typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = Ink
-                        )
-                    }
-                }
+                RunnerTopBar(
+                    kicker = "ORDER HISTORY",
+                    onLogout = onLogout
+                )
                 Spacer(modifier = Modifier.height(24.dp))
 
                 when (val state = ordersState) {
@@ -197,7 +177,8 @@ fun OrdersScreen(
                             LazyColumn(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .weight(1f),
+                                    .weight(1f)
+                                    .padding(horizontal = 24.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
                                 contentPadding = PaddingValues(bottom = 24.dp)
                             ) {
@@ -232,7 +213,8 @@ fun OrdersScreen(
                             LazyColumn(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .weight(1f),
+                                    .weight(1f)
+                                    .padding(horizontal = 24.dp),
                                 contentPadding = PaddingValues(bottom = 24.dp)
                             ) {
                                 item { SpendSection(spendStats) }
@@ -278,7 +260,8 @@ fun OrdersScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .height(48.dp)
+                        .padding(horizontal = 24.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
@@ -321,8 +304,12 @@ fun OrdersScreen(
                     is OrderDetailState.Success -> {
                         val order = detailState.order
                         LazyColumn(
-                            modifier = Modifier.fillMaxWidth().weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .padding(horizontal = 24.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            contentPadding = PaddingValues(bottom = 24.dp)
                         ) {
                             // Order summary header card + bundle download
                             item {

@@ -51,9 +51,10 @@ fun ProfileScreen(
     viewModel: ProfileViewModel,
     cartViewModel: CartViewModel,
     savedEventsViewModel: SavedEventsViewModel,
-    onNavigateBack: () -> Unit,
-    onOpenEvent: (String) -> Unit,
-    onBrowseEvents: () -> Unit
+    onNavigateBack: () -> Unit = {},
+    onOpenEvent: (String) -> Unit = {},
+    onBrowseEvents: () -> Unit = {},
+    onLogout: () -> Unit = {}
 ) {
     val selfies by viewModel.selfiesState.collectAsState()
     val isLoading by viewModel.selfiesLoading.collectAsState()
@@ -116,28 +117,10 @@ fun ProfileScreen(
                 .padding(top = 24.dp)
         ) {
             // Top Bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "RUNNER PROFILE",
-                        style = Typography.labelMedium,
-                        color = Slate
-                    )
-                    Text(
-                        text = "QuickPitik",
-                        style = Typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Ink
-                    )
-                }
-            }
+            RunnerTopBar(
+                kicker = "RUNNER PROFILE",
+                onLogout = onLogout
+            )
 
             Spacer(modifier = Modifier.height(24.dp))
 

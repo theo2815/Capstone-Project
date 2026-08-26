@@ -112,28 +112,10 @@ fun AccountSettingsScreen(
                 .padding(top = 24.dp)
         ) {
             // Top Bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "ACCOUNT SETTINGS",
-                        style = Typography.labelMedium,
-                        color = Slate
-                    )
-                    Text(
-                        text = "QuickPitik",
-                        style = Typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Ink
-                    )
-                }
-            }
+            RunnerTopBar(
+                kicker = "ACCOUNT SETTINGS",
+                onLogout = onLogout
+            )
 
             Spacer(modifier = Modifier.height(24.dp))
 
