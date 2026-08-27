@@ -10,6 +10,7 @@ import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.config.AiApiProperties
@@ -232,6 +233,25 @@ class AdminEventService(
             decision = "event_deleted",
         )
         return AdminEventDeleteResponseDto(removed = true)
+    }
+
+    // Re-drives AI indexing for an event's photos by resetting them to PENDING
+    // with a fresh attempt budget; the reconcile sweep picks them up within a
+    // minute. Default scope = FAILED + PARTIAL (outage recovery — the
+    // 2026-08-25 incident needed manual SQL for exactly this). all=true also
+    // requeues INDEXED + SKIPPED: for provider flips (the V33 indexed_provider
+    // stamp marks stale rows) and for photos uploaded while AI was disabled.
+    fun reindexPhotos(adminId: UUID, eventId: UUID, all: Boolean): Int {
+        val event = eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
+            ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+        val statuses = if (all) {
+            listOf(IndexingStatus.FAILED, IndexingStatus.PARTIAL, IndexingStatus.INDEXED, IndexingStatus.SKIPPED)
+        } else {
+            listOf(IndexingStatus.FAILED, IndexingStatus.PARTIAL)
+        }
+        val requeued = photoRepository.requeueIndexing(eventId, statuses)
+        log.info("Admin {} requeued {} photo(s) for indexing on event {} (all={})", adminId, requeued, event.id, all)
+        return requeued
     }
 
     private fun parseDate(raw: String): LocalDate =

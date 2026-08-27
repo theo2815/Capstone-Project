@@ -29,6 +29,7 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.multipart.MultipartFile
 import java.security.MessageDigest
 import java.time.LocalDate
@@ -49,11 +50,17 @@ class PhotoUploadService(
     private val userRepository: UserRepository,
     private val aiApiProperties: AiApiProperties,
     private val watermarkService: WatermarkService,
+    private val watermarkLogoCache: WatermarkLogoCache,
     private val eventPublisher: ApplicationEventPublisher,
+    private val transactionTemplate: TransactionTemplate,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    @Transactional
+    // Deliberately NOT @Transactional: the watermark fetch, JPEG decode +
+    // composite, and the two object-storage PUTs below take seconds each and
+    // would pin a Hikari connection (pool of 10) for the whole ride — marathon
+    // -day concurrent uploads exhausted the pool that way. Only the short
+    // persist block at the end runs in a transaction (TransactionTemplate).
     fun upload(photographerId: UUID, eventId: UUID, file: MultipartFile): UploadedPhotoDto {
         val event = eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
@@ -155,7 +162,7 @@ class PhotoUploadService(
         // sequence). Surface a clean 422 so the FE prompts the photographer
         // to re-upload via /dashboard/settings rather than dumping a 500.
         val watermarkBytes = try {
-            storageService.getBytes(settings.watermarkS3Key!!)
+            watermarkLogoCache.get(settings.watermarkS3Key!!)
         } catch (ex: java.io.IOException) {
             // Broadened from NoSuchFileException, which only covered the local-fs
             // backend. Under S3 a missing object, timeout, or permission denial
@@ -234,79 +241,92 @@ class PhotoUploadService(
         photo.indexingStatus =
             if (aiApiProperties.enabled) IndexingStatus.PENDING else IndexingStatus.SKIPPED
 
-        // saveAndFlush (not save) so a concurrent identical-bytes upload that
-        // slipped past the pre-check above trips the (photographer_id,
-        // content_hash) unique index HERE rather than at commit — the
-        // authoritative, race-safe dedup backstop. A duplicate is the only
-        // unique constraint a valid photo insert can violate (the id is a fresh
-        // random UUID), so translate it to a terminal duplicate conflict.
-        try {
-            photoRepository.saveAndFlush(photo)
-        } catch (ex: DataIntegrityViolationException) {
-            // Defense-in-depth: a fresh-UUID id and fully-populated columns mean
-            // the dedup index is the only unique constraint a valid insert can
-            // violate today, but a FUTURE constraint must not be silently
-            // mislabeled a duplicate. Walk the cause chain to the Hibernate
-            // ConstraintViolationException (Spring may wrap it a layer deep); if
-            // it positively names a DIFFERENT constraint, rethrow it as the
-            // genuine integrity fault it is. A null/unknown name keeps the old
-            // behavior (treat as the dedup race).
-            val violated = generateSequence(ex.cause) { it.cause }
-                .filterIsInstance<ConstraintViolationException>()
-                .firstOrNull()
-                ?.constraintName
-            if (violated != null && !violated.equals(CONTENT_HASH_CONSTRAINT, ignoreCase = true)) {
-                throw ex
-            }
-            // Same- vs different-event can't be re-resolved here: the unique
-            // violation has aborted this transaction (Postgres 25P02), so any
-            // follow-up read would fail. Emit the same-event conflict; if it was
-            // actually a different-event race the photographer's retry hits the
-            // pre-check above — which now sees the committed row — and gets the
-            // precise "already in event X" message. The different-event race
-            // (same bytes, two events, same instant) is pathological and
-            // self-heals on that retry.
-            throw ConflictException(
-                code = ErrorCodes.PHOTO_DUPLICATE_SAME_EVENT,
-                message = "This photo was just uploaded. Refresh to see it.",
-            )
-        }
-
-        // Atomic counter writes — concurrent uploads during a live marathon are
-        // the normal case, not an edge case. The prior read-modify-write pattern
-        // lost increments and could PK-collide on first-upload races (H-3 / M-6).
-        val now = OffsetDateTime.now()
-        eventPhotographerRepository.upsertOnUpload(eventId, photographerId, now)
-        eventRepository.incrementPhotoCount(eventId)
-
+        // Presigning is local SigV4 math — done up here so the transaction
+        // below makes no storage call at all.
         val thumbnailUrl = storageService.presignedGetUrl(watermarkKey, storageProperties.presignedTtl.thumbnail)
 
-        // Publish via Spring event so the broadcast fires AFTER_COMMIT
-        // (PhotoPublishedBroadcaster). Inline broadcast risks ghost photos:
-        // runners receive photo.published, a rollback discards the row, the
-        // FE 404s on the next fetch. Q-002.
-        eventPublisher.publishEvent(
-            PhotoPublishedEvent(
-                eventId = eventId,
-                payload = mapOf(
-                    "type" to "photo.published",
-                    "photo" to mapOf(
-                        "id" to photoId.toString(),
-                        "bib" to (photo.bibs.minByOrNull { it.bibNumber }?.bibNumber),
-                        "tone" to photo.tone,
-                        "span" to photo.span.wire,
-                        "imageUrl" to thumbnailUrl,
-                        "uploadedAt" to photo.uploadedAt.toString(),
+        // Short write transaction: row + counters + event publishes, ~ms. The
+        // expensive work (watermark fetch, composite, both storage PUTs) already
+        // ran above, outside any transaction. Publishing INSIDE the template
+        // binds both events to this transaction, so their AFTER_COMMIT listeners
+        // (PhotoPublishedBroadcaster, PhotoIndexingTrigger) fire at its commit —
+        // exactly as under the old method-level @Transactional. A persist-phase
+        // failure strands the two objects already PUT to storage; that orphan
+        // window predates this split (PUTs always ran before the flush) and
+        // stays accepted.
+        transactionTemplate.execute {
+            // saveAndFlush (not save) so a concurrent identical-bytes upload that
+            // slipped past the pre-check above trips the (photographer_id,
+            // content_hash) unique index HERE rather than at commit — the
+            // authoritative, race-safe dedup backstop. A duplicate is the only
+            // unique constraint a valid photo insert can violate (the id is a fresh
+            // random UUID), so translate it to a terminal duplicate conflict.
+            try {
+                photoRepository.saveAndFlush(photo)
+            } catch (ex: DataIntegrityViolationException) {
+                // Defense-in-depth: a fresh-UUID id and fully-populated columns mean
+                // the dedup index is the only unique constraint a valid insert can
+                // violate today, but a FUTURE constraint must not be silently
+                // mislabeled a duplicate. Walk the cause chain to the Hibernate
+                // ConstraintViolationException (Spring may wrap it a layer deep); if
+                // it positively names a DIFFERENT constraint, rethrow it as the
+                // genuine integrity fault it is. A null/unknown name keeps the old
+                // behavior (treat as the dedup race).
+                val violated = generateSequence(ex.cause) { it.cause }
+                    .filterIsInstance<ConstraintViolationException>()
+                    .firstOrNull()
+                    ?.constraintName
+                if (violated != null && !violated.equals(CONTENT_HASH_CONSTRAINT, ignoreCase = true)) {
+                    throw ex
+                }
+                // Same- vs different-event can't be re-resolved here: the unique
+                // violation has aborted this transaction (Postgres 25P02), so any
+                // follow-up read would fail. Emit the same-event conflict; if it was
+                // actually a different-event race the photographer's retry hits the
+                // pre-check above — which now sees the committed row — and gets the
+                // precise "already in event X" message. The different-event race
+                // (same bytes, two events, same instant) is pathological and
+                // self-heals on that retry.
+                throw ConflictException(
+                    code = ErrorCodes.PHOTO_DUPLICATE_SAME_EVENT,
+                    message = "This photo was just uploaded. Refresh to see it.",
+                )
+            }
+
+            // Atomic counter writes — concurrent uploads during a live marathon are
+            // the normal case, not an edge case. The prior read-modify-write pattern
+            // lost increments and could PK-collide on first-upload races (H-3 / M-6).
+            val now = OffsetDateTime.now()
+            eventPhotographerRepository.upsertOnUpload(eventId, photographerId, now)
+            eventRepository.incrementPhotoCount(eventId)
+
+            // Publish via Spring event so the broadcast fires AFTER_COMMIT
+            // (PhotoPublishedBroadcaster). Inline broadcast risks ghost photos:
+            // runners receive photo.published, a rollback discards the row, the
+            // FE 404s on the next fetch. Q-002.
+            eventPublisher.publishEvent(
+                PhotoPublishedEvent(
+                    eventId = eventId,
+                    payload = mapOf(
+                        "type" to "photo.published",
+                        "photo" to mapOf(
+                            "id" to photoId.toString(),
+                            "bib" to (photo.bibs.minByOrNull { it.bibNumber }?.bibNumber),
+                            "tone" to photo.tone,
+                            "span" to photo.span.wire,
+                            "imageUrl" to thumbnailUrl,
+                            "uploadedAt" to photo.uploadedAt.toString(),
+                        ),
                     ),
                 ),
-            ),
-        )
+            )
 
-        // Index faces + bibs asynchronously once this upload transaction commits
-        // (AFTER_COMMIT via PhotoIndexingTrigger), so the request returns without
-        // waiting on ai-api inference.
-        if (aiApiProperties.enabled) {
-            eventPublisher.publishEvent(PhotoUploadedForIndexing(photoId = photoId, eventId = eventId))
+            // Index faces + bibs asynchronously once this transaction commits
+            // (AFTER_COMMIT via PhotoIndexingTrigger), so the request returns
+            // without waiting on ai-api inference.
+            if (aiApiProperties.enabled) {
+                eventPublisher.publishEvent(PhotoUploadedForIndexing(photoId = photoId, eventId = eventId))
+            }
         }
 
         // Indexing now runs async, so detection isn't known at upload time. The

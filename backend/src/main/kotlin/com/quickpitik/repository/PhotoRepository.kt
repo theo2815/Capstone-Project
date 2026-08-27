@@ -28,6 +28,20 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("price") price: BigDecimal,
     ): Int
 
+    // Bulk re-queue for AI indexing (admin reindex endpoint). Resets the
+    // attempt budget so the reconcile sweep actually picks the rows up —
+    // exhausted attempts are otherwise excluded forever.
+    @Modifying
+    @Query(
+        "UPDATE Photo p SET p.indexingStatus = com.quickpitik.entity.IndexingStatus.PENDING, " +
+            "p.indexingAttempts = 0, p.indexingError = null " +
+            "WHERE p.eventId = :eventId AND p.indexingStatus IN :statuses",
+    )
+    fun requeueIndexing(
+        @Param("eventId") eventId: UUID,
+        @Param("statuses") statuses: Collection<IndexingStatus>,
+    ): Int
+
     // Bib filter is a substring (contains) match — OCR routinely clips digits
     // (e.g. "7202" stored as "720" or "71830" when the bib is "183") so exact
     // match is too brittle for real-world race photos. Substring also lets a

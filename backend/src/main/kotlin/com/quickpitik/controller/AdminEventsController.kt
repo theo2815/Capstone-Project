@@ -5,6 +5,7 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
 import com.quickpitik.dto.admin.AdminListEventDto
+import com.quickpitik.dto.admin.AdminReindexResponseDto
 import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
 import com.quickpitik.exception.ValidationException
@@ -125,6 +126,17 @@ class AdminEventsController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
     ): AdminEventDeleteResponseDto = adminEventService.delete(principal.userId, eventId)
+
+    // Re-drive AI indexing for this event's photos. Default requeues
+    // FAILED/PARTIAL (outage recovery); ?all=true also requeues INDEXED +
+    // SKIPPED (provider flip, or AI enabled after the photos were uploaded).
+    @PostMapping("/{eventId}/photos/reindex")
+    fun reindexPhotos(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @RequestParam(required = false) all: Boolean?,
+    ): AdminReindexResponseDto =
+        AdminReindexResponseDto(requeued = adminEventService.reindexPhotos(principal.userId, eventId, all == true))
 
     // FormData round-trips floats as strings ("80" or "80.00"). Blank /
     // missing means "no change" on PATCH and "default to 0" on POST. Surface

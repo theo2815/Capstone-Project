@@ -19,7 +19,15 @@ import software.amazon.awssdk.services.rekognition.RekognitionClient
 @ConditionalOnProperty(prefix = "app.ai", name = ["provider"], havingValue = "rekognition")
 class RekognitionConfig {
     @Bean
-    fun rekognitionClient(props: RekognitionProperties): RekognitionClient {
+    fun rekognitionClient(props: RekognitionProperties, aiApiProperties: AiApiProperties): RekognitionClient {
+        // Batch indexing is hardwired to the concrete ai-api client (mega jobs +
+        // webhook/poll ingest), so rekognition + INDEXING_MODE=batch would
+        // split-brain: the drain POSTs to ai-api while search reads Rekognition.
+        // Refuse to boot rather than run half-broken.
+        check(aiApiProperties.indexingMode != IndexingMode.BATCH) {
+            "app.ai.provider=rekognition is incompatible with INDEXING_MODE=batch — " +
+                "batch drain/ingest is ai-api-only. Use INDEXING_MODE=per_photo."
+        }
         val builder = RekognitionClient.builder().region(Region.of(props.region))
         if (!props.accessKey.isNullOrBlank() && !props.secretKey.isNullOrBlank()) {
             builder.credentialsProvider(

@@ -26,6 +26,9 @@ import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.SimpleTransactionStatus
+import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.multipart.MultipartFile
 import javax.imageio.IIOException
 import java.math.BigDecimal
@@ -89,7 +92,19 @@ class PhotoUploadServiceTest {
         userRepository,
         aiApiProperties,
         watermarkService,
+        // Real cache over the mocked storage — first get() always calls through,
+        // so the existing getBytes stubs and verifies keep working.
+        WatermarkLogoCache(storageService),
         eventPublisher,
+        // Real template over a stubbed manager: execute { } runs the callback
+        // inline (and rethrows), keeping these unit tests transaction-free. The
+        // getTransaction stub matters — a raw mock returns a null status, which
+        // trips the Kotlin lambda's non-null parameter check.
+        TransactionTemplate(
+            Mockito.mock(PlatformTransactionManager::class.java).also {
+                Mockito.`when`(it.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
+            },
+        ),
     )
 
     private fun event(id: UUID = eventId, name: String = "Cebu Marathon 2026"): Event =
@@ -146,6 +161,11 @@ class PhotoUploadServiceTest {
         Mockito.`when`(userRepository.findById(photographerId)).thenReturn(Optional.of(photographer()))
         Mockito.`when`(photographerSettingsRepository.findById(photographerId))
             .thenReturn(Optional.of(approvedSettings()))
+        // The thumbnail presign now runs BEFORE the persist block (it needs no
+        // transaction), so every test that reaches the storage path needs it
+        // stubbed — an unstubbed mock returns null and trips the Kotlin
+        // non-null check at the persist lambda. Individual tests may re-stub.
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
     }
 
     @Test

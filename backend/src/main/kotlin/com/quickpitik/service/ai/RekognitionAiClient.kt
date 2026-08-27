@@ -22,7 +22,9 @@ import software.amazon.awssdk.services.rekognition.model.DeleteCollectionRequest
 import software.amazon.awssdk.services.rekognition.model.DetectFacesRequest
 import software.amazon.awssdk.services.rekognition.model.DetectTextRequest
 import software.amazon.awssdk.services.rekognition.model.Image
+import software.amazon.awssdk.services.rekognition.model.ImageTooLargeException
 import software.amazon.awssdk.services.rekognition.model.IndexFacesRequest
+import software.amazon.awssdk.services.rekognition.model.InvalidImageFormatException
 import software.amazon.awssdk.services.rekognition.model.InvalidParameterException
 import software.amazon.awssdk.services.rekognition.model.QualityFilter
 import software.amazon.awssdk.services.rekognition.model.RekognitionException
@@ -259,6 +261,20 @@ class RekognitionAiClient(
             block()
         } catch (ex: AiApiException) {
             throw ex
+        } catch (ex: InvalidImageFormatException) {
+            // Client-error class: the IMAGE is bad, not the service. Map to a
+            // non-retryable 422 so indexing consumes an attempt instead of
+            // retrying a hopeless image forever (transport failures — the
+            // blanket SERVICE_UNAVAILABLE below — deliberately don't consume
+            // attempts, so this distinction is load-bearing).
+            log.warn("Rekognition {} rejected image: {}", op, ex.awsErrorDetails()?.errorMessage() ?: ex.message)
+            throw AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, null, "AWS Rekognition $op rejected the image", ex)
+        } catch (ex: ImageTooLargeException) {
+            log.warn("Rekognition {} rejected image: {}", op, ex.awsErrorDetails()?.errorMessage() ?: ex.message)
+            throw AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, null, "AWS Rekognition $op rejected the image", ex)
+        } catch (ex: InvalidParameterException) {
+            log.warn("Rekognition {} rejected request: {}", op, ex.awsErrorDetails()?.errorMessage() ?: ex.message)
+            throw AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, null, "AWS Rekognition $op rejected the request", ex)
         } catch (ex: RekognitionException) {
             log.warn("Rekognition {} failed: {}", op, ex.awsErrorDetails()?.errorMessage() ?: ex.message)
             throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "AWS Rekognition $op failed", ex)

@@ -67,3 +67,7 @@ data class UpdateAdminEventRequest(
 data class AdminEventDeleteResponseDto(
     val removed: Boolean,
 )
+
+data class AdminReindexResponseDto(
+    val requeued: Int,
+)

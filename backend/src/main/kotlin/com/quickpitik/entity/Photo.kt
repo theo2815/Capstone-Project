@@ -87,6 +87,13 @@ class Photo(
     @Column(name = "indexing_error", columnDefinition = "TEXT")
     var indexingError: String? = null,
 
+    // Which FaceBibProvider produced the stored face/bib results (V33):
+    // "ai_api" or "rekognition". Their person-id spaces are incompatible, so a
+    // provider flip leaves stale rows detectable — and re-drivable via the
+    // admin reindex endpoint — by this stamp.
+    @Column(name = "indexed_provider", length = 16)
+    var indexedProvider: String? = null,
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(
         name = "photo_bibs",
