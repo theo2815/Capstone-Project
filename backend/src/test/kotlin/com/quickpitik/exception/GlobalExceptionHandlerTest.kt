@@ -2,11 +2,17 @@ package com.quickpitik.exception
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.service.ai.AiApiException
+import jakarta.validation.ConstraintViolationException
 import org.junit.jupiter.api.Test
+import org.springframework.core.MethodParameter
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.mock.http.MockHttpInputMessage
+import org.springframework.web.HttpRequestMethodNotSupportedException
+import org.springframework.web.bind.MissingServletRequestParameterException
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
+import org.springframework.web.multipart.support.MissingServletRequestPartException
 import org.springframework.web.servlet.resource.NoResourceFoundException
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -136,4 +142,63 @@ class GlobalExceptionHandlerTest {
         assertEquals("Resource not found", message)
         assertFalse(message!!.contains("script"))
     }
+
+    // ─── Malformed-request mappings (2026-08-27): each previously fell
+    // through to the 500 catch-all.
+
+    @Test
+    fun `a malformed path variable is a 400, not a 500`() {
+        val ex = MethodArgumentTypeMismatchException(
+            "not-a-uuid",
+            java.util.UUID::class.java,
+            "eventId",
+            MethodParameter(javaClass.getDeclaredMethod("dummy", String::class.java), 0),
+            IllegalArgumentException("bad uuid"),
+        )
+
+        val response = handler.handleTypeMismatch(ex)
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+        assertEquals(ErrorCodes.VALIDATION_ERROR, response.body?.errors?.first()?.code)
+        assertEquals("eventId", response.body?.errors?.first()?.field)
+    }
+
+    @Test
+    fun `a missing multipart part is a 400 naming the part`() {
+        val response = handler.handleMissingPart(MissingServletRequestPartException("file"))
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+        assertEquals("file", response.body?.errors?.first()?.field)
+    }
+
+    @Test
+    fun `a missing query parameter is a 400 naming the parameter`() {
+        val response = handler.handleMissingParameter(
+            MissingServletRequestParameterException("token", "String"),
+        )
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+        assertEquals("token", response.body?.errors?.first()?.field)
+    }
+
+    @Test
+    fun `a wrong HTTP method is a 405`() {
+        val response = handler.handleMethodNotSupported(
+            HttpRequestMethodNotSupportedException("DELETE"),
+        )
+
+        assertEquals(HttpStatus.METHOD_NOT_ALLOWED, response.statusCode)
+        assertEquals(ErrorCodes.METHOD_NOT_ALLOWED, response.body?.errors?.first()?.code)
+    }
+
+    @Test
+    fun `a bean-validation constraint violation is a 400`() {
+        val response = handler.handleConstraintViolation(ConstraintViolationException(emptySet()))
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+        assertEquals(ErrorCodes.VALIDATION_ERROR, response.body?.errors?.first()?.code)
+    }
+
+    @Suppress("UNUSED_PARAMETER", "unused")
+    private fun dummy(value: String) = Unit
 }

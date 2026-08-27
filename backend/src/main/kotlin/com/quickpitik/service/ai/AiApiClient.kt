@@ -258,8 +258,12 @@ class AiApiClient(
     }
 
     private fun singleFileBody(file: ByteArray, contentType: String, filename: String): LinkedMultiValueMap<String, Any> {
+        // The filename can be a client-supplied originalFilename and lands in
+        // this part's Content-Disposition header — strip anything that could
+        // smuggle header syntax (quotes, CR/LF, separators).
+        val safeFilename = filename.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "file" }
         val resource = object : ByteArrayResource(file) {
-            override fun getFilename(): String = filename
+            override fun getFilename(): String = safeFilename
         }
         val body = LinkedMultiValueMap<String, Any>()
         val partHeaders = org.springframework.http.HttpHeaders().apply {

@@ -21,4 +21,8 @@ import java.time.Duration
 data class AuthLockoutProperties(
     val maxAttempts: Int = 5,
     val duration: Duration = Duration.ofMinutes(15),
+    // NFR-S-14: only failures within this window count as one streak. A
+    // failure older than [window] restarts the counter at 1 — five typos
+    // spread over a month is not an attack.
+    val window: Duration = Duration.ofMinutes(15),
 )

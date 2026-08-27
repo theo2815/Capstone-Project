@@ -16,6 +16,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter
 import org.springframework.web.cors.CorsConfigurationSource
 
 @Configuration
@@ -40,6 +41,18 @@ class SecurityConfig(
             .csrf { it.disable() }
             .cors { it.configurationSource(corsConfigurationSource) }
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
+            .headers { headers ->
+                // Spring Security defaults (nosniff, X-Frame-Options DENY,
+                // HSTS-on-secure-request) stay; these two the defaults omit.
+                // HSTS only fires once the request LOOKS secure — behind a
+                // TLS-terminating proxy configure Tomcat's RemoteIpValve
+                // (server.tomcat.remoteip.*, see application.yml) so it does.
+                // CSP intentionally absent: JSON API; springdoc serves its own UI.
+                headers.referrerPolicy {
+                    it.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN)
+                }
+                headers.permissionsPolicyHeader { it.policy("camera=(), microphone=(), geolocation=()") }
+            }
             .authorizeHttpRequests { auth ->
                 auth.requestMatchers(
                     "/api/v1/auth/register",
@@ -57,7 +70,13 @@ class SecurityConfig(
                     // anyRequest().authenticated() below.
                     "/api/v1/auth/verify-email",
                 ).permitAll()
-                auth.requestMatchers("/error", "/actuator/**").permitAll()
+                auth.requestMatchers("/error").permitAll()
+                // Actuator: health is a public liveness probe; everything else
+                // (metrics, info, …) is ADMIN-only. The previous blanket
+                // permitAll("/actuator/**") predated the actuator dependency —
+                // an armed hole for whoever added it, which 2026-08-27 did.
+                auth.requestMatchers("/actuator/health").permitAll()
+                auth.requestMatchers("/actuator/**").hasRole("ADMIN")
                 // Generated API docs. Whether they exist at all is decided by
                 // springdoc's own `enabled` flags (API_DOCS_ENABLED) — with
                 // those off there is no handler here to reach, so this rule
@@ -94,6 +113,10 @@ class SecurityConfig(
                 // because a top-level navigation can't carry the JWT).
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*/download-bundle").permitAll()
                 // Guest order detail (token-gated, anti-IDOR via service layer).
+                // ⚠ This single-segment wildcard makes ANY future GET
+                // /api/v1/orders/{x} public by default — a new sibling route
+                // MUST enforce its own authorization in the service layer,
+                // exactly like the token check does here.
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*").permitAll()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/payments/webhook/**").permitAll()
                 // Internal ai-api job webhook (Phase C). Authorization is the

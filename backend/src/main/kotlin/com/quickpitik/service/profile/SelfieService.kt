@@ -14,6 +14,7 @@ import com.quickpitik.repository.UserSelfieRepository
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.image.ExifOrientation
+import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
@@ -81,6 +82,16 @@ class SelfieService(
                 status = HttpStatus.PAYLOAD_TOO_LARGE,
                 code = ErrorCodes.PAYLOAD_TOO_LARGE,
                 message = "Selfie must be ≤ ${MAX_SELFIE_BYTES / (1024 * 1024)} MB",
+                field = "file",
+            )
+        }
+        // Decompression-bomb guard: normaliseOrientation ImageIO-decodes below,
+        // and 5 MB of flat-color JPEG can legally declare 65500×65500 (~17 GB
+        // decoded). Header-only check, no pixel decode.
+        if (ImagePixelGuard.exceedsPixelBudget(file)) {
+            throw ValidationException(
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "Image dimensions exceed the supported maximum.",
                 field = "file",
             )
         }

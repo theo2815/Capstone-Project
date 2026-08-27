@@ -58,7 +58,13 @@ class LoginAttemptService(
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     fun recordFailure(userId: UUID) {
         val user = userRepository.findById(userId).orElse(null) ?: return
-        val attempts = user.failedLoginAttempts + 1
+        val now = OffsetDateTime.now()
+        // NFR-S-14 window (V34): a streak whose last failure is older than the
+        // window restarts at 1 — only failures within `window` of each other
+        // accumulate toward a lock.
+        val staleStreak = user.lastFailedLoginAt?.isBefore(now.minus(properties.window)) == true
+        val attempts = if (staleStreak) 1 else user.failedLoginAttempts + 1
+        user.lastFailedLoginAt = now
         if (attempts >= properties.maxAttempts) {
             // Reset the counter as the lock goes on: from here the lock is the
             // state that matters, and leaving the counter at the threshold
@@ -83,8 +89,9 @@ class LoginAttemptService(
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     fun recordSuccess(userId: UUID) {
         val user = userRepository.findById(userId).orElse(null) ?: return
-        if (user.failedLoginAttempts == 0 && user.lockedUntil == null) return
+        if (user.failedLoginAttempts == 0 && user.lockedUntil == null && user.lastFailedLoginAt == null) return
         user.failedLoginAttempts = 0
+        user.lastFailedLoginAt = null
         user.lockedUntil = null
         userRepository.save(user)
     }

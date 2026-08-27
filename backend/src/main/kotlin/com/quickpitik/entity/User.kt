@@ -63,6 +63,12 @@ class User(
     @Column(name = "failed_login_attempts", nullable = false)
     var failedLoginAttempts: Int = 0,
 
+    // When the streak's most recent failure landed (V34). NFR-S-14 counts
+    // "5 failures within 15 min" — a failure older than the window restarts
+    // the streak at 1 instead of extending it.
+    @Column(name = "last_failed_login_at")
+    var lastFailedLoginAt: OffsetDateTime? = null,
+
     @Column(name = "locked_until")
     var lockedUntil: OffsetDateTime? = null,
 

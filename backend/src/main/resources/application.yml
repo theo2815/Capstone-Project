@@ -81,6 +81,9 @@ app:
     lockout:
       max-attempts: ${AUTH_LOCKOUT_MAX_ATTEMPTS:5}
       duration: ${AUTH_LOCKOUT_DURATION:PT15M}
+      # NFR-S-14 (V34): failures only accumulate toward a lock when they land
+      # within this window of the previous one; older streaks restart at 1.
+      window: ${AUTH_LOCKOUT_WINDOW:PT15M}
   admin:
     bootstrap-email: ${ADMIN_BOOTSTRAP_EMAIL:admin@quickpitik.local}
     bootstrap-password: ${ADMIN_BOOTSTRAP_PASSWORD:changeme123}

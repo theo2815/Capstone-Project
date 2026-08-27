@@ -4,6 +4,7 @@ import com.quickpitik.common.ApiError
 import com.quickpitik.common.ApiResponse
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.service.ai.AiApiException
+import jakarta.validation.ConstraintViolationException
 import org.slf4j.LoggerFactory
 import org.springframework.core.Ordered
 import org.springframework.core.annotation.Order
@@ -13,11 +14,15 @@ import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.security.access.AccessDeniedException
 import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.web.HttpMediaTypeNotSupportedException
+import org.springframework.web.HttpRequestMethodNotSupportedException
 import org.springframework.web.bind.MethodArgumentNotValidException
+import org.springframework.web.bind.MissingServletRequestParameterException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 import org.springframework.web.multipart.MaxUploadSizeExceededException
 import org.springframework.web.multipart.MultipartException
+import org.springframework.web.multipart.support.MissingServletRequestPartException
 import org.springframework.web.servlet.resource.NoResourceFoundException
 
 @RestControllerAdvice
@@ -198,6 +203,68 @@ class GlobalExceptionHandler {
         return builder.body(
             ApiResponse.failure(
                 ApiError(code = ex.code, message = ex.message ?: "Error", field = ex.field),
+            ),
+        )
+    }
+
+    // ─── Malformed-request mappings (2026-08-27). Each of these previously
+    // fell through to the 500 catch-all — a bad UUID in a path variable or a
+    // missing multipart part is the CLIENT's error and must read as one.
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException::class)
+    fun handleTypeMismatch(ex: MethodArgumentTypeMismatchException): ResponseEntity<ApiResponse<Nothing>> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "Invalid value for '${ex.name}'",
+                    field = ex.name,
+                ),
+            ),
+        )
+
+    @ExceptionHandler(MissingServletRequestPartException::class)
+    fun handleMissingPart(ex: MissingServletRequestPartException): ResponseEntity<ApiResponse<Nothing>> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "Missing required part '${ex.requestPartName}'",
+                    field = ex.requestPartName,
+                ),
+            ),
+        )
+
+    @ExceptionHandler(MissingServletRequestParameterException::class)
+    fun handleMissingParameter(ex: MissingServletRequestParameterException): ResponseEntity<ApiResponse<Nothing>> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "Missing required parameter '${ex.parameterName}'",
+                    field = ex.parameterName,
+                ),
+            ),
+        )
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException::class)
+    fun handleMethodNotSupported(ex: HttpRequestMethodNotSupportedException): ResponseEntity<ApiResponse<Nothing>> =
+        ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(
+            ApiResponse.failure(
+                ApiError(code = ErrorCodes.METHOD_NOT_ALLOWED, message = "Method not allowed"),
+            ),
+        )
+
+    @ExceptionHandler(ConstraintViolationException::class)
+    fun handleConstraintViolation(ex: ConstraintViolationException): ResponseEntity<ApiResponse<Nothing>> {
+        val first = ex.constraintViolations.firstOrNull()
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = first?.message ?: "Validation failed",
+                    field = first?.propertyPath?.toString()?.substringAfterLast('.'),
+                ),
             ),
         )
     }

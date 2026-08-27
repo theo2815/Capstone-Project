@@ -11,6 +11,7 @@ object ErrorCodes {
     const val VALIDATION_FAILED = "VALIDATION_FAILED"
     const val INTERNAL_ERROR = "INTERNAL_ERROR"
     const val NOT_FOUND = "NOT_FOUND"
+    const val METHOD_NOT_ALLOWED = "METHOD_NOT_ALLOWED"
 
     const val EVENT_NOT_FOUND = "EVENT_NOT_FOUND"
     const val EVENT_ARCHIVED = "EVENT_ARCHIVED"

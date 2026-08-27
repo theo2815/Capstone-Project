@@ -64,6 +64,46 @@ class LoginAttemptServiceTest {
         assertEquals(0, user.failedLoginAttempts)
     }
 
+    // NFR-S-14 window (V34): failures only accumulate within 15 minutes of the
+    // previous one. Five typos spread over a month must never lock an account.
+    @Test
+    fun `a failure after a stale streak restarts the counter at 1`() {
+        val user = stubUser(attempts = 4).apply {
+            lastFailedLoginAt = OffsetDateTime.now().minusMinutes(16)
+        }
+
+        service().recordFailure(userId)
+
+        assertEquals(1, user.failedLoginAttempts)
+        assertNull(user.lockedUntil)
+        // The streak clock restarts with this failure.
+        assertNotNull(user.lastFailedLoginAt)
+        assert(user.lastFailedLoginAt!! > OffsetDateTime.now().minusMinutes(1))
+    }
+
+    @Test
+    fun `a failure within the window extends the streak and restamps it`() {
+        val user = stubUser(attempts = 2).apply {
+            lastFailedLoginAt = OffsetDateTime.now().minusMinutes(1)
+        }
+
+        service().recordFailure(userId)
+
+        assertEquals(3, user.failedLoginAttempts)
+        assert(user.lastFailedLoginAt!! > OffsetDateTime.now().minusSeconds(30))
+    }
+
+    @Test
+    fun `success clears the streak timestamp too`() {
+        val user = stubUser(attempts = 0).apply {
+            lastFailedLoginAt = OffsetDateTime.now().minusMinutes(20)
+        }
+
+        service().recordSuccess(userId)
+
+        assertNull(user.lastFailedLoginAt)
+    }
+
     @Test
     fun `success clears both the counter and the lock`() {
         val user = stubUser(attempts = 3, lockedUntil = OffsetDateTime.now().plusMinutes(5))

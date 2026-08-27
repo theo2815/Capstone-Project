@@ -20,6 +20,7 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.PhotoPublishedEvent
 import org.hibernate.exception.ConstraintViolationException
@@ -117,6 +118,17 @@ class PhotoUploadService(
         }
 
         val bytes = file.bytes
+
+        // Decompression-bomb guard: header-only dimension check BEFORE the full
+        // ImageIO decode below. The 25 MB multipart cap bounds the compressed
+        // bytes, not the decoded raster — a bomb under 25 MB is unbounded heap.
+        if (ImagePixelGuard.exceedsPixelBudget(bytes)) {
+            throw ApiException(
+                status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "Image dimensions exceed the supported maximum.",
+            )
+        }
 
         // Duplicate detection (enterprise dedup). A photo's identity is the
         // SHA-256 of its ORIGINAL bytes, hashed HERE — before watermarking,
