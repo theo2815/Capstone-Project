@@ -1,7 +1,6 @@
 package com.quickpitik.mobile.ui.runner
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.isPhotographerRole
@@ -22,5 +21,12 @@ import com.quickpitik.mobile.data.local.isPhotographerRole
 @Composable
 fun rememberIsTrueRunner(): Boolean {
     val context = LocalContext.current
-    return remember { !isPhotographerRole(SessionManager.getInstance(context).getUserRole()) }
+    // Read the role LIVE — no keyless remember{}. Login only navigates; it does
+    // NOT recreate MainActivity's composition, so a cached value goes stale after
+    // an in-process role change (photographer → sign out → runner login). The
+    // root-mounted FloatingCart never leaves composition, so a stale cache there
+    // left a real runner with no cart pill even though the freshly-composed
+    // gallery still let them add. A SharedPreferences read per recomposition is
+    // cheap (in-memory after first load) and always current.
+    return !isPhotographerRole(SessionManager.getInstance(context).getUserRole())
 }

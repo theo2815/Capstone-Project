@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -108,7 +109,16 @@ private fun CtaContent(text: String, style: TextStyle) {
     val hasArrow = trimmed.endsWith("→")
     val label = if (hasArrow) trimmed.removeSuffix("→").trimEnd() else text
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = style, fontWeight = FontWeight.SemiBold)
+        // Single line, ellipsize — a CTA in a narrow weight() column must never
+        // wrap to two lines (it gets cramped in the fixed 48dp height). This one
+        // guard covers every PrimaryCta / GhostCta app-wide.
+        Text(
+            label,
+            style = style,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         if (hasArrow) {
             Spacer(Modifier.width(6.dp))
             Icon(

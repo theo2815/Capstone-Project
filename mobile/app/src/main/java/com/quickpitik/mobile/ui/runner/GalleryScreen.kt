@@ -472,7 +472,7 @@ fun RunnerGalleryScreen(
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Icon(Icons.Default.Face, contentDescription = "Selfie", tint = Fresh)
-                                Spacer(modifier = Modifier.height(12.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Text("Selfie Match", style = Typography.titleMedium, color = Ink)
                                 Text("AI Face Search", style = Typography.bodyMedium, color = SlateSoft)
                             }
@@ -493,7 +493,7 @@ fun RunnerGalleryScreen(
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Icon(Icons.Default.Search, contentDescription = "Bib", tint = Fresh)
-                                Spacer(modifier = Modifier.height(12.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Text("Bib Lookup", style = Typography.titleMedium, color = Ink)
                                 Text("Search by Number", style = Typography.bodyMedium, color = SlateSoft)
                             }
@@ -512,7 +512,7 @@ fun RunnerGalleryScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(
-                                modifier = Modifier.padding(24.dp),
+                                modifier = Modifier.padding(20.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
@@ -521,7 +521,7 @@ fun RunnerGalleryScreen(
                                     style = Typography.bodyMedium,
                                     color = InkSoft
                                 )
-                                Spacer(modifier = Modifier.height(16.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
                                 // Selfie picker — web SelfieSearchPanel parity:
                                 // the runner picks WHICH stored selfie to match
                                 // with; tapping a thumbnail fires the search.
@@ -588,7 +588,7 @@ fun RunnerGalleryScreen(
                                 ) {
                                     // Take a selfie now — opens the camera via a MediaStore URI
                                     GhostCta(
-                                        text = "Take a selfie",
+                                        text = "Take selfie",
                                         onClick = {
                                             try {
                                                 val values = ContentValues().apply {
@@ -1305,17 +1305,22 @@ private fun TileActionPill(
     val fg = if (filled) Color.White else Ink
     Box(
         modifier = Modifier
+            // ponytail: 44dp touch target (was ~24dp) — one step under the 48dp
+            // guideline to keep the tile corner uncluttered; the lightbox CTAs
+            // are the 48dp primary path. Label lifted off the 9sp floor too.
+            .heightIn(min = 44.dp)
             .clip(PillShape)
             .background(bg)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
     ) {
         ArrowLabel(
             text = label.uppercase(),
             color = fg,
             style = Typography.labelSmall,
-            fontSize = 9.sp,
-            iconSize = 11.dp,
+            fontSize = 11.sp,
+            iconSize = 12.dp,
         )
     }
 }

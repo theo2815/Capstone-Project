@@ -395,12 +395,12 @@ fun PhotoPreview(
                                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                                     ) {
                                         GhostCta(
-                                            text = if (photoInCart) "− Remove" else "+ Add to cart",
+                                            text = if (photoInCart) "Remove" else "Add to cart",
                                             onClick = { onToggleCart(activePhoto) },
                                             modifier = Modifier.weight(1f),
                                         )
                                         PrimaryCta(
-                                            text = if (photoInCart) "Checkout now →" else "Buy now →",
+                                            text = if (photoInCart) "Checkout →" else "Buy now →",
                                             onClick = { onBuyNow(activePhoto) },
                                             modifier = Modifier.weight(1f),
                                         )

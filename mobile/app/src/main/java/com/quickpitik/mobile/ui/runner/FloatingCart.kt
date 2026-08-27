@@ -150,7 +150,7 @@ fun FloatingCart(
                             color = Color.White.copy(alpha = 0.75f),
                         )
                         Text(
-                            text = "₱${"%,d".format(total.toInt())}",
+                            text = "₱${"%,.2f".format(total)}",
                             style = NumeralStyle.copy(fontSize = 13.sp),
                             color = Color.White,
                         )
