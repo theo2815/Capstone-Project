@@ -173,6 +173,14 @@ app:
       hmac-secret: ${AI_WEBHOOK_HMAC_SECRET:}
       poll-interval-ms: 30000
       poll-grace-seconds: 90
+  watermark:
+    # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
+    # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off
+    # the request thread. Same attempt semantics as indexing: only semantic
+    # failures (undecodable bytes) consume the budget; transport failures leave
+    # it intact so the reconcile sweep keeps re-driving them.
+    max-attempts: ${WATERMARK_MAX_ATTEMPTS:5}
+    reconcile-interval-ms: ${WATERMARK_RECONCILE_INTERVAL_MS:60000}
   rate-limit:
     # ON by default (decided 2026-08-27; closes the NFR-S-11 posture question).
     # Set RATE_LIMIT_ENABLED=false for load tests. The per-IP keys use

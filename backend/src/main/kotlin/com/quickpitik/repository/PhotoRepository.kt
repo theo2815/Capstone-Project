@@ -42,6 +42,45 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("statuses") statuses: Collection<IndexingStatus>,
     ): Int
 
+    // Async-watermark reconcile sweep (V36): PROCESSING rows the AFTER_COMMIT
+    // hot path missed (app crash, storage outage), oldest first. Mirrors
+    // findIndexingBacklog.
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.status = com.quickpitik.entity.PhotoStatus.PROCESSING
+          AND p.processingAttempts < :maxAttempts
+          AND p.uploadedAt < :cutoff
+        ORDER BY p.uploadedAt ASC
+        """,
+    )
+    fun findWatermarkBacklog(
+        @Param("maxAttempts") maxAttempts: Int,
+        @Param("cutoff") cutoff: OffsetDateTime,
+        pageable: Pageable,
+    ): List<Photo>
+
+    // Targeted, conditional flip to LIVE once the watermark object is stored.
+    // Deliberately NOT an entity save: PhotoIndexingService writes the same row
+    // concurrently via full-row save(), and two load-mutate-save flows would
+    // clobber each other's columns. Touching only the watermark columns kills
+    // one direction of that race; the status guard makes re-runs no-ops (the
+    // sweep is the self-heal for the other direction).
+    @Modifying
+    @Query(
+        "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, " +
+            "p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
+            "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING",
+    )
+    fun publishWatermarked(
+        @Param("id") id: UUID,
+        @Param("key") key: String,
+    ): Int
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.processingAttempts = p.processingAttempts + 1 WHERE p.id = :id")
+    fun incrementProcessingAttempts(@Param("id") id: UUID): Int
+
     // No-bib fast path for the event grid: skips the bibs join + DISTINCT that
     // searchForEvent pays even when there is nothing to filter — the LEFT JOIN
     // fans every photo out by its bib count before DISTINCT collapses it again.

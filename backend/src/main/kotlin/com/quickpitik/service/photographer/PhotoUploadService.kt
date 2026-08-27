@@ -22,7 +22,6 @@ import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
-import com.quickpitik.websocket.PhotoPublishedEvent
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
 import org.hibernate.exception.ConstraintViolationException
@@ -52,19 +51,18 @@ class PhotoUploadService(
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val userRepository: UserRepository,
     private val aiApiProperties: AiApiProperties,
-    private val watermarkService: WatermarkService,
-    private val watermarkLogoCache: WatermarkLogoCache,
     private val eventPublisher: ApplicationEventPublisher,
     private val transactionTemplate: TransactionTemplate,
     private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // Deliberately NOT @Transactional: the watermark fetch, JPEG decode +
-    // composite, and the two object-storage PUTs below take seconds each and
-    // would pin a Hikari connection (pool of 10) for the whole ride — marathon
-    // -day concurrent uploads exhausted the pool that way. Only the short
-    // persist block at the end runs in a transaction (TransactionTemplate).
+    // Deliberately NOT @Transactional: the original-object storage PUT below
+    // takes long enough that it would pin a Hikari connection (pool of 10) for
+    // the ride — marathon-day concurrent uploads exhausted the pool that way.
+    // Only the short persist block at the end runs in a transaction
+    // (TransactionTemplate). The watermark decode + composite + PUT moved off
+    // this request entirely (PhotoWatermarkService, 2026-08-28).
     fun upload(photographerId: UUID, eventId: UUID, file: MultipartFile): UploadedPhotoDto {
         // Times SUCCESSFUL new-photo uploads only (dedup short-circuits and
         // validation rejects return before the stop) — the number that matters
@@ -168,35 +166,18 @@ class PhotoUploadService(
 
         val photoId = UUID.randomUUID()
         val originalKey = "events/$eventId/photos/$photoId/original.jpg"
-        val watermarkKey = "events/$eventId/photos/$photoId/watermark.jpg"
 
-        // Photographer's watermark IMAGE (logo) gets composited onto every
-        // upload — bottom-right corner (identification) + diagonal center
-        // (anti-piracy). Verification gate at line 92 + PhotographerSettings
-        // collectMissing line 372-374 guarantee watermarkS3Key is non-null at
-        // this point; !! is safe. WatermarkService handles transparent PNG +
-        // opaque JPEG watermarks identically (alpha-aware composite).
-        //
-        // The defensive try/catch covers a real-world drift case observed
-        // 2026-05-18: DB pointer + disk file went out of sync (DB referenced
-        // a key whose bytes no longer existed on disk — partial nuke, manual
-        // file delete, or a race in uploadWatermark's put → save → delete
-        // sequence). Surface a clean 422 so the FE prompts the photographer
-        // to re-upload via /dashboard/settings rather than dumping a 500.
-        val watermarkBytes = try {
-            watermarkLogoCache.get(settings.watermarkS3Key!!)
-        } catch (ex: java.io.IOException) {
-            // Broadened from NoSuchFileException, which only covered the local-fs
-            // backend. Under S3 a missing object, timeout, or permission denial
-            // surfaces as a different IOException and used to escape as a 500 —
-            // the photographer got "internal error" instead of the actionable
-            // "re-upload your watermark" 422 this branch exists to give them.
-            log.warn(
-                "Watermark unreadable for photographer {} (key {}): {}",
-                photographerId,
-                settings.watermarkS3Key,
-                ex.message,
-            )
+        // Watermark generation moved OFF this request (2026-08-28): the decode +
+        // composite (~200-500ms CPU) and the watermark PUT now run async in
+        // PhotoWatermarkService, which flips the photo PROCESSING → LIVE when
+        // the derivative lands. The upload's 200 guarantees only that the
+        // ORIGINAL is durably stored (the mobile worker deletes its local copy
+        // on 200, so that invariant is load-bearing). A cheap pointer check
+        // keeps the actionable WATERMARK_MISSING 422 for the common
+        // misconfiguration; the storage-drift case (pointer present, bytes
+        // gone) now surfaces async and the sweep retries it after the
+        // photographer re-uploads the logo in Settings.
+        if (settings.watermarkS3Key == null) {
             throw ApiException(
                 status = HttpStatus.UNPROCESSABLE_ENTITY,
                 code = ErrorCodes.WATERMARK_MISSING,
@@ -204,51 +185,25 @@ class PhotoUploadService(
             )
         }
 
-        val watermarked = try {
-            watermarkService.processThumbnail(bytes, watermarkBytes)
-        } catch (ex: IllegalArgumentException) {
-            // Magic-byte mismatch — Content-Type lied, or the watermark image
-            // can't be decoded (stale storage). Reject with the same code as
-            // content-type filtering so the FE handles them as one.
-            throw ApiException(
-                status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
-                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
-                message = "Could not decode image bytes.",
-            )
-        } catch (ex: java.io.IOException) {
-            // ImageIO.read signals a TRUNCATED or structurally corrupt stream
-            // with IOException (usually IIOException) rather than returning
-            // null, and only the null path raised IllegalArgumentException
-            // above — so a partial JPEG escaped as a 500.
-            //
-            // This is not hypothetical: the camera-card import path pulls bytes
-            // off a DSLR over PTP, and a pull interrupted by a cable knock or a
-            // detach mid-frame produces exactly these bytes. The client should
-            // be told the file is unusable so it can stop retrying it, which a
-            // 500 does not do.
-            log.warn("Undecodable image bytes on upload for photographer {}: {}", photographerId, ex.message)
-            throw ApiException(
-                status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
-                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
-                message = "Could not decode image bytes.",
-            )
-        }
-
         storageService.put(originalKey, bytes, contentType)
-        storageService.put(watermarkKey, watermarked, "image/jpeg")
 
+        // PROCESSING until PhotoWatermarkService stores the watermark and flips
+        // it LIVE. Runner/public queries filter status = LIVE, so the clean
+        // original can never be served to a non-owner while the watermark is
+        // pending; the photographer's own library (no status filter) falls back
+        // to the original via thumbnailS3Key ?: s3Key.
         val photo = Photo(
             id = photoId,
             eventId = eventId,
             photographerId = photographerId,
             s3Key = originalKey,
-            thumbnailS3Key = watermarkKey,
-            watermarkS3Key = watermarkKey,
+            thumbnailS3Key = null,
+            watermarkS3Key = null,
             contentHash = contentHash,
             spanWire = PhotoSpan.DEFAULT.wire,
             tone = Random.nextInt(0, 4),
             uploadedAt = OffsetDateTime.now(),
-            status = PhotoStatus.LIVE,
+            status = PhotoStatus.PROCESSING,
             pricePhp = event.pricePerPhoto,
         )
 
@@ -264,18 +219,20 @@ class PhotoUploadService(
             if (aiApiProperties.enabled) IndexingStatus.PENDING else IndexingStatus.SKIPPED
 
         // Presigning is local SigV4 math — done up here so the transaction
-        // below makes no storage call at all.
-        val thumbnailUrl = storageService.presignedGetUrl(watermarkKey, storageProperties.presignedTtl.thumbnail)
+        // below makes no storage call at all. The watermark object doesn't
+        // exist yet, so this response presigns the ORIGINAL: the upload
+        // response goes only to the photo's owner (their own original — the
+        // same bytes their download endpoint serves).
+        val thumbnailUrl = storageService.presignedGetUrl(originalKey, storageProperties.presignedTtl.thumbnail)
 
         // Short write transaction: row + counters + event publishes, ~ms. The
-        // expensive work (watermark fetch, composite, both storage PUTs) already
-        // ran above, outside any transaction. Publishing INSIDE the template
-        // binds both events to this transaction, so their AFTER_COMMIT listeners
-        // (PhotoPublishedBroadcaster, PhotoIndexingTrigger) fire at its commit —
-        // exactly as under the old method-level @Transactional. A persist-phase
-        // failure strands the two objects already PUT to storage; that orphan
-        // window predates this split (PUTs always ran before the flush) and
-        // stays accepted.
+        // expensive work (the original storage PUT) already ran above, outside
+        // any transaction. Publishing INSIDE the template binds the events to
+        // this transaction, so their AFTER_COMMIT listeners
+        // (PhotoWatermarkTrigger, PhotoIndexingTrigger) fire at its commit. A
+        // persist-phase failure strands the original object already PUT to
+        // storage; that orphan window predates this split (PUTs always ran
+        // before the flush) and stays accepted.
         transactionTemplate.execute {
             // saveAndFlush (not save) so a concurrent identical-bytes upload that
             // slipped past the pre-check above trips the (photographer_id,
@@ -322,26 +279,16 @@ class PhotoUploadService(
             eventPhotographerRepository.upsertOnUpload(eventId, photographerId, now)
             eventRepository.incrementPhotoCount(eventId)
 
-            // Publish via Spring event so the broadcast fires AFTER_COMMIT
-            // (PhotoPublishedBroadcaster). Inline broadcast risks ghost photos:
-            // runners receive photo.published, a rollback discards the row, the
-            // FE 404s on the next fetch. Q-002.
-            eventPublisher.publishEvent(
-                PhotoPublishedEvent(
-                    eventId = eventId,
-                    payload = mapOf(
-                        "type" to "photo.published",
-                        "photo" to mapOf(
-                            "id" to photoId.toString(),
-                            "bib" to (photo.bibs.minByOrNull { it.bibNumber }?.bibNumber),
-                            "tone" to photo.tone,
-                            "span" to photo.span.wire,
-                            "imageUrl" to thumbnailUrl,
-                            "uploadedAt" to photo.uploadedAt.toString(),
-                        ),
-                    ),
-                ),
-            )
+            // The photo.published WebSocket frame no longer fires here — it
+            // moved to PhotoWatermarkService's flip transaction, so runners are
+            // notified only when the watermark URL the frame carries actually
+            // resolves (same no-ghost-photos guarantee as before, Q-002, just
+            // anchored to the LIVE flip instead of the insert).
+            //
+            // Generate the watermark + flip PROCESSING → LIVE asynchronously
+            // once this transaction commits (AFTER_COMMIT via
+            // PhotoWatermarkTrigger). NOT gated on ai-api — always runs.
+            eventPublisher.publishEvent(PhotoUploadedForWatermark(photoId = photoId, eventId = eventId))
 
             // Index faces + bibs asynchronously once this transaction commits
             // (AFTER_COMMIT via PhotoIndexingTrigger), so the request returns
@@ -359,7 +306,7 @@ class PhotoUploadService(
         timerSample.stop(meterRegistry.timer("qp.upload.duration"))
         return UploadedPhotoDto(
             id = photoId,
-            status = "live",
+            status = "processing",
             uploadedAt = photo.uploadedAt,
             thumbnailUrl = thumbnailUrl,
             span = photo.span.wire,
@@ -416,8 +363,10 @@ class PhotoUploadService(
     // end of upload(): same fields, a fresh presigned thumbnail, and the same
     // eventually-consistent aiDetectionStatus convention.
     private fun existingPhotoDto(photo: Photo): UploadedPhotoDto {
+        // A still-PROCESSING duplicate has no watermark object yet — fall back
+        // to the original (owner-only response), same as the live return above.
         val thumbnailUrl = storageService.presignedGetUrl(
-            photo.thumbnailS3Key!!,
+            photo.thumbnailS3Key ?: photo.s3Key,
             storageProperties.presignedTtl.thumbnail,
         )
         return UploadedPhotoDto(
@@ -425,7 +374,7 @@ class PhotoUploadService(
             status = when (photo.status) {
                 PhotoStatus.LIVE -> "live"
                 PhotoStatus.HIDDEN -> "hidden"
-                PhotoStatus.PROCESSING -> "live"
+                PhotoStatus.PROCESSING -> "processing"
             },
             uploadedAt = photo.uploadedAt,
             thumbnailUrl = thumbnailUrl,

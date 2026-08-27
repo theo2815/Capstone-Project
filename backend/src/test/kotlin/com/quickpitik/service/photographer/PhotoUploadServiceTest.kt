@@ -10,7 +10,6 @@ import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
-import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
@@ -26,12 +25,10 @@ import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
-import org.springframework.http.HttpStatus
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.SimpleTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.multipart.MultipartFile
-import javax.imageio.IIOException
 import java.math.BigDecimal
 import java.sql.SQLException
 import java.time.LocalDate
@@ -54,7 +51,6 @@ class PhotoUploadServiceTest {
     private lateinit var eventRepository: EventRepository
     private lateinit var photographerSettingsRepository: PhotographerSettingsRepository
     private lateinit var userRepository: UserRepository
-    private lateinit var watermarkService: WatermarkService
     private lateinit var eventPublisher: ApplicationEventPublisher
     private val storageProperties = StorageProperties()
 
@@ -79,7 +75,6 @@ class PhotoUploadServiceTest {
         eventRepository = Mockito.mock(EventRepository::class.java)
         photographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
         userRepository = Mockito.mock(UserRepository::class.java)
-        watermarkService = Mockito.mock(WatermarkService::class.java)
         eventPublisher = Mockito.mock(ApplicationEventPublisher::class.java)
     }
 
@@ -92,10 +87,6 @@ class PhotoUploadServiceTest {
         photographerSettingsRepository,
         userRepository,
         aiApiProperties,
-        watermarkService,
-        // Real cache over the mocked storage — first get() always calls through,
-        // so the existing getBytes stubs and verifies keep working.
-        WatermarkLogoCache(storageService, SimpleMeterRegistry()),
         eventPublisher,
         // Real template over a stubbed manager: execute { } runs the callback
         // inline (and rethrows), keeping these unit tests transaction-free. The
@@ -214,8 +205,6 @@ class PhotoUploadServiceTest {
         stubValidationsPass()
         Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
             .thenReturn(null)
-        Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(byteArrayOf(9))
-        Mockito.`when`(watermarkService.processThumbnail(anyArg(), anyArg())).thenReturn(byteArrayOf(1, 2, 3))
         Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
 
         val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
@@ -223,11 +212,17 @@ class PhotoUploadServiceTest {
         val captor = ArgumentCaptor.forClass(Photo::class.java)
         Mockito.verify(photoRepository).saveAndFlush(capture(captor))
         assertEquals(helloSha256, captor.value.contentHash)
-        assertEquals("live", dto.status)
-        // Upload proceeded (didn't short-circuit): it writes the original + the
-        // watermarked variant, so put() is invoked for both.
-        Mockito.verify(storageService, Mockito.atLeastOnce())
+        // Async watermark (2026-08-28): the row is inserted PROCESSING with no
+        // watermark keys — PhotoWatermarkService flips it LIVE off-request.
+        assertEquals(PhotoStatus.PROCESSING, captor.value.status)
+        assertEquals(null, captor.value.thumbnailS3Key)
+        assertEquals("processing", dto.status)
+        // Exactly ONE storage write in-request: the original. The watermark PUT
+        // moved to the async pipeline.
+        Mockito.verify(storageService, Mockito.times(1))
             .put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
+        // The watermark job is queued for AFTER_COMMIT dispatch.
+        Mockito.verify(eventPublisher).publishEvent(anyArg<PhotoUploadedForWatermark>())
     }
 
     @Test
@@ -270,8 +265,6 @@ class PhotoUploadServiceTest {
         stubValidationsPass()
         Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
             .thenReturn(null)
-        Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(byteArrayOf(9))
-        Mockito.`when`(watermarkService.processThumbnail(anyArg(), anyArg())).thenReturn(byteArrayOf(1, 2, 3))
         Mockito.`when`(photoRepository.saveAndFlush(anyArg<Photo>()))
             .thenThrow(dataIntegrityViolation("uq_photos_photographer_content_hash"))
 
@@ -288,8 +281,6 @@ class PhotoUploadServiceTest {
         stubValidationsPass()
         Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
             .thenReturn(null)
-        Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(byteArrayOf(9))
-        Mockito.`when`(watermarkService.processThumbnail(anyArg(), anyArg())).thenReturn(byteArrayOf(1, 2, 3))
         Mockito.`when`(photoRepository.saveAndFlush(anyArg<Photo>()))
             .thenThrow(dataIntegrityViolation("fk_photos_some_other_constraint"))
 
@@ -298,39 +289,10 @@ class PhotoUploadServiceTest {
         }
     }
 
-    // Cross-module reconciliation (2026-08-15). A mobile hardware test on
-    // 2026-05-28 saw ~43% of camera-card uploads come back 500; the gap was
-    // never filed backend-side. One certain route to a 500 was this: ImageIO
-    // signals a TRUNCATED stream with IOException (typically IIOException)
-    // rather than returning null, and only the null path was handled. Bytes
-    // pulled off a DSLR over PTP are exactly where truncation comes from — a
-    // knocked cable mid-frame yields a partial JPEG.
-    //
-    // It must be a 4xx so the upload worker treats the file as terminal; a 500
-    // reads as transient and gets retried forever.
-    @Test
-    fun `a truncated image is rejected as unsupported media, not a 500`() {
-        stubValidationsPass()
-        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
-            .thenReturn(null)
-        Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(byteArrayOf(9))
-        // doAnswer, not thenThrow: Kotlin declares no checked exceptions, so
-        // Mockito rejects thenThrow(IIOException) as "invalid for this method"
-        // even though ImageIO throws exactly that through this call at runtime.
-        Mockito.doAnswer { throw IIOException("Image is truncated") }
-            .`when`(watermarkService).processThumbnail(anyArg(), anyArg())
-
-        val ex = assertFailsWith<ApiException> {
-            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
-        }
-
-        assertEquals(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ex.status)
-        // Nothing hit storage — a photo we can't decode must not leave an
-        // orphan original in the bucket.
-        Mockito.verify(storageService, Mockito.never())
-            .put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
-        Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
-    }
+    // The truncated-image case (ImageIO IOException on decode) moved with the
+    // watermark work into the async pipeline — see PhotoWatermarkServiceTest's
+    // semantic-failure test. In-request, undecodable-but-header-valid bytes now
+    // upload 200 and settle via the processing_attempts budget.
 
     // A Spring DataIntegrityViolationException wrapping a Hibernate
     // ConstraintViolationException that names the given constraint — the shape a

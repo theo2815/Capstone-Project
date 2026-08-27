@@ -1,6 +1,6 @@
 # CLAUDE.md — Backend (Kotlin + Spring Boot)
 
-**Status:** All phases shipped and hardened (last reconciled 2026-08-27). 31 controllers under `controller/` (photo-alert opt-in added 2026-08-26); all four roles locked; suite at **275 unit + 20 integration** (2026-08-27, `./gradlew test` / `integrationTest`; `test` is Docker-free, `integrationTest` needs Docker). 2026-08-27 optimization pass: rate limiting ON by default with NFR-S-11 windows, NFR-S-14 lockout window (V34), indexing-transport failures no longer burn retry attempts, provider stamp (V33) + admin reindex endpoint, upload/indexing transactions no longer span network I/O, actuator + `qp.*` metrics. Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
+**Status:** All phases shipped and hardened (last reconciled 2026-08-28). 31 controllers under `controller/` (photo-alert opt-in added 2026-08-26); all four roles locked; suite at **283 unit + 20 integration** (2026-08-28, `./gradlew test` / `integrationTest`; `test` is Docker-free, `integrationTest` needs Docker). 2026-08-28: **async watermark pipeline (V36)** — uploads insert photos `PROCESSING` and `PhotoWatermarkTrigger` generates the derivative + flips them `LIVE` off the request thread; the upload 200 guarantees only that the original is durably stored, `photo.published` fires at the LIVE flip, and runner/public queries (which filter `LIVE`) can never serve a clean original. Prior 2026-08-27 optimization pass: rate limiting ON by default with NFR-S-11 windows, NFR-S-14 lockout window (V34), indexing-transport failures no longer burn retry attempts, provider stamp (V33) + admin reindex endpoint, upload/indexing transactions no longer span network I/O, actuator + `qp.*` metrics. Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
 
 The live route reference — every endpoint, its auth, and **which clients consume it** — is vault `backend/api-surface.md`. Read that before adding an endpoint or assuming one is missing.
 
@@ -77,7 +77,7 @@ App boots on `http://localhost:8080`. Frontend talks to `http://localhost:8080/a
 
 `test` runs the Mockito unit suite and **excludes** anything tagged `integration`, so it still
 works on a machine with nothing but a JDK. `integrationTest` runs the other half against a
-throwaway Postgres 16 container: Flyway V1→V35 applying to a virgin database, `ddl-auto: validate`
+throwaway Postgres 16 container: Flyway V1→V36 applying to a virgin database, `ddl-auto: validate`
 proving the entities still match, the `uq_photos_photographer_content_hash` partial index, and the
 lockout counter's survival of a rolled-back login transaction. Extend `PostgresIntegrationTest`
 to add one. End-to-end is verified via `curl` (see Smoke Test below).
@@ -94,7 +94,8 @@ the surface entirely.
 Actuator (2026-08-27): `GET /actuator/health` is public; `/actuator/metrics` (+ `info`) require an
 ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.dedup{outcome}`,
 `qp.indexing.outcome{outcome,provider}`, `qp.ai.call{op}`, `qp.ratelimit.denied{policy}`,
-`qp.watermark.cache{result}` — plus Hikari/JVM/HTTP-server metrics for free.
+`qp.watermark.cache{result}`, `qp.watermark.outcome{outcome}` (live/failed/transport, 2026-08-28) —
+plus Hikari/JVM/HTTP-server metrics for free.
 
 ### Stop Postgres
 
@@ -127,6 +128,8 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RATE_LIMIT_ENABLED` | `true` | Token buckets (bucket4j, in-memory). NFR-S-11 windows: auth 10/15 min per IP, photo-search 30/15 min; plus order-create, bundle-download, media-upload, photographer-upload, public-gallery policies. Set `false` only for load tests. Per-IP keys use `remoteAddr` — behind a proxy configure `server.tomcat.remoteip.*`. |
 | `AI_MAX_INDEXING_ATTEMPTS` | `5` | Per-photo indexing retry budget. Only *semantic* failures (bad image, 4xx) consume it — transport failures (provider unreachable) return the photo to PENDING with the budget intact. `POST /admin/events/{id}/photos/reindex` re-drives exhausted/stale photos (`?all=true` after a provider flip). |
 | `AI_RECONCILE_INTERVAL_MS` | `60000` | Cadence of the per-photo indexing reconcile sweep. |
+| `WATERMARK_MAX_ATTEMPTS` | `5` | Async-watermark retry budget per photo (V36). Only semantic failures (undecodable bytes) consume it; transport failures leave it intact so the sweep keeps re-driving. Exhausted photos stay `PROCESSING` (owner-visible, runner-invisible) — watch `qp.watermark.outcome{outcome=failed}`. |
+| `WATERMARK_RECONCILE_INTERVAL_MS` | `60000` | Cadence of the watermark reconcile sweep (re-drives stuck `PROCESSING` photos). |
 | `DB_POOL_SIZE` | `10` | Hikari `maximum-pool-size`. |
 | `LOG_LEVEL_APP` | `INFO` | `com.quickpitik` log level (set `DEBUG` for local debugging). |
 | `API_DOCS_ENABLED` | `true` | Serves `/swagger-ui.html` + `/v3/api-docs`. **Set `false` in production** — a full route inventory is free reconnaissance. |

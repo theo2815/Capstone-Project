@@ -84,6 +84,13 @@ class Photo(
     @Column(name = "indexing_attempts", nullable = false)
     var indexingAttempts: Int = 0,
 
+    // Async-watermark retry budget (V36). Photos are created PROCESSING and
+    // flipped LIVE by PhotoWatermarkTrigger; only semantic failures
+    // (undecodable bytes) consume this — transport failures leave it intact so
+    // the reconcile sweep keeps re-driving them.
+    @Column(name = "processing_attempts", nullable = false)
+    var processingAttempts: Int = 0,
+
     @Column(name = "indexing_error", columnDefinition = "TEXT")
     var indexingError: String? = null,
 
