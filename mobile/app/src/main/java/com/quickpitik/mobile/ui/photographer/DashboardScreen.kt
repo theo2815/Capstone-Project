@@ -22,6 +22,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +49,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerMessageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
@@ -58,6 +60,7 @@ import com.quickpitik.mobile.ui.runner.deriveEventState
 import com.quickpitik.mobile.ui.runner.eventDateLabel
 import com.quickpitik.mobile.ui.runner.extractCity
 import com.quickpitik.mobile.ui.theme.*
+import java.io.File
 
 /**
  * The Capture tab's content: event picker until an event is selected, then the
@@ -93,6 +96,17 @@ private fun TetherConsoleView(
     val cameraState by viewModel.cameraConnectionState.collectAsState()
     val watchState by viewModel.shutterWatchState.collectAsState()
     val scrollState = rememberScrollState()
+
+    // Per-photo strip data: this event's rows only, newest first, capped so a
+    // 500-shot ledger doesn't become 500 tiles. Everything pending anywhere
+    // (any event) still keeps the sync card visible below.
+    val recentForEvent = remember(queueStats.recentRecords, activeEvent?.id) {
+        queueStats.recentRecords.asSequence()
+            .filter { it.eventId == activeEvent?.id }
+            .take(RECENT_STRIP_MAX_TILES)
+            .toList()
+    }
+    val pendingWork = queueStats.queuedCount + queueStats.uploadingCount + queueStats.failedCount
 
     // Android 13+ suppresses TetherIngestService's notification unless
     // POST_NOTIFICATIONS is granted. The ingest itself runs either way — what's
@@ -185,6 +199,7 @@ private fun TetherConsoleView(
                 vendorId = cam.vendorId,
                 productId = cam.productId,
                 watchState = watchState,
+                latestCaptureFile = recentForEvent.firstOrNull()?.let { File(it.filePath) },
                 canStartWatch = activeEvent?.let { canUploadToEvent(it.date) } == true,
                 onStartWatch = {
                     ensureNotificationPermission()
@@ -226,9 +241,16 @@ private fun TetherConsoleView(
             )
         }
 
-        // 3. Sync queue — only visible once a camera is actually tethered.
-        // No connection ⇒ nothing to sync, so the card is hidden entirely.
-        if (cameraState is CameraConnectionState.Connected) {
+        // 3. Sync queue — visible while a camera is tethered, while anything is
+        // still pending (so unplugging mid-drain doesn't hide the uploads), or
+        // when this event has strip rows to show. Deliberately NOT
+        // totalCount > 0: COMPLETED rows are a permanent dedupe ledger, which
+        // would pin the card open on every event forever.
+        if (
+            cameraState is CameraConnectionState.Connected ||
+            pendingWork > 0 ||
+            recentForEvent.isNotEmpty()
+        ) {
         QpCard(modifier = Modifier.fillMaxWidth()) {
             Kicker(text = "Sync queue", color = SlateSoft)
             Spacer(modifier = Modifier.height(14.dp))
@@ -267,6 +289,25 @@ private fun TetherConsoleView(
                 }
                 StatusChip(text = statusText, tone = statusTone)
             }
+            // Per-photo strip: the frames themselves, newest first, each with
+            // its own status badge — the "did the right photo make it?" answer
+            // the counts alone never gave.
+            AnimatedVisibility(
+                visible = recentForEvent.isNotEmpty(),
+                enter = fadeIn(tween(200)),
+                exit = fadeOut(tween(200)),
+            ) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 14.dp),
+                ) {
+                    items(recentForEvent, key = { it.id }) { record ->
+                        SyncQueueTile(record)
+                    }
+                }
+            }
             // Surface the most recent failure string so a "Failed · N" chip
             // isn't a dead end. PhotoUploadWorker already stores the per-row
             // error (auth, timeout, server reject) — we just hadn't exposed
@@ -289,10 +330,17 @@ private fun TetherConsoleView(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = queueStats.uploadingCount == 0
             )
-            // "Clear failed" only appears when there's actually something to
-            // clear — keeps the card quiet on the happy path. Disabled mid-
-            // upload so the action can't race with a running worker.
+            // Retry + Clear only appear when there's actually something failed
+            // — keeps the card quiet on the happy path. Both disabled mid-
+            // upload so the actions can't race with a running worker.
             if (queueStats.failedCount > 0) {
+                Spacer(modifier = Modifier.height(10.dp))
+                GhostCta(
+                    text = "Retry ${queueStats.failedCount} failed",
+                    onClick = { viewModel.retryFailedUploads() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = queueStats.uploadingCount == 0
+                )
                 Spacer(modifier = Modifier.height(10.dp))
                 GhostCta(
                     text = "Clear ${queueStats.failedCount} failed",
@@ -402,6 +450,7 @@ private fun CameraConnectedCard(
     onStopWatch: () -> Unit,
     onSimulate: () -> Unit,
     onBrowseCard: () -> Unit,
+    latestCaptureFile: File? = null,
 ) {
     val watchBusy = watchState is ShutterWatchState.Starting ||
         watchState is ShutterWatchState.Watching
@@ -441,6 +490,7 @@ private fun CameraConnectedCard(
                 is ShutterWatchState.Watching -> ShutterWatchLiveCard(
                     state = state,
                     onStop = onStopWatch,
+                    latestCaptureFile = latestCaptureFile,
                 )
                 else -> Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -498,6 +548,7 @@ private fun CameraConnectedCard(
 private fun ShutterWatchLiveCard(
     state: ShutterWatchState.Watching,
     onStop: () -> Unit,
+    latestCaptureFile: File? = null,
 ) {
     QpCard(modifier = Modifier.fillMaxWidth()) {
         // A dropped cable is a pause, not a failure — the count keeps standing
@@ -527,13 +578,33 @@ private fun ShutterWatchLiveCard(
         }
         state.lastCaptureName?.let { name ->
             Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = "Last capture: $name",
-                color = Slate,
-                style = Typography.bodyMedium,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-            )
+            // The "I just shot this and here it is" moment: the newest queue
+            // row's spool file rendered beside the filename.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (latestCaptureFile != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(TileShape)
+                            .background(BoneDeep)
+                    ) {
+                        AsyncImage(
+                            model = latestCaptureFile,
+                            contentDescription = "Last capture",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                }
+                Text(
+                    text = "Last capture: $name",
+                    color = Slate,
+                    style = Typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
         }
         // Field-diagnostics tail — the controller's own log lines, so the first
         // on-device run reveals which detector fires without needing adb.
@@ -557,6 +628,95 @@ private fun ShutterWatchLiveCard(
             onClick = onStop,
             modifier = Modifier.fillMaxWidth()
         )
+    }
+}
+
+// Cap on the per-photo sync strip: newest N rows of the selected event. The
+// COMPLETED ledger is unbounded; the strip is not.
+private const val RECENT_STRIP_MAX_TILES = 30
+
+/**
+ * One frame in the sync strip. Pre-upload rows render the full spool JPEG
+ * (Coil downsamples to tile size); COMPLETED rows render the worker's in-place
+ * ~320px thumbnail. A missing/undecodable file (rows synced before the
+ * shrink-on-success change) just leaves the BoneDeep tile. Per-tile
+ * SuccessGreen/ErrorRed marks follow the card-import sheet's "Imported"
+ * precedent — semantic state, not accent CTAs, so the one-Fresh rule holds.
+ */
+@Composable
+private fun SyncQueueTile(record: UploadRecord) {
+    val stateLabel = when (record.uploadStatus) {
+        "UPLOADING" -> "uploading"
+        "COMPLETED" -> "synced"
+        "FAILED" -> "failed"
+        else -> "queued"
+    }
+    Box(
+        modifier = Modifier
+            .size(64.dp)
+            .clip(TileShape)
+            .background(BoneDeep)
+    ) {
+        AsyncImage(
+            model = File(record.filePath),
+            contentDescription = "Photo $stateLabel",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+        // QUEUED gets no badge — the quiet default; it flips to a spinner
+        // within seconds of the worker picking the row up.
+        if (record.uploadStatus != "QUEUED") {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(3.dp)
+                    .size(18.dp)
+                    .clip(PillShape)
+                    .background(Bone),
+                contentAlignment = Alignment.Center,
+            ) {
+                when (record.uploadStatus) {
+                    "UPLOADING" -> CircularProgressIndicator(
+                        color = Slate,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    "COMPLETED" -> Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = SuccessGreen,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    else -> Icon(
+                        Icons.Default.Close,
+                        contentDescription = null,
+                        tint = ErrorRed,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun SyncQueueTileStatesPreview() {
+    // Nonexistent paths render the BoneDeep placeholder — the badge per state
+    // is what this preview pins (queued / uploading / synced / failed).
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("QUEUED", "UPLOADING", "COMPLETED", "FAILED").forEach { status ->
+            SyncQueueTile(
+                UploadRecord(
+                    id = status.hashCode().toLong(),
+                    filePath = "/preview/no-such-file.jpg",
+                    eventId = "preview-event",
+                    photographerId = "preview@example.com",
+                    captureTimestamp = 0L,
+                    uploadStatus = status,
+                )
+            )
+        }
     }
 }
 

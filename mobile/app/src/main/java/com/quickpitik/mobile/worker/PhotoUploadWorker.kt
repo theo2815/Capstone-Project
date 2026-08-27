@@ -1,6 +1,10 @@
 package com.quickpitik.mobile.worker
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.quickpitik.mobile.BuildConfig
@@ -131,15 +135,23 @@ class PhotoUploadWorker(
             }
 
             if (ok) {
+                // Status flip MUST stay before the shrink below: a crash before
+                // the flip re-uploads the still-intact original (idempotent
+                // same-event 200); a shrunk file must never be re-POSTed as the
+                // marketplace product (different hash — dedupe wouldn't catch it).
                 database.uploadQueueDao().updateStatus(record.id, "COMPLETED", null)
                 // The photo is on the server; the local full-res copy is pure
                 // waste from here (a 500-shot race left ~1 GB in cacheDir for
-                // the life of the install). The Room row is deliberately KEPT —
-                // it is the card-import re-import dedupe ledger
-                // (getActiveOrCompletedForEvent). Only files we spooled into
-                // our own cacheDir are touched.
+                // the life of the install). Instead of deleting it outright, it
+                // is shrunk in place to a ~320px thumbnail (~20 KB) so the sync
+                // strip can keep showing the frame after upload. The Room row
+                // is deliberately KEPT — it is the card-import re-import dedupe
+                // ledger (getActiveOrCompletedForEvent). Only files we spooled
+                // into our own cacheDir are touched.
                 if (file.absolutePath.startsWith(applicationContext.cacheDir.absolutePath)) {
-                    runCatching { file.delete() }
+                    if (!runCatching { shrinkToThumbnail(file) }.getOrDefault(false)) {
+                        runCatching { file.delete() }
+                    }
                 }
             } else {
                 val errorMsg = responseEnvelope.error ?: "Upload rejected by server."
@@ -202,6 +214,57 @@ class PhotoUploadWorker(
         }
     }
 
+    /**
+     * Replaces an already-uploaded spool JPEG with a ~320px thumbnail at the
+     * SAME path, so UploadRecord.filePath stays renderable in the sync strip
+     * forever at ~20 KB — no schema change, no capture-path cost. Returns false
+     * when the bytes can't be decoded; the caller then falls back to the old
+     * delete. In-place rewrite, no temp+rename: renameTo can't replace an
+     * existing file on the Windows JVM the Robolectric suite runs on, and a
+     * mid-write crash only costs a placeholder tile — the upload itself already
+     * COMPLETED before this runs. Runs inside the Semaphore(3) permit, so at
+     * most 3 bounded decodes are ever in flight.
+     */
+    private fun shrinkToThumbnail(file: File): Boolean {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= THUMBNAIL_LONG_EDGE_PX) {
+            sample *= 2
+        }
+        var bitmap = BitmapFactory.decodeFile(
+            file.absolutePath,
+            BitmapFactory.Options().apply { inSampleSize = sample },
+        ) ?: return false
+        // Re-encoding drops the EXIF orientation tag, so bake the rotation into
+        // the pixels — otherwise portrait frames render sideways after the swap.
+        val degrees = runCatching {
+            when (
+                ExifInterface(file.absolutePath)
+                    .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+            ) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+        }.getOrDefault(0f)
+        if (degrees != 0f) {
+            val rotated = Bitmap.createBitmap(
+                bitmap, 0, 0, bitmap.width, bitmap.height,
+                Matrix().apply { postRotate(degrees) }, true,
+            )
+            bitmap.recycle()
+            bitmap = rotated
+        }
+        val encoded = file.outputStream().use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, THUMBNAIL_JPEG_QUALITY, out)
+        }
+        bitmap.recycle()
+        return encoded
+    }
+
     private companion object {
         // Rejections that can NEVER succeed on retry, so they END the record
         // instead of driving the exponential-backoff loop. Beyond the two
@@ -230,5 +293,11 @@ class PhotoUploadWorker(
         // Attempts per record across runs (tracked in UploadRecord.retryCount)
         // before a non-terminal failure is declared permanent.
         const val MAX_RETRIES = 5
+
+        // Post-upload in-place thumbnail: long edge + JPEG quality. ~20 KB per
+        // synced frame keeps the sync strip renderable without hoarding
+        // multi-MB originals in cacheDir.
+        const val THUMBNAIL_LONG_EDGE_PX = 320
+        const val THUMBNAIL_JPEG_QUALITY = 80
     }
 }

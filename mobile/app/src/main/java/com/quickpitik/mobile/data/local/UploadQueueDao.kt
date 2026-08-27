@@ -12,7 +12,9 @@ interface UploadQueueDao {
     @Query("SELECT * FROM upload_queue ORDER BY id ASC")
     fun getAllRecords(): Flow<List<UploadRecord>>
 
-    @Query("SELECT * FROM upload_queue WHERE uploadStatus = :status ORDER BY id ASC")
+    // Newest first, so a just-shot live frame uploads ahead of an old
+    // card-import backlog instead of waiting behind it.
+    @Query("SELECT * FROM upload_queue WHERE uploadStatus = :status ORDER BY id DESC")
     suspend fun getRecordsWithStatus(status: String): List<UploadRecord>
 
     @Query("SELECT * FROM upload_queue WHERE id = :id LIMIT 1")
@@ -35,6 +37,13 @@ interface UploadQueueDao {
 
     @Query("DELETE FROM upload_queue WHERE uploadStatus = :status")
     suspend fun deleteByStatus(status: String): Int
+
+    /** Sends every FAILED row back through the queue with a fresh retry budget. */
+    @Query(
+        "UPDATE upload_queue SET uploadStatus = 'QUEUED', retryCount = 0, " +
+            "errorMessage = NULL WHERE uploadStatus = 'FAILED'"
+    )
+    suspend fun requeueFailed(): Int
 
     /**
      * Records for [eventId] that should block a card photo from being re-imported:

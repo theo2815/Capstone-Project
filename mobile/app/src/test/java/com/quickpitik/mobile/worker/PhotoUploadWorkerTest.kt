@@ -18,6 +18,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.shadows.ShadowBitmapFactory
 import java.io.File
 
 /**
@@ -276,11 +277,41 @@ class PhotoUploadWorkerTest {
     }
 
     /**
-     * A completed upload's spool copy in OUR cacheDir is deleted (the server
-     * has the bytes); the Room row survives as the re-import dedupe ledger.
+     * A completed upload's spool copy in OUR cacheDir is shrunk in place to a
+     * ~320px thumbnail (the server has the full bytes; the strip keeps showing
+     * the frame); the Room row survives as the re-import dedupe ledger. Under
+     * Robolectric's legacy graphics shadows, BitmapFactory "decodes" the garbage
+     * test bytes into a fake bitmap and compress writes real JPEG bytes, so the
+     * rewrite is observable as changed content at the same path.
      */
     @Test
-    fun `a completed upload deletes its cacheDir spool file`() = runTest {
+    fun `a completed upload shrinks its cacheDir spool file to a thumbnail`() = runTest {
+        signIn()
+        startServer(ok())
+        val original = ByteArray(64) { 0xFF.toByte() }
+        val spooled = File(context.cacheDir, "gallery_upload_test.jpg").apply {
+            writeBytes(original)
+        }
+        val id = enqueue(filePath = spooled.absolutePath)
+
+        runWorker()
+
+        assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
+        assertTrue(spooled.exists())
+        assertTrue(spooled.length() > 0)
+        assertTrue(!spooled.readBytes().contentEquals(original))
+    }
+
+    /**
+     * When the spool bytes can't be decoded, the shrink falls back to the
+     * pre-2026-08-28 behavior: delete the file outright so undecodable
+     * originals can't hoard cacheDir. setAllowInvalidImageData(false) makes
+     * the shadow decoder return null for the garbage bytes (auto-reset by
+     * Robolectric between tests).
+     */
+    @Test
+    fun `an undecodable completed upload falls back to deleting its spool file`() = runTest {
+        ShadowBitmapFactory.setAllowInvalidImageData(false)
         signIn()
         startServer(ok())
         val spooled = File(context.cacheDir, "gallery_upload_test.jpg").apply {

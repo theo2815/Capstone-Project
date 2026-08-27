@@ -72,14 +72,32 @@ class UploadQueueDaoTest {
     }
 
     @Test
-    fun `getRecordsWithStatus filters by status and orders by id ascending`() = runTest {
+    fun `getRecordsWithStatus filters by status and orders newest first`() = runTest {
         val first = dao.insertRecord(record(filePath = "/cache/a.jpg"))
         dao.insertRecord(record(filePath = "/cache/b.jpg", status = "COMPLETED"))
         val third = dao.insertRecord(record(filePath = "/cache/c.jpg"))
 
         val queued = dao.getRecordsWithStatus("QUEUED")
 
-        assertEquals(listOf(first, third), queued.map { it.id })
+        assertEquals(listOf(third, first), queued.map { it.id })
+    }
+
+    @Test
+    fun `requeueFailed resets only failed rows and reports the count`() = runTest {
+        val failed = dao.insertRecord(record(status = "FAILED", retryCount = 3))
+        dao.updateStatus(failed, "FAILED", "Upload rejected by server.")
+        val completed = dao.insertRecord(record(status = "COMPLETED"))
+        val queued = dao.insertRecord(record(status = "QUEUED"))
+
+        val requeued = dao.requeueFailed()
+
+        assertEquals(1, requeued)
+        val revived = requireNotNull(dao.getRecordById(failed))
+        assertEquals("QUEUED", revived.uploadStatus)
+        assertEquals(0, revived.retryCount)
+        assertNull(revived.errorMessage)
+        assertEquals("COMPLETED", requireNotNull(dao.getRecordById(completed)).uploadStatus)
+        assertEquals("QUEUED", requireNotNull(dao.getRecordById(queued)).uploadStatus)
     }
 
     @Test

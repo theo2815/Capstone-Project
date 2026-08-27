@@ -113,7 +113,12 @@ data class QueueStats(
      * showing "Failed · N" with no detail, which made the 46-failure batch on
      * 2026-05-28 impossible to diagnose from the screen alone.
      */
-    val lastError: String? = null
+    val lastError: String? = null,
+    /**
+     * Full queue rows, newest first, for the per-photo sync strip. The Flow
+     * already delivered these — they were previously reduced to counts only.
+     */
+    val recentRecords: List<com.quickpitik.mobile.data.local.UploadRecord> = emptyList(),
 )
 
 /**
@@ -709,7 +714,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     failedCount = failed,
                     totalCount = total,
                     progress = progress,
-                    lastError = latestError
+                    lastError = latestError,
+                    // DAO emits id ASC; asReversed() is a zero-copy view.
+                    recentRecords = records.asReversed(),
                 )
             }
         }
@@ -748,6 +755,19 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     fun clearFailedUploads() {
         viewModelScope.launch {
             database.uploadQueueDao().deleteByStatus("FAILED")
+        }
+    }
+
+    /**
+     * Flips every FAILED row back to QUEUED with a fresh retry budget and kicks
+     * the engine. Terminal-coded rows (duplicate-in-another-event, missing
+     * file) settle FAILED again after one attempt with the same message —
+     * cheap and honest; same-event duplicates succeed idempotently.
+     */
+    fun retryFailedUploads() {
+        viewModelScope.launch {
+            database.uploadQueueDao().requeueFailed()
+            runSyncEngine()
         }
     }
 
