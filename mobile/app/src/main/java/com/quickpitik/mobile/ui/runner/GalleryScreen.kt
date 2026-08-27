@@ -151,14 +151,11 @@ fun RunnerGalleryScreen(
         uri?.let { viewModel.searchBySelfieUri(it) }
     }
 
-    // Load the "notify me when ready" opt-in state whenever a new event is
-    // selected (any lifecycle state — upcoming events are the main use case).
-    // RUNNER-gated endpoint — skipped in photographer runner-view.
-    if (isTrueRunner) LaunchedEffect(activeEvent?.slug) {
-        activeEvent?.slug?.let { viewModel.loadPhotoAlert(it) }
+    // One selfie-library request feeds both the picker and the runner-only
+    // photo-alert check; these used to request the same list concurrently.
+    LaunchedEffect(activeEvent?.slug, isTrueRunner) {
+        viewModel.loadGalleryMetadata(activeEvent?.slug.takeIf { isTrueRunner })
     }
-    // Selfie library for the picker in the Selfie Match card (Bearer, any role).
-    LaunchedEffect(Unit) { viewModel.loadSelfies() }
     val eventDetail by viewModel.eventDetail.collectAsState()
 
     // Lock the Runner Dashboard to the uniform Light Warm Cream Brand Theme

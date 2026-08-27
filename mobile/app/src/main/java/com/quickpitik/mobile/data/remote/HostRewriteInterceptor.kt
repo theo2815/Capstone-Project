@@ -11,16 +11,10 @@ import okhttp3.Response
 // 10.0.2.2 resolves. Shared between the Coil ImageLoader (so AsyncImage
 // paints) and the photo-download OkHttp client (so saves to gallery succeed).
 object HostRewriteInterceptor : Interceptor {
-    private val LOOPBACK = setOf("localhost", "127.0.0.1")
-
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
-        val url = req.url
-        val backendHost = RetrofitClient.BASE_URL.toHttpUrlOrNull()?.host
-        if (backendHost == null || url.host !in LOOPBACK || backendHost == url.host) {
-            return chain.proceed(req)
-        }
-        val rewritten = url.newBuilder().host(backendHost).build()
-        return chain.proceed(req.newBuilder().url(rewritten).build())
+        val backend = RetrofitClient.BASE_URL.toHttpUrlOrNull() ?: return chain.proceed(req)
+        val rewritten = rewriteLoopbackUrl(req.url, backend)
+        return chain.proceed(if (rewritten == req.url) req else req.newBuilder().url(rewritten).build())
     }
 }

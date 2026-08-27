@@ -251,6 +251,7 @@ private fun ProfileEventGalleryView(
     val eventDetail by viewModel.galleryEventDetail.collectAsState()
     var selectedPhoto by remember { mutableStateOf<PhotoDto?>(null) }
     var bibFilter by rememberSaveable { mutableStateOf("") }
+    var visiblePhotoLimit by rememberSaveable(slug) { mutableStateOf(20) }
 
     LaunchedEffect(slug) {
         viewModel.fetchProfileEventPhotos(handle, slug)
@@ -286,7 +287,10 @@ private fun ProfileEventGalleryView(
             // (that page also filters the loaded set client-side).
             TextField(
                 value = bibFilter,
-                onValueChange = { bibFilter = it },
+                onValueChange = {
+                    bibFilter = it
+                    visiblePhotoLimit = 20
+                },
                 placeholder = { Text("Filter by bib number…", color = SlateSoft) },
                 singleLine = true,
                 colors = TextFieldDefaults.colors(
@@ -330,7 +334,7 @@ private fun ProfileEventGalleryView(
                             )
                         }
                     } else {
-                        visiblePhotos.chunked(2).forEach { rowPhotos ->
+                        visiblePhotos.take(visiblePhotoLimit).chunked(2).forEach { rowPhotos ->
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 rowPhotos.forEach { photo ->
                                     Box(
@@ -370,6 +374,13 @@ private fun ProfileEventGalleryView(
                                 }
                             }
                             Spacer(modifier = Modifier.height(12.dp))
+                        }
+                        if (visiblePhotoLimit < visiblePhotos.size) {
+                            GhostCta(
+                                text = "Load more",
+                                onClick = { visiblePhotoLimit += 20 },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
                         }
                     }
                 }

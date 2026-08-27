@@ -2,6 +2,7 @@ package com.quickpitik.mobile.data.usb.ptp
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import com.quickpitik.mobile.BuildConfig
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import java.io.OutputStream
@@ -120,10 +121,12 @@ class UsbCardImportController(
 
                 // QP/UPLOAD-PERF — `adb logcat -s QP/UPLOAD-PERF` shows
                 // per-phase ms for each photo (ptp / persist / upload).
-                android.util.Log.i(
-                    "QP/UPLOAD-PERF",
-                    "ptp-read handle=${photo.handle} file=${photo.filename} bytes=$pulledBytes ms=$ptpMs",
-                )
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.i(
+                        "QP/UPLOAD-PERF",
+                        "ptp-read handle=${photo.handle} file=${photo.filename} bytes=$pulledBytes ms=$ptpMs",
+                    )
+                }
 
                 if (didPersist) succeeded.add(photo.handle) else failed.add(photo.handle)
 

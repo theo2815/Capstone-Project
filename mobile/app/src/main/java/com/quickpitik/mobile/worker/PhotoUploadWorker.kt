@@ -3,6 +3,7 @@ package com.quickpitik.mobile.worker
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.UploadRecord
@@ -122,10 +123,12 @@ class PhotoUploadWorker(
 
             val uploadMs = System.currentTimeMillis() - uploadStart
             val ok = responseEnvelope.success && responseEnvelope.data != null
-            android.util.Log.i(
-                "QP/UPLOAD-PERF",
-                "upload id=${record.id} file=${file.name} bytes=${file.length()} status=${if (ok) "OK" else "FAIL"} ms=$uploadMs",
-            )
+            if (BuildConfig.DEBUG) {
+                android.util.Log.i(
+                    "QP/UPLOAD-PERF",
+                    "upload id=${record.id} file=${file.name} bytes=${file.length()} status=${if (ok) "OK" else "FAIL"} ms=$uploadMs",
+                )
+            }
 
             if (ok) {
                 database.uploadQueueDao().updateStatus(record.id, "COMPLETED", null)
@@ -149,10 +152,12 @@ class PhotoUploadWorker(
             }
         } catch (e: Exception) {
             val uploadMs = System.currentTimeMillis() - uploadStart
-            android.util.Log.i(
-                "QP/UPLOAD-PERF",
-                "upload id=${record.id} file=${file.name} bytes=${file.length()} status=EXC ms=$uploadMs",
-            )
+            if (BuildConfig.DEBUG) {
+                android.util.Log.i(
+                    "QP/UPLOAD-PERF",
+                    "upload id=${record.id} file=${file.name} bytes=${file.length()} status=EXC ms=$uploadMs",
+                )
+            }
             // The backend rejects a duplicate with HTTP 409, and Retrofit throws
             // HttpException for any non-2xx status BEFORE the success-path body
             // (and its TERMINAL_UPLOAD_ERROR_CODES guard above) is ever reached —

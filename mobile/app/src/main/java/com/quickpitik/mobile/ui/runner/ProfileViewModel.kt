@@ -5,15 +5,19 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.MAX_UPLOAD_BYTES
+import com.quickpitik.mobile.data.readAtMost
 import com.quickpitik.mobile.data.remote.SelfieRefDto
 import com.quickpitik.mobile.data.repository.ProfileRepository
 import com.quickpitik.mobile.data.repository.ProfileRepositoryImpl
 import com.quickpitik.mobile.ui.auth.validateEmail
 import com.quickpitik.mobile.ui.auth.validateNewPassword
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class ProfileViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionManager = SessionManager.getInstance(application)
@@ -75,10 +79,6 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _avatarError = MutableStateFlow<String?>(null)
     val avatarError: StateFlow<String?> = _avatarError.asStateFlow()
 
-    init {
-        fetchSelfies()
-    }
-
     fun fetchSelfies() {
         val token = sessionManager.getAccessToken() ?: return
         viewModelScope.launch {
@@ -102,10 +102,14 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             _selfiesError.value = null
             try {
                 val contentResolver = getApplication<Application>().contentResolver
-                val inputStream = contentResolver.openInputStream(uri)
-                if (inputStream != null) {
-                    val bytes = inputStream.readBytes()
-                    inputStream.close()
+                val bytes = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)?.use { it.readAtMost(MAX_UPLOAD_BYTES + 1) }
+                }
+                if (bytes != null) {
+                    if (bytes.size > MAX_UPLOAD_BYTES) {
+                        _selfiesError.value = "Selfies must be 8 MB or smaller"
+                        return@launch
+                    }
                     
                     val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
                     val filename = "selfie_${System.currentTimeMillis()}.jpg"
@@ -282,10 +286,14 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             _avatarError.value = null
             try {
                 val contentResolver = getApplication<Application>().contentResolver
-                val inputStream = contentResolver.openInputStream(uri)
-                if (inputStream != null) {
-                    val bytes = inputStream.readBytes()
-                    inputStream.close()
+                val bytes = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)?.use { it.readAtMost(MAX_UPLOAD_BYTES + 1) }
+                }
+                if (bytes != null) {
+                    if (bytes.size > MAX_UPLOAD_BYTES) {
+                        _avatarError.value = "Profile photos must be 8 MB or smaller"
+                        return@launch
+                    }
 
                     val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
                     val filename = "avatar_${System.currentTimeMillis()}.jpg"
@@ -308,4 +316,5 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             }
         }
     }
+
 }

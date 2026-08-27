@@ -148,16 +148,6 @@ class MainActivity : ComponentActivity() {
                     handleQuickpitikUri(uri, navController, cartViewModel)
                     deepLinkUri = null
                 }
-                val profileViewModel: ProfileViewModel = viewModel()
-                // Hoisted to the NavHost scope so the events-discovery browse screen,
-                // the gallery cockpit, and the profile race log all read/write the one
-                // shared instance (selected event + saved-events store stay in sync).
-                val runnerViewModel: RunnerGalleryViewModel = viewModel()
-                val savedEventsViewModel: SavedEventsViewModel = viewModel()
-                // Hoisted like savedEventsViewModel so the bell's unread badge is
-                // the same number on every runner surface that mounts it.
-                val runnerInboxViewModel: RunnerInboxViewModel = viewModel()
-
                 // Cold start with a cached JWT should land on the user's home
                 // surface, not bounce them through login again. Same role→route
                 // mapping as onLoginSuccess below, kept in one place. remember{}
@@ -173,9 +163,9 @@ class MainActivity : ComponentActivity() {
                         // because studio is legal for the true role and the
                         // guard would never fire.
                         isPhotographerRole(sessionManager.getUserRole()) &&
-                            sessionManager.isRunnerView() -> "events"
+                            sessionManager.isRunnerView() -> "runner"
                         isPhotographerRole(sessionManager.getUserRole()) -> "studio"
-                        else -> "events"
+                        else -> "runner"
                     }
                 }
                 val runnerView by ViewMode.runnerView.collectAsState()
@@ -241,8 +231,11 @@ class MainActivity : ComponentActivity() {
                             vm.fetchVerificationStatus()
                             vm.fetchEvents()
                             vm.fetchEarningsAndTransactions()
+                            // REST hydration for the inbox — the WS push in the
+                            // VM only refetches once the socket actually opens,
+                            // and Overview derives the rejection banner from
+                            // these messages.
                             vm.fetchMessages()
-                            vm.fetchSettings()
                         }
                         "studio/events" -> {
                             vm.fetchEvents()
@@ -252,7 +245,10 @@ class MainActivity : ComponentActivity() {
                             vm.fetchPublicEvents()
                         }
                         "studio/earnings" -> vm.fetchEarningsAndTransactions()
-                        "studio/settings" -> vm.fetchVerificationStatus()
+                        "studio/settings" -> {
+                            vm.fetchVerificationStatus()
+                            vm.fetchSettings()
+                        }
                     }
                 }
 
@@ -284,7 +280,7 @@ class MainActivity : ComponentActivity() {
                         route in RUNNER_ROUTES && !effectiveRunner ->
                             navController.navigate("studio") { launchSingleTop = true }
                         route.startsWith("studio") && !photographer ->
-                            navController.navigate("events") { launchSingleTop = true }
+                            navController.navigate("runner") { launchSingleTop = true }
                     }
                 }
 
@@ -295,7 +291,7 @@ class MainActivity : ComponentActivity() {
                     ViewMode.switchToPhotographer.collect {
                         ViewMode.reset(sessionManager)
                         navController.navigate("studio") {
-                            popUpTo("events") { inclusive = true }
+                            popUpTo("runner") { inclusive = true }
                             launchSingleTop = true
                         }
                     }
@@ -356,7 +352,8 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onLoginSuccess = { isPhotographer ->
                                         sessionNotice = null
-                                        val target = if (isPhotographer) "studio" else "events"
+                                        val target = if (isPhotographer) "studio" else "runner"
+                                        if (!isPhotographer) cartViewModel.fetchCart()
                                         navController.navigate(target) {
                                             popUpTo("login") { inclusive = true }
                                         }
@@ -393,7 +390,8 @@ class MainActivity : ComponentActivity() {
                                         navController.navigate("login")
                                     },
                                     onRegisterSuccess = { isPhotographer ->
-                                        val target = if (isPhotographer) "studio" else "events"
+                                        val target = if (isPhotographer) "studio" else "runner"
+                                        if (!isPhotographer) cartViewModel.fetchCart()
                                         navController.navigate(target) {
                                             popUpTo("login") { inclusive = true }
                                         }
@@ -430,7 +428,7 @@ class MainActivity : ComponentActivity() {
                                 // a shutter watch is live.
                                 val switchToRunnerView: () -> Unit = {
                                     ViewMode.set(sessionManager, true)
-                                    navController.navigate("events") {
+                                    navController.navigate("runner") {
                                         popUpTo("studio") { inclusive = true }
                                         launchSingleTop = true
                                     }
@@ -538,6 +536,9 @@ class MainActivity : ComponentActivity() {
                                     // via "photographer/{handle}".
                                     val publicVm: PublicPhotographerViewModel = viewModel()
                                     val brandSettings by vm.brandSettings.collectAsState()
+                                    LaunchedEffect(Unit) {
+                                        if (brandSettings == null) vm.fetchBrandSettings()
+                                    }
                                     StudioTheme {
                                         PhotographerPublicProfileScreen(
                                             handle = brandSettings?.handle,
@@ -547,7 +548,22 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            composable("events") {
+                            // Runner state belongs to the authenticated runner
+                            // session, not the Activity. The graph is lazy and
+                            // popping it on logout clears every user-owned VM.
+                            navigation(startDestination = "events", route = "runner") {
+                                val runnerLogout: () -> Unit = {
+                                    authViewModel.logout()
+                                    cartViewModel.clearCart()
+                                    navController.navigate("login") {
+                                        popUpTo("runner") { inclusive = true }
+                                    }
+                                }
+                                composable("events") { entry ->
+                                    val graphEntry = runnerGraphEntry(navController, entry)
+                                    val runnerViewModel: RunnerGalleryViewModel = viewModel(graphEntry)
+                                    val savedEventsViewModel: SavedEventsViewModel = viewModel(graphEntry)
+                                    val runnerInboxViewModel: RunnerInboxViewModel = viewModel(graphEntry)
                                 EventsDiscoveryScreen(
                                     viewModel = runnerViewModel,
                                     savedEventsViewModel = savedEventsViewModel,
@@ -557,16 +573,14 @@ class MainActivity : ComponentActivity() {
                                         navController.navigate("gallery")
                                     },
                                     onOpenOrder = { orderId -> navController.navigate("orders?orderId=$orderId") },
-                                    onLogout = {
-                                        authViewModel.logout()
-                                        cartViewModel.clearCart()
-                                        navController.navigate("login") {
-                                            popUpTo("events") { inclusive = true }
-                                        }
-                                    }
+                                    onLogout = runnerLogout,
                                 )
                             }
-                            composable("gallery") {
+                                composable("gallery") { entry ->
+                                    val graphEntry = runnerGraphEntry(navController, entry)
+                                    val runnerViewModel: RunnerGalleryViewModel = viewModel(graphEntry)
+                                    val savedEventsViewModel: SavedEventsViewModel = viewModel(graphEntry)
+                                    val runnerInboxViewModel: RunnerInboxViewModel = viewModel(graphEntry)
                                 RunnerGalleryScreen(
                                     viewModel = runnerViewModel,
                                     cartViewModel = cartViewModel,
@@ -584,13 +598,7 @@ class MainActivity : ComponentActivity() {
                                     onNavigateBack = {
                                         navController.popBackStack()
                                     },
-                                    onLogout = {
-                                        authViewModel.logout()
-                                        cartViewModel.clearCart()
-                                        navController.navigate("login") {
-                                            popUpTo("events") { inclusive = true }
-                                        }
-                                    }
+                                    onLogout = runnerLogout,
                                 )
                             }
                             composable(
@@ -607,7 +615,11 @@ class MainActivity : ComponentActivity() {
                                     cartViewModel = cartViewModel,
                                 )
                             }
-                            composable("profile") {
+                                composable("profile") { entry ->
+                                    val graphEntry = runnerGraphEntry(navController, entry)
+                                    val profileViewModel: ProfileViewModel = viewModel(graphEntry)
+                                    val runnerViewModel: RunnerGalleryViewModel = viewModel(graphEntry)
+                                    val savedEventsViewModel: SavedEventsViewModel = viewModel(graphEntry)
                                 ProfileScreen(
                                     viewModel = profileViewModel,
                                     cartViewModel = cartViewModel,
@@ -624,25 +636,15 @@ class MainActivity : ComponentActivity() {
                                     onBrowseEvents = {
                                         navController.navigate("events")
                                     },
-                                    onLogout = {
-                                        authViewModel.logout()
-                                        cartViewModel.clearCart()
-                                        navController.navigate("login") {
-                                            popUpTo("events") { inclusive = true }
-                                        }
-                                    }
+                                    onLogout = runnerLogout,
                                 )
                             }
-                            composable("settings") {
+                                composable("settings") { entry ->
+                                    val graphEntry = runnerGraphEntry(navController, entry)
+                                    val profileViewModel: ProfileViewModel = viewModel(graphEntry)
                                 AccountSettingsScreen(
                                     viewModel = profileViewModel,
-                                    onLogout = {
-                                        authViewModel.logout()
-                                        cartViewModel.clearCart()
-                                        navController.navigate("login") {
-                                            popUpTo("events") { inclusive = true }
-                                        }
-                                    }
+                                    onLogout = runnerLogout,
                                 )
                             }
                             composable(
@@ -658,13 +660,7 @@ class MainActivity : ComponentActivity() {
                                 OrdersScreen(
                                     viewModel = cartViewModel,
                                     initialOrderId = entry.arguments?.getString("orderId"),
-                                    onLogout = {
-                                        authViewModel.logout()
-                                        cartViewModel.clearCart()
-                                        navController.navigate("login") {
-                                            popUpTo("events") { inclusive = true }
-                                        }
-                                    }
+                                    onLogout = runnerLogout,
                                 )
                             }
                             composable(
@@ -694,6 +690,7 @@ class MainActivity : ComponentActivity() {
                                         navController.popBackStack()
                                     },
                                 )
+                            }
                             }
                         }
 
@@ -803,6 +800,12 @@ private fun studioViewModel(
     val graphEntry = remember(entry) { navController.getBackStackEntry("studio") }
     return viewModel(graphEntry)
 }
+
+@Composable
+private fun runnerGraphEntry(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): NavBackStackEntry = remember(entry) { navController.getBackStackEntry("runner") }
 
 // ─── Floating-pill bottom nav for Runner ──────────────────────────────────────
 // Mirrors the Quiet Studio photographer floating pill nav format:

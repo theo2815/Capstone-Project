@@ -17,6 +17,9 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import com.quickpitik.mobile.BuildConfig
+import com.quickpitik.mobile.data.MAX_UPLOAD_BYTES
+import com.quickpitik.mobile.data.readAtMost
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.TetherEvents
@@ -289,12 +292,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     init {
         fetchEvents()
-        fetchPublicEvents()
         observeQueue()
         fetchEarningsAndTransactions()
         fetchVerificationStatus()
-        fetchSettings()
-        fetchMessages()
+        fetchBrandSettings()
         observeInboxPush()
         cameraManager.start()
         observeCameraDetach()
@@ -866,52 +867,64 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
+    fun fetchBrandSettings() {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            loadBrandSettings(token)
+        }
+    }
+
+    private suspend fun loadBrandSettings(token: String) {
+        try {
+            val response = RetrofitClient.apiService.getBrandSettings("Bearer $token")
+            if (response.success && response.data != null) {
+                _brandSettings.value = response.data
+                _settingsLoadError.value = null
+            }
+        } catch (e: Exception) {
+            // The brand payload hydrates the whole settings form. With nothing
+            // cached, an empty editable form could overwrite server values.
+            if (_brandSettings.value == null) {
+                _settingsLoadError.value = RetrofitClient.parseError(e)
+            }
+        }
+    }
+
     fun fetchSettings() {
         viewModelScope.launch {
             val token = sessionManager.getAccessToken() ?: return@launch
-            try {
-                val brandResponse = RetrofitClient.apiService.getBrandSettings("Bearer $token")
-                if (brandResponse.success && brandResponse.data != null) {
-                    _brandSettings.value = brandResponse.data
-                    _settingsLoadError.value = null
-                }
-            } catch (e: Exception) {
-                // The brand payload hydrates the whole settings form. With
-                // nothing cached, silence meant the screen rendered an EMPTY
-                // editable form — and saving it would overwrite real server
-                // values with blanks. The screen gates on this error instead.
-                if (_brandSettings.value == null) {
-                    _settingsLoadError.value = RetrofitClient.parseError(e)
-                }
-            }
-            try {
-                val payoutsResponse = RetrofitClient.apiService.getPayoutAccounts("Bearer $token")
-                if (payoutsResponse.success && payoutsResponse.data != null) {
-                    _payoutAccounts.value = payoutsResponse.data
-                }
-            } catch (e: Exception) {
-                // Fail silently
-            }
-            try {
-                val socialsResponse = RetrofitClient.apiService.getSocials("Bearer $token")
-                if (socialsResponse.success && socialsResponse.data != null) {
-                    _socials.value = socialsResponse.data
-                }
-            } catch (e: Exception) {
-                // Fail silently
-            }
-            // Reference data, not per-photographer — fetched here because the
-            // region slab lives on this screen. Skipped once loaded so
-            // re-entering Settings doesn't re-request a list that changes
-            // roughly never (backend caches it for a day).
-            if (_regions.value.isEmpty()) {
-                try {
-                    val regionsResponse = RetrofitClient.apiService.getRegions()
-                    if (regionsResponse.success && regionsResponse.data != null) {
-                        _regions.value = regionsResponse.data
+            coroutineScope {
+                launch { loadBrandSettings(token) }
+                launch {
+                    try {
+                        val response = RetrofitClient.apiService.getPayoutAccounts("Bearer $token")
+                        if (response.success && response.data != null) {
+                            _payoutAccounts.value = response.data
+                        }
+                    } catch (_: Exception) {
+                        // Keep the last known list.
                     }
-                } catch (e: Exception) {
-                    // Fail silently — the slab keeps the saved region visible.
+                }
+                launch {
+                    try {
+                        val response = RetrofitClient.apiService.getSocials("Bearer $token")
+                        if (response.success && response.data != null) {
+                            _socials.value = response.data
+                        }
+                    } catch (_: Exception) {
+                        // Keep the last known list.
+                    }
+                }
+                // Reference data changes rarely and is cached by the backend.
+                if (_regions.value.isEmpty()) launch {
+                    try {
+                        val response = RetrofitClient.apiService.getRegions()
+                        if (response.success && response.data != null) {
+                            _regions.value = response.data
+                        }
+                    } catch (_: Exception) {
+                        // Keep the saved region visible.
+                    }
                 }
             }
         }
@@ -1211,14 +1224,18 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 dao.getRecordById(recordId)?.let { runCatching { File(it.filePath).delete() } }
                 dao.deleteRecordById(recordId)
             }
-            android.util.Log.i(
-                "QP/UPLOAD-PERF",
-                "dedup pre-flight skipped=${skipped.size} of ${hashes.size}",
-            )
+            if (BuildConfig.DEBUG) {
+                android.util.Log.i(
+                    "QP/UPLOAD-PERF",
+                    "dedup pre-flight skipped=${skipped.size} of ${hashes.size}",
+                )
+            }
         } catch (e: Exception) {
             // Offline or a backend hiccup — keep everything queued. The upload
             // path stays correct without this; it is only an optimisation.
-            android.util.Log.w("QP/UPLOAD-PERF", "dedup pre-flight failed: ${e.message}")
+            if (BuildConfig.DEBUG) {
+                android.util.Log.w("QP/UPLOAD-PERF", "dedup pre-flight failed: ${e.message}")
+            }
         }
     }
 
@@ -1270,10 +1287,12 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             )
             hashSink?.invoke(recordId, digest.digest().joinToString("") { "%02x".format(it) })
             val persistMs = System.currentTimeMillis() - persistStart
-            android.util.Log.i(
-                "QP/UPLOAD-PERF",
-                "persist file=$originalFilename bytes=${file.length()} ms=$persistMs",
-            )
+            if (BuildConfig.DEBUG) {
+                android.util.Log.i(
+                    "QP/UPLOAD-PERF",
+                    "persist file=$originalFilename bytes=${file.length()} ms=$persistMs",
+                )
+            }
             true
         } catch (e: Exception) {
             // Streaming means a mid-transfer failure leaves a partial file
@@ -1407,7 +1426,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
      * via `adb logcat -s QP/TETHER` while the screen shows only the tail.
      */
     private fun appendWatchLog(line: String) {
-        android.util.Log.i("QP/TETHER", line)
+        if (BuildConfig.DEBUG) android.util.Log.i("QP/TETHER", line)
         watchLogTail = (watchLogTail + line).takeLast(WATCH_LOG_LINES)
         _shutterWatchState.update { s ->
             if (s is ShutterWatchState.Watching) s.copy(recentLog = watchLogTail) else s
@@ -1495,6 +1514,22 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         _settingsActionState.value = null
     }
 
+    private suspend fun readSettingsAsset(uri: String): ByteArray? =
+        withContext(Dispatchers.IO) {
+            getApplication<Application>().contentResolver.openInputStream(Uri.parse(uri))
+                ?.use { it.readAtMost(MAX_UPLOAD_BYTES + 1) }
+        }
+
+    // Returns the validated bytes, or null after setting the error state.
+    private suspend fun readValidatedAsset(uri: String, label: String): ByteArray? {
+        val bytes = readSettingsAsset(uri)
+        if (bytes == null || bytes.isEmpty() || bytes.size > MAX_UPLOAD_BYTES) {
+            _settingsActionState.value = "Error: $label must be a readable image up to 8 MB."
+            return null
+        }
+        return bytes
+    }
+
     fun saveSettings(
         brandName: String,
         bio: String,
@@ -1504,9 +1539,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         regionCode: String,
         provinceCode: String,
         socialUrl: String,
-        avatarBytes: ByteArray?,
-        coverBytes: ByteArray?,
-        watermarkBytes: ByteArray?,
+        avatarUri: String?,
+        coverUri: String?,
+        watermarkUri: String?,
         // Wire value from ALLOWED_BRAND_COLORS (none/fresh/amber/indigo/rose/
         // ink). Null = leave whatever is on the server untouched.
         brandColor: String? = null,
@@ -1522,6 +1557,13 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             }
 
             try {
+                // 0. Read + validate every picked image BEFORE the first PATCH
+                // — an unreadable or oversized pick must not abort a
+                // half-applied save.
+                val avatarBytes = avatarUri?.let { readValidatedAsset(it, "Avatar") ?: return@launch }
+                val coverBytes = coverUri?.let { readValidatedAsset(it, "Cover") ?: return@launch }
+                val watermarkBytes = watermarkUri?.let { readValidatedAsset(it, "Watermark") ?: return@launch }
+
                 // 1. Update Brand (Name & Bio). brandColor passes through the
                 // hydrated value — sending a literal "none" here silently reset
                 // a brand colour the photographer had picked on the website on
@@ -1767,12 +1809,13 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         method: String,
         accountName: String,
         accountNumber: String,
-        qrBytes: ByteArray? = null,
+        qrUri: String? = null,
     ) {
         viewModelScope.launch {
             val token = sessionManager.getAccessToken() ?: return@launch
             _settingsActionState.value = "Saving payout..."
             try {
+                val qrBytes = qrUri?.let { readValidatedAsset(it, "QR") ?: return@launch }
                 val createResponse = RetrofitClient.apiService.createPayoutAccount(
                     "Bearer $token",
                     com.quickpitik.mobile.data.remote.CreatePayoutRequest(method, accountNumber, accountName),
@@ -1783,9 +1826,13 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 }
                 if (qrBytes != null) {
                     val newId = createResponse.data.id
-                    val requestFile = qrBytes.toRequestBody("image/png".toMediaTypeOrNull(), 0, qrBytes.size)
-                    val part = MultipartBody.Part.createFormData("file", "qr.png", requestFile)
-                    RetrofitClient.apiService.uploadPayoutQr("Bearer $token", newId, part)
+                    if (!uploadPayoutQr(token, newId, qrBytes)) {
+                        // The account row DID land — refresh so it shows and a
+                        // retry doesn't create a duplicate.
+                        _settingsActionState.value = "Error: Payout was added, but its QR could not be uploaded."
+                        fetchSettings()
+                        return@launch
+                    }
                 }
                 _settingsActionState.value = "Success: Payout added."
                 fetchSettings()
@@ -1795,17 +1842,29 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
-    fun updatePayoutAccount(id: String, accountName: String, accountNumber: String) {
+    fun updatePayoutAccount(
+        id: String,
+        accountName: String,
+        accountNumber: String,
+        qrUri: String? = null,
+    ) {
         viewModelScope.launch {
             val token = sessionManager.getAccessToken() ?: return@launch
             _settingsActionState.value = "Updating payout..."
             try {
+                val qrBytes = qrUri?.let { readValidatedAsset(it, "QR") ?: return@launch }
                 val response = RetrofitClient.apiService.patchPayout(
                     "Bearer $token",
                     id,
                     com.quickpitik.mobile.data.remote.PatchPayoutRequest(accountNumber, accountName),
                 )
                 if (response.success) {
+                    if (qrBytes != null && !uploadPayoutQr(token, id, qrBytes)) {
+                        // The patch DID land — refresh so the list reflects it.
+                        _settingsActionState.value = "Error: Payout was updated, but its QR could not be uploaded."
+                        fetchSettings()
+                        return@launch
+                    }
                     _settingsActionState.value = "Success: Payout updated."
                     fetchSettings()
                 } else {
@@ -1853,24 +1912,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
-    fun uploadPayoutAccountQr(id: String, qrBytes: ByteArray) {
-        viewModelScope.launch {
-            val token = sessionManager.getAccessToken() ?: return@launch
-            _settingsActionState.value = "Uploading QR…"
-            try {
-                val requestFile = qrBytes.toRequestBody("image/png".toMediaTypeOrNull(), 0, qrBytes.size)
-                val part = MultipartBody.Part.createFormData("file", "qr.png", requestFile)
-                val response = RetrofitClient.apiService.uploadPayoutQr("Bearer $token", id, part)
-                if (response.success) {
-                    _settingsActionState.value = "Success: QR uploaded."
-                    fetchSettings()
-                } else {
-                    _settingsActionState.value = "Error: " + (response.error ?: "Failed to upload QR.")
-                }
-            } catch (e: Exception) {
-                _settingsActionState.value = "Error: " + (e.localizedMessage ?: "Connection error.")
-            }
-        }
+    private suspend fun uploadPayoutQr(token: String, id: String, bytes: ByteArray): Boolean {
+        val request = bytes.toRequestBody("image/png".toMediaTypeOrNull(), 0, bytes.size)
+        val part = MultipartBody.Part.createFormData("file", "qr.png", request)
+        return RetrofitClient.apiService.uploadPayoutQr("Bearer $token", id, part).success
     }
 
     private companion object {

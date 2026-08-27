@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,6 +66,7 @@ fun PhotographerEventShareScreen(
     val brand by viewModel.brandSettings.collectAsState()
     val photosState by viewModel.sharePhotosState.collectAsState()
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
+    var visiblePhotoLimit by rememberSaveable(event.id) { mutableStateOf(20) }
     val scope = rememberCoroutineScope()
     // Guards the lightbox download: the presigned-URL fetch plus the save is a
     // multi-second round trip, and repeat taps would queue duplicate saves.
@@ -73,10 +75,9 @@ fun PhotographerEventShareScreen(
     LaunchedEffect(event.id) {
         viewModel.fetchSharePhotos(event.id)
         // The handle is read from the shared brandSettings flow, hydrated by
-        // the VM's init + Settings/Home refreshes. fetchSettings() here fired
-        // FOUR extra requests per share-page open purely to re-read one field
-        // that was already in memory; re-fetch only if it never loaded.
-        if (viewModel.brandSettings.value == null) viewModel.fetchSettings()
+        // the VM's init + Settings refreshes; re-fetch only the one payload this
+        // screen needs if it never loaded.
+        if (viewModel.brandSettings.value == null) viewModel.fetchBrandSettings()
     }
 
     val handle = brand?.handle?.takeIf { it.isNotBlank() } ?: "your-handle"
@@ -237,7 +238,7 @@ fun PhotographerEventShareScreen(
                             )
                         }
                     } else {
-                        state.photos.chunked(2).forEachIndexed { rowIdx, rowPhotos ->
+                        state.photos.take(visiblePhotoLimit).chunked(2).forEachIndexed { rowIdx, rowPhotos ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -255,6 +256,13 @@ fun PhotographerEventShareScreen(
                                 }
                             }
                             Spacer(modifier = Modifier.height(12.dp))
+                        }
+                        if (visiblePhotoLimit < state.photos.size) {
+                            GhostCta(
+                                text = "Load more",
+                                onClick = { visiblePhotoLimit += 20 },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
                         }
                     }
                 }

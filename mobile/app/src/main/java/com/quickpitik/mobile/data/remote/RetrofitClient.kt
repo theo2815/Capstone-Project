@@ -3,8 +3,8 @@ package com.quickpitik.mobile.data.remote
 import android.content.Context
 import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.local.SessionManager
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -17,12 +17,23 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
+internal fun rewriteLoopbackUrl(url: HttpUrl, backend: HttpUrl): HttpUrl {
+    if (url.host !in setOf("localhost", "127.0.0.1")) return url
+    // Host-only swap: a presigned URL minted against a different loopback port
+    // (e.g. MinIO on :9000) must keep its own scheme + port.
+    return url.newBuilder().host(backend.host).build()
+}
+
 object RetrofitClient {
     // Compiled-in fallback. Used verbatim on a fresh install, in every release
     // build, and whenever the debug override is cleared.
     //
     // When using the Android Studio Emulator, "http://10.0.2.2:8080/" routes to your PC's backend.
     // If you use a physical phone via USB instead of Wi-Fi, run "adb reverse tcp:8080 tcp:8080".
+    //
+    // Release manifests set usesCleartextTraffic=false, so this MUST become an
+    // https origin before any release ships — with this http value a release
+    // APK cannot reach the network at all.
     const val DEFAULT_BASE_URL = "http://10.0.2.2:8080/"
 
     // The live backend origin. Was a `const val` until 2026-08-16, which meant
@@ -40,18 +51,6 @@ object RetrofitClient {
     val BASE_URL: String
         get() = _baseUrl
 
-    // Single source of truth for image URL rewriting across the photographer
-    // screens. Derived from BASE_URL so any host change (emulator → Wi-Fi IP →
-    // ngrok URL) automatically flows to every avatar/cover/banner site without
-    // a per-screen edit. Falls back to "10.0.2.2" if BASE_URL is malformed.
-    val backendHost: String
-        get() = BASE_URL.toHttpUrlOrNull()?.host ?: "10.0.2.2"
-
-    // BASE_URL without the trailing slash — for path-based image URLs that
-    // start with "/" (e.g. presigned storage paths from the backend).
-    val backendOrigin: String
-        get() = BASE_URL.trimEnd('/')
-
     // THE image-URL resolver — every AsyncImage model should pass through
     // here. Two dev-time shapes need fixing: backend-relative paths
     // ("/storage/…" → prefix the live origin) and presigned URLs minted
@@ -60,12 +59,12 @@ object RetrofitClient {
     // screen had one, so a relative path rendered broken tiles on every
     // runner surface only. (Coil's HostRewriteInterceptor still covers the
     // localhost half as a second net; the relative half only lives here.)
-    fun resolveImageUrl(url: String?): String? = when {
-        url.isNullOrBlank() -> url
-        url.startsWith("/") -> "$backendOrigin$url"
-        else -> url
-            .replace("localhost", backendHost)
-            .replace("127.0.0.1", backendHost)
+    fun resolveImageUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return url
+        if (url.startsWith("/")) return BASE_URL.trimEnd('/') + url
+        val parsed = url.toHttpUrlOrNull() ?: return url
+        val backend = BASE_URL.toHttpUrlOrNull() ?: return url
+        return rewriteLoopbackUrl(parsed, backend).toString()
     }
 
     // WebSocket origin ("ws://host:port"), derived from BASE_URL for the same
@@ -80,29 +79,9 @@ object RetrofitClient {
             return "$scheme://${url.host}:${url.port}"
         }
 
-    // Two interceptors, one per verbosity. `bodyLogger` is what we want for JSON
-    // traffic (auth, events, profile) — full request/response payloads in logcat
-    // make debugging trivial. `headersLogger` is what we MUST use for multipart
-    // photo uploads: at BODY level, OkHttp dumps every JPEG byte as a giant wall
-    // of mojibake (1 MB photo = hundreds of unreadable log lines, plus the
-    // logcat I/O itself measurably slows the upload). HEADERS keeps status code,
-    // URL, and content-length without the binary spam.
-    private val bodyLogger = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.BODY
-    }
-    private val headersLogger = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.HEADERS
-    }
-
-    // Per-request router: pick HEADERS when the outgoing body is multipart
-    // (i.e. the photo upload endpoint), BODY otherwise. Done at this layer so
-    // we don't have to remember to silence logging at every call site that
-    // streams binary — adding a new upload endpoint later "just works."
-    private val loggingInterceptor = Interceptor { chain ->
-        val request = chain.request()
-        val isMultipart = request.body?.contentType()?.type == "multipart"
-        val delegate = if (isMultipart) headersLogger else bodyLogger
-        delegate.intercept(chain)
+    // Debug-only request timing without credentials, PII, tokens, or JPEG bodies.
+    private val loggingInterceptor = HttpLoggingInterceptor().apply {
+        level = HttpLoggingInterceptor.Level.BASIC
     }
 
     // Set once from QuickPitikApp.onCreate(), which always runs before any
@@ -176,7 +155,7 @@ object RetrofitClient {
     // before bubbling up an error. 60s lets the gateway respond cleanly.
     private val okHttpClient by lazy {
         OkHttpClient.Builder()
-            .addInterceptor(loggingInterceptor)
+            .apply { if (BuildConfig.DEBUG) addInterceptor(loggingInterceptor) }
             .authenticator(TokenAuthenticator(SessionManager.getInstance(appContext)))
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
@@ -190,7 +169,7 @@ object RetrofitClient {
     // is belt-and-braces on the one call where a loop would be unrecoverable.
     private val refreshClient by lazy {
         OkHttpClient.Builder()
-            .addInterceptor(loggingInterceptor)
+            .apply { if (BuildConfig.DEBUG) addInterceptor(loggingInterceptor) }
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .build()

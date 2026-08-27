@@ -22,8 +22,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+        }
         release {
             isMinifyEnabled = false
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -87,12 +91,6 @@ dependencies {
 
     // Background Sync (WorkManager)
     implementation(libs.work.runtime.ktx)
-
-    // Camera Integration (CameraX)
-    implementation(libs.camera.core)
-    implementation(libs.camera.camera2)
-    implementation(libs.camera.lifecycle)
-    implementation(libs.camera.view)
 
     // Coil Image Loader
     implementation(libs.coil.compose)

@@ -15,12 +15,17 @@ import com.quickpitik.mobile.data.remote.PhotoAlertRequest
 import com.quickpitik.mobile.data.remote.WsFrameEnvelope
 import com.quickpitik.mobile.data.remote.WsState
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.MAX_UPLOAD_BYTES
+import com.quickpitik.mobile.data.readAtMost
 import android.net.Uri
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -90,13 +95,36 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     private val _selfies = MutableStateFlow<List<SelfieRefDto>>(emptyList())
     val selfies: StateFlow<List<SelfieRefDto>> = _selfies
 
-    fun loadSelfies() {
+    fun loadGalleryMetadata(photoAlertSlug: String?) {
         viewModelScope.launch {
-            val token = SessionManager.getInstance(getApplication()).getAccessToken() ?: return@launch
-            runCatching { RetrofitClient.apiService.getSelfies("Bearer $token") }
-                .getOrNull()
-                ?.takeIf { it.success && it.data != null }
-                ?.let { _selfies.value = it.data!! }
+            if (photoAlertSlug != null) _photoAlert.value = PhotoAlertUiState.Loading
+            val token = SessionManager.getInstance(getApplication()).getAccessToken()
+            if (token == null) {
+                if (photoAlertSlug != null) _photoAlert.value = PhotoAlertUiState.NeedsSelfie
+                return@launch
+            }
+            try {
+                // Only overwrite the cache on a real payload — a transient
+                // success=false envelope must not blank the picker grid or flip
+                // the alert card to NeedsSelfie for a registered runner.
+                val response = RetrofitClient.apiService.getSelfies("Bearer $token")
+                if (response.success && response.data != null) _selfies.value = response.data
+                val selfies = _selfies.value
+                if (photoAlertSlug == null) return@launch
+                if (selfies.isEmpty()) {
+                    _photoAlert.value = PhotoAlertUiState.NeedsSelfie
+                    return@launch
+                }
+                val status = RetrofitClient.apiService.getPhotoAlertStatus("Bearer $token", photoAlertSlug)
+                _photoAlert.value = PhotoAlertUiState.Ready(
+                    registered = status.success && status.data?.registered == true,
+                )
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (photoAlertSlug != null) {
+                    _photoAlert.value = PhotoAlertUiState.Ready(registered = false)
+                }
+            }
         }
     }
 
@@ -138,7 +166,6 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     private var liveChannelHasOpened = false
 
     init {
-        fetchPublicEvents()
         observeLivePhotos()
     }
 
@@ -282,6 +309,8 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         // so tears down / reopens on its own when this value changes. A pending
         // refresh must not fire against the newly selected event.
         liveRefreshJob?.cancel()
+        bibSearchJob?.cancel()
+        bibRequestJob?.cancel()
         liveChannelHasOpened = false
         _newPhotoCount.value = 0
         // Pre-race-day events have no gallery yet — the website never loads
@@ -305,6 +334,8 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         // As in selectEvent: the lifecycle effect closes the socket when the
         // active event id changes. Here we only drop the derived state.
         liveRefreshJob?.cancel()
+        bibSearchJob?.cancel()
+        bibRequestJob?.cancel()
         liveChannelHasOpened = false
         _newPhotoCount.value = 0
     }
@@ -314,9 +345,11 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     // refresh debounce below; a submitted query still lands within ~a third of
     // a second of the last key.
     private var bibSearchJob: Job? = null
+    private var bibRequestJob: Job? = null
 
     fun searchByBib(bib: String) {
         bibSearchJob?.cancel()
+        bibRequestJob?.cancel()
         bibSearchJob = viewModelScope.launch {
             delay(BIB_SEARCH_DEBOUNCE_MS)
             runBibSearch(bib, showLoading = true)
@@ -334,7 +367,8 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         activeBibQuery = trimmed
         isFaceSearchMode = false
         _isFiltered.value = trimmed.isNotEmpty()
-        viewModelScope.launch {
+        bibRequestJob?.cancel()
+        bibRequestJob = viewModelScope.launch {
             if (showLoading) _searchState.value = PhotosSearchState.Loading
             try {
                 val query = trimmed.ifEmpty { null }
@@ -356,6 +390,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     _searchState.value = PhotosSearchState.Error(response.error ?: "Search lookup failed.")
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 // A failed background refresh keeps the photos already on screen
                 // — only a user-initiated search is allowed to surface an error.
                 if (showLoading) {
@@ -369,6 +404,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         _isFiltered.value = false
         // Explicit tap — no reason to sit out the keystroke debounce.
         bibSearchJob?.cancel()
+        bibRequestJob?.cancel()
         runBibSearch("", showLoading = true)
     }
 
@@ -430,7 +466,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         else RetrofitClient.parseError(e)
     }
 
-    fun searchBySelfie(selfieFile: File) {
+    private suspend fun searchBySelfie(selfieFile: File) {
         val event = _activeEvent.value ?: return
         _isFiltered.value = true
         // Face results share _searchState with bib results — mark the mode so a
@@ -443,9 +479,8 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
             _searchState.value = PhotosSearchState.Error("Authentication token not found. Please log in.")
             return
         }
-        viewModelScope.launch {
-            _searchState.value = PhotosSearchState.Loading
-            try {
+        _searchState.value = PhotosSearchState.Loading
+        try {
                 val requestFile = selfieFile.asRequestBody("image/jpeg".toMediaTypeOrNull())
                 val selfiePart = MultipartBody.Part.createFormData("selfie", selfieFile.name, requestFile)
 
@@ -464,9 +499,9 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     _searchState.value =
                         PhotosSearchState.Error(humanizeFaceSearchError(err?.code, err?.message))
                 }
-            } catch (e: Exception) {
-                _searchState.value = PhotosSearchState.Error(faceSearchErrorFrom(e))
-            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            _searchState.value = PhotosSearchState.Error(faceSearchErrorFrom(e))
         }
     }
 
@@ -478,21 +513,40 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         isFaceSearchMode = true
         viewModelScope.launch {
             _searchState.value = PhotosSearchState.Loading
+            var cacheFile: File? = null
             try {
                 val resolver = getApplication<Application>().contentResolver
-                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
-                if (bytes == null || bytes.isEmpty()) {
-                    _searchState.value = PhotosSearchState.Error("Couldn't read that photo. Please try again.")
+                val file = withContext(Dispatchers.IO) {
+                    val target = File.createTempFile(
+                        "selfie_search_",
+                        ".jpg",
+                        getApplication<Application>().cacheDir,
+                    )
+                    val copied = resolver.openInputStream(uri)?.use { input ->
+                        val bytes = input.readAtMost(MAX_UPLOAD_BYTES + 1)
+                        if (bytes.size > MAX_UPLOAD_BYTES) 0L else {
+                            target.outputStream().use { it.write(bytes) }
+                            bytes.size.toLong()
+                        }
+                    } ?: 0L
+                    if (copied > 0L) target else {
+                        target.delete()
+                        null
+                    }
+                }
+                if (file == null) {
+                    _searchState.value = PhotosSearchState.Error(
+                        "Couldn't read that photo. Use an image up to 8 MB and try again.",
+                    )
                     return@launch
                 }
-                val cacheFile = File(
-                    getApplication<Application>().cacheDir,
-                    "selfie_search_${System.currentTimeMillis()}.jpg"
-                )
-                cacheFile.writeBytes(bytes)
-                searchBySelfie(cacheFile)
+                cacheFile = file
+                searchBySelfie(file)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _searchState.value = PhotosSearchState.Error(e.localizedMessage ?: "Failed to process the selfie image.")
+            } finally {
+                cacheFile?.delete()
             }
         }
     }
@@ -535,80 +589,36 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun searchByStoredSelfie() {
-        val event = _activeEvent.value ?: return
-        _isFiltered.value = true
-        isFaceSearchMode = true
-        val application = getApplication<Application>()
-        val sessionManager = SessionManager.getInstance(application)
-        val token = sessionManager.getAccessToken()
+        val cached = _selfies.value.firstOrNull { it.isPrimary }
+        if (cached != null) {
+            searchBySelfieId(cached.id)
+            return
+        }
+        // The CTA that lands here renders exactly when the cached library is
+        // empty (still loading, or the fetch failed) — re-fetch before
+        // concluding the runner has no primary selfie.
+        val token = SessionManager.getInstance(getApplication()).getAccessToken()
         if (token == null) {
             _searchState.value = PhotosSearchState.Error("Authentication token not found. Please log in.")
             return
         }
         viewModelScope.launch {
-            _searchState.value = PhotosSearchState.Loading
-            try {
-                // 1. Fetch user's selfies to find the primary selfie ID
-                val selfiesResponse = RetrofitClient.apiService.getSelfies("Bearer $token")
-                if (!selfiesResponse.success || selfiesResponse.data == null) {
-                    _searchState.value = PhotosSearchState.Error(selfiesResponse.error ?: "Failed to retrieve user selfies.")
-                    return@launch
-                }
-                
-                val primarySelfie = selfiesResponse.data.find { it.isPrimary }
-                if (primarySelfie == null) {
-                    _searchState.value = PhotosSearchState.Error("No primary selfie set. Please upload a selfie and set it as primary first.")
-                    return@launch
-                }
-                
-                // 2. Perform the JSON search using the primary selfie's ID
-                val response = RetrofitClient.apiService.searchPhotosByFaceJson(
-                    token = "Bearer $token",
-                    slug = event.slug,
-                    request = SearchByFaceJsonRequest(selfieId = primarySelfie.id)
-                )
-                if (response.success && response.data != null) {
-                    _searchState.value = PhotosSearchState.Success(
-                        photos = response.data.items,
-                        total = response.data.items.size.toLong(),
-                    )
-                } else {
-                    val err = response.errors?.firstOrNull()
-                    _searchState.value =
-                        PhotosSearchState.Error(humanizeFaceSearchError(err?.code, err?.message))
-                }
+            val primary = try {
+                val response = RetrofitClient.apiService.getSelfies("Bearer $token")
+                if (response.success && response.data != null) _selfies.value = response.data
+                _selfies.value.firstOrNull { it.isPrimary }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _searchState.value = PhotosSearchState.Error(faceSearchErrorFrom(e))
-            }
-        }
-    }
-
-    // Loads the opt-in state for the active event. Reuses the selfie library the
-    // face search does: no selfie → NeedsSelfie (prompt to add one); otherwise
-    // Ready(registered) from GET /photo-alert.
-    fun loadPhotoAlert(slug: String) {
-        viewModelScope.launch {
-            _photoAlert.value = PhotoAlertUiState.Loading
-            val token = SessionManager.getInstance(getApplication()).getAccessToken()
-            if (token == null) {
-                _photoAlert.value = PhotoAlertUiState.NeedsSelfie
                 return@launch
             }
-            try {
-                val selfies = RetrofitClient.apiService.getSelfies("Bearer $token")
-                val hasSelfie = selfies.success && !selfies.data.isNullOrEmpty()
-                if (!hasSelfie) {
-                    _photoAlert.value = PhotoAlertUiState.NeedsSelfie
-                    return@launch
-                }
-                val status = RetrofitClient.apiService.getPhotoAlertStatus("Bearer $token", slug)
-                val registered = status.success && status.data?.registered == true
-                _photoAlert.value = PhotoAlertUiState.Ready(registered = registered)
-            } catch (e: Exception) {
-                // Couldn't confirm — still let the runner try; a genuinely
-                // selfie-less register surfaces as NeedsSelfie in togglePhotoAlert.
-                _photoAlert.value = PhotoAlertUiState.Ready(registered = false)
+            if (primary == null) {
+                _searchState.value = PhotosSearchState.Error(
+                    "No primary selfie set. Please upload a selfie and set it as primary first.",
+                )
+                return@launch
             }
+            searchBySelfieId(primary.id)
         }
     }
 

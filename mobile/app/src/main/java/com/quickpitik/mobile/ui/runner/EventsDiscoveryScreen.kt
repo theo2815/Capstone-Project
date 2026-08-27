@@ -95,10 +95,11 @@ fun EventsDiscoveryScreen(
     // race log in sync. Toggle feedback surfaces as a snackbar.
     val snackbarHostState = remember { SnackbarHostState() }
     val savedMessage by savedEventsViewModel.message.collectAsState()
-    // Refetch on every screen entry — the VM's `init` only runs once at process
-    // start, so an event the admin published mid-session would never appear
-    // otherwise. The VM keeps the existing list visible during the refetch
-    // (Loading state is only assigned when no prior Success exists).
+    // Refetch on every screen entry — the VM is graph-scoped and survives all
+    // navigation until logout, so an event the admin published mid-session
+    // would otherwise never appear (web /events refetches every visit). The VM
+    // keeps the existing list visible during the refetch (Loading is only
+    // assigned when no prior Success exists), so this is stale-while-revalidate.
     LaunchedEffect(Unit) { viewModel.fetchPublicEvents() }
     // Saved events + the runner inbox are RUNNER-role-gated server-side — a
     // photographer browsing in runner view (ViewMode) gets neither: the fetch
@@ -309,10 +310,31 @@ fun EventsDiscoveryScreen(
                         SEGMENTS.forEach { segment ->
                             val items = withState.filter { it.second == segment.state }
                             if (items.isNotEmpty()) {
+                                // Explicit key: every forEach iteration shares
+                                // one composite key hash, so positional storage
+                                // would restore counts onto the wrong segment.
+                                var visibleCount by rememberSaveable(
+                                    key = "segment-count-${segment.state.name}",
+                                ) {
+                                    mutableStateOf(FLAT_PAGE_SIZE)
+                                }
                                 if (rendered > 0) Spacer(Modifier.height(28.dp))
                                 SegmentHeader(segment, items.size)
                                 Spacer(Modifier.height(12.dp))
-                                EventGrid(items, savedIds, onEventSelected, savedEventsViewModel::toggle)
+                                EventGrid(
+                                    items.take(visibleCount),
+                                    savedIds,
+                                    onEventSelected,
+                                    savedEventsViewModel::toggle,
+                                )
+                                if (items.size > visibleCount) {
+                                    Spacer(Modifier.height(16.dp))
+                                    GhostCta(
+                                        text = "LOAD MORE",
+                                        onClick = { visibleCount += FLAT_PAGE_SIZE },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                                 rendered++
                             }
                         }

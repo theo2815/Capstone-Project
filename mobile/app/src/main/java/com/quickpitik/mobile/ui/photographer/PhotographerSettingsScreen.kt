@@ -235,51 +235,20 @@ fun PhotographerSettingsScreen(
     var coverUri by remember { mutableStateOf<String?>(null) }
     var watermarkUri by remember { mutableStateOf<String?>(null) }
 
-    var avatarBytes by remember { mutableStateOf<ByteArray?>(null) }
-    var coverBytes by remember { mutableStateOf<ByteArray?>(null) }
-    var watermarkBytes by remember { mutableStateOf<ByteArray?>(null) }
-
     val avatarPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        uri?.let {
-            try {
-                context.contentResolver.openInputStream(it)?.use { stream ->
-                    avatarBytes = stream.readBytes()
-                    avatarUri = it.toString()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to load image", Toast.LENGTH_SHORT).show()
-            }
-        }
+        uri?.let { avatarUri = it.toString() }
     }
     val coverPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        uri?.let {
-            try {
-                context.contentResolver.openInputStream(it)?.use { stream ->
-                    coverBytes = stream.readBytes()
-                    coverUri = it.toString()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to load image", Toast.LENGTH_SHORT).show()
-            }
-        }
+        uri?.let { coverUri = it.toString() }
     }
     val watermarkPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        uri?.let {
-            try {
-                context.contentResolver.openInputStream(it)?.use { stream ->
-                    watermarkBytes = stream.readBytes()
-                    watermarkUri = it.toString()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to load image", Toast.LENGTH_SHORT).show()
-            }
-        }
+        uri?.let { watermarkUri = it.toString() }
     }
 
     LaunchedEffect(actionMessage) {
@@ -289,9 +258,6 @@ fun PhotographerSettingsScreen(
                 avatarUri = null
                 coverUri = null
                 watermarkUri = null
-                avatarBytes = null
-                coverBytes = null
-                watermarkBytes = null
             }
             viewModel.clearSettingsActionState()
         }
@@ -445,9 +411,9 @@ fun PhotographerSettingsScreen(
                         regionCode = regionCode,
                         provinceCode = provinceCode,
                         socialUrl = "",
-                        avatarBytes = avatarBytes,
-                        coverBytes = coverBytes,
-                        watermarkBytes = watermarkBytes,
+                        avatarUri = avatarUri,
+                        coverUri = coverUri,
+                        watermarkUri = watermarkUri,
                         brandColor = brandColor,
                     )
                 },
@@ -475,13 +441,11 @@ fun PhotographerSettingsScreen(
         PayoutEditorSheet(
             mode = mode,
             onDismiss = { payoutSheetMode = null },
-            onConfirm = { method, accountName, accountNumber, qrBytes ->
+            onConfirm = { method, accountName, accountNumber, qrUri ->
                 when (mode) {
-                    is PayoutSheetMode.Add -> viewModel.addPayoutAccount(method, accountName, accountNumber, qrBytes)
-                    is PayoutSheetMode.Edit -> {
-                        viewModel.updatePayoutAccount(mode.account.id, accountName, accountNumber)
-                        if (qrBytes != null) viewModel.uploadPayoutAccountQr(mode.account.id, qrBytes)
-                    }
+                    is PayoutSheetMode.Add -> viewModel.addPayoutAccount(method, accountName, accountNumber, qrUri)
+                    is PayoutSheetMode.Edit ->
+                        viewModel.updatePayoutAccount(mode.account.id, accountName, accountNumber, qrUri)
                 }
                 payoutSheetMode = null
             },
@@ -1483,9 +1447,8 @@ private fun SocialEditorSheet(
 private fun PayoutEditorSheet(
     mode: PayoutSheetMode,
     onDismiss: () -> Unit,
-    onConfirm: (method: String, accountName: String, accountNumber: String, qrBytes: ByteArray?) -> Unit,
+    onConfirm: (method: String, accountName: String, accountNumber: String, qrUri: String?) -> Unit,
 ) {
-    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     var method by remember(mode) {
@@ -1504,23 +1467,13 @@ private fun PayoutEditorSheet(
             if (mode is PayoutSheetMode.Edit) formatPayoutNumber(mode.account.method, mode.account.accountNumber) else "",
         )
     }
-    var qrBytes by remember(mode) { mutableStateOf<ByteArray?>(null) }
     var qrUri by remember(mode) { mutableStateOf<String?>(null) }
     var methodMenuExpanded by remember { mutableStateOf(false) }
 
     val qrPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        uri?.let {
-            try {
-                context.contentResolver.openInputStream(it)?.use { stream ->
-                    qrBytes = stream.readBytes()
-                    qrUri = it.toString()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to load QR image", Toast.LENGTH_SHORT).show()
-            }
-        }
+        uri?.let { qrUri = it.toString() }
     }
 
     val numberDigits = accountNumberInput.filter { it.isDigit() }
@@ -1625,7 +1578,7 @@ private fun PayoutEditorSheet(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (qrBytes != null) "Will replace on save" else "Pick a PNG of your QR",
+                            text = if (qrUri != null) "Will replace on save" else "Pick a PNG of your QR",
                             color = Ink,
                             style = Typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
@@ -1649,7 +1602,7 @@ private fun PayoutEditorSheet(
             Spacer(modifier = Modifier.height(20.dp))
             PrimaryCta(
                 text = if (mode is PayoutSheetMode.Edit) "Save changes" else "Add method",
-                onClick = { onConfirm(method, accountName.trim(), numberDigits, qrBytes) },
+                onClick = { onConfirm(method, accountName.trim(), numberDigits, qrUri) },
                 enabled = canSubmit,
                 modifier = Modifier.fillMaxWidth(),
             )

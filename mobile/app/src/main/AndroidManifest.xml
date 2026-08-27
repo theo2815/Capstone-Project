@@ -39,7 +39,7 @@
 
     <application
         android:name=".QuickPitikApp"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -47,12 +47,11 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.QuickPitikMobile"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="${usesCleartextTraffic}"
         tools:targetApi="31">
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="@string/app_name"
             android:launchMode="singleTask"
             android:theme="@style/Theme.QuickPitikMobile">
             <intent-filter>
@@ -95,12 +94,16 @@
             Holds the process foreground-alive for the duration of a USB ingest
             (live shutter watch or card import). Started and stopped by
             PhotographerDashboardViewModel; see TetherIngestService for why it
-            does not own the ingest loop itself.
+            does not own the ingest loop itself. The lint suppression covers
+            the connected-device runtime prerequisite supplied by
+            UsbManager.requestPermission(); lint only recognizes manifest-based
+            prerequisites here.
         -->
         <service
             android:name=".service.TetherIngestService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice"
+            tools:ignore="ForegroundServicePermission" />
     </application>
 
 </manifest>

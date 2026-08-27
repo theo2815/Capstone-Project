@@ -15,7 +15,6 @@ retrofit = "2.9.0"
 okhttp = "4.12.0"
 room = "2.6.1"
 work = "2.9.0"
-camerax = "1.3.3"
 coil = "2.6.0"
 navigationCompose = "2.7.7"
 browser = "1.8.0"
@@ -53,12 +52,6 @@ room-compiler = { group = "androidx.room", name = "room-compiler", version.ref =
 
 # WorkManager
 work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
-
-# CameraX
-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
 
 # Coil (Image Loading)
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }

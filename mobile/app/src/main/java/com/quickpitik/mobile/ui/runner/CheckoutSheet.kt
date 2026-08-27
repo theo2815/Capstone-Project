@@ -27,6 +27,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.quickpitik.mobile.ui.auth.validateEmail
 import com.quickpitik.mobile.ui.theme.*
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
+internal fun isSafeCheckoutUrl(url: String): Boolean = url.toHttpUrlOrNull()?.isHttps == true
 
 // Mobile mirror of website `CheckoutModal`. Opens from the CartSheet's
 // "Continue to checkout" CTA. Once the BE returns the PayMongo redirect URL
@@ -84,6 +87,10 @@ fun CheckoutSheet(
         if (!redirectingSuccess) return@LaunchedEffect
         val url = (checkoutState as? CheckoutState.Success)?.order?.redirectUrl
             ?: return@LaunchedEffect
+        if (!isSafeCheckoutUrl(url)) {
+            cartViewModel.setCheckoutError("Checkout returned an unsafe payment link. Please try again.")
+            return@LaunchedEffect
+        }
         try {
             try {
                 CustomTabsIntent.Builder()
