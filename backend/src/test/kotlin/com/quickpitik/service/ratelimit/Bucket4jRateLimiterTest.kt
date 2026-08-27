@@ -1,6 +1,7 @@
 package com.quickpitik.service.ratelimit
 
 import com.quickpitik.config.RateLimitProperties
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Test
 import java.time.Duration
 import kotlin.test.assertEquals
@@ -21,6 +22,7 @@ class Bucket4jRateLimiterTest {
     fun `allows up to capacity then denies with a positive retry-after`() {
         val limiter = Bucket4jRateLimiter(
             RateLimitProperties(authLogin = policy(3, Duration.ofMinutes(15))),
+            SimpleMeterRegistry(),
         )
         repeat(3) {
             assertTrue(limiter.tryAcquire(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, "1.2.3.4").allowed)
@@ -37,6 +39,7 @@ class Bucket4jRateLimiterTest {
                 authLogin = policy(1, Duration.ofMinutes(15)),
                 authRegister = policy(1, Duration.ofMinutes(15)),
             ),
+            SimpleMeterRegistry(),
         )
         assertTrue(limiter.tryAcquire(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, "a").allowed)
         assertFalse(limiter.tryAcquire(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, "a").allowed)
@@ -49,7 +52,7 @@ class Bucket4jRateLimiterTest {
     fun `every declared policy resolves to a configured bucket`() {
         // A policy constant with no branch in policyFor() would throw here —
         // this is the net that catches a call-site/config mismatch.
-        val limiter = Bucket4jRateLimiter(RateLimitProperties())
+        val limiter = Bucket4jRateLimiter(RateLimitProperties(), SimpleMeterRegistry())
         Bucket4jRateLimiter.ALL_POLICIES.forEach { policy ->
             assertTrue(limiter.tryAcquire(policy, "probe").allowed, "policy $policy denied its first token")
         }
@@ -57,7 +60,7 @@ class Bucket4jRateLimiterTest {
 
     @Test
     fun `unknown policy fails loudly instead of silently defaulting`() {
-        val limiter = Bucket4jRateLimiter(RateLimitProperties())
+        val limiter = Bucket4jRateLimiter(RateLimitProperties(), SimpleMeterRegistry())
         assertFailsWith<IllegalStateException> { limiter.tryAcquire("no-such-policy", "x") }
     }
 
@@ -70,6 +73,7 @@ class Bucket4jRateLimiterTest {
                 // 15-minute window — stays drained for the whole test.
                 authRegister = policy(2, Duration.ofMinutes(15)),
             ),
+            SimpleMeterRegistry(),
         )
         limiter.tryAcquire(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, "fast")
         limiter.tryAcquire(Bucket4jRateLimiter.POLICY_AUTH_REGISTER, "slow")

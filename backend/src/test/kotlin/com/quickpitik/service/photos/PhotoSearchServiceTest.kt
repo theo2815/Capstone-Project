@@ -6,6 +6,7 @@ import com.quickpitik.config.AiApiProperties
 import com.quickpitik.dto.ai.FaceMatch
 import com.quickpitik.dto.ai.FacesSearchResult
 import com.quickpitik.dto.photos.PhotoDto
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiApiException
 import org.junit.jupiter.api.BeforeEach
@@ -171,6 +172,7 @@ class PhotoSearchServiceTest {
             aiApiClient,
             AiApiProperties(enabled = enabled, searchFallbackOnError = fallback),
             photoService,
+            SimpleMeterRegistry(),
         )
 
     /**

@@ -25,6 +25,11 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-websocket")
+	// Health + Micrometer metrics (2026-08-27 observability pass): /actuator/health
+	// is public, everything else ADMIN-only (SecurityConfig). Brings Hikari/JVM/
+	// HTTP-server metrics for free plus the qp.* instruments (upload, dedup,
+	// indexing outcomes, AI call latency, rate-limit denials, watermark cache).
+	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 	implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
 	implementation("org.flywaydb:flyway-core")

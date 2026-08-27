@@ -18,6 +18,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.hibernate.exception.ConstraintViolationException
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -94,7 +95,7 @@ class PhotoUploadServiceTest {
         watermarkService,
         // Real cache over the mocked storage — first get() always calls through,
         // so the existing getBytes stubs and verifies keep working.
-        WatermarkLogoCache(storageService),
+        WatermarkLogoCache(storageService, SimpleMeterRegistry()),
         eventPublisher,
         // Real template over a stubbed manager: execute { } runs the callback
         // inline (and rethrows), keeping these unit tests transaction-free. The
@@ -105,6 +106,7 @@ class PhotoUploadServiceTest {
                 Mockito.`when`(it.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
             },
         ),
+        SimpleMeterRegistry(),
     )
 
     private fun event(id: UUID = eventId, name: String = "Cebu Marathon 2026"): Event =

@@ -11,6 +11,7 @@ import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.PhotoIndexedEvent
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
@@ -37,6 +38,7 @@ class PhotoIndexingService(
     private val aiProperties: AiProperties,
     private val eventPublisher: ApplicationEventPublisher,
     private val transactionTemplate: TransactionTemplate,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -107,14 +109,16 @@ class PhotoIndexingService(
         var facesOk = false
         var facesTransport = false
         try {
-            val enroll = aiApiClient.facesEnroll(
-                file = bytes,
-                contentType = contentType,
-                filename = filename,
-                personName = photo.id.toString(),
-                personId = null,
-                eventId = photo.eventId,
-            )
+            val enroll = meterRegistry.timer("qp.ai.call", "op", "enroll").recordCallable {
+                aiApiClient.facesEnroll(
+                    file = bytes,
+                    contentType = contentType,
+                    filename = filename,
+                    personName = photo.id.toString(),
+                    personId = null,
+                    eventId = photo.eventId,
+                )
+            }!!
             personId = enroll.person_id
             facesOk = true
         } catch (ex: AiApiException) {
@@ -134,7 +138,9 @@ class PhotoIndexingService(
         var bibsOk = false
         var bibsTransport = false
         try {
-            val result = aiApiClient.bibsRecognize(bytes, contentType, filename)
+            val result = meterRegistry.timer("qp.ai.call", "op", "bib").recordCallable {
+                aiApiClient.bibsRecognize(bytes, contentType, filename)
+            }!!
             // Group only the QUALIFYING detections by normalized bib number and
             // store the max confidence among them — a re-lookup over the full
             // (unfiltered) list could otherwise persist a below-threshold value
@@ -162,6 +168,16 @@ class PhotoIndexingService(
         )
     }
 
+    private fun recordOutcome(outcome: String) {
+        meterRegistry.counter(
+            "qp.indexing.outcome",
+            "outcome",
+            outcome,
+            "provider",
+            aiProperties.provider.name.lowercase(),
+        ).increment()
+    }
+
     private fun writeOutcome(photoId: UUID, outcome: InferenceOutcome) {
         val photo = photoRepository.findById(photoId).orElse(null) ?: return
         if (photo.indexingStatus == IndexingStatus.INDEXED ||
@@ -184,6 +200,7 @@ class PhotoIndexingService(
             photo.indexingError = outcome.bytesUnavailable
             photo.indexedAt = null
             photoRepository.save(photo)
+            recordOutcome("failed")
             return
         }
 
@@ -196,6 +213,7 @@ class PhotoIndexingService(
             photo.indexingStatus = IndexingStatus.PENDING
             photo.indexingError = outcome.error
             photoRepository.save(photo)
+            recordOutcome("pending_transport")
             log.warn("Indexing {}: provider unreachable; back to PENDING, attempt not consumed", photoId)
             return
         }
@@ -230,6 +248,7 @@ class PhotoIndexingService(
             )
         }
         photoRepository.save(photo)
+        recordOutcome(photo.indexingStatus.name.lowercase())
 
         // Notify the live gallery even on PARTIAL so the bib (if any) surfaces.
         // Published inside the phase-C transaction so AFTER_COMMIT fires.

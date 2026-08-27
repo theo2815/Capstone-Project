@@ -1,6 +1,7 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.service.storage.StorageService
+import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.stereotype.Service
 import java.time.Duration
 import java.time.Instant
@@ -16,12 +17,17 @@ import java.util.concurrent.ConcurrentHashMap
 @Service
 class WatermarkLogoCache(
     private val storageService: StorageService,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val cache = ConcurrentHashMap<String, Entry>()
 
     fun get(key: String): ByteArray {
         val hit = cache[key]?.takeIf { Duration.between(it.loadedAt, Instant.now()) < TTL }
-        if (hit != null) return hit.bytes
+        if (hit != null) {
+            meterRegistry.counter("qp.watermark.cache", "result", "hit").increment()
+            return hit.bytes
+        }
+        meterRegistry.counter("qp.watermark.cache", "result", "miss").increment()
         val bytes = storageService.getBytes(key)
         // ponytail: crude size bound — clear everything past the cap instead of
         // LRU; entries repopulate on the next upload. Swap for a real cache if

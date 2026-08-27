@@ -272,6 +272,14 @@ app:
       connect-timeout: PT5S
       read-timeout: PT15S
 
+# Actuator: /actuator/health is a public liveness probe; metrics + info need
+# an ADMIN bearer (SecurityConfig). Nothing else is exposed over the web.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
 # Generated OpenAPI spec + Swagger UI (springdoc). ON by default: the point of
 # the surface is local exploration and the adviser demo, and this service has no
 # production deployment yet. Set API_DOCS_ENABLED=false when one exists —

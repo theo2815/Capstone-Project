@@ -13,6 +13,7 @@ import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.PhotoIndexedEvent
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -61,7 +62,9 @@ class PhotoIndexingServiceTest {
         storage = Mockito.mock(StorageService::class.java)
         aiClient = Mockito.mock(AiApiClient::class.java)
         publisher = Mockito.mock(ApplicationEventPublisher::class.java)
-        service = PhotoIndexingService(photoRepo, storage, aiClient, props(), AiProperties(), publisher, template())
+        service = PhotoIndexingService(
+            photoRepo, storage, aiClient, props(), AiProperties(), publisher, template(), SimpleMeterRegistry(),
+        )
     }
 
     private fun photo(status: IndexingStatus = IndexingStatus.PENDING): Photo =
@@ -202,8 +205,9 @@ class PhotoIndexingServiceTest {
     fun `ai-api disabled - SKIPPED, no calls`() {
         val p = photo()
         Mockito.`when`(photoRepo.findById(p.id)).thenReturn(Optional.of(p))
-        val disabled =
-            PhotoIndexingService(photoRepo, storage, aiClient, props(enabled = false), AiProperties(), publisher, template())
+        val disabled = PhotoIndexingService(
+            photoRepo, storage, aiClient, props(enabled = false), AiProperties(), publisher, template(), SimpleMeterRegistry(),
+        )
 
         disabled.index(p.id)
 

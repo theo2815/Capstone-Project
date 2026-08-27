@@ -3,6 +3,7 @@ package com.quickpitik.service.ratelimit
 import com.quickpitik.config.RateLimitProperties
 import io.github.bucket4j.Bandwidth
 import io.github.bucket4j.Bucket
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.scheduling.annotation.Scheduled
@@ -18,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap
 @ConditionalOnProperty(prefix = "app.rate-limit", name = ["enabled"], havingValue = "true")
 class Bucket4jRateLimiter(
     private val properties: RateLimitProperties,
+    private val meterRegistry: MeterRegistry,
 ) : RateLimiter {
     private val log = LoggerFactory.getLogger(javaClass)
     private val buckets: ConcurrentHashMap<String, Bucket> = ConcurrentHashMap()
@@ -32,6 +34,7 @@ class Bucket4jRateLimiter(
                 remaining = probe.remainingTokens,
             )
         } else {
+            meterRegistry.counter("qp.ratelimit.denied", "policy", policy).increment()
             RateLimiter.Decision(
                 allowed = false,
                 retryAfter = Duration.ofNanos(probe.nanosToWaitForRefill),

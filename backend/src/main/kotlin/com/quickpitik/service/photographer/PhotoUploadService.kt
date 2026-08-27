@@ -23,6 +23,8 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.PhotoPublishedEvent
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Timer
 import org.hibernate.exception.ConstraintViolationException
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
@@ -54,6 +56,7 @@ class PhotoUploadService(
     private val watermarkLogoCache: WatermarkLogoCache,
     private val eventPublisher: ApplicationEventPublisher,
     private val transactionTemplate: TransactionTemplate,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -63,6 +66,10 @@ class PhotoUploadService(
     // -day concurrent uploads exhausted the pool that way. Only the short
     // persist block at the end runs in a transaction (TransactionTemplate).
     fun upload(photographerId: UUID, eventId: UUID, file: MultipartFile): UploadedPhotoDto {
+        // Times SUCCESSFUL new-photo uploads only (dedup short-circuits and
+        // validation rejects return before the stop) — the number that matters
+        // for marathon-day capacity planning.
+        val timerSample = Timer.start(meterRegistry)
         val event = eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         if (event.status !in UPLOADABLE_STATUSES) {
@@ -142,14 +149,17 @@ class PhotoUploadService(
         val contentHash = sha256Hex(bytes)
         photoRepository.findFirstByPhotographerIdAndContentHash(photographerId, contentHash)?.let { existing ->
             if (existing.eventId == eventId) {
+                meterRegistry.counter("qp.upload.dedup", "outcome", "same_event").increment()
                 return existingPhotoDto(existing)
             }
+            meterRegistry.counter("qp.upload.dedup", "outcome", "different_event").increment()
             val otherEvent = eventRepository.findById(existing.eventId).orElse(null)
             throw ConflictException(
                 code = ErrorCodes.PHOTO_DUPLICATE_DIFFERENT_EVENT,
                 message = "This photo already exists in your event '${otherEvent?.name ?: "another event"}'.",
             )
         }
+        meterRegistry.counter("qp.upload.dedup", "outcome", "new").increment()
 
         // Blur culling is desktop-only (BatchMyPhotos). Web upload assumes
         // photos have already been culled by the photographer's desktop
@@ -346,6 +356,7 @@ class PhotoUploadService(
         // clients treat it as informational. "none" when ai-api is disabled.
         val aiDetectionStatus = if (aiApiProperties.enabled) "pending" else "none"
 
+        timerSample.stop(meterRegistry.timer("qp.upload.duration"))
         return UploadedPhotoDto(
             id = photoId,
             status = "live",

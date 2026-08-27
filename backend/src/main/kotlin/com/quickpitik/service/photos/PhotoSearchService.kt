@@ -8,6 +8,7 @@ import com.quickpitik.dto.photos.PhotoDto
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.ai.FaceBibProvider
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
@@ -18,6 +19,7 @@ class PhotoSearchService(
     private val aiApiClient: FaceBibProvider,
     private val aiApiProperties: AiApiProperties,
     private val photoService: PhotoService,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -50,14 +52,16 @@ class PhotoSearchService(
         }
         val threshold = aiApiProperties.faceMatchThresholdDefault
         val matches = try {
-            aiApiClient.facesSearch(
-                file = selfieBytes,
-                contentType = contentType,
-                filename = filename,
-                eventId = eventId,
-                threshold = threshold,
-                topK = 50,
-            )
+            meterRegistry.timer("qp.ai.call", "op", "search").recordCallable {
+                aiApiClient.facesSearch(
+                    file = selfieBytes,
+                    contentType = contentType,
+                    filename = filename,
+                    eventId = eventId,
+                    threshold = threshold,
+                    topK = 50,
+                )
+            }!!
         } catch (ex: Exception) {
             if (allowFallbackOnError && aiApiProperties.searchFallbackOnError) {
                 log.warn(
