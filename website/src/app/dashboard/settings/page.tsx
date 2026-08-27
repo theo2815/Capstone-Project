@@ -25,6 +25,7 @@ import { Modal } from "@/components/ui/modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { useToast } from "@/hooks/use-toast";
+import { ApiError } from "@/lib/api";
 import { uploadAvatar } from "@/lib/api-avatar";
 import {
   deletePayoutAccount,
@@ -593,9 +594,17 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         const labels = Array.from(
           new Set(failures.map((f) => f.label)),
         ).join(", ");
+        // Surface the backend's own error when there is one — a 429 or
+        // validation reject is not a connection problem, and hiding the
+        // message sent the photographer down the wrong debugging path.
+        const backendMessage = failures
+          .map((f) => (f.r as PromiseRejectedResult).reason)
+          .find((reason) => reason instanceof ApiError)?.message;
         showToast({
           kind: "error",
-          message: `Couldn't save ${labels}. Check your connection and try again.`,
+          message: backendMessage
+            ? `Couldn't save ${labels}. ${backendMessage}`
+            : `Couldn't save ${labels}. Check your connection and try again.`,
         });
       }
     } finally {

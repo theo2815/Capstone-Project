@@ -17,10 +17,6 @@ import {
 } from "@/lib/api-orders";
 import type { OrderPhotoDetail } from "@/types/order";
 import { ROUTES } from "@/lib/constants";
-import {
-  appendDownloadDisposition,
-  buildPhotoDownloadFilename,
-} from "@/lib/download-helpers";
 import { cn } from "@/lib/utils";
 
 // /orders/return — landing page PayMongo redirects to after hosted checkout.
@@ -314,10 +310,9 @@ function PhotoCard({
   index: number;
   variant: PhotoCardVariant;
 }) {
-  const filename = buildPhotoDownloadFilename(photo);
-  const downloadUrl = photo.downloadUrl
-    ? appendDownloadDisposition(photo.downloadUrl, filename)
-    : null;
+  // Disposition + filename are baked into the signed downloadUrl by the
+  // backend (appending params client-side breaks the SigV4 signature on R2).
+  const downloadUrl = photo.downloadUrl ?? null;
   const label = photo.bib ? `BIB ${photo.bib}` : "Untagged";
   const previewSrc = photo.previewUrl || photo.thumbnailUrl;
 
@@ -349,7 +344,7 @@ function PhotoCard({
       {downloadUrl ? (
         <a
           href={downloadUrl}
-          download={filename}
+          download
           className={cn(
             "group inline-flex w-full items-center justify-center gap-2 px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
             variant === "primary"

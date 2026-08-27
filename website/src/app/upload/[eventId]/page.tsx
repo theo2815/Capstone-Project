@@ -566,13 +566,16 @@ function UploadForm({ event }: { event: ListEvent }) {
           );
         })
         .catch((err: Error & { code?: string }) => {
-          // Backend duplicate-rejection codes are terminal — the same bytes
-          // will always be rejected, so don't offer a retry (mirrors the mobile
+          // Codes where the same bytes will always be rejected — duplicates,
+          // the ≥80MP pixel-bomb guard (415 UNSUPPORTED_MEDIA_TYPE), oversize —
+          // are terminal: don't offer a retry (mirrors the mobile
           // PhotoUploadWorker terminal-code guard). The pre-flight check catches
-          // these first; this is the fallback for when it was skipped or failed.
+          // duplicates first; this is the fallback for when it was skipped.
           const terminal =
             err.code === "PHOTO_DUPLICATE_DIFFERENT_EVENT" ||
-            err.code === "PHOTO_DUPLICATE_SAME_EVENT";
+            err.code === "PHOTO_DUPLICATE_SAME_EVENT" ||
+            err.code === "UNSUPPORTED_MEDIA_TYPE" ||
+            err.code === "PAYLOAD_TOO_LARGE";
           setEntries((prev) =>
             prev.map((p) =>
               p.id === entry.id

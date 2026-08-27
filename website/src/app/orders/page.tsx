@@ -18,10 +18,6 @@ import {
   withdrawDispute,
   type RunnerDispute,
 } from "@/lib/api-orders";
-import {
-  appendDownloadDisposition,
-  buildPhotoDownloadFilename,
-} from "@/lib/download-helpers";
 import { type MockOrder } from "@/store/orders-store";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirmation } from "@/hooks/use-confirmation";
@@ -441,13 +437,12 @@ function ReceiptRow({
   function handleDownloadOne(id: string) {
     const photo = detail?.photos.find((p) => p.id === id);
     if (!photo?.downloadUrl) return;
-    // appendDownloadDisposition flips the response to
-    // Content-Disposition: attachment so mobile Safari (which ignores
-    // cross-origin `<a download>`) and desktop both save instead of
-    // navigating to the image. Same plumbing as the /orders/return cards.
-    const filename = buildPhotoDownloadFilename(photo);
-    const url = appendDownloadDisposition(photo.downloadUrl, filename);
-    triggerDownload(url, filename);
+    // The backend bakes Content-Disposition: attachment + filename INTO the
+    // signed downloadUrl (LocalFs query params / S3 response-content-disposition)
+    // so mobile Safari (which ignores cross-origin `<a download>`) and desktop
+    // both save instead of navigating. Appending our own params here would
+    // break the SigV4 signature under S3/R2 — don't.
+    triggerDownload(photo.downloadUrl);
     showToast({
       kind: "success",
       message: `Downloading ${id.replace(/^mock-/, "")}…`,
