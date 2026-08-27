@@ -5,20 +5,30 @@ import java.time.Duration
 
 @ConfigurationProperties(prefix = "app.rate-limit")
 data class RateLimitProperties(
-    val enabled: Boolean = false,
+    val enabled: Boolean = true,
     val photographerUpload: Policy = Policy(capacity = 600, refillPeriod = Duration.ofMinutes(1)),
     val publicGallery: Policy = Policy(capacity = 60, refillPeriod = Duration.ofMinutes(1)),
-    // Runner photo search (face + bib). Each face search forwards an image to
-    // ai-api and burns GPU inference, so it is far more expensive than an
-    // ordinary read. 10/min is generous for a human trying a few selfies.
-    val photoSearch: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(1)),
-    // Pre-auth endpoints — keyed by client IP since there's no userId yet.
-    // Per-minute caps are sized for normal humans plus a small retry cushion;
-    // anything beyond is credential-stuffing / email-bombing / token-brute.
-    val authLogin: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(1)),
-    val authRegister: Policy = Policy(capacity = 5, refillPeriod = Duration.ofMinutes(1)),
-    val authForgotPassword: Policy = Policy(capacity = 3, refillPeriod = Duration.ofMinutes(1)),
-    val authResetPassword: Policy = Policy(capacity = 5, refillPeriod = Duration.ofMinutes(1)),
+    // NFR-S-11: face/bib photo search 30 req / 15 min. Each face search burns
+    // AI inference, so it costs far more than an ordinary read. bucket4j's
+    // greedy refill = burst of 30, then ~1 token / 30 s.
+    val photoSearch: Policy = Policy(capacity = 30, refillPeriod = Duration.ofMinutes(15)),
+    // NFR-S-11: auth endpoints 10 req / 15 min by source IP — burst of 10,
+    // then ~1 token / 90 s. Anything past that is credential stuffing, email
+    // bombing, or token brute-force, not a human retrying.
+    val authLogin: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(15)),
+    val authRegister: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(15)),
+    val authForgotPassword: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(15)),
+    val authResetPassword: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(15)),
+    // Guest checkout mints a PayMongo session per call — bound the burn rate
+    // per IP.
+    val orderCreate: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(1)),
+    // Public token-gated bundle download streams one S3 GET per photo + zip
+    // CPU per call.
+    val bundleDownload: Policy = Policy(capacity = 6, refillPeriod = Duration.ofMinutes(1)),
+    // Authenticated small-file uploads (avatar / selfie / photographer cover /
+    // watermark / payout QR) share one per-user bucket — selfie uploads can
+    // trigger AI quality inference, the rest are storage writes.
+    val mediaUpload: Policy = Policy(capacity = 20, refillPeriod = Duration.ofMinutes(1)),
 ) {
     data class Policy(
         val capacity: Long,

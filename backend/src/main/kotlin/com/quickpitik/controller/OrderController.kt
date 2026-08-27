@@ -15,6 +15,11 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.orders.OrderService
 import com.quickpitik.service.orders.RefundService
+import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
+import com.quickpitik.service.ratelimit.RateLimiter
+import com.quickpitik.service.ratelimit.acquireOrThrow
+import com.quickpitik.service.ratelimit.clientIp
+import jakarta.servlet.http.HttpServletRequest
 import jakarta.validation.Valid
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
@@ -32,6 +37,7 @@ import java.util.UUID
 class OrderController(
     private val orderService: OrderService,
     private val refundService: RefundService,
+    private val rateLimiter: RateLimiter,
 ) {
     // Guest-allowed: principal may be null. SecurityConfig permits POST /orders.
     // Idempotency-Key per RFC 9110 §9.2.2 — header, not body. `required = false`
@@ -43,7 +49,11 @@ class OrderController(
         @AuthenticationPrincipal principal: AuthPrincipal?,
         @RequestHeader(name = IdempotencyKey.HEADER, required = false) idempotencyHeader: String?,
         @Valid @RequestBody body: CreateOrderRequest,
+        request: HttpServletRequest,
     ): OrderResponse {
+        // Per-IP: this public endpoint mints a PayMongo checkout session per
+        // call, so an unthrottled loop burns real payment-provider quota.
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_ORDER_CREATE, clientIp(request))
         val key = IdempotencyKey.parse(idempotencyHeader)?.value
             ?: throw ValidationException(
                 code = ErrorCodes.INVALID_IDEMPOTENCY_KEY,

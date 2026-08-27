@@ -16,6 +16,7 @@ import com.quickpitik.service.photos.PhotoService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
+import com.quickpitik.service.ratelimit.clientIp
 import com.quickpitik.service.storage.StorageService
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.http.HttpStatus
@@ -199,15 +200,6 @@ class EventPhotoController(
     // the anonymous path unthrottled.
     private fun searchKey(principal: AuthPrincipal?, request: HttpServletRequest): String =
         principal?.userId?.toString() ?: clientIp(request)
-
-    // Mirrors the helper in AuthController / PublicPhotographerController.
-    private fun clientIp(request: HttpServletRequest): String {
-        val forwarded = request.getHeader("X-Forwarded-For")
-        if (!forwarded.isNullOrBlank()) {
-            return forwarded.split(",").first().trim()
-        }
-        return request.remoteAddr ?: "unknown"
-    }
 
     private fun contentTypeOf(key: String): String = when (key.substringAfterLast('.').lowercase()) {
         "jpg", "jpeg" -> MediaType.IMAGE_JPEG_VALUE

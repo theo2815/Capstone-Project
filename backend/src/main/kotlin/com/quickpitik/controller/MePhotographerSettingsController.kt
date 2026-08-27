@@ -17,6 +17,9 @@ import com.quickpitik.service.earnings.PayoutCycleService
 import com.quickpitik.service.photographer.PayoutAccountService
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.photographer.SocialLinkService
+import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
+import com.quickpitik.service.ratelimit.RateLimiter
+import com.quickpitik.service.ratelimit.acquireOrThrow
 import jakarta.validation.Valid
 import org.springframework.http.MediaType
 import org.springframework.security.access.prepost.PreAuthorize
@@ -54,6 +57,7 @@ class MePhotographerSettingsController(
     private val socialLinkService: SocialLinkService,
     private val payoutAccountService: PayoutAccountService,
     private val payoutCycleService: PayoutCycleService,
+    private val rateLimiter: RateLimiter,
 ) {
     // ─── Brand / Handle / Region ──────────────────────────────────────────
     @GetMapping("/brand")
@@ -100,21 +104,27 @@ class MePhotographerSettingsController(
     fun uploadCover(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @RequestPart("file") file: MultipartFile,
-    ): MediaUploadResponseDto = photographerSettingsService.uploadCover(
-        userId = principal.userId,
-        bytes = file.bytes,
-        contentType = file.contentType,
-    )
+    ): MediaUploadResponseDto {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
+        return photographerSettingsService.uploadCover(
+            userId = principal.userId,
+            bytes = file.bytes,
+            contentType = file.contentType,
+        )
+    }
 
     @PostMapping("/watermark", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun uploadWatermark(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @RequestPart("file") file: MultipartFile,
-    ): MediaUploadResponseDto = photographerSettingsService.uploadWatermark(
-        userId = principal.userId,
-        bytes = file.bytes,
-        contentType = file.contentType,
-    )
+    ): MediaUploadResponseDto {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
+        return photographerSettingsService.uploadWatermark(
+            userId = principal.userId,
+            bytes = file.bytes,
+            contentType = file.contentType,
+        )
+    }
 
     // ─── Socials CRUD ─────────────────────────────────────────────────────
     @GetMapping("/socials")
@@ -195,12 +205,15 @@ class MePhotographerSettingsController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable id: UUID,
         @RequestPart("file") file: MultipartFile,
-    ): PayoutAccountDto = payoutAccountService.uploadQr(
-        userId = principal.userId,
-        id = id,
-        bytes = file.bytes,
-        contentType = file.contentType,
-    )
+    ): PayoutAccountDto {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
+        return payoutAccountService.uploadQr(
+            userId = principal.userId,
+            id = id,
+            bytes = file.bytes,
+            contentType = file.contentType,
+        )
+    }
 
     // ─── Verification submit + status read ────────────────────────────────
     @GetMapping("/verification")

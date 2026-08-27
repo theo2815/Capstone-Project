@@ -171,32 +171,52 @@ app:
       poll-interval-ms: 30000
       poll-grace-seconds: 90
   rate-limit:
-    enabled: ${RATE_LIMIT_ENABLED:false}
+    # ON by default (decided 2026-08-27; closes the NFR-S-11 posture question).
+    # Set RATE_LIMIT_ENABLED=false for load tests. The per-IP keys use
+    # request.remoteAddr — behind a TLS-terminating proxy configure Tomcat's
+    # RemoteIpValve (server.tomcat.remoteip.remote-ip-header +
+    # internal-proxies) so remoteAddr reflects the real client; never trust
+    # X-Forwarded-For raw (client-forgeable).
+    enabled: ${RATE_LIMIT_ENABLED:true}
     photographer-upload:
       capacity: 600
       refill-period: PT1M
     public-gallery:
       capacity: 60
       refill-period: PT1M
-    # Runner photo search (face + bib). Each face search burns ai-api GPU
-    # inference, so it costs far more than an ordinary read.
+    # NFR-S-11: face/bib photo search 30 req / 15 min. Each face search burns
+    # AI inference, so it costs far more than an ordinary read. Greedy refill
+    # = burst of 30, then ~1 token / 30 s.
     photo-search:
-      capacity: 10
-      refill-period: PT1M
-    # Pre-auth endpoints — per-IP buckets. Sized for normal users plus a
-    # retry cushion; tighter caps go on credential-stuffing-prone surfaces
-    # (login) and email-bombing-prone surfaces (forgot-password).
+      capacity: 30
+      refill-period: PT15M
+    # NFR-S-11: auth endpoints 10 req / 15 min by source IP — burst of 10,
+    # then ~1 token / 90 s. Anything past that is credential stuffing, email
+    # bombing, or token brute-force, not a human retrying.
     auth-login:
       capacity: 10
-      refill-period: PT1M
+      refill-period: PT15M
     auth-register:
-      capacity: 5
-      refill-period: PT1M
+      capacity: 10
+      refill-period: PT15M
     auth-forgot-password:
-      capacity: 3
-      refill-period: PT1M
+      capacity: 10
+      refill-period: PT15M
     auth-reset-password:
-      capacity: 5
+      capacity: 10
+      refill-period: PT15M
+    # Guest checkout mints a PayMongo session per call — bound the burn rate.
+    order-create:
+      capacity: 10
+      refill-period: PT1M
+    # Public token-gated bundle download: one S3 GET per photo + zip CPU.
+    bundle-download:
+      capacity: 6
+      refill-period: PT1M
+    # Authenticated small-file uploads (avatar / selfie / cover / watermark /
+    # payout QR) share one per-user bucket.
+    media-upload:
+      capacity: 20
       refill-period: PT1M
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}

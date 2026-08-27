@@ -19,6 +19,7 @@ import com.quickpitik.service.profile.EmailChangeService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
+import com.quickpitik.service.ratelimit.clientIp
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.validation.Valid
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -141,15 +142,4 @@ class AuthController(
     @GetMapping("/me")
     fun me(@AuthenticationPrincipal principal: AuthPrincipal): UserDto =
         authService.me(principal)
-
-    // X-Forwarded-For wins when present (behind a load balancer); fall back
-    // to the direct remote address for local dev. Mirrors the helper in
-    // PublicPhotographerController.
-    private fun clientIp(request: HttpServletRequest): String {
-        val forwarded = request.getHeader("X-Forwarded-For")
-        if (!forwarded.isNullOrBlank()) {
-            return forwarded.split(",").first().trim()
-        }
-        return request.remoteAddr ?: "unknown"
-    }
 }

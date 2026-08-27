@@ -4,6 +4,11 @@ import com.quickpitik.dto.orders.OrderDetailDto
 import com.quickpitik.dto.orders.OrderStatusDto
 import com.quickpitik.service.orders.OrderBundleService
 import com.quickpitik.service.orders.OrderService
+import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
+import com.quickpitik.service.ratelimit.RateLimiter
+import com.quickpitik.service.ratelimit.acquireOrThrow
+import com.quickpitik.service.ratelimit.clientIp
+import jakarta.servlet.http.HttpServletRequest
 import org.springframework.http.HttpHeaders
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
@@ -30,6 +35,7 @@ import java.util.UUID
 class GuestOrderController(
     private val orderService: OrderService,
     private val orderBundleService: OrderBundleService,
+    private val rateLimiter: RateLimiter,
 ) {
     @GetMapping("/{id}/status")
     fun status(
@@ -59,7 +65,11 @@ class GuestOrderController(
     fun bundle(
         @PathVariable id: UUID,
         @RequestParam(required = false) token: String?,
+        request: HttpServletRequest,
     ): ResponseEntity<StreamingResponseBody> {
+        // Per-IP: public route streaming one S3 GET per photo + zip CPU per
+        // call — the token gates access, this bounds resource burn.
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_BUNDLE_DOWNLOAD, clientIp(request))
         val spec = orderBundleService.prepare(orderId = id, token = token)
         val encoded = URLEncoder.encode(spec.filename, StandardCharsets.UTF_8).replace("+", "%20")
         val body = StreamingResponseBody { out -> orderBundleService.writeTo(spec, out) }
