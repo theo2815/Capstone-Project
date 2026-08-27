@@ -1,6 +1,6 @@
 # CLAUDE.md — Backend (Kotlin + Spring Boot)
 
-**Status:** All phases shipped and hardened (last reconciled 2026-08-19). 31 controllers under `controller/` (photo-alert opt-in added 2026-08-26); all four roles locked; suite at 228 unit + 15 integration (`./gradlew test` is Docker-free; `integrationTest` needs Docker) — plus 3 new `service/events/` photo-alert suites (2026-08-26). Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
+**Status:** All phases shipped and hardened (last reconciled 2026-08-27). 31 controllers under `controller/` (photo-alert opt-in added 2026-08-26); all four roles locked; suite at **275 unit + 20 integration** (2026-08-27, `./gradlew test` / `integrationTest`; `test` is Docker-free, `integrationTest` needs Docker). 2026-08-27 optimization pass: rate limiting ON by default with NFR-S-11 windows, NFR-S-14 lockout window (V34), indexing-transport failures no longer burn retry attempts, provider stamp (V33) + admin reindex endpoint, upload/indexing transactions no longer span network I/O, actuator + `qp.*` metrics. Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
 
 The live route reference — every endpoint, its auth, and **which clients consume it** — is vault `backend/api-surface.md`. Read that before adding an endpoint or assuming one is missing.
 
@@ -77,7 +77,7 @@ App boots on `http://localhost:8080`. Frontend talks to `http://localhost:8080/a
 
 `test` runs the Mockito unit suite and **excludes** anything tagged `integration`, so it still
 works on a machine with nothing but a JDK. `integrationTest` runs the other half against a
-throwaway Postgres 16 container: Flyway V1→V30 applying to a virgin database, `ddl-auto: validate`
+throwaway Postgres 16 container: Flyway V1→V35 applying to a virgin database, `ddl-auto: validate`
 proving the entities still match, the `uq_photos_photographer_content_hash` partial index, and the
 lockout counter's survival of a rolled-back login transaction. Extend `PostgresIntegrationTest`
 to add one. End-to-end is verified via `curl` (see Smoke Test below).
@@ -90,6 +90,11 @@ Generated from the controllers by springdoc; `OpenApiConfig` rewrites the respon
 shows is what the wire carries. The padlocks are declared globally — public routes show one they
 don't enforce; `config/SecurityConfig.kt` is authoritative. Set `API_DOCS_ENABLED=false` to remove
 the surface entirely.
+
+Actuator (2026-08-27): `GET /actuator/health` is public; `/actuator/metrics` (+ `info`) require an
+ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.dedup{outcome}`,
+`qp.indexing.outcome{outcome,provider}`, `qp.ai.call{op}`, `qp.ratelimit.denied{policy}`,
+`qp.watermark.cache{result}` — plus Hikari/JVM/HTTP-server metrics for free.
 
 ### Stop Postgres
 
@@ -118,6 +123,12 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `AI_API_ENABLED` | `false` | Set `true` when ai-api is wired and you want face/bib indexing on upload + selfie quality gate + runner face-search. When `false`, every server-side ai-api call is skipped — photographer upload + selfie upload still work, face-search returns 503. See vault `backend/decisions.md` 2026-05-18 master-switch ADR. |
 | `AUTH_LOCKOUT_MAX_ATTEMPTS` | `5` | Consecutive failed logins before an account locks (V29). Raise it if a demo needs more headroom — there is no separate on/off switch. |
 | `AUTH_LOCKOUT_DURATION` | `PT15M` | How long a lock holds. Auto-clears; a successful login also resets it. Unlike the rate-limit buckets this is **always on**, independent of `RATE_LIMIT_ENABLED`. |
+| `AUTH_LOCKOUT_WINDOW` | `PT15M` | NFR-S-14 (V34): failures only count toward a lock when within this window of the previous one; older streaks restart at 1. |
+| `RATE_LIMIT_ENABLED` | `true` | Token buckets (bucket4j, in-memory). NFR-S-11 windows: auth 10/15 min per IP, photo-search 30/15 min; plus order-create, bundle-download, media-upload, photographer-upload, public-gallery policies. Set `false` only for load tests. Per-IP keys use `remoteAddr` — behind a proxy configure `server.tomcat.remoteip.*`. |
+| `AI_MAX_INDEXING_ATTEMPTS` | `5` | Per-photo indexing retry budget. Only *semantic* failures (bad image, 4xx) consume it — transport failures (provider unreachable) return the photo to PENDING with the budget intact. `POST /admin/events/{id}/photos/reindex` re-drives exhausted/stale photos (`?all=true` after a provider flip). |
+| `AI_RECONCILE_INTERVAL_MS` | `60000` | Cadence of the per-photo indexing reconcile sweep. |
+| `DB_POOL_SIZE` | `10` | Hikari `maximum-pool-size`. |
+| `LOG_LEVEL_APP` | `INFO` | `com.quickpitik` log level (set `DEBUG` for local debugging). |
 | `API_DOCS_ENABLED` | `true` | Serves `/swagger-ui.html` + `/v3/api-docs`. **Set `false` in production** — a full route inventory is free reconnaissance. |
 
 `BootstrapAdminRunner` creates the admin on first boot if no `ADMIN` exists yet. Subsequent boots are no-ops.
