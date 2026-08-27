@@ -196,7 +196,11 @@ class CartRepositoryImpl : CartRepository {
                 Result.failure(Exception(response.error ?: "Checkout failed"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            // parseError surfaces the backend envelope message — order-create
+            // is rate-limited (10/min/IP), so a 429 here must read as the
+            // backend's "slow down" copy, not "HTTP 429" (sibling pattern:
+            // submitRefund / withdrawDispute below).
+            Result.failure(Exception(RetrofitClient.parseError(e)))
         }
     }
 

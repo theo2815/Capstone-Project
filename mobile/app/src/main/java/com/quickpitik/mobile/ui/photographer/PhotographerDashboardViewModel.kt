@@ -52,6 +52,7 @@ import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -1915,7 +1916,18 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     private suspend fun uploadPayoutQr(token: String, id: String, bytes: ByteArray): Boolean {
         val request = bytes.toRequestBody("image/png".toMediaTypeOrNull(), 0, bytes.size)
         val part = MultipartBody.Part.createFormData("file", "qr.png", request)
-        return RetrofitClient.apiService.uploadPayoutQr("Bearer $token", id, part).success
+        // A thrown HTTP error (e.g. 429 — the QR route shares the backend's
+        // 20/min media-upload bucket) must land on the callers' "payout was
+        // added, but…" branch and its fetchSettings(), not skip into the
+        // generic catch. Both failure shapes → false; cancellation still
+        // propagates.
+        return try {
+            RetrofitClient.apiService.uploadPayoutQr("Bearer $token", id, part).success
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private companion object {
