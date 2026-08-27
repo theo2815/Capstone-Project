@@ -6,6 +6,10 @@ spring:
     username: ${DB_USER:quickpitik}
     password: ${DB_PASSWORD:quickpitik}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # Boot default is 10. Raise via DB_POOL_SIZE if marathon-day upload
+      # concurrency ever saturates it (watch hikaricp.connections.* metrics).
+      maximum-pool-size: ${DB_POOL_SIZE:10}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -13,8 +17,22 @@ spring:
     properties:
       hibernate:
         format_sql: false
+        # Collapses the EAGER @ElementCollection fan-out (Photo.bibs /
+        # Photo.facePersons, Event.categories): N per-row collection selects
+        # become ceil(N/50) IN-selects. A 200-photo grid page drops from
+        # ~401 queries to ~13.
+        default_batch_fetch_size: 50
+        order_inserts: true
+        query:
+          in_clause_parameter_padding: true
         jdbc:
           time_zone: UTC
+          batch_size: 25
+  task:
+    scheduling:
+      # Boot default is 1 thread, which let a slow indexing reconcile sweep
+      # starve the reaper / batch drain / poll / photos-ready sweeps.
+      pool-size: 4
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -129,6 +147,11 @@ app:
     # search promises. Flip only for a live demo with ai-api stopped.
     search-fallback-on-error: ${AI_SEARCH_FALLBACK:false}
     bib-confidence-threshold-default: 0.7
+    # Per-photo indexing retry budget + reconcile cadence. Transport-level
+    # failures (provider unreachable) do NOT consume attempts — only semantic
+    # failures (bad image, 4xx) do, so an outage self-heals via the reconciler.
+    max-indexing-attempts: ${AI_MAX_INDEXING_ATTEMPTS:5}
+    reconcile-interval-ms: ${AI_RECONCILE_INTERVAL_MS:60000}
     # Phase C bulk indexing. PER_PHOTO (default) = Phase-B behaviour (one enroll
     # + one bib HTTP call per photo, off the upload request). BATCH stands that
     # down and drains PENDING photos per event into mega jobs + webhook/poll
@@ -245,5 +268,6 @@ springdoc:
 logging:
   level:
     root: INFO
-    com.quickpitik: DEBUG
+    # INFO is the shipped default; set LOG_LEVEL_APP=DEBUG for local debugging.
+    com.quickpitik: ${LOG_LEVEL_APP:INFO}
     org.springframework.security: INFO
