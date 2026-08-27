@@ -91,6 +91,18 @@ class S3StorageService(
         return url
     }
 
+    override fun presignedDownloadUrl(key: String, ttl: Duration, filename: String): String {
+        // No memo: filename varies per photo and the order-detail path is
+        // low-QPS compared to grid thumbnails.
+        val req = GetObjectRequest.builder()
+            .bucket(props.bucket)
+            .key(key)
+            .responseContentDisposition("attachment; filename=\"$filename\"")
+            .build()
+        val presignRequest = GetObjectPresignRequest.builder().signatureDuration(ttl).getObjectRequest(req).build()
+        return presigner.presignGetObject(presignRequest).url().toExternalForm()
+    }
+
     private class PresignedEntry(val url: String, val mintedAt: Instant)
 
     private val presignMemo = ConcurrentHashMap<String, PresignedEntry>()

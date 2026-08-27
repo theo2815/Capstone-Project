@@ -14,6 +14,10 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.rekognition.RekognitionClient
 import java.io.File
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.UUID
 
@@ -48,8 +52,19 @@ class RekognitionR2E2eSmokeTest {
             val url = s.presignedGetUrl(key, Duration.ofMinutes(5))
             assertTrue(url.startsWith("https://")) { "presigned URL is not https" }
             assertTrue(s.exists(key)) { "R2 object should exist after put" }
+            // Signed response-content-disposition must be ACCEPTED live — an
+            // unsigned appended param 403s SignatureDoesNotMatch, which is the
+            // failure mode presignedDownloadUrl exists to avoid.
+            val dlUrl = s.presignedDownloadUrl(key, Duration.ofMinutes(5), "smoke-download.txt")
+            val resp = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create(dlUrl)).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray(),
+            )
+            assertTrue(resp.statusCode() == 200) { "signed-disposition GET returned ${resp.statusCode()}" }
+            val cd = resp.headers().firstValue("Content-Disposition").orElse("")
+            assertTrue(cd.contains("attachment")) { "Content-Disposition missing or inline: '$cd'" }
             s.delete(key)
-            println("✅ R2 OK — put + get (bytes matched) + presigned GET + delete round-tripped.")
+            println("✅ R2 OK — put + get + presigned GET + signed-disposition download (header: $cd) + delete round-tripped.")
         }
     }
 

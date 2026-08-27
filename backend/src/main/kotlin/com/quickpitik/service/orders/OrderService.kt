@@ -638,10 +638,24 @@ class OrderService(
         if (grant == null) return null
         val now = OffsetDateTime.now()
         if (grant.grantedUntil.isBefore(now)) return null
-        return storageService.presignedGetUrl(photo.s3Key, storageProperties.presignedTtl.runnerDownload)
+        return storageService.presignedDownloadUrl(
+            photo.s3Key,
+            storageProperties.presignedTtl.runnerDownload,
+            downloadFilenameOf(photo),
+        )
+    }
+
+    // Mirrors the filename the website used to build client-side (its
+    // download-helpers.ts appended it as unsigned query params — a LocalFs-only
+    // trick that 403s under SigV4, so the server owns the name now).
+    private fun downloadFilenameOf(photo: Photo): String {
+        val bib = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber
+        val tag = if (!bib.isNullOrBlank()) "bib-$bib" else "untagged-${photo.id.toString().take(8)}"
+        return "quickpitik-$tag.jpg".replace(FILENAME_UNSAFE, "_")
     }
 
     private companion object {
+        val FILENAME_UNSAFE: Regex = Regex("[^A-Za-z0-9._-]")
         val TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
         val DISPLAY_ZONE: ZoneId = ZoneId.of("Asia/Manila")
         // Defensive only — the controller DTO already runs Jakarta @Email via
