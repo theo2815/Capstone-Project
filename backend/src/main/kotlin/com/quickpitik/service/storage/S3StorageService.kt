@@ -22,6 +22,8 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 import java.io.InputStream
 import java.net.URI
 import java.time.Duration
+import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 
 @Service
 @ConditionalOnProperty(prefix = "app.storage", name = ["backend"], havingValue = "S3")
@@ -69,10 +71,29 @@ class S3StorageService(
     }
 
     override fun presignedGetUrl(key: String, ttl: Duration): String {
+        // TTL-bucketed memo. Without it every response mints a fresh signature,
+        // so the SAME image gets a DIFFERENT URL on every page load and the
+        // browser can never cache it — each grid revisit re-downloads every
+        // thumbnail from object storage. Memo lifetime is min(5 min, ttl/4),
+        // so a served URL always has ≥ 3/4 of its validity left and NFR-S-13's
+        // short download TTLs are respected.
+        val memoTtl = minOf(PRESIGN_MEMO_MAX, ttl.dividedBy(4))
+        val memoKey = "$key|${ttl.seconds}"
+        val now = Instant.now()
+        presignMemo[memoKey]?.takeIf { Duration.between(it.mintedAt, now) < memoTtl }?.let { return it.url }
         val req = GetObjectRequest.builder().bucket(props.bucket).key(key).build()
         val presignRequest = GetObjectPresignRequest.builder().signatureDuration(ttl).getObjectRequest(req).build()
-        return presigner.presignGetObject(presignRequest).url().toExternalForm()
+        val url = presigner.presignGetObject(presignRequest).url().toExternalForm()
+        // ponytail: crude size bound — clear all past the cap instead of LRU;
+        // entries are ~½ KB and re-mint on the next request.
+        if (presignMemo.size >= PRESIGN_MEMO_MAX_ENTRIES) presignMemo.clear()
+        presignMemo[memoKey] = PresignedEntry(url, now)
+        return url
     }
+
+    private class PresignedEntry(val url: String, val mintedAt: Instant)
+
+    private val presignMemo = ConcurrentHashMap<String, PresignedEntry>()
 
     override fun presignedPutUrl(key: String, ttl: Duration, contentType: String): String {
         val req = PutObjectRequest.builder().bucket(props.bucket).key(key).contentType(contentType).build()
@@ -110,4 +131,9 @@ class S3StorageService(
         } else {
             DefaultCredentialsProvider.create()
         }
+
+    private companion object {
+        val PRESIGN_MEMO_MAX: Duration = Duration.ofMinutes(5)
+        const val PRESIGN_MEMO_MAX_ENTRIES = 10_000
+    }
 }

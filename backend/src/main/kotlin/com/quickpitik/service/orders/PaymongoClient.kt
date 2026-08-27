@@ -5,6 +5,7 @@ import com.quickpitik.dto.orders.PaymongoCheckoutSessionRequest
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionResponse
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpHeaders
+import org.springframework.http.client.SimpleClientHttpRequestFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientResponseException
@@ -33,7 +34,15 @@ class PaymongoClient(
     }
 
     private val restClient: RestClient by lazy {
+        // The timeouts were declared config since day one but never wired — a
+        // hung PayMongo socket blocked a checkout request thread indefinitely
+        // (OrderService.create calls this inside its transaction).
+        val requestFactory = SimpleClientHttpRequestFactory().apply {
+            setConnectTimeout(properties.connectTimeout)
+            setReadTimeout(properties.readTimeout)
+        }
         RestClient.builder()
+            .requestFactory(requestFactory)
             .baseUrl(properties.baseUrl)
             .defaultHeader(HttpHeaders.AUTHORIZATION, authHeader)
             .defaultHeader(HttpHeaders.ACCEPT, "application/json")

@@ -42,6 +42,28 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("statuses") statuses: Collection<IndexingStatus>,
     ): Int
 
+    // No-bib fast path for the event grid: skips the bibs join + DISTINCT that
+    // searchForEvent pays even when there is nothing to filter — the LEFT JOIN
+    // fans every photo out by its bib count before DISTINCT collapses it again.
+    // Same predicate, sort, and pagination as searchForEvent with bib = ''.
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.eventId = :eventId
+          AND p.status = :status
+        ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
+        """,
+        countQuery = """
+        SELECT COUNT(p) FROM Photo p
+        WHERE p.eventId = :eventId AND p.status = :status
+        """,
+    )
+    fun findForEventNoBib(
+        @Param("eventId") eventId: UUID,
+        @Param("status") status: PhotoStatus,
+        pageable: Pageable,
+    ): Page<Photo>
+
     // Bib filter is a substring (contains) match — OCR routinely clips digits
     // (e.g. "7202" stored as "720" or "71830" when the bib is "183") so exact
     // match is too brittle for real-world race photos. Substring also lets a

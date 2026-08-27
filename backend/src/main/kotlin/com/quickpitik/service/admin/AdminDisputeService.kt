@@ -15,9 +15,14 @@ import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.DisputeStatus
+import com.quickpitik.entity.Event
+import com.quickpitik.entity.Order
+import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.RunnerMessageKind
 import com.quickpitik.entity.Transaction
+import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -339,10 +344,43 @@ class AdminDisputeService(
 
     private fun hydrateMany(disputes: List<Dispute>): List<AdminDisputeDto> {
         if (disputes.isEmpty()) return emptyList()
-        // Batch-fetch activity for the page in one round trip; pass the
-        // pre-grouped map to hydrateOne so the per-row path doesn't re-query.
+        // Batch-fetch the page's context (activity, orders, photos, runners,
+        // settings, events) in six IN round-trips instead of ~8 queries per
+        // row. hydrateOne's defaults keep the single-row resolve / deny /
+        // escalate paths working unchanged.
         val activityByDispute = loadActivityForDisputes(disputes.map { it.id })
-        return disputes.map { hydrateOne(it, activityByDispute[it.id].orEmpty()) }
+        val ordersById = orderRepository
+            .findAllById(disputes.mapTo(mutableSetOf()) { it.orderId })
+            .associateBy { it.id }
+        val photosById = photoRepository
+            .findAllById(disputes.mapTo(mutableSetOf()) { it.photoId })
+            .associateBy { it.id }
+        val runnersById = userRepository
+            .findAllById(disputes.mapNotNullTo(mutableSetOf()) { it.runnerId })
+            .associateBy { it.id }
+        val settingsById = photographerSettingsRepository
+            .findAllById(photosById.values.mapNotNullTo(mutableSetOf()) { it.photographerId })
+            .associateBy { it.userId }
+        val eventsById = eventRepository
+            .findAllById(
+                disputes.mapNotNullTo(mutableSetOf()) { d ->
+                    ordersById[d.orderId]?.eventId ?: photosById[d.photoId]?.eventId
+                },
+            )
+            .associateBy { it.id }
+        return disputes.map { d ->
+            val order = ordersById[d.orderId]
+            val photo = photosById[d.photoId]
+            hydrateOne(
+                d,
+                activity = activityByDispute[d.id].orEmpty(),
+                order = order,
+                photo = photo,
+                runner = d.runnerId?.let { runnersById[it] },
+                photographerSettings = photo?.photographerId?.let { settingsById[it] },
+                event = (order?.eventId ?: photo?.eventId)?.let { eventsById[it] },
+            )
+        }
     }
 
     private fun loadActivityForDisputes(
@@ -377,24 +415,25 @@ class AdminDisputeService(
     internal fun hydrateOne(
         dispute: Dispute,
         activity: List<DisputeActivityEntry> = loadActivityForDisputes(listOf(dispute.id))[dispute.id].orEmpty(),
+        order: Order? = orderRepository.findById(dispute.orderId).orElse(null),
+        photo: Photo? = photoRepository.findById(dispute.photoId).orElse(null),
+        runner: User? = dispute.runnerId?.let { userRepository.findById(it).orElse(null) },
+        photographerSettings: PhotographerSettings? =
+            photo?.photographerId?.let { photographerSettingsRepository.findById(it).orElse(null) },
+        event: Event? = (order?.eventId ?: photo?.eventId)?.let { eventRepository.findById(it).orElse(null) },
     ): AdminDisputeDto {
-        val order = orderRepository.findById(dispute.orderId).orElse(null)
-        val photo = photoRepository.findById(dispute.photoId).orElse(null)
+        // A runnerId that no longer resolves still reads as "" (deleted user),
+        // never as the guest-email fallback — matches the pre-batching logic.
+        val runnerHandle = if (dispute.runnerId != null) {
+            runner?.let { runnerDisplayHandle(it.name, it.email) } ?: ""
+        } else {
+            order?.let { runnerDisplayHandle("", it.recipientEmail) } ?: ""
+        }
 
-        val runnerHandle = dispute.runnerId?.let { rid ->
-            userRepository.findById(rid).map { runnerDisplayHandle(it.name, it.email) }.orElse("")
-        } ?: order?.let { runnerDisplayHandle("", it.recipientEmail) }
-        ?: ""
-
-        val photographerId = photo?.photographerId
-        val photographerHandle: String = photographerId?.let {
-            photographerSettingsRepository.findById(it).map { s -> s.handle }.orElse(null)
-        }.orEmpty()
+        val photographerHandle: String = photographerSettings?.handle.orEmpty()
 
         val eventId = order?.eventId ?: photo?.eventId ?: dispute.orderId // fallback for ghost rows
-        val eventName = (order?.eventId ?: photo?.eventId)?.let { eid ->
-            eventRepository.findById(eid).map { it.name }.orElse(null)
-        }
+        val eventName = event?.name
 
         return AdminDisputeDto(
             id = dispute.id,

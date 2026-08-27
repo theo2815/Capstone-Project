@@ -22,6 +22,8 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.format.DateTimeFormatter
@@ -56,8 +58,14 @@ class PublicPhotographerService(
             throw NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photographer not found")
         }
 
+        // Bounded: this is an UNAUTHENTICATED route and the coverage list was
+        // the last unbounded query on one. 200 events ≈ four years of weekly
+        // races — a cap, not a pagination contract (wire shape unchanged).
         val coverage = eventPhotographerRepository
-            .findAllByIdPhotographerId(settings.userId)
+            .findAllByIdPhotographerId(
+                settings.userId,
+                PageRequest.of(0, MAX_PUBLIC_EVENTS, Sort.by(Sort.Direction.DESC, "lastUploadAt")),
+            )
             .filter { it.photoCount > 0 }
         val eventsById = if (coverage.isEmpty()) {
             emptyMap()
@@ -162,5 +170,11 @@ class PublicPhotographerService(
         // last to the source key.
         val key = photo.watermarkS3Key ?: photo.thumbnailS3Key ?: photo.s3Key
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
+    }
+
+    private companion object {
+        // Newest-coverage cap for the unauthenticated profile — ~4 years of
+        // weekly races. A bound, not pagination: the wire shape is unchanged.
+        const val MAX_PUBLIC_EVENTS = 200
     }
 }

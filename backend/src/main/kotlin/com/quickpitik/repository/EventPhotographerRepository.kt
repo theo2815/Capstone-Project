@@ -32,7 +32,9 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         pageable: Pageable,
     ): Page<EventPhotographer>
 
-    fun findAllByIdPhotographerId(photographerId: UUID): List<EventPhotographer>
+    // Pageable-bounded: the sole caller is the UNAUTHENTICATED public profile,
+    // which caps at its own MAX_PUBLIC_EVENTS (newest coverage first).
+    fun findAllByIdPhotographerId(photographerId: UUID, pageable: Pageable): List<EventPhotographer>
 
     // Per-event earnings list — filters out events with no revenue so the FE
     // tile doesn't show ₱0 rows (matches the mock filter

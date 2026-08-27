@@ -6,6 +6,7 @@ import com.quickpitik.dto.email.ResendSendEmailResponse
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatusCode
+import org.springframework.http.client.SimpleClientHttpRequestFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientResponseException
@@ -21,7 +22,15 @@ class ResendClient(
     private val log = LoggerFactory.getLogger(javaClass)
 
     private val restClient: RestClient by lazy {
+        // Wires the declared-but-previously-dead timeout config — an email
+        // send runs on the @Async pool, but a hung socket still pinned one of
+        // its threads forever.
+        val requestFactory = SimpleClientHttpRequestFactory().apply {
+            setConnectTimeout(properties.connectTimeout)
+            setReadTimeout(properties.readTimeout)
+        }
         RestClient.builder()
+            .requestFactory(requestFactory)
             .baseUrl(properties.baseUrl)
             .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer ${properties.apiKey}")
             .defaultHeader(HttpHeaders.CONTENT_TYPE, "application/json")

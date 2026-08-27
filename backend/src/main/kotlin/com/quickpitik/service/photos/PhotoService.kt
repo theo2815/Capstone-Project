@@ -35,12 +35,23 @@ class PhotoService(
         requesterUserId: UUID? = null,
     ): PaginatedResponse<PhotoDto> {
         val cleanedBib = normalizeBib(bib)
-        val page = photoRepository.searchForEvent(
-            eventId = eventId,
-            status = PhotoStatus.LIVE,
-            bib = cleanedBib,
-            pageable = OffsetLimitPageable(pagination),
-        )
+        // Plain browsing (no bib) takes the join-free fast path — the grid is
+        // the hottest read in the system and needs neither the bibs join nor
+        // the DISTINCT it forces.
+        val page = if (cleanedBib.isEmpty()) {
+            photoRepository.findForEventNoBib(
+                eventId = eventId,
+                status = PhotoStatus.LIVE,
+                pageable = OffsetLimitPageable(pagination),
+            )
+        } else {
+            photoRepository.searchForEvent(
+                eventId = eventId,
+                status = PhotoStatus.LIVE,
+                bib = cleanedBib,
+                pageable = OffsetLimitPageable(pagination),
+            )
+        }
         return toPaginatedDto(page.content, page.totalElements, pagination, requesterUserId)
     }
 

@@ -98,6 +98,22 @@ class PhotoServiceAttributionTest {
         Mockito.verify(userRepository, Mockito.times(1)).findAllById(anyArg())
     }
 
+    // 2026-08-27 perf pass: plain browsing must take the join-free fast path
+    // (no bibs LEFT JOIN, no DISTINCT); only an actual bib filter pays for
+    // searchForEvent.
+    @Test
+    fun `no bib routes to the fast path, a bib routes to the search query`() {
+        stubPage(emptyList())
+
+        service().listForEvent(eventId, bib = null, pagination = pagination)
+        Mockito.verify(photoRepository).findForEventNoBib(anyArg(), anyArg(), anyArg())
+        Mockito.verify(photoRepository, Mockito.never())
+            .searchForEvent(anyArg(), anyArg(), anyArg(), anyArg())
+
+        service().listForEvent(eventId, bib = "183", pagination = pagination)
+        Mockito.verify(photoRepository).searchForEvent(anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
     @Test
     fun `a photo with no photographer resolves to no attribution instead of failing`() {
         // photographerId is nullable on Photo. Such a row simply has no
@@ -123,6 +139,10 @@ class PhotoServiceAttributionTest {
     )
 
     private fun stubPage(photos: List<Photo>) {
+        // listForEvent with no bib takes the join-free fast path; the bib
+        // variant keeps searchForEvent. Stub both so either route serves.
+        Mockito.`when`(photoRepository.findForEventNoBib(anyArg(), anyArg(), anyArg()))
+            .thenReturn(PageImpl(photos))
         Mockito.`when`(photoRepository.searchForEvent(anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(PageImpl(photos))
     }

@@ -19,6 +19,8 @@ import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.entity.PayoutMethod
 import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.entity.PhotographerSettings
+import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -462,14 +464,34 @@ class AdminPayoutService(
 
     private fun hydrateMany(cycles: List<PayoutCycle>): List<AdminPayoutCycleDto> {
         if (cycles.isEmpty()) return emptyList()
-        return cycles.map { hydrateOne(it) }
+        // Batch-prefetch the page's users / settings / payout accounts in three
+        // IN round-trips instead of 3–4 queries per row (same shape as
+        // OrderService.hydrateList). hydrateOne's defaults keep the single-row
+        // approve/hold/pay paths working unchanged.
+        val photographerIds = cycles.mapTo(mutableSetOf()) { it.photographerId }
+        val usersById = userRepository.findAllById(photographerIds).associateBy { it.id }
+        val settingsById = photographerSettingsRepository.findAllById(photographerIds).associateBy { it.userId }
+        val accountsByUser = payoutAccountRepository
+            .findAllByUserIdInOrderByCreatedAtAsc(photographerIds)
+            .groupBy { it.userId }
+        return cycles.map { cycle ->
+            val candidates = accountsByUser[cycle.photographerId].orEmpty()
+            hydrateOne(
+                cycle,
+                user = usersById[cycle.photographerId],
+                settings = settingsById[cycle.photographerId],
+                account = candidates.firstOrNull { it.isPrimary } ?: candidates.firstOrNull(),
+            )
+        }
     }
 
-    internal fun hydrateOne(cycle: PayoutCycle): AdminPayoutCycleDto {
-        val user = userRepository.findById(cycle.photographerId).orElse(null)
-        val settings = photographerSettingsRepository.findById(cycle.photographerId).orElse(null)
-        val account = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(cycle.photographerId)
-            ?: payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(cycle.photographerId).firstOrNull()
+    internal fun hydrateOne(
+        cycle: PayoutCycle,
+        user: User? = userRepository.findById(cycle.photographerId).orElse(null),
+        settings: PhotographerSettings? = photographerSettingsRepository.findById(cycle.photographerId).orElse(null),
+        account: PayoutAccount? = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(cycle.photographerId)
+            ?: payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(cycle.photographerId).firstOrNull(),
+    ): AdminPayoutCycleDto {
         return AdminPayoutCycleDto(
             id = cycle.id,
             photographerId = cycle.photographerId,
