@@ -13,9 +13,10 @@ import {
   buildOrderBundleUrl,
   fetchOrderDetail,
   fetchGuestOrderDetail,
+  fetchOrderStatus,
   type OrderDetail,
 } from "@/lib/api-orders";
-import type { OrderPhotoDetail } from "@/types/order";
+import type { OrderPhotoDetail, OrderStatus } from "@/types/order";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -70,17 +71,32 @@ function ReturnBody() {
       attempts += 1;
       setAttempt(attempts);
       try {
-        const d = await loadDetail(orderId, token, isAuthenticated);
+        // Guests poll the status-only endpoint: the full detail response
+        // mints a fresh presigned URL per photo on every call — pure waste
+        // ×30 polls — so the receipt hydrates once, on the paid flip. Authed
+        // runners (no ?token=) have no status-only route; they keep polling
+        // /me/orders/{id} (rate-limit-exempt) directly.
+        let d: OrderDetail | null = null;
+        let status: OrderStatus | null = null;
+        if (token) {
+          status = (await fetchOrderStatus(orderId, token)).status;
+          if (cancelled) return;
+          if (status === "PAID" || status === "FULFILLED") {
+            d = await fetchGuestOrderDetail(orderId, token);
+          }
+        } else if (isAuthenticated) {
+          d = await fetchOrderDetail(orderId);
+          status = d?.status ?? null;
+        }
         if (cancelled) return;
-        if (d && (d.status === "PAID" || d.status === "FULFILLED")) {
+        if (d && (status === "PAID" || status === "FULFILLED")) {
           clearCart();
           queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
-          queryClient.invalidateQueries({ queryKey: ["me", "saved-events"] });
           setDetail(d);
           setPollState("paid");
           return;
         }
-        if (d?.status === "REFUNDED") {
+        if (status === "REFUNDED") {
           setPollState("failed");
           return;
         }
@@ -115,16 +131,6 @@ function ReturnBody() {
   if (pollState === "timeout")
     return <TimeoutState orderId={orderId} token={token} />;
   return <PollingState attempt={attempt} />;
-}
-
-async function loadDetail(
-  orderId: string,
-  token: string | null,
-  isAuthenticated: boolean,
-): Promise<OrderDetail | null> {
-  if (token) return fetchGuestOrderDetail(orderId, token);
-  if (isAuthenticated) return fetchOrderDetail(orderId);
-  return null;
 }
 
 /* ─────────────── PAID — editorial receipt ─────────────── */

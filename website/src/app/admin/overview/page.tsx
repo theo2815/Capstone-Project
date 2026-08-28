@@ -1,102 +1,41 @@
 "use client";
 
-import { useMemo } from "react";
 import { Slab } from "@/components/profile-shell";
 import { Kicker } from "@/components/ui/kicker";
 import { AdminStatTile } from "@/components/admin/admin-stat-tile";
 import { AdminOverviewTrend } from "@/components/admin/admin-overview-trend";
 import { AdminDecisionsTimeline } from "@/components/admin/admin-decisions-timeline";
-import { useAdminUserStore } from "@/store/admin-user-store";
-import { useAdminUsersData } from "@/lib/admin-users-data";
-import {
-  useAdminDisputeStore,
-  getEffectiveDisputes,
-} from "@/store/admin-dispute-store";
-import {
-  useAdminFlagStore,
-  getEffectiveFlags,
-} from "@/store/admin-flag-store";
-import {
-  useAdminPayoutStore,
-  mergePayoutsWithOverrides,
-} from "@/store/admin-payout-store";
-import { useAdminPayouts } from "@/hooks/use-admin-data";
-import { useEventCatalog } from "@/lib/event-catalog";
-import { type AdminUserRow } from "@/lib/admin-user-registry";
+import { useAdminKpis } from "@/hooks/use-admin-data";
+import type { AdminKpis } from "@/lib/api-admin";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
-
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Phase 1 admin redesign — /admin/overview is now the weekly-review tab.
 // 8-tile KPI grid + 30-day trend + decisions timeline. The daily landing
 // moved to /admin/inbox; /admin redirects to /admin/inbox so this page
 // is reached only via the rail's last entry or direct URL.
 //
-// Subscribes to all four stores' overrides + log directly and derives
-// counts via useMemo to avoid React 19's useSyncExternalStore Object.is
-// trap.
+// All eight tiles read GET /admin/kpis — the server counts whole tables.
+// The old client-side derivation counted over capped fetches (200 users /
+// 50 payouts), so tiles saturated at the caps, and "Live events" read the
+// retired event-catalog seed — structurally 0 forever. /admin/inbox's KPI
+// strip reads the same ["admin","kpis"] key (so the two surfaces agree),
+// and useAdminQueueRealtime already invalidates it on its tick.
+
+// Zero-filled placeholder while the KPI query loads — the tiles render 0,
+// the same first paint the old derivation produced from empty arrays.
+const EMPTY_KPIS: AdminKpis = {
+  pendingVerifications: 0,
+  approvedPhotographers: 0,
+  suspended: 0,
+  liveEvents: 0,
+  decisionsThisWeek: 0,
+  openDisputes: 0,
+  openFlags: 0,
+  pendingPayouts: 0,
+};
 
 export default function AdminOverviewPage() {
-  const { rows: effective } = useAdminUsersData();
-  const userLog = useAdminUserStore((s) => s.log);
-  const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
-  const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
-  const flagOverrides = useAdminFlagStore((s) => s.overrides);
-  const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
-  // A-1 followup: hydrate payouts from BE instead of the mock seed so the
-  // pending-payouts KPI reflects real photographer-submitted requests.
-  const serverPayouts = useAdminPayouts() ?? [];
-  const catalog = useEventCatalog();
-
-  const kpis = useMemo(() => {
-    const photographers = effective.filter((u) => u.role === "PHOTOGRAPHER");
-    const pending = photographers.filter(
-      (u) => u.verificationStatus === "pending" && u.suspendedAt === null,
-    ).length;
-    const approved = photographers.filter(
-      (u) => u.verificationStatus === "approved" && u.suspendedAt === null,
-    ).length;
-    const suspended = effective.filter((u) => u.suspendedAt !== null).length;
-    const liveEvents = catalog.filter((e) => e.state === "live").length;
-    const cutoff = Date.now() - SEVEN_DAYS_MS;
-    const weekDecisions = userLog.filter((e) => {
-      const t = new Date(e.decidedAt).getTime();
-      return Number.isFinite(t) && t >= cutoff;
-    }).length;
-
-    const openDisputes = getEffectiveDisputes(
-      disputeOverrides,
-      disputeSubmissions,
-    ).filter((d) => d.status === "open").length;
-    const openFlags = ADMIN_FLAGS_ENABLED
-      ? getEffectiveFlags(flagOverrides).filter((f) => f.status === "open")
-          .length
-      : 0;
-    const pendingPayouts = mergePayoutsWithOverrides(
-      serverPayouts,
-      payoutOverrides,
-    ).filter((p) => p.status === "pending_review").length;
-
-    return {
-      pending,
-      approved,
-      suspended,
-      liveEvents,
-      weekDecisions,
-      openDisputes,
-      openFlags,
-      pendingPayouts,
-    };
-  }, [
-    effective,
-    catalog,
-    userLog,
-    disputeOverrides,
-    disputeSubmissions,
-    flagOverrides,
-    payoutOverrides,
-    serverPayouts,
-  ]);
+  const kpis = useAdminKpis() ?? EMPTY_KPIS;
 
   return (
     <>
@@ -107,9 +46,9 @@ export default function AdminOverviewPage() {
           <AdminStatTile
             number="01"
             kicker="Pending verifications"
-            value={kpis.pending}
+            value={kpis.pendingVerifications}
             caption={
-              kpis.pending === 1
+              kpis.pendingVerifications === 1
                 ? "photographer waiting"
                 : "photographers waiting"
             }
@@ -164,7 +103,7 @@ export default function AdminOverviewPage() {
           <AdminStatTile
             number={ADMIN_FLAGS_ENABLED ? "06" : "05"}
             kicker="Approved photographers"
-            value={kpis.approved}
+            value={kpis.approvedPhotographers}
             caption="active on platform"
             href={ROUTES.ADMIN_PHOTOGRAPHERS}
           />
@@ -180,9 +119,9 @@ export default function AdminOverviewPage() {
           <AdminStatTile
             number={ADMIN_FLAGS_ENABLED ? "08" : "07"}
             kicker="This week's decisions"
-            value={kpis.weekDecisions}
+            value={kpis.decisionsThisWeek}
             caption={
-              kpis.weekDecisions === 1
+              kpis.decisionsThisWeek === 1
                 ? "action logged"
                 : "actions logged"
             }

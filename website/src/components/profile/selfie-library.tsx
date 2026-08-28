@@ -33,14 +33,11 @@ export function SelfieLibrary() {
 
   function invalidateSelfieDependents() {
     queryClient.invalidateQueries({ queryKey: ["me", "selfies"] });
-    // Selfie-search results depend on the user's primary embedding; refresh
-    // any cached event photo queries so the cockpit picks up the new primary.
-    queryClient.invalidateQueries({
-      predicate: (q) =>
-        Array.isArray(q.queryKey) &&
-        q.queryKey[0] === "events" &&
-        q.queryKey[2] === "photos",
-    });
+    // No event-photo invalidation here: face-search results are one-shot
+    // component state (never cached under a query key), and the
+    // ["events",slug,"photos",{bib}] caches hold bib/browse results that
+    // don't depend on the selfie set — the old predicate nuke only refetched
+    // innocent caches.
   }
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {

@@ -50,7 +50,9 @@ import type { PaginatedResponse } from "@/types/api";
 
 const EVENTS_STALE_MS = 60_000;
 const EARNINGS_STALE_MS = 5 * 60_000;
-const PUBLIC_STALE_MS = 5 * 60_000;
+// Public profile + platform fees move on settings saves / config changes, not
+// by the minute. 30 min stays well under the 1 h presigned-URL TTL on covers.
+const PUBLIC_STALE_MS = 30 * 60_000;
 
 // ───────────────────────────────────────────── Covered events
 

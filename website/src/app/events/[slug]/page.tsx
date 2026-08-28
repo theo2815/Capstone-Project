@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, cache } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { SiteHeader } from "@/components/layout/site-header";
@@ -19,11 +19,17 @@ interface EventPageProps {
 // once /events crosses the demo dataset.
 export const dynamic = "force-dynamic";
 
+// generateMetadata and the page body run as separate calls and each needs the
+// detail — without this, every SSR render hit GET /events/{slug} twice.
+// cache() dedupes within one request. Kept local to this server file:
+// api-events.ts is shared client code.
+const getEventDetail = cache(fetchEventDetail);
+
 export async function generateMetadata({
   params,
 }: EventPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const event = await fetchEventDetail(slug);
+  const event = await getEventDetail(slug);
   if (!event) return { title: "Event not found | QuickPitik" };
   return {
     title: `${event.name} | QuickPitik`,
@@ -33,7 +39,7 @@ export async function generateMetadata({
 
 export default async function EventPage({ params }: EventPageProps) {
   const { slug } = await params;
-  const event = await fetchEventDetail(slug);
+  const event = await getEventDetail(slug);
   if (!event) notFound();
 
   // Pre-race-day events stay viewable as a public page but the gallery is

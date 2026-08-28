@@ -15,6 +15,7 @@ import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 import { useAdminUsersServerStore } from "@/lib/admin-users-data";
 import { useMyPhotographerMessagesStore } from "@/lib/me-photographer-messages-data";
 import { useMyRunnerMessagesStore } from "@/lib/me-runner-messages-data";
+import { resetPhotographerHydrationGuard } from "@/hooks/use-photographer-settings-hydration";
 import { useViewModeStore } from "@/store/view-mode-store";
 
 // Reset every Zustand store that carries user-scoped data + clears the
@@ -48,6 +49,9 @@ export function resetUserScopedStores(): void {
   useViewModeStore.getState().reset();
 
   usePhotographerSettingsStore.getState().reset();
+  // The hydration guard lives at module level (it must survive DashboardShell
+  // remounts) — re-arm it here so the next account hydrates fresh.
+  resetPhotographerHydrationGuard();
   // PF-9 (2026-05-27): the photographer-messages inbox cache survived logout
   // — next photographer login saw stale messages + unread badge from the
   // previous account until the first refetch. Same class as the 9 admin-store

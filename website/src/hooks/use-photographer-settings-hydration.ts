@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   fetchBrand,
   fetchPayoutAccounts,
@@ -28,12 +28,22 @@ import { useUserMediaStore } from "@/store/user-media-store";
 // Three blocks hydrate independently (no shared Promise.all) so a null on one
 // block doesn't abort the others. The settings page's Edit→Save state machine
 // still owns writes; this hook is read-only into the store.
+// Module-level, not a ref: app/dashboard/layout.tsx swaps DashboardShell out
+// for the focused share page (FOCUSED_PATTERNS), so a ref-based guard died on
+// every dashboard → share → back hop and re-fired all three fetches — which
+// bypass React Query, so nothing deduped them. Deliberately NOT persisted:
+// a page reload must re-hydrate (the stored presigned URLs go stale in 1 h).
+let hydratedFor: string | null = null;
+
+// Called from resetUserScopedStores() so an auth transition re-arms
+// hydration for the next account.
+export function resetPhotographerHydrationGuard(): void {
+  hydratedFor = null;
+}
+
 export function usePhotographerSettingsHydration(): void {
   const user = useAuthStore((s) => s.user);
   const isPhotographer = user?.role === "PHOTOGRAPHER";
-  // Per-user ref so a logout → login within the same shell instance re-fires
-  // hydration for the new user.
-  const hydratedForRef = useRef<string | null>(null);
   // Retry trigger. DashboardShell is mounted from app/dashboard/layout.tsx,
   // an App Router layout — it persists across /dashboard/* navigation, so a
   // remount-based retry would never fire. Bumping state is the only way to
@@ -43,11 +53,11 @@ export function usePhotographerSettingsHydration(): void {
 
   useEffect(() => {
     if (!isPhotographer || !user) return;
-    if (hydratedForRef.current === user.id) return;
-    hydratedForRef.current = user.id;
+    if (hydratedFor === user.id) return;
+    hydratedFor = user.id;
     void hydrateAll().then((ok) => {
       if (ok || attempt >= MAX_HYDRATION_RETRIES) return;
-      hydratedForRef.current = null;
+      hydratedFor = null;
       setTimeout(() => setAttempt((a) => a + 1), HYDRATION_RETRY_MS);
     });
   }, [isPhotographer, user, attempt]);

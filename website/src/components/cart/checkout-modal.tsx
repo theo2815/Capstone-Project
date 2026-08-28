@@ -157,7 +157,6 @@ export function CheckoutModal({
       // No redirectUrl ⇒ idempotent replay of an already-PAID order, or the
       // legacy stub path. Fall back to the in-modal success step.
       queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
-      queryClient.invalidateQueries({ queryKey: ["me", "saved-events"] });
       setOrderId(order.id);
       setStep("success");
     } catch (err) {

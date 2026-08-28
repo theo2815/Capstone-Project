@@ -67,7 +67,10 @@ export default function HandleEventPage() {
 }
 
 function PageBody({ handle, slug }: { handle: string; slug: string }) {
-  // Profile + event detail fan out in parallel — both 5-min stale, both BE.
+  // Profile + event detail fan out in parallel, both BE. Long stale times:
+  // a public profile changes when the photographer edits settings (30 min),
+  // an event's metadata changes on an admin edit (10 min) — and the presigned
+  // cover URLs inside both live 1 h, which bounds how stale is safe.
   // useQuery (not the wrapper hook) so we can distinguish "still loading"
   // from "404 / not found". The wrapper collapses both into null which would
   // flash NotFoundBody before the BE response lands.
@@ -75,13 +78,13 @@ function PageBody({ handle, slug }: { handle: string; slug: string }) {
     queryKey: ["photographer", "public", handle],
     queryFn: () => fetchPublicPhotographer(handle),
     enabled: handle.length > 0,
-    staleTime: 5 * 60_000,
+    staleTime: 30 * 60_000,
   });
   const eventQuery = useQuery({
     queryKey: ["events", slug, "detail"],
     queryFn: () => fetchEventDetail(slug),
     enabled: slug.length > 0,
-    staleTime: 60_000,
+    staleTime: 10 * 60_000,
   });
 
   if (profileQuery.isLoading || eventQuery.isLoading) {

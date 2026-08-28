@@ -17,6 +17,16 @@ export function Providers({ children }: { children: ReactNode }) {
         defaultOptions: {
           queries: {
             staleTime: 60 * 1000,
+            // Focus refetch is off: every surface that needs freshness has
+            // its own channel (WS pushes, the admin adaptive poll, the
+            // explicit focus syncs in verification/admin-users/inbox stores).
+            // With it on, every tab return refired every mounted query —
+            // on /admin/inbox that was five list fetches per alt-tab.
+            refetchOnWindowFocus: false,
+            // Dashboard/admin navigation is a tab loop; the 5-min default
+            // discarded caches on a coffee break. Safe to hold longer since
+            // every auth transition clears the whole cache (use-auth).
+            gcTime: 30 * 60_000,
             // Never auto-retry a 429 — the bucket is empty and an immediate
             // retry just deepens the denial (rate limiting is ON by default
             // backend-side since 2026-08-27).
