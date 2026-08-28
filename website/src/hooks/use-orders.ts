@@ -8,6 +8,11 @@ import {
 } from "@/lib/api-orders";
 import type { MockOrder } from "@/store/orders-store";
 
+// Full order list (capped at the fetcher default). Both /orders slabs share it:
+// SpendSlab needs every order to compute lifetime totals, so ReceiptsSlab
+// client-slices the same in-memory set rather than issuing a second fetch. True
+// receipts pagination is blocked on a BE order-summary endpoint to decouple the
+// spend aggregate — filed under "requires backend changes".
 export function useOrdersList(): {
   orders: MockOrder[];
   isLoading: boolean;

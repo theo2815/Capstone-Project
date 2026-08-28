@@ -37,6 +37,10 @@ class RunnerMessageReaderService(
             )
             .map { it.toDto() }
 
+    @Transactional(readOnly = true)
+    fun count(runnerId: UUID): Long =
+        runnerMessageRepository.countByRunnerIdAndRemovedAtIsNull(runnerId)
+
     fun markRead(runnerId: UUID, messageId: UUID): RunnerMessageDto {
         val message = loadOwn(runnerId, messageId)
         if (message.readAt == null) {

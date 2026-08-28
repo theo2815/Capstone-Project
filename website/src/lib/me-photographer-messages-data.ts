@@ -29,15 +29,23 @@ import {
 
 const STALE_HEALTHY_MS = 5 * 60_000;
 const STALE_DEGRADED_MS = 30_000;
+// The BE inbox defaults to 100 rows and caps at 200. Load-more bumps the
+// requested limit and re-fetches (the store mixes WS-pushed + optimistically
+// mutated rows, so a full replace is safer than offset-appending).
+const MESSAGES_PAGE = 100;
+const MESSAGES_MAX = 200;
 
 interface MessagesState {
   messages: PhotographerMessage[];
+  total: number | null;
+  limit: number;
   loading: boolean;
   error: string | null;
   fetchedAt: number;
   inFlight: Promise<void> | null;
   wsConnected: boolean;
   refetch: () => Promise<void>;
+  loadMore: () => Promise<void>;
   markRead: (id: string) => Promise<void>;
   markAllRead: () => Promise<void>;
   remove: (id: string) => Promise<void>;
@@ -54,6 +62,8 @@ interface MessagesState {
 export const useMyPhotographerMessagesStore = create<MessagesState>(
   (set, get) => ({
     messages: [],
+    total: null,
+    limit: MESSAGES_PAGE,
     loading: false,
     error: null,
     fetchedAt: 0,
@@ -65,9 +75,12 @@ export const useMyPhotographerMessagesStore = create<MessagesState>(
       const p = (async () => {
         set({ loading: true, error: null });
         try {
-          const messages = await fetchMyPhotographerMessages();
+          const { messages, total } = await fetchMyPhotographerMessages(
+            get().limit,
+          );
           set({
             messages,
+            total,
             loading: false,
             fetchedAt: Date.now(),
             inFlight: null,
@@ -83,6 +96,12 @@ export const useMyPhotographerMessagesStore = create<MessagesState>(
       })();
       set({ inFlight: p });
       return p;
+    },
+    loadMore: async () => {
+      const next = Math.min(get().limit + MESSAGES_PAGE, MESSAGES_MAX);
+      if (next === get().limit) return;
+      set({ limit: next, fetchedAt: 0 });
+      await get().refetch();
     },
     markRead: async (id) => {
       // Optimistic flip — the BE PATCH returns the updated row but the
@@ -152,6 +171,8 @@ export const useMyPhotographerMessagesStore = create<MessagesState>(
     reset: () =>
       set({
         messages: [],
+        total: null,
+        limit: MESSAGES_PAGE,
         loading: false,
         error: null,
         fetchedAt: 0,
@@ -163,9 +184,12 @@ export const useMyPhotographerMessagesStore = create<MessagesState>(
 
 export interface UseMyPhotographerMessagesResult {
   messages: PhotographerMessage[];
+  total: number | null;
+  hasMore: boolean;
   loading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
+  loadMore: () => Promise<void>;
   markRead: (id: string) => Promise<void>;
   markAllRead: () => Promise<void>;
   remove: (id: string) => Promise<void>;
@@ -177,14 +201,20 @@ export function useMyPhotographerMessages(
   enabled: boolean = true,
 ): UseMyPhotographerMessagesResult {
   const messages = useMyPhotographerMessagesStore((s) => s.messages);
+  const total = useMyPhotographerMessagesStore((s) => s.total);
+  const limit = useMyPhotographerMessagesStore((s) => s.limit);
   const loading = useMyPhotographerMessagesStore((s) => s.loading);
   const error = useMyPhotographerMessagesStore((s) => s.error);
   const fetchedAt = useMyPhotographerMessagesStore((s) => s.fetchedAt);
   const wsConnected = useMyPhotographerMessagesStore((s) => s.wsConnected);
   const refetch = useMyPhotographerMessagesStore((s) => s.refetch);
+  const loadMore = useMyPhotographerMessagesStore((s) => s.loadMore);
   const markRead = useMyPhotographerMessagesStore((s) => s.markRead);
   const markAllRead = useMyPhotographerMessagesStore((s) => s.markAllRead);
   const remove = useMyPhotographerMessagesStore((s) => s.remove);
+
+  const hasMore =
+    total !== null && messages.length < total && limit < MESSAGES_MAX;
 
   useEffect(() => {
     if (!enabled) return;
@@ -210,5 +240,16 @@ export function useMyPhotographerMessages(
     };
   }, [enabled, refetch]);
 
-  return { messages, loading, error, refetch, markRead, markAllRead, remove };
+  return {
+    messages,
+    total,
+    hasMore,
+    loading,
+    error,
+    refetch,
+    loadMore,
+    markRead,
+    markAllRead,
+    remove,
+  };
 }

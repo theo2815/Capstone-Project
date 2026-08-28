@@ -23,6 +23,10 @@ interface PhotographerMessageRepository : JpaRepository<PhotographerMessage, UUI
         pageable: Pageable,
     ): List<PhotographerMessage>
 
+    // Total un-removed messages — surfaced via the X-Total-Count header so the
+    // web inbox knows the true count behind its capped page.
+    fun countByPhotographerIdAndRemovedAtIsNull(photographerId: UUID): Long
+
     // Tenant-safe single-row fetch — guards against IDOR by matching photographer_id.
     fun findByIdAndPhotographerId(
         id: UUID,

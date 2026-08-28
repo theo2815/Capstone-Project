@@ -55,18 +55,20 @@ export default async function EventPage({ params }: EventPageProps) {
     );
   }
 
-  // Initial photo seed for first paint. Browse mode refetches via React Query
-  // when the user enters a bib (Q-011 server-side filter).
+  // Initial photo seed for first paint = page 0 (one Load-more page). The whole
+  // envelope is threaded through so the grid header knows the true server total,
+  // not the seed length. Browse mode pages via React Query from here; a bib
+  // filter (Q-011 server-side) caches and pages independently.
   const initialPhotos = await fetchEventPhotos(slug, {
     offset: 0,
-    limit: PAGE_SIZE.PHOTO_INITIAL * 2,
+    limit: PAGE_SIZE.PHOTO_INCREMENT,
   });
 
   return (
     <main className="bg-bone text-ink min-h-screen">
       <SiteHeader />
       <Suspense fallback={<CockpitFallback />}>
-        <EventCockpit event={event} initialPhotos={initialPhotos.items} />
+        <EventCockpit event={event} initialPhotos={initialPhotos} />
       </Suspense>
     </main>
   );

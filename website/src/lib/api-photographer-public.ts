@@ -1,7 +1,6 @@
 import { api } from "@/lib/api";
 import type { PhotographerProfile } from "@/lib/photographer-registry";
 import type { MockPhoto } from "@/types/photo";
-import type { EventDetail } from "@/types/event";
 import type { PaginatedResponse } from "@/types/api";
 
 // Phase F.2 photographer-public backend contract
@@ -31,15 +30,12 @@ export interface PublicPhotographerPhotosArgs {
 export async function fetchPublicPhotographerEventPhotos(
   handle: string,
   eventSlug: string,
-  _event: EventDetail,
-  _expectedCount: number,
   args: PublicPhotographerPhotosArgs = {},
-): Promise<MockPhoto[]> {
+): Promise<PaginatedResponse<MockPhoto>> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? 24));
-  const res = await api.get<PaginatedResponse<MockPhoto>>(
+  return api.get<PaginatedResponse<MockPhoto>>(
     `/public/photographers/${encodeURIComponent(handle)}/events/${encodeURIComponent(eventSlug)}/photos?${p.toString()}`,
   );
-  return res.items;
 }

@@ -1,6 +1,8 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteList } from "@/hooks/use-infinite-list";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { ApiError } from "@/lib/api";
 import {
   fetchPhotographerEvents,
@@ -17,7 +19,6 @@ import {
   fetchPhotographerTransactions,
   type PayoutBalanceResponse,
   type PerEventEarning,
-  type TransactionsResponse,
 } from "@/lib/api-photographer-earnings";
 import { fetchPublicPhotographer } from "@/lib/api-photographer-public";
 import {
@@ -50,12 +51,21 @@ const PUBLIC_STALE_MS = 30 * 60_000;
 
 // ───────────────────────────────────────────── Covered events
 
+// Covered events. The list surfaces (/dashboard/events, /profile portfolio,
+// dashboard "Next up") filter by date/search CLIENT-SIDE — the BE endpoint only
+// supports `withUploads`, so true offset pagination would only ever filter the
+// loaded page. Instead those surfaces pass `limit: COVERED_EVENTS_MAX` to pull
+// the full set (the BE max, which covers every realistic photographer) and keep
+// their own Load-more client-slice, so the rendered DOM stays bounded. Simple
+// consumers (setup journey, action grid) omit it and take the fetcher default.
+export const COVERED_EVENTS_MAX = 200;
+
 export function usePhotographerEvents(
-  args: { withUploads?: boolean } = {},
+  args: { withUploads?: boolean; limit?: number } = {},
 ): PhotographerEventSummary[] | null {
   const query = useQuery<PhotographerEventSummary[]>({
     queryKey: ["photographer", "events", args],
-    queryFn: () => fetchPhotographerEvents(args),
+    queryFn: () => fetchPhotographerEvents(args).then((r) => r.items),
     staleTime: EVENTS_STALE_MS,
   });
   return query.data ?? null;
@@ -98,19 +108,17 @@ export function usePhotographerEventDetail(
   };
 }
 
-export function usePhotographerEventPhotos(
-  eventId: string | null,
-): PhotographerLibraryPhoto[] | null {
-  const query = useQuery<PhotographerLibraryPhoto[]>({
+export function usePhotographerEventPhotos(eventId: string | null) {
+  return useInfiniteList<PhotographerLibraryPhoto>({
     queryKey: ["photographer", "events", eventId, "photos"],
-    queryFn: () =>
+    fetchPage: (offset, limit) =>
       eventId
-        ? fetchPhotographerEventPhotos(eventId)
-        : Promise.resolve([]),
+        ? fetchPhotographerEventPhotos(eventId, { offset, limit })
+        : Promise.resolve({ items: [], total: 0, offset, limit }),
+    limit: PAGE_SIZE.PHOTO_INCREMENT,
     enabled: !!eventId,
     staleTime: EVENTS_STALE_MS,
   });
-  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Earnings
@@ -124,8 +132,10 @@ export function usePhotographerEarnings(): PhotographerEarnings | null {
   return query.data ?? null;
 }
 
-// Envelope, not a bare array — the page needs `total` to say "N of M" instead
-// of hedging with "the 200 most recent".
+// Single capped fetch (not offset pagination): the slab sorts client-side by
+// revenueKept desc and the BE has no revenue-sort param, so paging would only
+// rank the loaded page. The fetcher defaults to the BE max, and the slab
+// client-slices the render. Envelope kept so the page can say "N of M".
 export function usePhotographerPerEventEarnings(): PaginatedResponse<PerEventEarning> | null {
   const query = useQuery<PaginatedResponse<PerEventEarning>>({
     queryKey: ["photographer", "earnings", "per-event"],
@@ -137,13 +147,13 @@ export function usePhotographerPerEventEarnings(): PaginatedResponse<PerEventEar
 
 // ───────────────────────────────────────────── Payouts
 
-export function usePhotographerPayouts(): PaginatedResponse<PhotographerPayout> | null {
-  const query = useQuery<PaginatedResponse<PhotographerPayout>>({
+export function usePhotographerPayouts() {
+  return useInfiniteList<PhotographerPayout>({
     queryKey: ["photographer", "payouts"],
-    queryFn: () => fetchPhotographerPayouts(),
+    fetchPage: (offset, limit) => fetchPhotographerPayouts({ offset, limit }),
+    limit: PAGE_SIZE.PAYOUT_INCREMENT,
     staleTime: EARNINGS_STALE_MS,
   });
-  return query.data ?? null;
 }
 
 // Unpaid balance + open-request state for the Request Payout hero on
@@ -171,13 +181,35 @@ export function usePhotographerPayoutReports(args: {
 
 // ───────────────────────────────────────────── Transactions
 
-export function usePhotographerTransactions(): TransactionsResponse | null {
-  const query = useQuery<TransactionsResponse>({
+// Uses useInfiniteQuery directly (not useInfiniteList) to surface the extra
+// `monthTotals` envelope field. The server computes monthTotals over ALL rows,
+// so it is identical on every page — read it from page 0, never accumulate.
+export function usePhotographerTransactions() {
+  const query = useInfiniteQuery({
     queryKey: ["photographer", "transactions"],
-    queryFn: () => fetchPhotographerTransactions(),
+    queryFn: ({ pageParam }) =>
+      fetchPhotographerTransactions({
+        offset: pageParam,
+        limit: PAGE_SIZE.TRANSACTION_INCREMENT,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (last) => {
+      const next = last.offset + last.limit;
+      return next < last.total ? next : undefined;
+    },
     staleTime: EARNINGS_STALE_MS,
   });
-  return query.data ?? null;
+  const pages = query.data?.pages ?? [];
+  return {
+    items: pages.flatMap((p) => p.items),
+    total: pages.at(-1)?.total ?? 0,
+    monthTotals: pages[0]?.monthTotals ?? {},
+    isLoading: query.isPending,
+    isFetchingNextPage: query.isFetchingNextPage,
+    hasNextPage: query.hasNextPage,
+    fetchNextPage: () => void query.fetchNextPage(),
+    error: query.error,
+  };
 }
 
 // ───────────────────────────────────────────── Public profile

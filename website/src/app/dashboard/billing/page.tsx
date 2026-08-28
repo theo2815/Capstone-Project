@@ -71,11 +71,10 @@ function PayoutsSlab() {
   const [trackingCycle, setTrackingCycle] = useState<PhotographerPayout | null>(
     null,
   );
-  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PAYOUT_INITIAL);
   const livePayouts = usePhotographerPayouts();
   const balance = usePhotographerPayoutBalance();
-  const payouts = livePayouts?.items ?? [];
-  const isLoading = livePayouts === null || balance === null;
+  const payouts = livePayouts.items;
+  const isLoading = livePayouts.isLoading || balance === null;
   const { user } = useAuth();
   const photographer = resolveCurrentPhotographer(user);
   // Read reports from BE so admin acknowledge/resolve responses surface to
@@ -107,7 +106,7 @@ function PayoutsSlab() {
     ? (reportByCycleId.get(trackingCycle.id) ?? null)
     : null;
 
-  if (isLoading || !payouts) {
+  if (isLoading) {
     return (
       <Slab id="payouts" number="01" title="Payouts" caption="Weekly · GCash">
         <div>
@@ -151,11 +150,11 @@ function PayoutsSlab() {
               Recent payouts
             </Kicker>
             <Kicker as="p" tone="soft" tnum>
-              {payouts.length} payouts
+              {livePayouts.total} payouts
             </Kicker>
           </div>
           <ul className="border-y border-line divide-y divide-line">
-            {payouts.slice(0, loadedCount).map((payout) => (
+            {payouts.map((payout) => (
               <li key={payout.id} id={`cycle-${payout.id}`}>
                 <PayoutRow
                   payout={payout}
@@ -166,21 +165,12 @@ function PayoutsSlab() {
               </li>
             ))}
           </ul>
-          {/* `total` is every payout the BE has; `payouts` is what this fetch
-              returned (capped at the backend's max limit). When they disagree,
-              say the real number instead of claiming "All N loaded". */}
           <LoadMoreButton
-            shown={Math.min(loadedCount, payouts.length)}
-            total={payouts.length}
+            shown={payouts.length}
+            total={livePayouts.total}
             increment={PAGE_SIZE.PAYOUT_INCREMENT}
-            onLoadMore={() =>
-              setLoadedCount((n) => n + PAGE_SIZE.PAYOUT_INCREMENT)
-            }
-            terminalLabel={
-              livePayouts && payouts.length < livePayouts.total
-                ? `Showing first ${payouts.length.toLocaleString()} of ${livePayouts.total.toLocaleString()}`
-                : undefined
-            }
+            onLoadMore={livePayouts.fetchNextPage}
+            isLoading={livePayouts.isFetchingNextPage}
           />
         </div>
       )}
@@ -562,40 +552,24 @@ function PayoutRow({
 }
 
 function TransactionsSlab() {
-  // monthTotals lives in the response envelope but the existing render
-  // derives them client-side from the same items, so both paths agree.
   const liveTx = usePhotographerTransactions();
-  const transactions = liveTx?.items ?? [];
-  const isLoading = liveTx === null;
-  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.TRANSACTION_INITIAL);
+  const transactions = liveTx.items;
+  const isLoading = liveTx.isLoading;
 
-  // Memos must run on every render — using `?? []` so the loading branch
-  // still calls them with a stable empty list. Skeleton early-return lives
-  // below the hooks.
-  const txList = transactions ?? [];
-
-  // Full-month totals computed over the complete list — sticky header values
-  // stay stable as load-more reveals more rows within a month.
-  const fullMonthTotals = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const tx of txList) {
-      const key = monthKey(tx.paidAt);
-      map.set(key, (map.get(key) ?? 0) + tx.amountKept);
-    }
-    return map;
-  }, [txList]);
-
-  const loadedSlice = useMemo(
-    () => txList.slice(0, loadedCount),
-    [txList, loadedCount],
+  // Month-header totals come straight from the server envelope (computed over
+  // ALL rows, in PHT), so sticky headers stay stable as Load-more reveals more
+  // rows — no client re-derivation over the loaded page.
+  const monthTotalsMap = useMemo(
+    () => new Map(Object.entries(liveTx.monthTotals)),
+    [liveTx.monthTotals],
   );
 
   const loadedGroups = useMemo(
-    () => groupByMonth(loadedSlice, fullMonthTotals),
-    [loadedSlice, fullMonthTotals],
+    () => groupByMonth(transactions, monthTotalsMap),
+    [transactions, monthTotalsMap],
   );
 
-  if (isLoading || !transactions) {
+  if (isLoading) {
     return (
       <Slab
         id="transactions"
@@ -619,7 +593,9 @@ function TransactionsSlab() {
     );
   }
 
-  const total = transactions.reduce((sum, tx) => sum + tx.amountKept, 0);
+  // Grand total over ALL rows = sum of the server month totals (not just the
+  // loaded page).
+  const total = Object.values(liveTx.monthTotals).reduce((sum, v) => sum + v, 0);
 
   return (
     <Slab
@@ -628,8 +604,8 @@ function TransactionsSlab() {
       title="Transactions"
       caption="Each photo sale, post-platform-cut"
       trailing={
-        transactions.length > 0
-          ? `${transactions.length} · ₱${total.toLocaleString()}`
+        liveTx.total > 0
+          ? `${liveTx.total} · ₱${total.toLocaleString()}`
           : undefined
       }
     >
@@ -664,22 +640,12 @@ function TransactionsSlab() {
               </li>
             ))}
           </ul>
-          {/* `total` is what the fetch returned (capped at the backend's 200
-              MAX_LIMIT), since that's all Load More can chunk through. The
-              response envelope also carries the real row count — when the
-              two disagree, say so instead of claiming "All 200 loaded". */}
           <LoadMoreButton
-            shown={loadedSlice.length}
-            total={transactions.length}
+            shown={transactions.length}
+            total={liveTx.total}
             increment={PAGE_SIZE.TRANSACTION_INCREMENT}
-            onLoadMore={() =>
-              setLoadedCount((n) => n + PAGE_SIZE.TRANSACTION_INCREMENT)
-            }
-            terminalLabel={
-              liveTx && transactions.length < liveTx.total
-                ? `Showing first ${transactions.length.toLocaleString()} of ${liveTx.total.toLocaleString()}`
-                : undefined
-            }
+            onLoadMore={liveTx.fetchNextPage}
+            isLoading={liveTx.isFetchingNextPage}
           />
         </>
       )}

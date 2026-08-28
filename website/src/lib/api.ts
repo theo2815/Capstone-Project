@@ -10,14 +10,17 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
-  async fetch<T>(
+  // Full request path (auth header, 30s/120s timeout, single-flight 401 refresh
+  // + one retry). Returns the parsed envelope data AND the raw Response so
+  // callers needing a header (getWithTotal → X-Total-Count) can read it.
+  async fetchRaw<T>(
     path: string,
     options?: RequestInit,
     // Set on the one retry we allow after a token refresh. A second refresh
     // can never help: if a freshly-minted token still 401s, a newer one will
     // too — and unbounded recursion here re-submits the request forever.
     retried = false,
-  ): Promise<T> {
+  ): Promise<{ data: T; res: Response }> {
     const token = getAccessToken();
     const isFormData = options?.body instanceof FormData;
     const headers: HeadersInit = {
@@ -71,7 +74,7 @@ class ApiClient {
       !isCredentialRejection(data)
     ) {
       const refreshed = retried ? false : await refreshAccessToken();
-      if (refreshed) return this.fetch<T>(path, options, true);
+      if (refreshed) return this.fetchRaw<T>(path, options, true);
       this.redirectToLogin();
       throw new Error("Unauthorized");
     }
@@ -90,11 +93,27 @@ class ApiClient {
         retryAfterSeconds(res),
       );
     }
-    return data.data;
+    return { data: data.data, res };
+  }
+
+  async fetch<T>(path: string, options?: RequestInit): Promise<T> {
+    return (await this.fetchRaw<T>(path, options)).data;
   }
 
   async get<T>(path: string): Promise<T> {
     return this.fetch<T>(path, { method: "GET" });
+  }
+
+  // GET that also reads the X-Total-Count response header (CORS-exposed) for
+  // endpoints whose body stays a bare array for mobile parity (message inboxes).
+  // `total` is null when the header is absent or unparseable.
+  async getWithTotal<T>(
+    path: string,
+  ): Promise<{ data: T; total: number | null }> {
+    const { data, res } = await this.fetchRaw<T>(path, { method: "GET" });
+    const raw = res.headers.get("X-Total-Count");
+    const parsed = raw == null ? NaN : Number(raw);
+    return { data, total: Number.isFinite(parsed) ? parsed : null };
   }
 
   async post<T>(

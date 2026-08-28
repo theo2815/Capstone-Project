@@ -73,4 +73,24 @@ class MessagePaginationTest {
         // cap were ever lowered below 100 this test flags the silent truncation.
         assertEquals(100, PaginationParams.of(null, 100).limit)
     }
+
+    // The controllers set X-Total-Count from these counts so the web inbox knows
+    // the true total behind its capped page (the body stays a bare array).
+    @Test
+    fun `photographer inbox count returns the un-removed repository total`() {
+        val userId = UUID.randomUUID()
+        Mockito.`when`(photographerRepo.countByPhotographerIdAndRemovedAtIsNull(userId))
+            .thenReturn(137L)
+
+        assertEquals(137L, PhotographerMessageService(photographerRepo).count(userId))
+    }
+
+    @Test
+    fun `runner inbox count returns the un-removed repository total`() {
+        val userId = UUID.randomUUID()
+        Mockito.`when`(runnerRepo.countByRunnerIdAndRemovedAtIsNull(userId))
+            .thenReturn(42L)
+
+        assertEquals(42L, RunnerMessageReaderService(runnerRepo).count(userId))
+    }
 }

@@ -487,6 +487,11 @@ function SegmentBlock({
   highlight?: boolean;
 }) {
   const bgClass = bg === "bone-deep" ? "bg-bone-deep" : "bg-bone";
+  // Client-slice so a large segment (a growing Archive especially) doesn't
+  // render every tile at once. The catalog itself is capped at the BE max
+  // upstream; reaching beyond that needs server-side lifecycle segmentation.
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EVENT_GRID_INITIAL);
+  const visibleItems = items.slice(0, loadedCount);
   return (
     <section id={id} className={`${bgClass} px-6 md:px-10 py-14 md:py-20 scroll-mt-28`}>
       <div className="max-w-7xl mx-auto">
@@ -512,10 +517,18 @@ function SegmentBlock({
           </Kicker>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
-          {items.map((e, i) => (
+          {visibleItems.map((e, i) => (
             <EventTile key={e.id} event={e} index={i} />
           ))}
         </div>
+        <LoadMoreButton
+          shown={visibleItems.length}
+          total={items.length}
+          increment={PAGE_SIZE.EVENT_GRID_INCREMENT}
+          onLoadMore={() =>
+            setLoadedCount((n) => n + PAGE_SIZE.EVENT_GRID_INCREMENT)
+          }
+        />
       </div>
     </section>
   );

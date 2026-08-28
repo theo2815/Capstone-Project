@@ -19,9 +19,13 @@ import {
   type EventDateKey,
 } from "@/components/dashboard/event-filter-bar";
 import { Kicker } from "@/components/ui/kicker";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useAuth } from "@/hooks/use-auth";
 import { useEffectiveRole } from "@/hooks/use-effective-role";
-import { usePhotographerEvents } from "@/hooks/use-photographer-data";
+import {
+  usePhotographerEvents,
+  COVERED_EVENTS_MAX,
+} from "@/hooks/use-photographer-data";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useOrdersList } from "@/hooks/use-orders";
 import { useToast } from "@/hooks/use-toast";
@@ -31,6 +35,7 @@ import {
 } from "@/lib/api-saved-events";
 import type { MockOrder } from "@/store/orders-store";
 import { ROUTES } from "@/lib/constants";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { formatMemberSince, formatRaceDate } from "@/lib/format";
 import type { PhotographerEventSummary } from "@/lib/photographer-mock";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
@@ -387,8 +392,13 @@ function PhotographerProfileBody({ user }: { user: User }) {
   // Live BE rollup of the photographer's covered events. withUploads=true so
   // events the photographer hasn't shot for yet stay out of the portfolio.
   // null = still loading; [] = no covered events. The StatsRow + PortfolioGrid
-  // both feed off this single read.
-  const events = usePhotographerEvents({ withUploads: true });
+  // both feed off this single read. limit=MAX so a prolific portfolio isn't
+  // capped (client-side date/search filter needs the full set); PortfolioGrid
+  // client-slices the render to keep the DOM bounded.
+  const events = usePhotographerEvents({
+    withUploads: true,
+    limit: COVERED_EVENTS_MAX,
+  });
 
   const accent = brandColor !== "none" ? BRAND_COLOR_HEX[brandColor] : null;
   const displayName = brandName.trim() || user.name;
@@ -634,6 +644,7 @@ function PortfolioGrid({
   const validHandle = handle.length > 0;
   const [date, setDate] = useState<EventDateKey>("any");
   const [query, setQuery] = useState("");
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PORTFOLIO_INITIAL);
 
   const filtered = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -646,6 +657,13 @@ function PortfolioGrid({
       return true;
     });
   }, [allEvents, date, query]);
+
+  // Client-side filter changes reset the client-side page.
+  useEffect(() => {
+    setLoadedCount(PAGE_SIZE.PORTFOLIO_INITIAL);
+  }, [date, query]);
+
+  const visibleSlice = filtered.slice(0, loadedCount);
 
   const clearFilters = () => {
     setDate("any");
@@ -678,21 +696,31 @@ function PortfolioGrid({
           {filtered.length === 0 ? (
             <EventFilterEmpty onClear={clearFilters} />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
-              {filtered.map((summary, index) => (
-                <EventTile
-                  key={summary.id}
-                  mode="browse"
-                  event={toListEvent(summary)}
-                  index={index}
-                  hrefOverride={
-                    validHandle
-                      ? `/${handle}/events/${summary.slug}`
-                      : undefined
-                  }
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
+                {visibleSlice.map((summary, index) => (
+                  <EventTile
+                    key={summary.id}
+                    mode="browse"
+                    event={toListEvent(summary)}
+                    index={index}
+                    hrefOverride={
+                      validHandle
+                        ? `/${handle}/events/${summary.slug}`
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
+              <LoadMoreButton
+                shown={visibleSlice.length}
+                total={filtered.length}
+                increment={PAGE_SIZE.PORTFOLIO_INCREMENT}
+                onLoadMore={() =>
+                  setLoadedCount((n) => n + PAGE_SIZE.PORTFOLIO_INCREMENT)
+                }
+              />
+            </>
           )}
         </>
       )}

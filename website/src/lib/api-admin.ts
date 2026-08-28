@@ -20,6 +20,14 @@ import type { ListEvent } from "@/app/events/events-browser";
 import type { DecisionLogEntry } from "@/store/admin-user-store";
 import type { PaginatedResponse } from "@/types/api";
 
+// Admin queues fetch a page and then categorize/merge/sort it CLIENT-SIDE
+// (status slabs, optimistic-store overrides, GMV sort), so true offset
+// pagination would only ever transform the loaded page. They instead pull up
+// to the BE max in one fetch and keep their own client-slice Load-more, so the
+// rendered DOM stays bounded. Fully scalable admin pagination would need
+// server-side categorization — filed as future work.
+const ADMIN_LIST_LIMIT = 200;
+
 // Phase G admin backend contract (Q-A1 + Q-A2 + Q-A3 + Q-A4 RESOLVED 2026-05-09).
 //
 //   GET    /api/v1/admin/kpis                              → AdminKpis
@@ -112,7 +120,7 @@ function buildUsersQs(args: AdminUserListArgs): string {
   if (args.status) p.set("status", args.status);
   if (args.q) p.set("q", args.q);
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   return p.toString();
 }
 
@@ -272,7 +280,7 @@ function buildDisputesQs(args: AdminDisputeListArgs): string {
   if (args.status) p.set("status", args.status);
   if (args.q) p.set("q", args.q);
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   return p.toString();
 }
 
@@ -335,7 +343,7 @@ function buildPayoutsQs(args: AdminPayoutListArgs): string {
   if (args.status) p.set("status", args.status);
   if (args.q) p.set("q", args.q);
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   return p.toString();
 }
 
@@ -428,7 +436,7 @@ export async function fetchAdminPayoutReports(
   const p = new URLSearchParams();
   if (args.status) p.set("status", args.status);
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   const res = await api.get<PaginatedResponse<PayoutReport>>(
     `/admin/payouts/reports?${p.toString()}`,
   );
@@ -469,7 +477,7 @@ export async function fetchAdminEvents(
   const p = new URLSearchParams();
   if (args.state) p.set("state", args.state);
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   const res = await api.get<PaginatedResponse<ListEvent>>(
     `/admin/events?${p.toString()}`,
   );
@@ -590,7 +598,7 @@ export async function fetchAdminSalesByEvent(
 ): Promise<AdminSalesEventRow[]> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   if (args.order) p.set("order", args.order);
   const res = await api.get<PaginatedResponse<AdminSalesEventRow>>(
     `/admin/sales/by-event?${p.toString()}`,

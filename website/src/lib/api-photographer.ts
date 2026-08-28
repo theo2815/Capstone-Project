@@ -52,15 +52,14 @@ export interface PhotographerEventListArgs {
 
 export async function fetchPhotographerEvents(
   args: PhotographerEventListArgs = {},
-): Promise<PhotographerEventSummary[]> {
+): Promise<PaginatedResponse<PhotographerEventSummary>> {
   const p = new URLSearchParams();
   if (args.withUploads) p.set("withUploads", "true");
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? 24));
-  const res = await api.get<PaginatedResponse<PhotographerEventSummary>>(
+  return api.get<PaginatedResponse<PhotographerEventSummary>>(
     `/me/photographer/events?${p.toString()}`,
   );
-  return res.items;
 }
 
 export async function fetchPhotographerEventDetail(
@@ -80,15 +79,14 @@ export interface PhotographerEventPhotosArgs {
 export async function fetchPhotographerEventPhotos(
   eventId: string,
   args: PhotographerEventPhotosArgs = {},
-): Promise<PhotographerLibraryPhoto[]> {
+): Promise<PaginatedResponse<PhotographerLibraryPhoto>> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? 120));
   if (args.order) p.set("order", args.order);
-  const res = await api.get<PaginatedResponse<PhotographerLibraryPhoto>>(
+  return api.get<PaginatedResponse<PhotographerLibraryPhoto>>(
     `/me/photographer/events/${encodeURIComponent(eventId)}/photos?${p.toString()}`,
   );
-  return res.items;
 }
 
 export interface PhotographerDownloadResponse {

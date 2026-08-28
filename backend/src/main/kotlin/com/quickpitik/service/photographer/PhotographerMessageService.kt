@@ -38,6 +38,10 @@ class PhotographerMessageService(
             )
             .map { it.toDto() }
 
+    @Transactional(readOnly = true)
+    fun count(photographerId: UUID): Long =
+        photographerMessageRepository.countByPhotographerIdAndRemovedAtIsNull(photographerId)
+
     fun markRead(photographerId: UUID, messageId: UUID): PhotographerMessageDto {
         val message = loadOwn(photographerId, messageId)
         if (message.readAt == null) {

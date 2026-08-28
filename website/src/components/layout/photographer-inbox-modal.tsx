@@ -41,11 +41,12 @@ export function PhotographerInboxModal({
   isOpen,
   onClose,
 }: PhotographerInboxModalProps) {
-  const { messages, markRead, markAllRead, remove } =
+  const { messages, total, hasMore, loadMore, markRead, markAllRead, remove } =
     useMyPhotographerMessages(isOpen);
   const { confirm } = useConfirmation();
 
   const unreadCount = getUnreadCount(messages);
+  const totalLabel = total ?? messages.length;
 
   async function handleRemove(message: PhotographerMessage) {
     const ok = await confirm({
@@ -65,8 +66,8 @@ export function PhotographerInboxModal({
       <div className="flex items-baseline justify-between mb-5">
         <Kicker as="p" tone="soft" tnum>
           {unreadCount > 0
-            ? `${unreadCount} unread · ${messages.length} total`
-            : `${messages.length} total`}
+            ? `${unreadCount} unread · ${totalLabel} total`
+            : `${totalLabel} total`}
         </Kicker>
         {unreadCount > 0 && (
           <button
@@ -84,18 +85,31 @@ export function PhotographerInboxModal({
           No messages yet. Admin actions on your account will land here.
         </p>
       ) : (
-        <ul className="max-h-[60vh] overflow-y-auto -mx-2 divide-y divide-line">
-          {messages.map((m) => (
-            <InboxRow
-              key={m.id}
-              message={m}
-              onMarkRead={() => {
-                if (m.readAt === null) void markRead(m.id);
-              }}
-              onRemove={() => handleRemove(m)}
-            />
-          ))}
-        </ul>
+        <div className="max-h-[60vh] overflow-y-auto -mx-2">
+          <ul className="divide-y divide-line">
+            {messages.map((m) => (
+              <InboxRow
+                key={m.id}
+                message={m}
+                onMarkRead={() => {
+                  if (m.readAt === null) void markRead(m.id);
+                }}
+                onRemove={() => handleRemove(m)}
+              />
+            ))}
+          </ul>
+          {hasMore && (
+            <div className="mt-3 flex justify-center">
+              <button
+                type="button"
+                onClick={() => void loadMore()}
+                className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+              >
+                Load older
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       <div className="mt-6 flex justify-end">

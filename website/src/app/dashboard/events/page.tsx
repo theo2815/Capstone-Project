@@ -11,7 +11,10 @@ import {
 import { EventTile } from "@/components/events/event-tile";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { TileSkeleton } from "@/components/ui/skeleton";
-import { usePhotographerEvents } from "@/hooks/use-photographer-data";
+import {
+  usePhotographerEvents,
+  COVERED_EVENTS_MAX,
+} from "@/hooks/use-photographer-data";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import type { PhotographerEventSummary } from "@/lib/photographer-mock";
@@ -44,7 +47,10 @@ function toListEvent(p: PhotographerEventSummary): ListEvent {
 }
 
 export default function DashboardEventsPage() {
-  const liveEvents = usePhotographerEvents({ withUploads: true });
+  const liveEvents = usePhotographerEvents({
+    withUploads: true,
+    limit: COVERED_EVENTS_MAX,
+  });
   const isLoading = liveEvents === null;
 
   const covered = useMemo(

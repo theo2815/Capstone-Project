@@ -44,7 +44,7 @@ type Mode = "cockpit" | "browse";
 
 interface Props {
   event: EventDetail;
-  initialPhotos: MockPhoto[];
+  initialPhotos: EventPhotosResult;
 }
 
 export function EventCockpit({ event, initialPhotos }: Props) {
@@ -78,7 +78,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const bibPhotos = useEventPhotos({
     slug: event.slug,
     bib: bibFilter || undefined,
-    initialItems: initialPhotos,
+    initialPage: initialPhotos,
     enabled: !isFaceMode,
   });
 
@@ -99,9 +99,14 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const visiblePhotos = isFaceMode
     ? faceSearchResult?.items ?? []
     : bibPhotos.photos;
+  // Face search is one-shot local state (Step 2 turns it into a real infinite
+  // query); render all its matches at once and read `total` from what's loaded
+  // so Load-more shows the terminal kicker instead of a dead button.
   const visibleTotal = isFaceMode
-    ? faceSearchResult?.total ?? 0
+    ? faceSearchResult?.items.length ?? 0
     : bibPhotos.total;
+  const onLoadMore = isFaceMode ? () => {} : bibPhotos.fetchNextPage;
+  const isLoadingMore = isFaceMode ? false : bibPhotos.isFetchingNextPage;
 
   const submitBib = (raw: string) => {
     const clean = raw.trim().toUpperCase();
@@ -202,6 +207,8 @@ export function EventCockpit({ event, initialPhotos }: Props) {
         event={event}
         photos={visiblePhotos}
         total={visibleTotal}
+        onLoadMore={onLoadMore}
+        isLoadingMore={isLoadingMore}
         bibFilter={bibFilter}
         isFaceMode={isFaceMode}
         canShowMyPhotos={isAuthenticated && !!primarySelfieId}
@@ -462,6 +469,8 @@ function BrowseMode({
   event,
   photos,
   total,
+  onLoadMore,
+  isLoadingMore,
   bibFilter,
   isFaceMode,
   canShowMyPhotos,
@@ -477,6 +486,8 @@ function BrowseMode({
   event: EventDetail;
   photos: MockPhoto[];
   total: number;
+  onLoadMore: () => void;
+  isLoadingMore: boolean;
   bibFilter: string;
   isFaceMode: boolean;
   canShowMyPhotos: boolean;
@@ -491,12 +502,12 @@ function BrowseMode({
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PHOTO_INITIAL);
   const [isPolicyOpen, setIsPolicyOpen] = useState(false);
 
   const isBibFilter = bibFilter.trim().length > 0;
   const isAnyFilter = isBibFilter || isFaceMode;
-  // Photos are already server-filtered by bib (Q-011) or face (Q-005/006).
+  // Server-filtered by bib (Q-011) or face (Q-005/006) and server-paginated —
+  // `photos` is the flattened set loaded so far; Load-more fetches the next page.
   const visible = photos;
 
   // Q-002: live WebSocket prepend for live-state events. Hook is a no-op
@@ -509,24 +520,15 @@ function BrowseMode({
   });
 
   useEffect(() => {
-    setLoadedCount(PAGE_SIZE.PHOTO_INITIAL);
-  }, [bibFilter, isFaceMode]);
-
-  const visibleSlice = useMemo(
-    () => visible.slice(0, loadedCount),
-    [visible, loadedCount],
-  );
-
-  useEffect(() => {
-    if (previewIndex !== null && previewIndex >= visibleSlice.length) {
-      setPreviewIndex(visibleSlice.length === 0 ? null : visibleSlice.length - 1);
+    if (previewIndex !== null && previewIndex >= visible.length) {
+      setPreviewIndex(visible.length === 0 ? null : visible.length - 1);
     }
-  }, [visibleSlice.length, previewIndex]);
+  }, [visible.length, previewIndex]);
 
   const totalPrice = visible.reduce((sum, p) => sum + p.price, 0);
   const showBuyAll = isAnyFilter && visible.length > 0;
   const previewPhoto =
-    previewIndex !== null ? visibleSlice[previewIndex] ?? null : null;
+    previewIndex !== null ? visible[previewIndex] ?? null : null;
 
   const headerKicker = isBibFilter
     ? `${event.name} · BIB ${bibFilter}`
@@ -570,13 +572,13 @@ function BrowseMode({
                       opacity: 0,
                     }}
                   >
-                    {visible.length}
+                    {total}
                   </span>{" "}
                   {isFaceMode
-                    ? visible.length === 1
+                    ? total === 1
                       ? "match"
                       : "matches"
-                    : visible.length === 1
+                    : total === 1
                       ? "photo"
                       : "photos"}
                   .
@@ -721,7 +723,7 @@ function BrowseMode({
           <div className="px-6 md:px-10 py-10 md:py-14 pb-20">
             <div className="max-w-7xl mx-auto">
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
-                {visibleSlice.map((p, i) => (
+                {visible.map((p, i) => (
                   <PhotoMosaicTile
                     key={p.id}
                     event={event}
@@ -732,12 +734,11 @@ function BrowseMode({
                 ))}
               </div>
               <LoadMoreButton
-                shown={visibleSlice.length}
-                total={Math.min(visible.length, total || visible.length)}
+                shown={visible.length}
+                total={total}
                 increment={PAGE_SIZE.PHOTO_INCREMENT}
-                onLoadMore={() =>
-                  setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT)
-                }
+                onLoadMore={onLoadMore}
+                isLoading={isLoadingMore}
                 countSuffix={
                   isBibFilter
                     ? `· BIB ${bibFilter}`
@@ -746,11 +747,6 @@ function BrowseMode({
                       : undefined
                 }
               />
-              {!isBibFilter && !isFaceMode && total > visible.length && (
-                <p className="mt-4 text-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-                  Showing first <span className="tnum text-ink">{visible.length}</span> of <span className="tnum text-ink">{total}</span> · search by bib or selfie to find yours
-                </p>
-              )}
             </div>
           </div>
         )}
@@ -781,7 +777,7 @@ function BrowseMode({
           event={event}
           photo={previewPhoto}
           index={previewIndex}
-          total={visibleSlice.length}
+          total={visible.length}
           onClose={() => setPreviewIndex(null)}
           onPrev={
             previewIndex > 0
@@ -789,7 +785,7 @@ function BrowseMode({
               : undefined
           }
           onNext={
-            previewIndex < visibleSlice.length - 1
+            previewIndex < visible.length - 1
               ? () => setPreviewIndex(previewIndex + 1)
               : undefined
           }

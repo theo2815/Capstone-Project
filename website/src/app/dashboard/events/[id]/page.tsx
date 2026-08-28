@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
 import { SiteHeader } from "@/components/layout/site-header";
 import {
@@ -425,47 +425,28 @@ function PhotoGrid({
 }: {
   event: ListEvent;
   photographer: PhotographerEventSummary;
-  livePhotos: PhotographerLibraryPhoto[] | null;
+  livePhotos: ReturnType<typeof usePhotographerEventPhotos>;
 }) {
-  // GET /me/photographer/events/{id}/photos — null while the request is in
-  // flight. Treat null as "still loading" via an empty list so the grid
-  // shows its skeleton row count rather than flashing the empty state.
-  const photos = livePhotos ?? [];
-  // Two different numbers, deliberately. `photoCount` is the event's true
-  // total (event_photographer.photo_count); `photos.length` is how many the
-  // fetch actually returned, capped at the backend's 120 limit. Showing the
-  // fetched count as "total" contradicted the Stats row directly above it.
+  // Flattened server pages loaded so far; Load-more fetches the next page.
+  const photos = livePhotos.items;
+  // The event's canonical total (event_photographer.photo_count) drives the
+  // header stat; the paginator uses the photos endpoint's own total so
+  // Load-more reaches every LIVE photo.
   const total = photographer.photoCount;
-  const fetchCapped = photos.length < total;
 
   const { showToast } = useToast();
   const [openIndex, setOpenIndex] = useState<number | null>(null);
-  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PHOTO_INITIAL);
-
-  const visibleSlice = useMemo(
-    () => photos.slice(0, loadedCount),
-    [photos, loadedCount],
-  );
 
   const handleOpen = useCallback((i: number) => setOpenIndex(i), []);
   const handleClose = useCallback(() => setOpenIndex(null), []);
   const handlePrev = useCallback(() => {
     setOpenIndex((i) => (i === null || i === 0 ? i : i - 1));
   }, []);
-  // Advancing past the last *rendered* tile pulls the next client-side page
-  // in so the arrow keeps working — the grid shows PHOTO_INITIAL (60) but the
-  // fetch already holds up to 120, and those extra photos were unreachable
-  // from the lightbox. Read openIndex from the closure rather than nesting
-  // setLoadedCount inside the setOpenIndex updater: StrictMode double-invokes
-  // updaters, which would advance loadedCount by two increments.
+  // Navigate within the photos loaded so far; the arrow extends as more pages
+  // land via Load-more.
   const handleNext = useCallback(() => {
-    if (openIndex === null || openIndex >= photos.length - 1) return;
-    const next = openIndex + 1;
-    if (next >= loadedCount) {
-      setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT);
-    }
-    setOpenIndex(next);
-  }, [openIndex, photos.length, loadedCount]);
+    setOpenIndex((i) => (i === null || i >= photos.length - 1 ? i : i + 1));
+  }, [photos.length]);
   const handleDownload = useCallback(async () => {
     const photoId = openIndex !== null ? photos[openIndex]?.id : undefined;
     if (!photoId) return;
@@ -494,9 +475,6 @@ function PhotoGrid({
     }
   }, [openIndex, photos, showToast]);
 
-  // Index against `photos`, not `visibleSlice` — handleNext can advance past
-  // the current slice in the same tick it grows loadedCount. Equivalent for
-  // every already-visible index (visibleSlice is a prefix of photos).
   const openPhoto = openIndex !== null ? photos[openIndex] : null;
   const previewItem: PhotoPreviewItem | null = openPhoto
     ? {
@@ -522,7 +500,7 @@ function PhotoGrid({
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
-        {visibleSlice.map((photo, i) => (
+        {photos.map((photo, i) => (
           <PhotoTile
             key={photo.id}
             photo={photo}
@@ -532,19 +510,12 @@ function PhotoGrid({
         ))}
       </div>
 
-      {/* `total` here is photos.length, not the event total — the button can
-          only chunk through what the fetch returned. When the fetch was
-          capped, terminalLabel says so instead of claiming "All N loaded". */}
       <LoadMoreButton
-        shown={visibleSlice.length}
-        total={photos.length}
+        shown={photos.length}
+        total={livePhotos.total}
         increment={PAGE_SIZE.PHOTO_INCREMENT}
-        onLoadMore={() => setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT)}
-        terminalLabel={
-          fetchCapped
-            ? `Showing first ${photos.length.toLocaleString()} of ${total.toLocaleString()}`
-            : undefined
-        }
+        onLoadMore={livePhotos.fetchNextPage}
+        isLoading={livePhotos.isFetchingNextPage}
       />
 
       {previewItem && openIndex !== null && (
