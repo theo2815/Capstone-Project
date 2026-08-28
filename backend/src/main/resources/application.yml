@@ -213,6 +213,9 @@ app:
     auth-forgot-password:
       capacity: 10
       refill-period: PT15M
+    auth-verify-reset-otp:
+      capacity: 10
+      refill-period: PT15M
     auth-reset-password:
       capacity: 10
       refill-period: PT15M

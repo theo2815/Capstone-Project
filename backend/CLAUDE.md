@@ -1,6 +1,6 @@
 # CLAUDE.md — Backend (Kotlin + Spring Boot)
 
-**Status:** All phases shipped and hardened (last reconciled 2026-08-28). 31 controllers under `controller/` (photo-alert opt-in added 2026-08-26); all four roles locked; suite at **283 unit + 20 integration** (2026-08-28, `./gradlew test` / `integrationTest`; `test` is Docker-free, `integrationTest` needs Docker). 2026-08-28: **async watermark pipeline (V36)** — uploads insert photos `PROCESSING` and `PhotoWatermarkTrigger` generates the derivative + flips them `LIVE` off the request thread; the upload 200 guarantees only that the original is durably stored, `photo.published` fires at the LIVE flip, and runner/public queries (which filter `LIVE`) can never serve a clean original. Prior 2026-08-27 optimization pass: rate limiting ON by default with NFR-S-11 windows, NFR-S-14 lockout window (V34), indexing-transport failures no longer burn retry attempts, provider stamp (V33) + admin reindex endpoint, upload/indexing transactions no longer span network I/O, actuator + `qp.*` metrics. Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
+**Status:** All phases shipped and hardened (last reconciled 2026-08-28). 31 controllers under `controller/` (photo-alert opt-in added 2026-08-26); all four roles locked; suite at **297 unit + 20 integration** (2026-08-28, `./gradlew test` / `integrationTest`; `test` is Docker-free, `integrationTest` needs Docker). 2026-08-28 (PM): **password reset moved to a 6-digit OTP** (V37) — see the auth contract below. 2026-08-28: **async watermark pipeline (V36)** — uploads insert photos `PROCESSING` and `PhotoWatermarkTrigger` generates the derivative + flips them `LIVE` off the request thread; the upload 200 guarantees only that the original is durably stored, `photo.published` fires at the LIVE flip, and runner/public queries (which filter `LIVE`) can never serve a clean original. Prior 2026-08-27 optimization pass: rate limiting ON by default with NFR-S-11 windows, NFR-S-14 lockout window (V34), indexing-transport failures no longer burn retry attempts, provider stamp (V33) + admin reindex endpoint, upload/indexing transactions no longer span network I/O, actuator + `qp.*` metrics. Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
 
 The live route reference — every endpoint, its auth, and **which clients consume it** — is vault `backend/api-surface.md`. Read that before adding an endpoint or assuming one is missing.
 
@@ -160,15 +160,20 @@ curl -X POST http://localhost:8080/api/v1/auth/refresh \
   -H "Content-Type: application/json" \
   -d '{"refreshToken":"<REFRESH_TOKEN>"}'
 
-# 5. Forgot password — check console for [EMAIL STUB] log line
+# 5. Forgot password — check console for the [EMAIL STUB] 6-digit code
 curl -X POST http://localhost:8080/api/v1/auth/forgot-password \
   -H "Content-Type: application/json" \
   -d '{"email":"runner@test.local"}'
 
-# 6. Reset with the logged token
+# 6a. Verify the logged code — the response carries the one-shot resetToken
+curl -X POST http://localhost:8080/api/v1/auth/verify-reset-otp \
+  -H "Content-Type: application/json" \
+  -d '{"email":"runner@test.local","code":"<CODE_FROM_LOG>"}'
+
+# 6b. Reset with the continuation token from 6a
 curl -X POST http://localhost:8080/api/v1/auth/reset-password \
   -H "Content-Type: application/json" \
-  -d '{"token":"<RESET_TOKEN_FROM_LOG>","newPassword":"newpassword123"}'
+  -d '{"token":"<RESET_TOKEN_FROM_6A>","newPassword":"newpassword123"}'
 
 # 7. Login as the bootstrap admin
 curl -X POST http://localhost:8080/api/v1/auth/login \
@@ -187,8 +192,9 @@ All responses come wrapped in `{ success, data, errors? }`. Match the website `A
 | `/api/v1/auth/register` | POST | Public | `{ name, email, password, role: "RUNNER"\|"PHOTOGRAPHER" }` |
 | `/api/v1/auth/login` | POST | Public | `{ email, password }` |
 | `/api/v1/auth/refresh` | POST | Public | `{ refreshToken }` |
-| `/api/v1/auth/forgot-password` | POST | Public | `{ email }` |
-| `/api/v1/auth/reset-password` | POST | Public | `{ token, newPassword }` |
+| `/api/v1/auth/forgot-password` | POST | Public | `{ email }` — mails a 6-digit OTP |
+| `/api/v1/auth/verify-reset-otp` | POST | Public | `{ email, code }` → `{ resetToken }` |
+| `/api/v1/auth/reset-password` | POST | Public | `{ token, newPassword }` — token comes from verify-reset-otp, never from the email |
 | `/api/v1/auth/verify-email` | POST | Public | `{ token }` |
 | `/api/v1/auth/resend-verification` | POST | Bearer JWT | — |
 | `/api/v1/auth/me` | GET | Bearer JWT | — |
@@ -209,7 +215,7 @@ Roles are UPPERCASE in JSON: `"ADMIN" | "PHOTOGRAPHER" | "RUNNER"`. `ADMIN` is n
 ## Implementation notes
 
 - **Refresh tokens** are opaque random 32-byte base64url strings, hashed with SHA-256 before persistence. **Rotated on every refresh** (parent token revoked, new one issued). On `confirmReset`, all of a user's refresh tokens are revoked to log out other sessions.
-- **Reset tokens** same generation, 15-min expiry, one-shot use.
+- **Password reset is a 6-digit OTP** (V37): forgot-password mails a code (10-min TTL, SHA-256-hashed at rest, only the newest outstanding code is live, dead after 5 wrong verify attempts); verify-reset-otp trades it for a 15-min one-shot continuation token (opaque 32-byte, same generation as refresh tokens) that reset-password consumes. A row's `token_hash` is NULL until the code is verified, so the verify step cannot be bypassed. Verify fails identically for unknown email and wrong code (anti-enumeration).
 - **Access tokens** are JWTs (HS256) carrying `sub=userId`, `email`, `role` claims. 15-min TTL.
 - **Forgot-password** is intentionally silent if the email doesn't exist (anti-enumeration). The endpoint always returns the same generic message.
 - **Email is real (Resend)**: `EmailService` sends via `service/email/ResendClient` (`RESEND_API_KEY`; a dev placeholder key is detected and logged instead of sent). Covers password reset, order receipts, change-email (V28), and advisory verification (V30) mails. Every mailed link's origin is the **first** `CORS_ALLOWED_ORIGINS` entry. (The stdout-stub description here was stale — the rewrite landed 2026-05-20; corrected 2026-08-19.)

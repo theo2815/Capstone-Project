@@ -18,6 +18,9 @@ data class RateLimitProperties(
     val authLogin: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(15)),
     val authRegister: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(15)),
     val authForgotPassword: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(15)),
+    // Its own bucket (not reset-password's): OTP guessing must not drain the
+    // budget of the confirm step, and vice versa.
+    val authVerifyResetOtp: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(15)),
     val authResetPassword: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(15)),
     // Guest checkout mints a PayMongo session per call — bound the burn rate
     // per IP.

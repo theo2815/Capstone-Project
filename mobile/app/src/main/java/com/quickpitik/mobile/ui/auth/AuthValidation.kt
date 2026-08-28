@@ -39,6 +39,12 @@ fun validateEmail(value: String): String? {
     return null
 }
 
+/** The 6-digit password-reset OTP. Website counterpart: `lib/auth-validation.ts`. */
+fun validateResetCode(value: String): String? {
+    if (!Regex("""^\d{6}$""").matches(value)) return "Enter the 6-digit code from your email."
+    return null
+}
+
 /** Sign-in gate. Length floor only — NEVER cap here, see [PASSWORD_MAX_BYTES]. */
 fun validatePassword(value: String): String? {
     if (value.isEmpty()) return "Password is required."

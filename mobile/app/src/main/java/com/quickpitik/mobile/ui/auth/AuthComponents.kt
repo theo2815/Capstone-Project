@@ -32,10 +32,9 @@ import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 
-// Shared chrome for the auth-recovery screens (ForgotPasswordScreen +
-// ResetPasswordScreen), the mobile counterpart to the website's <AuthShell>.
-// Extracted because both screens need identical inset/IME handling and getting
-// it right once beats getting it right twice.
+// Shared chrome for the auth-recovery flow (ForgotPasswordScreen, which since
+// the OTP cutover carries every step), the mobile counterpart to the website's
+// <AuthShell>. Extracted so inset/IME handling is got right once.
 //
 // LoginScreen/RegisterScreen predate these and keep their own inline chrome —
 // migrating them is not part of this change.

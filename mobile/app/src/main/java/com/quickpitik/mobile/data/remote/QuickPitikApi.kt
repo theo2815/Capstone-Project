@@ -33,6 +33,11 @@ interface QuickPitikApi {
         @Body request: ForgotPasswordRequest
     ): ApiResponseEnvelope<MessageResponse>
 
+    @POST("api/v1/auth/verify-reset-otp")
+    suspend fun verifyResetOtp(
+        @Body request: VerifyResetOtpRequest
+    ): ApiResponseEnvelope<VerifyResetOtpResponse>
+
     @POST("api/v1/auth/reset-password")
     suspend fun resetPassword(
         @Body request: ResetPasswordRequest

@@ -35,7 +35,6 @@ import com.quickpitik.mobile.ui.auth.AuthViewModel
 import com.quickpitik.mobile.ui.auth.ForgotPasswordScreen
 import com.quickpitik.mobile.ui.auth.LoginScreen
 import com.quickpitik.mobile.ui.auth.RegisterScreen
-import com.quickpitik.mobile.ui.auth.ResetPasswordScreen
 import com.quickpitik.mobile.ui.photographer.EventsState
 import com.quickpitik.mobile.ui.photographer.PhotographerCaptureScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
@@ -362,19 +361,6 @@ class MainActivity : ComponentActivity() {
                             }
                             composable("forgot-password") {
                                 ForgotPasswordScreen(
-                                    viewModel = authViewModel,
-                                    onNavigateToLogin = {
-                                        navController.navigate("login") {
-                                            popUpTo("login") { inclusive = true }
-                                        }
-                                    },
-                                    onNavigateToReset = {
-                                        navController.navigate("reset-password")
-                                    }
-                                )
-                            }
-                            composable("reset-password") {
-                                ResetPasswordScreen(
                                     viewModel = authViewModel,
                                     onNavigateToLogin = {
                                         navController.navigate("login") {

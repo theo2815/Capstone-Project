@@ -37,7 +37,7 @@ export default function OrdersReturnPage() {
       <SiteHeader />
       {/* `ReturnBody` reads `?orderId=` + `?token=` via useSearchParams(). Without
           this boundary Next bails out of static prerender for the whole route and
-          `next build` fails — the same reason /reset-password wraps its form. The
+          `next build` fails — the same reason /verify-email wraps its form. The
           fallback is the polling state at attempt 0 because that is what the page
           renders the instant the params resolve on the happy path. */}
       <Suspense fallback={<PollingState attempt={0} />}>

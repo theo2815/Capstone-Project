@@ -214,6 +214,9 @@ const PUBLIC_AUTH_ENDPOINTS = new Set([
   "/auth/register",
   "/auth/refresh",
   "/auth/forgot-password",
+  // The whole OTP flow runs signed out — a 401-shaped failure must render on
+  // the form, not bounce to /login mid-reset.
+  "/auth/verify-reset-otp",
   "/auth/reset-password",
   // Opened from a link in the NEW inbox, so the caller is frequently signed
   // out — or signed in with a stale token, since confirming revokes every

@@ -10,6 +10,8 @@ import com.quickpitik.dto.auth.RefreshRequest
 import com.quickpitik.dto.auth.RegisterRequest
 import com.quickpitik.dto.auth.ResetPasswordRequest
 import com.quickpitik.dto.auth.UserDto
+import com.quickpitik.dto.auth.VerifyResetOtpRequest
+import com.quickpitik.dto.auth.VerifyResetOtpResponse
 import com.quickpitik.dto.profile.EmailChangeConfirmRequest
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.AuthService
@@ -77,7 +79,21 @@ class AuthController(
     ): MessageResponse {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_FORGOT_PASSWORD, clientIp(request))
         passwordResetService.requestReset(req.email)
-        return MessageResponse("If that email exists, a reset link has been sent.")
+        return MessageResponse("If that email exists, a reset code has been sent.")
+    }
+
+    // Step 2 of the OTP reset flow: trades the mailed 6-digit code for the
+    // one-shot continuation token /auth/reset-password consumes. Public — the
+    // caller is by definition signed out. Its own policy (not reset-password's)
+    // so code guessing can't drain the confirm step's budget, whose token is
+    // unguessable anyway.
+    @PostMapping("/verify-reset-otp")
+    fun verifyResetOtp(
+        @Valid @RequestBody req: VerifyResetOtpRequest,
+        request: HttpServletRequest,
+    ): VerifyResetOtpResponse {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_VERIFY_RESET_OTP, clientIp(request))
+        return VerifyResetOtpResponse(passwordResetService.verifyOtp(req.email, req.code))
     }
 
     @PostMapping("/reset-password")

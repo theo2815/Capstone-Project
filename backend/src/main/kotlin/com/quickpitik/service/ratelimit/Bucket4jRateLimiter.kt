@@ -82,6 +82,7 @@ class Bucket4jRateLimiter(
         POLICY_AUTH_LOGIN -> properties.authLogin
         POLICY_AUTH_REGISTER -> properties.authRegister
         POLICY_AUTH_FORGOT_PASSWORD -> properties.authForgotPassword
+        POLICY_AUTH_VERIFY_RESET_OTP -> properties.authVerifyResetOtp
         POLICY_AUTH_RESET_PASSWORD -> properties.authResetPassword
         POLICY_ORDER_CREATE -> properties.orderCreate
         POLICY_BUNDLE_DOWNLOAD -> properties.bundleDownload
@@ -99,6 +100,7 @@ class Bucket4jRateLimiter(
         const val POLICY_AUTH_LOGIN = "auth-login"
         const val POLICY_AUTH_REGISTER = "auth-register"
         const val POLICY_AUTH_FORGOT_PASSWORD = "auth-forgot-password"
+        const val POLICY_AUTH_VERIFY_RESET_OTP = "auth-verify-reset-otp"
         const val POLICY_AUTH_RESET_PASSWORD = "auth-reset-password"
         const val POLICY_ORDER_CREATE = "order-create"
         const val POLICY_BUNDLE_DOWNLOAD = "bundle-download"
@@ -113,6 +115,7 @@ class Bucket4jRateLimiter(
             POLICY_AUTH_LOGIN,
             POLICY_AUTH_REGISTER,
             POLICY_AUTH_FORGOT_PASSWORD,
+            POLICY_AUTH_VERIFY_RESET_OTP,
             POLICY_AUTH_RESET_PASSWORD,
             POLICY_ORDER_CREATE,
             POLICY_BUNDLE_DOWNLOAD,

@@ -54,9 +54,10 @@ export function ConfirmEmailChangeForm() {
     }
   }
 
-  // Derived, not stored — same reason as ResetPasswordForm: a client-side nav
-  // that drops `?token=` must be re-detected. Excluded from `done` so the
-  // success screen survives its own token being spent.
+  // Derived, not stored — a client-side nav that drops `?token=` must be
+  // re-detected; a useState initializer would latch the answer at first mount.
+  // Excluded from `done` so the success screen survives its own token being
+  // spent.
   if (status !== "done" && !token) {
     return (
       <div className="stagger-children space-y-7">

@@ -38,6 +38,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     private val _passwordResetState = MutableStateFlow<PasswordResetState>(PasswordResetState.Idle)
     val passwordResetState: StateFlow<PasswordResetState> = _passwordResetState
 
+    // The one-shot continuation token from verify-reset-otp, consumed by
+    // confirmPasswordReset. Memory only — a short-lived credential must never
+    // touch SessionManager / SharedPreferences.
+    private var resetToken: String? = null
+
     fun login(email: String, password: String) {
         viewModelScope.launch {
             _authState.value = AuthState.Loading
@@ -102,6 +107,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
      * "this account exists". The screen's copy must not imply otherwise.
      */
     fun requestPasswordReset(email: String) {
+        // A new request restarts the flow — any continuation from an earlier
+        // verify is dead server-side (invalidateOutstanding), so drop it here.
+        resetToken = null
         viewModelScope.launch {
             _passwordResetState.value = PasswordResetState.Loading
             try {
@@ -112,7 +120,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     PasswordResetState.Success
                 } else {
                     PasswordResetState.Error(
-                        envelope.error ?: "Could not send reset link. Please try again."
+                        envelope.error ?: "Could not send a reset code. Please try again."
                     )
                 }
             } catch (e: Exception) {
@@ -122,25 +130,58 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * POST /auth/reset-password. Reset tokens are 15-minute, one-shot, so the
-     * common failure here is an expired or already-used token — the screen's
-     * fallback copy points the user back at requesting a fresh one. On success
-     * the backend also revokes every refresh token for the account, logging
-     * out other sessions.
+     * POST /auth/verify-reset-otp. Trades the mailed 6-digit code for the
+     * one-shot continuation token that [confirmPasswordReset] consumes. The
+     * backend fails identically for an unknown email and a wrong code
+     * (anti-enumeration), and kills the code after 5 wrong attempts.
      */
-    fun confirmPasswordReset(token: String, newPassword: String) {
+    fun verifyResetOtp(email: String, code: String) {
+        viewModelScope.launch {
+            _passwordResetState.value = PasswordResetState.Loading
+            try {
+                val envelope = RetrofitClient.apiService.verifyResetOtp(
+                    VerifyResetOtpRequest(email.trim(), code)
+                )
+                if (envelope.success && envelope.data != null) {
+                    resetToken = envelope.data.resetToken
+                    _passwordResetState.value = PasswordResetState.Success
+                } else {
+                    _passwordResetState.value = PasswordResetState.Error(
+                        envelope.error
+                            ?: "That code didn't work. It may have expired — resend a new one."
+                    )
+                }
+            } catch (e: Exception) {
+                _passwordResetState.value = PasswordResetState.Error(RetrofitClient.parseError(e))
+            }
+        }
+    }
+
+    /**
+     * POST /auth/reset-password with the continuation token from [verifyResetOtp]
+     * (15-minute, one-shot). On success the backend also revokes every refresh
+     * token for the account, logging out other sessions.
+     */
+    fun confirmPasswordReset(newPassword: String) {
+        val token = resetToken
+        if (token == null) {
+            _passwordResetState.value =
+                PasswordResetState.Error("Your verification expired — request a new code.")
+            return
+        }
         viewModelScope.launch {
             _passwordResetState.value = PasswordResetState.Loading
             try {
                 val envelope = RetrofitClient.apiService.resetPassword(
-                    ResetPasswordRequest(token.trim(), newPassword)
+                    ResetPasswordRequest(token, newPassword)
                 )
-                _passwordResetState.value = if (envelope.success) {
-                    PasswordResetState.Success
+                if (envelope.success) {
+                    resetToken = null
+                    _passwordResetState.value = PasswordResetState.Success
                 } else {
-                    PasswordResetState.Error(
+                    _passwordResetState.value = PasswordResetState.Error(
                         envelope.error
-                            ?: "Could not reset your password. The link may have expired — request a new one."
+                            ?: "Could not reset your password. Your verification may have expired — start over."
                     )
                 }
             } catch (e: Exception) {

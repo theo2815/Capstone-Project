@@ -48,9 +48,25 @@ data class ForgotPasswordRequest(
     val email: String
 )
 
+// Body for POST /auth/verify-reset-otp. Mirrors backend
+// dto/auth/VerifyResetOtpRequest. Fails identically for an unknown email and a
+// wrong code (anti-enumeration), so the UI copy must never distinguish them.
+data class VerifyResetOtpRequest(
+    val email: String,
+    val code: String
+)
+
+// The short-lived one-shot continuation token minted by a successful OTP
+// verification — the only credential /auth/reset-password accepts. Held in
+// AuthViewModel memory only, never persisted.
+data class VerifyResetOtpResponse(
+    val resetToken: String
+)
+
 // Body for POST /auth/reset-password. Mirrors backend
 // dto/auth/ResetPasswordRequest, which enforces @Size(min = 8) on newPassword;
-// validatePassword() gates the same rule client-side first.
+// validatePassword() gates the same rule client-side first. `token` is the
+// continuation from verify-reset-otp — never typed or pasted by the user.
 data class ResetPasswordRequest(
     val token: String,
     val newPassword: String

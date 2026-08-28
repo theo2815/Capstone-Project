@@ -69,6 +69,12 @@ export function validateNewPassword(value: string): string | null {
   return null;
 }
 
+/** The 6-digit password-reset OTP. Mobile counterpart: `ui/auth/AuthValidation.kt`. */
+export function validateResetCode(value: string): string | null {
+  if (!/^\d{6}$/.test(value)) return "Enter the 6-digit code from your email.";
+  return null;
+}
+
 export function validateName(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return "Name is required.";
