@@ -14,6 +14,7 @@ import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 import { useAdminUsersServerStore } from "@/lib/admin-users-data";
 import { useMyPhotographerMessagesStore } from "@/lib/me-photographer-messages-data";
+import { useMyRunnerMessagesStore } from "@/lib/me-runner-messages-data";
 import { useViewModeStore } from "@/store/view-mode-store";
 
 // Reset every Zustand store that carries user-scoped data + clears the
@@ -52,6 +53,10 @@ export function resetUserScopedStores(): void {
   // previous account until the first refetch. Same class as the 9 admin-store
   // leaks closed 2026-05-27 (see admin-flow audit P0).
   useMyPhotographerMessagesStore.getState().reset();
+  // Same leak, runner side (2026-08-28 audit): PF-9 closed the photographer
+  // inbox only — the runner inbox store kept the previous account's messages
+  // and unread badge until the first refetch.
+  useMyRunnerMessagesStore.getState().reset();
   useUserMediaStore.getState().clear();
   useOrdersStore.getState().clear();
   useCartStore.getState().clear();

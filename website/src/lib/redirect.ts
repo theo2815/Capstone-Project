@@ -9,7 +9,16 @@ export function isSafeRedirect(value: string | null | undefined): value is strin
   if (!value) return false;
   if (!value.startsWith("/")) return false;
   if (value.startsWith("//") || value.startsWith("/\\")) return false;
-  return true;
+  // The prefix checks alone are bypassable: the WHATWG parser strips
+  // TAB/CR/LF before parsing and folds `\` into `/`, so `/%09/evil.com`
+  // decodes to `/<TAB>/evil.com`, passes both guards above, and navigates
+  // to `//evil.com`. Resolve against a fixed base — anything that escapes
+  // that base's origin is not a relative path.
+  try {
+    return new URL(value, "http://x").origin === "http://x";
+  } catch {
+    return false;
+  }
 }
 
 // The current view, in the form `buildLoginRedirect` wants. The hash is part

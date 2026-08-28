@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
@@ -14,6 +15,7 @@ import type { ApiResponse } from "@/types/api";
 import type { User } from "@/types/user";
 
 export function AuthHydrator() {
+  const queryClient = useQueryClient();
   const setUser = useAuthStore((s) => s.setUser);
   const setLoading = useAuthStore((s) => s.setLoading);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -65,6 +67,9 @@ export function AuthHydrator() {
         // belongs to the guest sitting there now. See captureGuestBuffer().
         clearTokens();
         resetUserScopedStores();
+        // The React Query cache is the same kind of residue — clear it with
+        // the stores (see the matching clears in useAuth).
+        queryClient.clear();
         setLoading(false);
       }
     }
@@ -73,7 +78,7 @@ export function AuthHydrator() {
     return () => {
       cancelled = true;
     };
-  }, [setUser, setLoading]);
+  }, [setUser, setLoading, queryClient]);
 
   // Guest → authed merge per Q-003. Runs exactly once per signed-in user.
   // Failure leaves local state intact (do NOT clear) — retried on next mount.

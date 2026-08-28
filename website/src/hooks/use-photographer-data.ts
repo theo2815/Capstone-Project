@@ -86,9 +86,15 @@ export function usePhotographerEventDetail(
     enabled: !!eventId,
     staleTime: EVENTS_STALE_MS,
     // A 404 is a verdict, not a blip. Retrying it just holds the skeleton up
-    // for several seconds before the page can render its 404.
+    // for several seconds before the page can render its 404. 429 is excluded
+    // for the opposite reason — retrying re-arms the empty bucket (this
+    // override replaces the global predicate in providers.tsx, so it must
+    // carry the same exclusion).
     retry: (failureCount, err) =>
-      !(err instanceof ApiError && err.status === 404) && failureCount < 3,
+      !(
+        err instanceof ApiError &&
+        (err.status === 404 || err.status === 429)
+      ) && failureCount < 3,
   });
   return {
     detail: query.data ?? null,

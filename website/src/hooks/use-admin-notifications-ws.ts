@@ -83,13 +83,18 @@ export function useAdminNotificationsWs(enabled: boolean): void {
             case "payout_report_filed":
               // TODO(Phase G): invalidate admin-dispute-store /
               // admin-payout-report-store once they migrate off mocks.
-              console.info(
-                `[admin/ws] ${data.type} entity=${data.entityId} actor=${data.actorId}`,
-              );
+              if (process.env.NODE_ENV !== "production") {
+                console.info(
+                  `[admin/ws] ${data.type} entity=${data.entityId} actor=${data.actorId}`,
+                );
+              }
               break;
             default:
-              // Unknown type — log and drop.
-              console.warn("[admin/ws] unknown frame", data);
+              // Unknown type — log and drop (dev only — entity/actor ids
+              // don't belong in a production console).
+              if (process.env.NODE_ENV !== "production") {
+                console.warn("[admin/ws] unknown frame", data);
+              }
           }
         } catch {
           // Silently drop malformed frames.

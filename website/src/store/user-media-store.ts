@@ -32,56 +32,21 @@ export interface SelfieRef {
 
 interface UserMediaState {
   avatar: AvatarMedia | null;
-  selfies: SelfieRef[];
   setAvatar: (avatar: AvatarMedia | null) => void;
-  addSelfie: (selfie: SelfieRef) => void;
-  removeSelfie: (id: string) => void;
-  setPrimary: (id: string) => void;
   clear: () => void;
 }
 
+// The selfie slice this store once persisted is gone (2026-08-28 audit): its
+// actions had zero callers — the library is BE-backed via useSelfiesList() —
+// yet every selfie kept a base64 data URL of the user's face in localStorage,
+// the most sensitive artifact the product touches. The next persist write
+// drains any old `selfies` key from storage.
 export const useUserMediaStore = create<UserMediaState>()(
   persist(
     (set) => ({
       avatar: null,
-      selfies: [],
       setAvatar: (avatar) => set({ avatar }),
-      addSelfie: (incoming) =>
-        set((state) => {
-          if (state.selfies.length >= SELFIE_MAX) return state;
-          const isFirst = state.selfies.length === 0;
-          // First upload is automatically primary; subsequent uploads keep
-          // the existing primary unless the caller passed isPrimary: true.
-          const promote = isFirst || incoming.isPrimary;
-          const others = promote
-            ? state.selfies.map((s) => ({ ...s, isPrimary: false }))
-            : state.selfies;
-          return {
-            selfies: [...others, { ...incoming, isPrimary: promote }],
-          };
-        }),
-      removeSelfie: (id) =>
-        set((state) => {
-          const next = state.selfies.filter((s) => s.id !== id);
-          if (next.length === 0) return { selfies: [] };
-          if (next.some((s) => s.isPrimary)) return { selfies: next };
-          // Removed the primary — promote the most recent remaining selfie.
-          const promotedIndex = next.length - 1;
-          return {
-            selfies: next.map((s, i) => ({
-              ...s,
-              isPrimary: i === promotedIndex,
-            })),
-          };
-        }),
-      setPrimary: (id) =>
-        set((state) => ({
-          selfies: state.selfies.map((s) => ({
-            ...s,
-            isPrimary: s.id === id,
-          })),
-        })),
-      clear: () => set({ avatar: null, selfies: [] }),
+      clear: () => set({ avatar: null }),
     }),
     { name: "quickpitik-user-media" },
   ),

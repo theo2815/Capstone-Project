@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/store/auth-store";
 import { api } from "@/lib/api";
 import { getRefreshToken, setTokens, clearTokens } from "@/lib/auth";
@@ -14,6 +15,7 @@ import type {
 } from "@/types/user";
 
 export function useAuth() {
+  const queryClient = useQueryClient();
   const {
     user,
     isAuthenticated,
@@ -39,12 +41,18 @@ export function useAuth() {
       // still has something to merge — see captureGuestBuffer().
       const restoreGuestBuffer = captureGuestBuffer();
       resetUserScopedStores();
+      // Same leak, one layer up: the React Query cache outlives the Zustand
+      // wipe (the client is created once in providers.tsx), so with a 60s
+      // staleTime User B's first render after a same-tab account switch was
+      // served User A's cached /me/orders, selfies, admin queues. Clear it on
+      // every auth transition, exactly like resetUserScopedStores().
+      queryClient.clear();
       restoreGuestBuffer();
       setTokens(data.accessToken, data.refreshToken);
       setUser(data.user);
       return data.user;
     },
-    [setUser],
+    [setUser, queryClient],
   );
 
   const register = useCallback(
@@ -52,12 +60,13 @@ export function useAuth() {
       const data = await api.post<AuthResponse>("/auth/register", payload);
       const restoreGuestBuffer = captureGuestBuffer();
       resetUserScopedStores();
+      queryClient.clear();
       restoreGuestBuffer();
       setTokens(data.accessToken, data.refreshToken);
       setUser(data.user);
       return data.user;
     },
-    [setUser],
+    [setUser, queryClient],
   );
 
   const mockGoogleLogin = useCallback(async () => {
@@ -79,9 +88,10 @@ export function useAuth() {
   const completeOnboarding = useCallback(
     (role: Role) => {
       resetUserScopedStores();
+      queryClient.clear();
       return completeOnboardingInStore(role);
     },
-    [completeOnboardingInStore],
+    [completeOnboardingInStore, queryClient],
   );
 
   const cancelOnboarding = useCallback(() => {
@@ -103,8 +113,9 @@ export function useAuth() {
     // correctly when their clear() runs (resetUserScopedStores flips
     // syncEnabled false first to skip the spurious BE clear call).
     resetUserScopedStores();
+    queryClient.clear();
     clearUser();
-  }, [clearUser]);
+  }, [clearUser, queryClient]);
 
   return {
     user,
