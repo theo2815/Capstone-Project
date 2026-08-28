@@ -6,7 +6,7 @@
 // pre-submit hard gates that surface inline (no round-trip on obviously
 // malformed input).
 
-import { ApiError } from "@/lib/api";
+import { ApiError, formatRetryWait } from "@/lib/api";
 
 // Shaped to agree with the backend's Jakarta `@Email`, which was rejecting
 // addresses this gate waved through — `a@b..c`, `a@b.c.`, `a@-b.co` all cost a
@@ -111,5 +111,18 @@ export function splitApiFieldErrors(
     }
   }
 
-  return { fields, message: rest[0] ?? null };
+  let message = rest[0] ?? null;
+  // A plain RATE_LIMITED rejection says "slow down" with no number, while the
+  // 429's Retry-After header carries the exact wait — swap in a message that
+  // names it. Keyed on the code so ACCOUNT_LOCKED keeps its backend copy
+  // (which already says how many minutes).
+  if (
+    message &&
+    err.errors[0]?.code === "RATE_LIMITED" &&
+    err.retryAfterSeconds != null
+  ) {
+    message = `Too many requests. Try again in about ${formatRetryWait(err.retryAfterSeconds)}.`;
+  }
+
+  return { fields, message };
 }

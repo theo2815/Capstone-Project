@@ -19,18 +19,40 @@ class ApiClient {
     retried = false,
   ): Promise<T> {
     const token = getAccessToken();
+    const isFormData = options?.body instanceof FormData;
     const headers: HeadersInit = {
-      ...(options?.body instanceof FormData
-        ? {}
-        : { "Content-Type": "application/json" }),
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(token && { Authorization: `Bearer ${token}` }),
       ...options?.headers,
     };
 
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      ...options,
-      headers,
-    });
+    // Nothing here carried a signal, so a stalled connection hung forever —
+    // React Query never saw the promise settle and skeletons held
+    // indefinitely. FormData gets the long budget: a 10 MB cover on venue
+    // Wi-Fi is slow, not dead.
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        ...options,
+        headers,
+        signal:
+          options?.signal ??
+          AbortSignal.timeout(isFormData ? 120_000 : 30_000),
+      });
+    } catch (e) {
+      if (
+        e instanceof DOMException &&
+        (e.name === "TimeoutError" || e.name === "AbortError")
+      ) {
+        throw new ApiError([
+          {
+            code: "TIMEOUT",
+            message: "Request timed out. Check your connection and try again.",
+          },
+        ]);
+      }
+      throw e;
+    }
 
     // Parsed before the 401 branch, because an expired session and a rejected
     // password both arrive as 401 and only the envelope's code tells them
@@ -58,12 +80,14 @@ class ApiClient {
       throw new ApiError(
         [{ code: "UNKNOWN", message: "Request failed" }],
         res.status,
+        retryAfterSeconds(res),
       );
     }
     if (!data.success) {
       throw new ApiError(
         data.errors ?? [{ code: "UNKNOWN", message: "Request failed" }],
         res.status,
+        retryAfterSeconds(res),
       );
     }
     return data.data;
@@ -148,6 +172,7 @@ async function postRefresh(refreshToken: string): Promise<string | null> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) return null;
@@ -200,17 +225,37 @@ function isCredentialRejection<T>(data: ApiResponse<T> | null): boolean {
   return data?.errors?.some((e) => e.code === "INVALID_CREDENTIALS") ?? false;
 }
 
+// Every backend 429 — rate-limit bucket and account lockout alike — carries
+// Retry-After in seconds, and CorsConfig exposes it to browser JS. Parse it
+// once here so a catch site can say "try again in ~N s" instead of guessing.
+function retryAfterSeconds(res: Response): number | undefined {
+  const raw = res.headers.get("Retry-After");
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+// Human copy for ApiError.retryAfterSeconds ("42 seconds" / "3 minutes").
+export function formatRetryWait(seconds: number): string {
+  if (seconds < 90) return `${Math.max(1, Math.ceil(seconds))} seconds`;
+  return `${Math.ceil(seconds / 60)} minutes`;
+}
+
 export class ApiError extends Error {
   errors: { code: string; message: string; field?: string }[];
   status?: number;
+  // Seconds from a 429's Retry-After header; undefined on every other status.
+  retryAfterSeconds?: number;
 
   constructor(
     errors: { code: string; message: string; field?: string }[],
     status?: number,
+    retryAfterSeconds?: number,
   ) {
     super(errors[0]?.message ?? "Unknown error");
     this.errors = errors;
     this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 

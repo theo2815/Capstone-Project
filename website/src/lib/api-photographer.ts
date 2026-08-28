@@ -1,4 +1,4 @@
-import { api } from "@/lib/api";
+import { api, refreshAccessToken } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/constants";
 import type {
@@ -117,60 +117,90 @@ export function uploadPhotographerPhoto(
   file: File,
   onProgress?: (event: UploadProgressEvent) => void,
 ): Promise<UploadedPhoto> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const url = `${API_BASE_URL}/me/photographer/events/${encodeURIComponent(eventId)}/photos`;
-    const token = getAccessToken();
+  const url = `${API_BASE_URL}/me/photographer/events/${encodeURIComponent(eventId)}/photos`;
 
-    xhr.open("POST", url);
-    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+  // One attempt = one XHR. A 401 mid-batch is routine, not exceptional:
+  // access tokens live 15 minutes and a big queue at 4-concurrent outlives
+  // that — before this, every file after expiry failed "retryable" while the
+  // manual retry re-sent the same dead token. On the first 401, refresh
+  // through the shared single-flight (same mutex the ApiClient uses, so a
+  // concurrent pre-flight can't double-rotate) and re-send once.
+  const attempt = (
+    token: string | null,
+    retried: boolean,
+  ): Promise<UploadedPhoto> =>
+    new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
 
-    if (onProgress) {
-      xhr.upload.onprogress = (event) => {
-        if (!event.lengthComputable) return;
-        onProgress({
-          loaded: event.loaded,
-          total: event.total,
-          percent: Math.round((event.loaded / event.total) * 100),
-        });
-      };
-    }
+      xhr.open("POST", url);
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      // A stalled connection must settle, not hang — a dead XHR pinned one of
+      // the upload page's 4 concurrency slots forever. Whole-request timer,
+      // sized for an 8 MB original on slow venue Wi-Fi.
+      xhr.timeout = 120_000;
 
-    xhr.onload = () => {
-      try {
-        const body = JSON.parse(xhr.responseText) as
-          | { success: true; data: UploadedPhoto }
-          | {
-              success: false;
-              errors: Array<{ code: string; message: string }>;
-            };
-        if (xhr.status >= 200 && xhr.status < 300 && body.success) {
-          resolve(body.data);
+      if (onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          onProgress({
+            loaded: event.loaded,
+            total: event.total,
+            percent: Math.round((event.loaded / event.total) * 100),
+          });
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status === 401 && !retried) {
+          refreshAccessToken()
+            .then((fresh) =>
+              fresh
+                ? resolve(attempt(fresh, true))
+                : reject(new Error("Session expired. Sign in again to retry.")),
+            )
+            .catch(() =>
+              reject(new Error("Session expired. Sign in again to retry.")),
+            );
           return;
         }
-        const message =
-          !body.success && body.errors[0]?.message
-            ? body.errors[0].message
-            : `Upload failed (${xhr.status})`;
-        // Carry the backend error code so the caller can tell a terminal
-        // duplicate rejection (never retryable) from a transient network glitch.
-        const error = new Error(message) as Error & { code?: string };
-        if (!body.success && body.errors[0]?.code) {
-          error.code = body.errors[0].code;
+        try {
+          const body = JSON.parse(xhr.responseText) as
+            | { success: true; data: UploadedPhoto }
+            | {
+                success: false;
+                errors: Array<{ code: string; message: string }>;
+              };
+          if (xhr.status >= 200 && xhr.status < 300 && body.success) {
+            resolve(body.data);
+            return;
+          }
+          const message =
+            !body.success && body.errors[0]?.message
+              ? body.errors[0].message
+              : `Upload failed (${xhr.status})`;
+          // Carry the backend error code so the caller can tell a terminal
+          // duplicate rejection (never retryable) from a transient network glitch.
+          const error = new Error(message) as Error & { code?: string };
+          if (!body.success && body.errors[0]?.code) {
+            error.code = body.errors[0].code;
+          }
+          reject(error);
+        } catch {
+          reject(new Error(`Upload failed (${xhr.status})`));
         }
-        reject(error);
-      } catch {
-        reject(new Error(`Upload failed (${xhr.status})`));
-      }
-    };
+      };
 
-    xhr.onerror = () => reject(new Error("Upload network error"));
-    xhr.onabort = () => reject(new Error("Upload aborted"));
+      xhr.onerror = () => reject(new Error("Upload network error"));
+      xhr.ontimeout = () =>
+        reject(new Error("Upload timed out. Check your connection and retry."));
+      xhr.onabort = () => reject(new Error("Upload aborted"));
 
-    const fd = new FormData();
-    fd.append("file", file);
-    xhr.send(fd);
-  });
+      const fd = new FormData();
+      fd.append("file", file);
+      xhr.send(fd);
+    });
+
+  return attempt(getAccessToken(), false);
 }
 
 // Pre-flight duplicate check (dedup Phase 2). The upload page hashes each file

@@ -36,7 +36,7 @@ import { deriveEventState } from "@/lib/event-catalog";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
-import { ApiError } from "@/lib/api";
+import { ApiError, formatRetryWait } from "@/lib/api";
 import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
 import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
 
@@ -950,6 +950,11 @@ function myPhotosErrorMessage(err: unknown): string {
     }
     if (code === "LOW_CONFIDENCE") {
       return "We couldn't find you in this event yet. Try again as more photos land.";
+    }
+    // Face + bib search share a 30-per-15-min bucket; the header says exactly
+    // how long the wait is, so say it instead of the generic "slow down".
+    if (err.status === 429 && err.retryAfterSeconds != null) {
+      return `Too many searches. Try again in about ${formatRetryWait(err.retryAfterSeconds)}.`;
     }
     return err.message || "Couldn't load your photos right now.";
   }
