@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
-import { useInfiniteList } from "@/hooks/use-infinite-list";
+import { dedupeItems, useInfiniteList } from "@/hooks/use-infinite-list";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { ApiError } from "@/lib/api";
 import {
@@ -57,7 +57,9 @@ const PUBLIC_STALE_MS = 30 * 60_000;
 // loaded page. Instead those surfaces pass `limit: COVERED_EVENTS_MAX` to pull
 // the full set (the BE max, which covers every realistic photographer) and keep
 // their own Load-more client-slice, so the rendered DOM stays bounded. Simple
-// consumers (setup journey, action grid) omit it and take the fetcher default.
+// consumers (setup journey, action grid) omit it and take the fetcher default,
+// which is also the BE max — a lower default silently truncated the
+// dashboard's setup-mode fork and Next-up glance at 24 rows.
 export const COVERED_EVENTS_MAX = 200;
 
 export function usePhotographerEvents(
@@ -201,7 +203,7 @@ export function usePhotographerTransactions() {
   });
   const pages = query.data?.pages ?? [];
   return {
-    items: pages.flatMap((p) => p.items),
+    items: dedupeItems(pages),
     total: pages.at(-1)?.total ?? 0,
     monthTotals: pages[0]?.monthTotals ?? {},
     isLoading: query.isPending,

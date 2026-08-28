@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { buildWsUrl } from "@/lib/ws-url";
 import { getAccessToken } from "@/lib/auth";
 import type { EventPhotosResult, Photo } from "@/lib/api-photos";
@@ -89,16 +89,24 @@ export function useEventLivePhotos(
           const data = JSON.parse(event.data) as PhotoPublishedMessage;
           if (data.type !== "photo.published") return;
           // Idempotent prepend to every cache slot for this event/bib.
-          // Server may push duplicates — guard by id.
-          qc.setQueriesData<EventPhotosResult>(
+          // Server may push duplicates — guard by id. The cache is the
+          // InfiniteData shape useInfiniteList stores — prepend into page 0
+          // and bump every page's total (the flatten reads the last page's).
+          qc.setQueriesData<InfiniteData<EventPhotosResult>>(
             { queryKey: ["events", args.slug, "photos"] },
             (prev) => {
-              if (!prev) return prev;
-              if (prev.items.some((p) => p.id === data.photo.id)) return prev;
+              if (!prev || prev.pages.length === 0) return prev;
+              const seen = prev.pages.some((pg) =>
+                pg.items.some((p) => p.id === data.photo.id),
+              );
+              if (seen) return prev;
               return {
                 ...prev,
-                items: [data.photo, ...prev.items],
-                total: prev.total + 1,
+                pages: prev.pages.map((pg, i) => ({
+                  ...pg,
+                  items: i === 0 ? [data.photo, ...pg.items] : pg.items,
+                  total: pg.total + 1,
+                })),
               };
             },
           );

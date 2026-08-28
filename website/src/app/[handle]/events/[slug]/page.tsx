@@ -210,7 +210,14 @@ function Gallery({
           <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight leading-[0.95] text-ink mt-4">
             {isFiltered ? (
               visible.length === 0 ? (
-                "No matches yet."
+                // The bib filter is a client view over loaded pages — while
+                // unsearched pages remain (or a fetch is in flight), the
+                // negative isn't known yet.
+                list.hasNextPage || list.isFetching ? (
+                  "Searching…"
+                ) : (
+                  "No matches yet."
+                )
               ) : (
                 <>
                   We found{" "}
@@ -318,7 +325,36 @@ function Gallery({
 
       <div className="flex-1 px-6 md:px-10 py-10 md:py-14 pb-32">
         <div className="max-w-7xl mx-auto">
-          {photos.length === 0 ? (
+          {list.isLoading ? (
+            // First photos page is a client fetch with no SSR seed — don't
+            // show "Photos coming soon" (or an error's empty fallback) while
+            // it's still in flight.
+            <div
+              className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]"
+              aria-busy="true"
+            >
+              {Array.from({ length: 8 }, (_, i) => (
+                <Skeleton key={i} className="h-full w-full rounded-xl" />
+              ))}
+            </div>
+          ) : list.error && photos.length === 0 ? (
+            <div className="border border-dashed border-line rounded-2xl p-10 md:p-16 text-center max-w-2xl mx-auto">
+              <Kicker as="p" tone="soft">
+                Gallery
+              </Kicker>
+              <p className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink mt-4">
+                Couldn&apos;t load photos.
+              </p>
+              <Kicker
+                as="button"
+                type="button"
+                onClick={list.refetch}
+                className="mt-6 inline-flex text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
+              >
+                Try again ↻
+              </Kicker>
+            </div>
+          ) : photos.length === 0 ? (
             <EmptyGalleryPanel displayName={profile.displayName} />
           ) : isFiltered && visible.length === 0 && !list.hasNextPage ? (
             <BibEmptyResult

@@ -29,10 +29,32 @@ interface UseInfiniteListResult<T> {
   isFetchingNextPage: boolean;
   hasNextPage: boolean;
   fetchNextPage: () => void;
+  refetch: () => void;
   error: unknown;
 }
 
-export function useInfiniteList<T>({
+// Flatten pages into one list, dropping id-duplicates (first occurrence
+// wins). Offset paging over newest-first lists re-serves rows when inserts
+// land at offset 0 between page fetches — without this, a live prepend plus
+// a later fetchNextPage yields duplicate React keys.
+// ponytail: dedupes the duplicates from offset drift; skipped rows would
+// need cursor pagination if that ever matters.
+export function dedupeItems<T extends { id: string }>(
+  pages: ReadonlyArray<PaginatedResponse<T>>,
+): T[] {
+  const seen = new Set<string>();
+  const items: T[] = [];
+  for (const page of pages) {
+    for (const item of page.items) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      items.push(item);
+    }
+  }
+  return items;
+}
+
+export function useInfiniteList<T extends { id: string }>({
   queryKey,
   fetchPage,
   limit,
@@ -57,7 +79,7 @@ export function useInfiniteList<T>({
 
   const pages = query.data?.pages ?? [];
   return {
-    items: pages.flatMap((p) => p.items),
+    items: dedupeItems(pages),
     // Every page carries the same server total; read the latest fetched one.
     total: pages.at(-1)?.total ?? 0,
     isLoading: query.isPending,
@@ -65,6 +87,7 @@ export function useInfiniteList<T>({
     isFetchingNextPage: query.isFetchingNextPage,
     hasNextPage: query.hasNextPage,
     fetchNextPage: () => void query.fetchNextPage(),
+    refetch: () => void query.refetch(),
     error: query.error,
   };
 }

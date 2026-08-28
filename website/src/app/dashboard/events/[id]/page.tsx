@@ -66,8 +66,9 @@ export default function FocusedSharePage() {
     notFound();
   }
 
-  // Loading: hook returns null until the BE responds. Don't gate on photos
-  // separately — the grid renders its own skeleton when livePhotos is null.
+  // Loading: detail is null until the BE responds. Photos load in parallel
+  // as an infinite list — the grid shows its own tile skeletons while its
+  // first page is in flight.
   if (liveDetail === null) {
     return <FocusedShareSkeleton />;
   }
@@ -500,14 +501,21 @@ function PhotoGrid({
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
-        {photos.map((photo, i) => (
-          <PhotoTile
-            key={photo.id}
-            photo={photo}
-            index={i}
-            onOpen={() => handleOpen(i)}
-          />
-        ))}
+        {/* First photos page loads in parallel with the detail — show tile
+            skeletons instead of a silent blank grid under the "N total"
+            header. */}
+        {livePhotos.isLoading
+          ? Array.from({ length: 8 }, (_, i) => (
+              <Skeleton key={i} className="h-full w-full rounded-xl" />
+            ))
+          : photos.map((photo, i) => (
+              <PhotoTile
+                key={photo.id}
+                photo={photo}
+                index={i}
+                onOpen={() => handleOpen(i)}
+              />
+            ))}
       </div>
 
       <LoadMoreButton

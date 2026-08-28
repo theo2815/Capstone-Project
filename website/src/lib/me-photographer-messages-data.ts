@@ -98,10 +98,14 @@ export const useMyPhotographerMessagesStore = create<MessagesState>(
       return p;
     },
     loadMore: async () => {
-      const next = Math.min(get().limit + MESSAGES_PAGE, MESSAGES_MAX);
-      if (next === get().limit) return;
+      const prev = get().limit;
+      const next = Math.min(prev + MESSAGES_PAGE, MESSAGES_MAX);
+      if (next === prev) return;
       set({ limit: next, fetchedAt: 0 });
       await get().refetch();
+      // refetch swallows its own errors — roll the limit back on failure so
+      // hasMore stays true and Load-older remains retryable.
+      if (get().error) set({ limit: prev });
     },
     markRead: async (id) => {
       // Optimistic flip — the BE PATCH returns the updated row but the
@@ -145,12 +149,22 @@ export const useMyPhotographerMessagesStore = create<MessagesState>(
     },
     remove: async (id) => {
       const prev = get().messages;
-      set({ messages: prev.filter((m) => m.id !== id) });
+      const prevTotal = get().total;
+      const next = prev.filter((m) => m.id !== id);
+      // Keep the header total in step with the optimistic removal, and
+      // restore it on rollback — X-Total-Count only refreshes on refetch.
+      set({
+        messages: next,
+        total:
+          prevTotal === null || next.length === prev.length
+            ? prevTotal
+            : prevTotal - 1,
+      });
       try {
         await removeMyPhotographerMessage(id);
       } catch (err) {
         console.error("[me/messages] remove failed", err);
-        set({ messages: prev });
+        set({ messages: prev, total: prevTotal });
       }
     },
     applyPush: (msg) =>
@@ -165,7 +179,11 @@ export const useMyPhotographerMessagesStore = create<MessagesState>(
           arr[existingIdx] = msg;
           return { messages: arr };
         }
-        return { messages: [msg, ...s.messages] };
+        // A genuinely new row also grows the server-side total.
+        return {
+          messages: [msg, ...s.messages],
+          total: s.total === null ? null : s.total + 1,
+        };
       }),
     setWsConnected: (connected) => set({ wsConnected: connected }),
     reset: () =>

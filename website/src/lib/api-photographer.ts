@@ -56,7 +56,10 @@ export async function fetchPhotographerEvents(
   const p = new URLSearchParams();
   if (args.withUploads) p.set("withUploads", "true");
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 24));
+  // Default to the BE MAX_LIMIT: dashboard consumers (setup-mode fork,
+  // Next-up glance) derive from this list and omit `limit` — the old 24
+  // default silently truncated what they saw.
+  p.set("limit", String(args.limit ?? 200));
   return api.get<PaginatedResponse<PhotographerEventSummary>>(
     `/me/photographer/events?${p.toString()}`,
   );

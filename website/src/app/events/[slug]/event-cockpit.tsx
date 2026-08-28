@@ -27,6 +27,7 @@ import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { RefundModal } from "@/components/orders/refund-modal";
 import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
 import { useEventPhotos } from "@/hooks/use-event-photos";
@@ -209,6 +210,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
         total={visibleTotal}
         onLoadMore={onLoadMore}
         isLoadingMore={isLoadingMore}
+        isLoadingPhotos={isFaceMode ? false : bibPhotos.isLoading}
         bibFilter={bibFilter}
         isFaceMode={isFaceMode}
         canShowMyPhotos={isAuthenticated && !!primarySelfieId}
@@ -471,6 +473,7 @@ function BrowseMode({
   total,
   onLoadMore,
   isLoadingMore,
+  isLoadingPhotos,
   bibFilter,
   isFaceMode,
   canShowMyPhotos,
@@ -488,6 +491,7 @@ function BrowseMode({
   total: number;
   onLoadMore: () => void;
   isLoadingMore: boolean;
+  isLoadingPhotos: boolean;
   bibFilter: string;
   isFaceMode: boolean;
   canShowMyPhotos: boolean;
@@ -560,7 +564,11 @@ function BrowseMode({
           <h2 className="font-hero text-ink text-4xl md:text-6xl">
             {isAnyFilter ? (
               visible.length === 0 ? (
-                "No matches yet."
+                isLoadingPhotos ? (
+                  "Searching…"
+                ) : (
+                  "No matches yet."
+                )
               ) : (
                 <>
                   We found{" "}
@@ -715,7 +723,20 @@ function BrowseMode({
       </div>
 
       <div className="flex-1 flex flex-col">
-        {isBibFilter && visible.length === 0 ? (
+        {isBibFilter && visible.length === 0 && isLoadingPhotos ? (
+          // Bib queries cache under their own key with no SSR seed, so the
+          // first page loads client-side — don't flash "No matches yet"
+          // while the search is still in flight.
+          <div className="px-6 md:px-10 py-10 md:py-14 pb-20" aria-busy="true">
+            <div className="max-w-7xl mx-auto">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
+                {Array.from({ length: 4 }, (_, i) => (
+                  <Skeleton key={i} className="h-full w-full rounded-xl" />
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : isBibFilter && visible.length === 0 ? (
           <BibEmptyResult event={event} bib={bibFilter} onClear={onClearBib} />
         ) : isFaceMode && visible.length === 0 ? (
           <FaceEmptyResult onClear={onClearFace} />

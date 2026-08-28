@@ -19,6 +19,7 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCanUpload } from "@/hooks/use-can-upload";
+import { usePhotographerEventDetail } from "@/hooks/use-photographer-data";
 import { usePublicEvents } from "@/hooks/use-public-events";
 import { useToast } from "@/hooks/use-toast";
 import { usePhotographerVerificationSync } from "@/lib/photographer-verification-sync";
@@ -105,16 +106,51 @@ export default function FocusedUploadPage() {
   // a skeleton — 404 only fires once we know the event truly isn't there.
   const liveEvents = usePublicEvents();
   const catalog = useEventCatalog(liveEvents ?? EMPTY_SEED);
-  const event = useMemo(
+  const catalogEvent = useMemo(
     () => (eventId ? catalog.find((e) => e.id === eventId) : undefined),
     [catalog, eventId],
   );
+
+  // The catalog is one capped page (BE MAX_LIMIT) of the whole platform's
+  // events, so a covered event can fall past it while staying uploadable.
+  // On a miss, resolve directly by id through the photographer detail
+  // endpoint — it 404s only for events this photographer never touched,
+  // which are unreachable from the picker anyway.
+  const needFallback = liveEvents !== null && !catalogEvent && !!eventId;
+  const { detail: fallbackDetail, isMissing } = usePhotographerEventDetail(
+    needFallback ? (eventId ?? null) : null,
+  );
+
+  // Same ListEvent synthesis as /dashboard/events/[id] — summary fields from
+  // the BE; participantCount + status + city are slot fillers the upload
+  // surface doesn't read.
+  const event: ListEvent | undefined =
+    catalogEvent ??
+    (fallbackDetail
+      ? {
+          id: fallbackDetail.id,
+          slug: fallbackDetail.slug,
+          name: fallbackDetail.name,
+          date: fallbackDetail.date,
+          location: fallbackDetail.location,
+          photoCount: fallbackDetail.photoCount,
+          participantCount: 0,
+          status: "ACTIVE",
+          state: fallbackDetail.state as EventState,
+          city: fallbackDetail.location.split(",").pop()?.trim() ?? "",
+        }
+      : undefined);
 
   if (liveEvents === null) {
     return <FocusedUploadSkeleton />;
   }
 
   if (!event) {
+    // Fallback still in flight — keep the skeleton up; a 404 verdict is the
+    // only thing that should read as "this event doesn't exist for you."
+    if (needFallback && !isMissing) {
+      return <FocusedUploadSkeleton />;
+    }
     notFound();
   }
 
