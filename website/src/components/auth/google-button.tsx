@@ -1,18 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import Script from "next/script";
+import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
-import { ROUTES } from "@/lib/constants";
+import { ApiError } from "@/lib/api";
+import { GOOGLE_CLIENT_ID, ROUTES } from "@/lib/constants";
+import { roleHome } from "@/lib/redirect";
+import { cn } from "@/lib/utils";
 
-// Master switch for the mock Google OAuth path. The 2026-05-05 ADR shipped
-// `mockGoogleLogin` as a placeholder that hardcodes `juan.delacruz@gmail.com`
-// for every Google signup — so every account that came in via Google looked
-// identical across browsers. Real Google OAuth lands in Phase B (see
-// website/tasks.md Next). Until then, this flag is `false` and email/password
-// is the only signup path. When real OAuth ships, flip to `true` and replace
-// `mockGoogleLogin` with a real `/auth/oauth/google/callback` exchange.
-export const OAUTH_ENABLED = false;
+// Real Google sign-in via Google Identity Services (GIS). GIS renders its own
+// branded button inside an iframe — there is no supported way to trigger the
+// credential flow from a custom-styled button, so the 2026-05-05 hand-drawn
+// one is retired by necessity (accepted tradeoff in the 2026-08-29 OAuth
+// plan). The old boolean flag is env-derived now: leave
+// NEXT_PUBLIC_GOOGLE_CLIENT_ID unset and this block disappears from /login +
+// /register, mirroring the backend's blank-GOOGLE_CLIENT_ID 503.
+export const OAUTH_ENABLED = GOOGLE_CLIENT_ID !== "";
+
+const GSI_SRC = "https://accounts.google.com/gsi/client";
+// GIS hard-caps its rendered button at 400 CSS px; the 440px auth card gets
+// it slightly inset, centered by the flex wrapper below.
+const GSI_MAX_WIDTH = 400;
 
 interface GoogleButtonProps {
   disabled?: boolean;
@@ -20,53 +29,76 @@ interface GoogleButtonProps {
 
 export function GoogleButton({ disabled }: GoogleButtonProps) {
   const router = useRouter();
-  const { mockGoogleLogin } = useAuth();
-  const [isLoading, setIsLoading] = useState(false);
+  const { googleLogin } = useAuth();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  async function handleClick() {
-    if (isLoading || disabled) return;
-    setIsLoading(true);
-    try {
-      await mockGoogleLogin();
-      router.replace(ROUTES.ONBOARDING);
-    } catch {
-      setIsLoading(false);
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={isLoading || disabled}
-      className="w-full inline-flex items-center justify-center gap-3 bg-bone border border-line hover:border-slate hover:bg-bone-deep/40 active:bg-bone-deep py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-    >
-      <GoogleG aria-hidden />
-      <span>{isLoading ? "Connecting…" : "Continue with Google"}</span>
-    </button>
+  const handleCredential = useCallback(
+    async (response: GsiCredentialResponse) => {
+      setError(null);
+      try {
+        const user = await googleLogin(response.credential);
+        if (user) {
+          router.replace(roleHome(user.role));
+        } else {
+          // null = backend answered ROLE_REQUIRED: a brand-new Google account
+          // that picks RUNNER/PHOTOGRAPHER on /onboarding first.
+          router.replace(ROUTES.ONBOARDING);
+        }
+      } catch (err) {
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : "Google sign-in failed. Try again.",
+        );
+      }
+    },
+    [googleLogin, router],
   );
-}
 
-function GoogleG(props: React.SVGProps<SVGSVGElement>) {
+  const init = useCallback(() => {
+    const google = window.google;
+    const container = containerRef.current;
+    if (!google || !container) return;
+    // onReady re-fires on every remount (and StrictMode double-invokes it in
+    // dev); renderButton appends a fresh iframe per call, so clear first.
+    container.innerHTML = "";
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleCredential,
+    });
+    google.accounts.id.renderButton(container, {
+      type: "standard",
+      theme: "outline",
+      text: "continue_with",
+      shape: "pill",
+      logo_alignment: "center",
+      width: Math.min(container.offsetWidth || GSI_MAX_WIDTH, GSI_MAX_WIDTH),
+    });
+  }, [handleCredential]);
+
+  if (!OAUTH_ENABLED) return null;
+
   return (
-    <svg viewBox="0 0 18 18" className="size-4 shrink-0" {...props}>
-      <path
-        d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"
-        fill="#4285F4"
+    <div className="space-y-3">
+      <Script src={GSI_SRC} strategy="afterInteractive" onReady={init} />
+      {/* min-h reserves the GIS button's height so the card doesn't jump
+          when the iframe lands. If the script never loads (ad blocker), the
+          slot stays empty and email/password remains the path — deliberate. */}
+      <div
+        ref={containerRef}
+        aria-disabled={disabled}
+        className={cn(
+          "flex justify-center min-h-[44px]",
+          disabled && "pointer-events-none opacity-50",
+        )}
       />
-      <path
-        d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.836.86-3.048.86-2.345 0-4.328-1.583-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"
-        fill="#34A853"
-      />
-      <path
-        d="M3.964 10.706A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.038l3.007-2.332z"
-        fill="#FBBC05"
-      />
-      <path
-        d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.962L3.964 7.294C4.672 5.166 6.655 3.58 9 3.58z"
-        fill="#EA4335"
-      />
-    </svg>
+      {error && (
+        <p role="alert" className="font-sans text-sm text-error text-center">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

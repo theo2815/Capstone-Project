@@ -11,6 +11,13 @@ interface QuickPitikApi {
     @POST("api/v1/auth/register")
     suspend fun register(@Body request: RegisterRequest): ApiResponseEnvelope<AuthResponse>
 
+    // "Continue with Google" — exchanges a Credential Manager ID token for the
+    // normal pair. Public, and TokenAuthenticator skips /auth/* — so its 4xx
+    // answers (422 ROLE_REQUIRED = brand-new account, pick a role first) can
+    // never trigger a refresh or a forced logout. See AuthViewModel.googleLogin.
+    @POST("api/v1/auth/google")
+    suspend fun googleLogin(@Body request: GoogleLoginRequest): ApiResponseEnvelope<AuthResponse>
+
     // Non-suspend Call on purpose: TokenAuthenticator runs on OkHttp's thread
     // outside any coroutine, so it needs a blocking execute(). Called only via
     // RetrofitClient.refreshApi (the authenticator-free client).

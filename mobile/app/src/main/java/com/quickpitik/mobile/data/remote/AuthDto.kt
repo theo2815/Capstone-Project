@@ -27,6 +27,15 @@ data class AuthResponse(
     val user: UserDto
 )
 
+// Body for POST /auth/google. Mirrors backend dto/auth/GoogleLoginRequest.
+// `role` is null on the first attempt (Gson omits null fields); a brand-new
+// Google account gets 422 ROLE_REQUIRED back and re-POSTs the same idToken
+// with the picked role. Existing accounts ignore `role` entirely.
+data class GoogleLoginRequest(
+    val idToken: String,
+    val role: String? = null
+)
+
 // Body for POST /auth/refresh. Mirrors backend dto/auth/RefreshRequest.
 data class RefreshRequest(
     val refreshToken: String

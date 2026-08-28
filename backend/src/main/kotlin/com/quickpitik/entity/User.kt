@@ -44,6 +44,12 @@ class User(
     @Column(name = "avatar_s3_key", length = 512)
     var avatarS3Key: String? = null,
 
+    // Google account link (V38). NULL for password-only accounts; set on the
+    // first Google sign-in — either at account creation or when a verified
+    // Google email auto-links to an existing row. See GoogleAuthService.
+    @Column(name = "google_sub", length = 255, unique = true)
+    var googleSub: String? = null,
+
     // When the address on this row was proven reachable (V30). Advisory —
     // nothing gates on it. NULL means "never confirmed", which is the honest
     // reading for every account that predates the flow.

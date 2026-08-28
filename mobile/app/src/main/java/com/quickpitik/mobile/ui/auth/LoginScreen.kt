@@ -126,6 +126,15 @@ fun LoginScreen(
             )
             Spacer(modifier = Modifier.height(32.dp))
 
+            // "Continue with Google" + divider — website parity: the block
+            // sits above the email form on /login. Renders nothing when no
+            // client ID is compiled in (see gradle.properties).
+            GoogleSignInRow(
+                enabled = authState !is AuthState.Loading,
+                onIdToken = viewModel::googleLogin,
+                onError = viewModel::showError,
+            )
+
             // Fields
             Column(
                 verticalArrangement = Arrangement.spacedBy(24.dp)
@@ -300,6 +309,14 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(24.dp))
             DevServerRow()
             Spacer(modifier = Modifier.height(24.dp))
+
+            // Brand-new Google account — role pick before it exists.
+            if (authState is AuthState.GoogleRoleRequired) {
+                GoogleRoleSheet(
+                    onPick = viewModel::completeGoogleSignup,
+                    onDismiss = viewModel::cancelGoogleSignup,
+                )
+            }
 
             if (authState is AuthState.Loading) {
                 Box(

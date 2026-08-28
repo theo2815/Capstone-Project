@@ -3,6 +3,7 @@ package com.quickpitik.controller
 import com.quickpitik.dto.auth.AuthResponse
 import com.quickpitik.dto.auth.EmailVerificationConfirmRequest
 import com.quickpitik.dto.auth.ForgotPasswordRequest
+import com.quickpitik.dto.auth.GoogleLoginRequest
 import com.quickpitik.dto.auth.LoginRequest
 import com.quickpitik.dto.auth.LogoutRequest
 import com.quickpitik.dto.auth.MessageResponse
@@ -16,6 +17,7 @@ import com.quickpitik.dto.profile.EmailChangeConfirmRequest
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.AuthService
 import com.quickpitik.service.EmailVerificationService
+import com.quickpitik.service.GoogleAuthService
 import com.quickpitik.service.PasswordResetService
 import com.quickpitik.service.profile.EmailChangeService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
@@ -35,6 +37,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/v1/auth")
 class AuthController(
     private val authService: AuthService,
+    private val googleAuthService: GoogleAuthService,
     private val passwordResetService: PasswordResetService,
     private val emailChangeService: EmailChangeService,
     private val emailVerificationService: EmailVerificationService,
@@ -56,6 +59,19 @@ class AuthController(
     ): AuthResponse {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, clientIp(request))
         return authService.login(req)
+    }
+
+    // "Continue with Google" — website (GIS button) and mobile (Credential
+    // Manager) both exchange a Google-signed ID token here for the normal
+    // QuickPitik pair. Shares the login policy: identical threat shape
+    // (unauthenticated credential in the body), no reason for a second budget.
+    @PostMapping("/google")
+    fun google(
+        @Valid @RequestBody req: GoogleLoginRequest,
+        request: HttpServletRequest,
+    ): AuthResponse {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, clientIp(request))
+        return googleAuthService.login(req)
     }
 
     // Refresh is intentionally NOT rate-limited per IP — a single user

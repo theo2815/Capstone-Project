@@ -149,7 +149,9 @@ class AuthService(
         }
     }
 
-    private fun buildAuthResponse(user: User): AuthResponse {
+    // internal: GoogleAuthService reuses this so every sign-in path mints the
+    // pair (and its refresh-token row) in exactly one place.
+    internal fun buildAuthResponse(user: User): AuthResponse {
         val accessToken = tokenProvider.createAccessToken(user)
         val refreshToken = refreshTokenService.issue(user.id)
         return AuthResponse(

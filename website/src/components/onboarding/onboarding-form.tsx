@@ -3,6 +3,7 @@
 import { useEffect, useState, type SVGProps } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
+import { ApiError } from "@/lib/api";
 import { ROUTES } from "@/lib/constants";
 import { roleHome } from "@/lib/redirect";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,7 @@ export function OnboardingForm() {
   const { pendingOAuth, completeOnboarding, cancelOnboarding } = useAuth();
   const [role, setRole] = useState<Role | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!pendingOAuth) {
@@ -22,12 +24,33 @@ export function OnboardingForm() {
 
   if (!pendingOAuth) return null;
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!role || isSubmitting) return;
     setIsSubmitting(true);
-    completeOnboarding(role);
-    router.replace(roleHome(role));
+    setError(null);
+    try {
+      await completeOnboarding(role);
+      router.replace(roleHome(role));
+    } catch (err) {
+      // The parked Google token lives ~1h. If it expired while this page sat
+      // open, the pick cannot complete — restart the flow from /login, where
+      // one more button click mints a fresh token.
+      if (
+        err instanceof ApiError &&
+        err.errors.some((issue) => issue.code === "INVALID_GOOGLE_TOKEN")
+      ) {
+        cancelOnboarding();
+        router.replace(ROUTES.LOGIN);
+        return;
+      }
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Something went wrong. Try again.",
+      );
+      setIsSubmitting(false);
+    }
   }
 
   function handleSignOut() {
@@ -105,6 +128,12 @@ export function OnboardingForm() {
             onSelect={() => setRole("PHOTOGRAPHER")}
           />
         </div>
+
+        {error && (
+          <p role="alert" className="font-sans text-sm text-error">
+            {error}
+          </p>
+        )}
 
         <button
           type="submit"

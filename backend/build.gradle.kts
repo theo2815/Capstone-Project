@@ -40,6 +40,12 @@ dependencies {
 	runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
 	runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
 
+	// Google ID-token verification for /auth/google (NimbusJwtDecoder + cached
+	// auto-rotating JWKS fetch). Version from the Spring Boot BOM. Deliberately
+	// NOT the resource-server starter — jose alone activates no auto-config, so
+	// the jjwt filter chain above stays the only authentication path.
+	implementation("org.springframework.security:spring-security-oauth2-jose")
+
 	implementation("software.amazon.awssdk:s3:2.30.21")
 	// AWS Rekognition — face index/search + bib text detection, used when
 	// app.ai.provider=rekognition (the AWS-managed alternative to self-hosted

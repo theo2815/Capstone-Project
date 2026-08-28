@@ -120,6 +120,17 @@ fun RegisterScreen(
             )
             Spacer(modifier = Modifier.height(24.dp))
 
+            // "Continue with Google" + divider — website parity: the block
+            // sits above the role pivot on /register. A brand-new Google
+            // account picks its role in the sheet below, not from the cards —
+            // the toggle's default must never silently decide a permanent
+            // choice. Renders nothing when no client ID is compiled in.
+            GoogleSignInRow(
+                enabled = authState !is AuthState.Loading,
+                onIdToken = viewModel::googleLogin,
+                onError = viewModel::showError,
+            )
+
             // Role selection buttons
             Text(
                 text = "ACCOUNT TYPE",
@@ -494,6 +505,14 @@ fun RegisterScreen(
                         color = SlateSoft
                     )
                 }
+            }
+
+            // Brand-new Google account — role pick before it exists.
+            if (authState is AuthState.GoogleRoleRequired) {
+                GoogleRoleSheet(
+                    onPick = viewModel::completeGoogleSignup,
+                    onDismiss = viewModel::cancelGoogleSignup,
+                )
             }
         }
     }

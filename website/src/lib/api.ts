@@ -212,6 +212,9 @@ async function postRefresh(refreshToken: string): Promise<string | null> {
 const PUBLIC_AUTH_ENDPOINTS = new Set([
   "/auth/login",
   "/auth/register",
+  // The Google ID-token exchange — its 401s mean "bad Google token", never
+  // "expired QuickPitik session", so a refresh-and-retry is meaningless.
+  "/auth/google",
   "/auth/refresh",
   "/auth/forgot-password",
   // The whole OTP flow runs signed out — a 401-shaped failure must render on

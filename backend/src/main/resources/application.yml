@@ -84,6 +84,13 @@ app:
       # NFR-S-14 (V34): failures only accumulate toward a lock when they land
       # within this window of the previous one; older streaks restart at 1.
       window: ${AUTH_LOCKOUT_WINDOW:PT15M}
+    # "Continue with Google" (V38). The Web application OAuth client ID from
+    # Google Cloud — shared audience for the website GIS button AND the mobile
+    # Credential Manager exchange. Blank (dev default) makes /auth/google
+    # answer 503 GOOGLE_AUTH_UNAVAILABLE; both clients hide the button when
+    # their copy of the ID is unset, so the endpoint going dark is symmetric.
+    google:
+      client-id: ${GOOGLE_CLIENT_ID:}
   admin:
     bootstrap-email: ${ADMIN_BOOTSTRAP_EMAIL:admin@quickpitik.local}
     bootstrap-password: ${ADMIN_BOOTSTRAP_PASSWORD:changeme123}

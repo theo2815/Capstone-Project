@@ -8,6 +8,10 @@ export interface OAuthIdentity {
   email: string;
   name: string;
   avatarUrl?: string;
+  // The raw Google ID token, held while the role picker is open so
+  // completeOnboarding can re-POST it with the chosen role. Google ID tokens
+  // live ~1h; an expired one just bounces the user back to /login.
+  idToken: string;
 }
 
 export interface User {

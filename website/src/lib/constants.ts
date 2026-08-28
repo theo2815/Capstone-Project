@@ -1,6 +1,11 @@
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1";
 
+// Google OAuth Web client ID (public identifier, not a secret). Unset hides
+// the "Continue with Google" button entirely — the backend's GOOGLE_CLIENT_ID
+// env is the same value, so the two surfaces go dark together.
+export const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
+
 export const ROUTES = {
   HOME: "/",
   RUNNERS: "/runners",

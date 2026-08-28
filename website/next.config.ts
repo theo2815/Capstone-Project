@@ -22,13 +22,19 @@ const WS_ORIGIN = (
 // img-src allows any https host: photo thumbnails are presigned R2 URLs on
 // an account-specific domain the FE can't know at build time; images can't
 // execute script, so the wildcard is the pragmatic trade.
+// The accounts.google.com entries are Google Identity Services (the
+// "Continue with Google" button): its loader script, the iframe the button
+// actually renders in, its stylesheet, and its XHR. frame-src is declared
+// explicitly because the default-src 'self' fallback would silently block
+// the button iframe — in production only, since dev ships no CSP.
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/client",
+  "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
   "img-src 'self' data: blob: https: http://localhost:8080",
   "font-src 'self' data:",
-  `connect-src 'self' ${API_ORIGIN} ${WS_ORIGIN}`,
+  `connect-src 'self' ${API_ORIGIN} ${WS_ORIGIN} https://accounts.google.com/gsi/`,
+  "frame-src 'self' https://accounts.google.com/gsi/",
   "frame-ancestors 'none'",
   "object-src 'none'",
   "base-uri 'self'",

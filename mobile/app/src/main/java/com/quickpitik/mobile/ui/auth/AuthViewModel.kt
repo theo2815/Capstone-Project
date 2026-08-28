@@ -14,6 +14,11 @@ sealed class AuthState {
     object Idle : AuthState()
     object Loading : AuthState()
     data class Success(val response: AuthResponse) : AuthState()
+
+    // Backend answered 422 ROLE_REQUIRED to a Google exchange: the account is
+    // brand new and must pick RUNNER/PHOTOGRAPHER before it exists. The screen
+    // shows the role sheet; completeGoogleSignup finishes the job.
+    object GoogleRoleRequired : AuthState()
     data class Error(val message: String) : AuthState()
 }
 
@@ -43,22 +48,31 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     // touch SessionManager / SharedPreferences.
     private var resetToken: String? = null
 
+    // The Google ID token parked while the role sheet is open, re-POSTed by
+    // completeGoogleSignup. Same rule as resetToken: memory only.
+    private var pendingGoogleIdToken: String? = null
+
+    // Every path that mints a session (login / register / Google) lands here,
+    // so SessionManager and the Success transition happen in exactly one place.
+    private fun establishSession(authData: AuthResponse) {
+        sessionManager.saveSession(
+            token = authData.accessToken,
+            role = authData.user.role,
+            name = authData.user.name,
+            email = authData.user.email,
+            avatarUrl = authData.user.avatarUrl,
+            refreshToken = authData.refreshToken,
+        )
+        _authState.value = AuthState.Success(authData)
+    }
+
     fun login(email: String, password: String) {
         viewModelScope.launch {
             _authState.value = AuthState.Loading
             try {
                 val envelope = RetrofitClient.apiService.login(LoginRequest(email, password))
                 if (envelope.success && envelope.data != null) {
-                    val authData = envelope.data
-                    sessionManager.saveSession(
-                        token = authData.accessToken,
-                        role = authData.user.role,
-                        name = authData.user.name,
-                        email = authData.user.email,
-                        avatarUrl = authData.user.avatarUrl,
-                        refreshToken = authData.refreshToken,
-                    )
-                    _authState.value = AuthState.Success(authData)
+                    establishSession(envelope.data)
                 } else {
                     _authState.value = AuthState.Error(envelope.error ?: "Login failed. Please check credentials.")
                 }
@@ -81,16 +95,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     RegisterRequest(name, email, password, role)
                 )
                 if (envelope.success && envelope.data != null) {
-                    val authData = envelope.data
-                    sessionManager.saveSession(
-                        token = authData.accessToken,
-                        role = authData.user.role,
-                        name = authData.user.name,
-                        email = authData.user.email,
-                        avatarUrl = authData.user.avatarUrl,
-                        refreshToken = authData.refreshToken,
-                    )
-                    _authState.value = AuthState.Success(authData)
+                    establishSession(envelope.data)
                 } else {
                     _authState.value = AuthState.Error(envelope.error ?: "Registration failed.")
                 }
@@ -98,6 +103,88 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 _authState.value = AuthState.Error(RetrofitClient.parseError(e))
             }
         }
+    }
+
+    /**
+     * POST /auth/google with the ID token minted by Credential Manager
+     * (GoogleSignInRow). Success establishes a session exactly like login.
+     * 422 ROLE_REQUIRED means this Google account is brand new — the token is
+     * parked and the screen shows the role sheet, finished by
+     * [completeGoogleSignup].
+     */
+    fun googleLogin(idToken: String) {
+        viewModelScope.launch {
+            _authState.value = AuthState.Loading
+            try {
+                val envelope = RetrofitClient.apiService.googleLogin(GoogleLoginRequest(idToken))
+                if (envelope.success && envelope.data != null) {
+                    establishSession(envelope.data)
+                } else {
+                    _authState.value = AuthState.Error(envelope.error ?: "Google sign-in failed.")
+                }
+            } catch (e: Exception) {
+                // parseHttpError drains the buffered errorBody, so parseError
+                // must not re-read it — the fallback below is safe only
+                // because parseError degrades to "HTTP <code>" on a drained
+                // buffer and handles transport failures without touching it.
+                val apiError = RetrofitClient.parseHttpError(e)
+                if (apiError?.code == "ROLE_REQUIRED") {
+                    pendingGoogleIdToken = idToken
+                    _authState.value = AuthState.GoogleRoleRequired
+                } else {
+                    _authState.value = AuthState.Error(
+                        apiError?.message ?: RetrofitClient.parseError(e)
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Second leg for a brand-new Google account: re-POST the parked ID token
+     * with the picked role. Google ID tokens live about an hour, so a stale
+     * park just errors and the user taps the Google button again.
+     */
+    fun completeGoogleSignup(isPhotographer: Boolean) {
+        val idToken = pendingGoogleIdToken
+        if (idToken == null) {
+            _authState.value = AuthState.Error("Google sign-in expired — try again.")
+            return
+        }
+        viewModelScope.launch {
+            _authState.value = AuthState.Loading
+            try {
+                val role = if (isPhotographer) "PHOTOGRAPHER" else "RUNNER"
+                val envelope = RetrofitClient.apiService.googleLogin(
+                    GoogleLoginRequest(idToken, role)
+                )
+                if (envelope.success && envelope.data != null) {
+                    pendingGoogleIdToken = null
+                    establishSession(envelope.data)
+                } else {
+                    _authState.value = AuthState.Error(envelope.error ?: "Google sign-in failed.")
+                }
+            } catch (e: Exception) {
+                val apiError = RetrofitClient.parseHttpError(e)
+                _authState.value = AuthState.Error(
+                    apiError?.message ?: RetrofitClient.parseError(e)
+                )
+            }
+        }
+    }
+
+    /** The user dismissed the role sheet — drop the parked token, back to Idle. */
+    fun cancelGoogleSignup() {
+        pendingGoogleIdToken = null
+        _authState.value = AuthState.Idle
+    }
+
+    /**
+     * Client-side sign-in failures (Credential Manager: no Google account on
+     * the device, Play services missing) share the screens' error slot.
+     */
+    fun showError(message: String) {
+        _authState.value = AuthState.Error(message)
     }
 
     /**

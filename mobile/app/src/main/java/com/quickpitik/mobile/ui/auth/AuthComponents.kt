@@ -1,14 +1,22 @@
 package com.quickpitik.mobile.ui.auth
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -17,6 +25,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -28,9 +38,19 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.NoCredentialException
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.quickpitik.mobile.BuildConfig
+import com.quickpitik.mobile.R
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
+import kotlinx.coroutines.launch
 
 // Shared chrome for the auth-recovery flow (ForgotPasswordScreen, which since
 // the OTP cutover carries every step), the mobile counterpart to the website's
@@ -448,5 +468,242 @@ fun BackToSignIn(onClick: () -> Unit, enabled: Boolean = true) {
                 color = Slate,
             )
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// "Continue with Google" (2026-08-29) — Credential Manager + role sheet
+// ---------------------------------------------------------------------------
+
+/**
+ * GhostCta-idiom Google button (Ink outline, no fill — Fresh stays reserved
+ * for the screen's primary CTA) followed by the "or with email" divider,
+ * mirroring the website's `<GoogleButton/> + <AuthDivider/>` block. Renders
+ * nothing when no web client ID is compiled in (QP_GOOGLE_SERVER_CLIENT_ID in
+ * gradle.properties) — website button and backend endpoint go dark off the
+ * same value, so the three surfaces stay symmetric.
+ *
+ * The getCredential call must anchor to the ACTIVITY — which LocalContext is
+ * inside MainActivity's composition; an Application context cannot show the
+ * account dialog. Only the extracted ID token leaves this composable; the
+ * exchange itself is AuthViewModel.googleLogin's job.
+ */
+@Composable
+fun GoogleSignInRow(
+    enabled: Boolean,
+    onIdToken: (String) -> Unit,
+    onError: (String) -> Unit,
+) {
+    if (BuildConfig.GOOGLE_SERVER_CLIENT_ID.isBlank()) return
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    Column {
+        OutlinedButton(
+            onClick = {
+                scope.launch {
+                    try {
+                        val option = GetSignInWithGoogleOption
+                            .Builder(BuildConfig.GOOGLE_SERVER_CLIENT_ID)
+                            .build()
+                        val result = CredentialManager.create(context).getCredential(
+                            context,
+                            GetCredentialRequest(listOf(option)),
+                        )
+                        val credential = result.credential
+                        if (
+                            credential is CustomCredential &&
+                            credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+                        ) {
+                            onIdToken(GoogleIdTokenCredential.createFrom(credential.data).idToken)
+                        } else {
+                            onError("Google sign-in unavailable. Use your email instead.")
+                        }
+                    } catch (e: GetCredentialCancellationException) {
+                        // The user closed the account picker — not an error.
+                    } catch (e: NoCredentialException) {
+                        onError("No Google account on this device.")
+                    } catch (e: GetCredentialException) {
+                        // Play-less devices/emulators land here as provider-
+                        // configuration failures, as does a missing Android
+                        // OAuth client in Google Cloud (see gradle.properties).
+                        onError("Google sign-in unavailable. Use your email instead.")
+                    }
+                }
+            },
+            enabled = enabled,
+            shape = PillShape,
+            border = BorderStroke(1.dp, Ink),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+        ) {
+            Image(
+                painter = painterResource(R.drawable.ic_google_g),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(text = "CONTINUE WITH GOOGLE", style = Typography.labelLarge)
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Divider(modifier = Modifier.weight(1f), color = Line)
+            Text(
+                text = "OR WITH EMAIL",
+                style = Typography.labelMedium,
+                color = SlateSoft,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+            Divider(modifier = Modifier.weight(1f), color = Line)
+        }
+
+        Spacer(modifier = Modifier.height(28.dp))
+    }
+}
+
+/**
+ * Role pick for a brand-new Google account (AuthState.GoogleRoleRequired —
+ * the backend answered 422 ROLE_REQUIRED because Google supplies no role).
+ * A bottom sheet, per the mobile-design rule that contextual choices ride
+ * sheets, not dialogs. Mirrors the website's /onboarding gate: the choice is
+ * permanent, so it is asked explicitly, never defaulted from a toggle the
+ * user may not have noticed.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GoogleRoleSheet(
+    onPick: (isPhotographer: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Bone,
+    ) {
+        GoogleRoleSheetContent(onPick = onPick)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GoogleRoleSheetContent(onPick: (isPhotographer: Boolean) -> Unit) {
+    var isPhotographer by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .padding(horizontal = 24.dp)
+            .padding(bottom = 24.dp)
+            .navigationBarsPadding(),
+    ) {
+        Text(
+            text = "ONE LAST THING",
+            style = Typography.labelLarge,
+            color = Slate,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "How will you use QuickPitik?",
+            style = Typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = Ink,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "This choice is permanent.",
+            style = Typography.bodyMedium,
+            color = SlateSoft,
+        )
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            GoogleRoleCard(
+                index = "01",
+                title = "I run",
+                subtitle = "Find your photos",
+                selected = !isPhotographer,
+                onClick = { isPhotographer = false },
+                modifier = Modifier.weight(1f),
+            )
+            GoogleRoleCard(
+                index = "02",
+                title = "I shoot",
+                subtitle = "Sell your photos",
+                selected = isPhotographer,
+                onClick = { isPhotographer = true },
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(
+            onClick = { onPick(isPhotographer) },
+            shape = PillShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Fresh,
+                contentColor = Bone,
+            ),
+            contentPadding = PaddingValues(vertical = 16.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(text = "CONTINUE", style = Typography.labelLarge)
+        }
+    }
+}
+
+// The RegisterScreen role-card recipe (numbered corner, 6dp Fresh dot when
+// selected, BoneDeep fill + Ink border), reused for the Google role pick.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GoogleRoleCard(
+    index: String,
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        onClick = onClick,
+        border = BorderStroke(
+            width = 1.5.dp,
+            color = if (selected) Ink else Line,
+        ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) BoneDeep else Bone,
+        ),
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier,
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(index, style = Typography.labelMedium, color = SlateSoft)
+                if (selected) {
+                    Surface(
+                        shape = PillShape,
+                        color = Fresh,
+                        modifier = Modifier.size(6.dp),
+                    ) {}
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(title, style = Typography.titleMedium, color = Ink)
+            Text(subtitle, style = Typography.bodyMedium, color = SlateSoft)
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun GoogleRoleSheetContentPreview() {
+    Surface(color = Bone) {
+        GoogleRoleSheetContent(onPick = {})
     }
 }

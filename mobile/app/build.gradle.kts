@@ -19,6 +19,15 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // Google OAuth web client ID from gradle.properties — see the note
+        // there. Compiled in (not runtime-settable) so release builds can't be
+        // repointed, same stance as DEFAULT_BASE_URL.
+        buildConfigField(
+            "String",
+            "GOOGLE_SERVER_CLIENT_ID",
+            "\"${project.findProperty("QP_GOOGLE_SERVER_CLIENT_ID") ?: ""}\"",
+        )
     }
 
     buildTypes {
@@ -100,6 +109,11 @@ dependencies {
 
     // Custom Tabs — keeps the PayMongo handoff out of an app-chooser dialog
     implementation(libs.browser)
+
+    // "Continue with Google" — Credential Manager + Google ID token parsing
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.googleid)
 
     testImplementation(libs.junit)
     testImplementation(libs.room.testing)

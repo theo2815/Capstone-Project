@@ -33,6 +33,12 @@ object ErrorCodes {
     const val INVALID_RESET_CODE = "INVALID_RESET_CODE"
     const val INVALID_RESET_TOKEN = "INVALID_RESET_TOKEN"
     const val EMAIL_ALREADY_VERIFIED = "EMAIL_ALREADY_VERIFIED"
+    // Google sign-in (V38). ROLE_REQUIRED (422) is the "new Google user, pick
+    // RUNNER/PHOTOGRAPHER first" signal both clients branch on.
+    const val ROLE_REQUIRED = "ROLE_REQUIRED"
+    const val INVALID_GOOGLE_TOKEN = "INVALID_GOOGLE_TOKEN"
+    const val GOOGLE_EMAIL_UNVERIFIED = "GOOGLE_EMAIL_UNVERIFIED"
+    const val GOOGLE_AUTH_UNAVAILABLE = "GOOGLE_AUTH_UNAVAILABLE"
     const val LOW_CONFIDENCE = "LOW_CONFIDENCE"
 
     const val CART_ITEM_PRICE_CHANGED = "CART_ITEM_PRICE_CHANGED"
