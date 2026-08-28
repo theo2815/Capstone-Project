@@ -112,6 +112,8 @@ export function PhotoMosaicTile({
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={photo.imageUrl ?? ""}
+              loading="lazy"
+              decoding="async"
               alt={
                 photo.alt ??
                 (photo.bib

@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   fetchAdminKpis,
   fetchAdminKpiTrend,
-  fetchAdminUsers,
   fetchAdminDisputes,
   fetchAdminPayouts,
   fetchAdminPayoutReports,
@@ -13,13 +12,11 @@ import {
   fetchAdminSalesByEvent,
   type AdminKpis,
   type AdminTrendPoint,
-  type AdminUserStatusFilter,
   type AdminDisputeStatusFilter,
   type AdminSalesEventRow,
   type AdminSalesKpis,
   type AdminSalesRange,
 } from "@/lib/api-admin";
-import type { AdminUserRow } from "@/lib/admin-user-registry";
 import type { Dispute } from "@/lib/admin-disputes";
 import type {
   AdminPayoutCycle,
@@ -39,6 +36,15 @@ const KPI_STALE_MS = 30_000;
 const LIST_STALE_MS = 60_000;
 const SALES_STALE_MS = 60_000;
 
+// Stable empty fallbacks for the `useX() ?? EMPTY_*` pattern at call sites.
+// A literal `?? []` mints a fresh array identity on every render while the
+// query loads, which defeats every downstream useMemo keyed on it (the whole
+// derive chain recomputes per render). Same trick as the upload page's
+// EMPTY_SEED.
+export const EMPTY_DISPUTES: Dispute[] = [];
+export const EMPTY_PAYOUTS: AdminPayoutCycle[] = [];
+export const EMPTY_REPORTS: PayoutReport[] = [];
+
 // ───────────────────────────────────────────── KPIs
 
 export function useAdminKpis(): AdminKpis | null {
@@ -57,25 +63,6 @@ export function useAdminKpiTrend(
     queryKey: ["admin", "kpis", "trend", days],
     queryFn: () => fetchAdminKpiTrend(days),
     staleTime: KPI_STALE_MS,
-  });
-  return query.data ?? null;
-}
-
-// ───────────────────────────────────────────── Users / verifications
-
-export interface UseAdminUsersArgs {
-  role?: "PHOTOGRAPHER" | "RUNNER";
-  status?: AdminUserStatusFilter;
-  q?: string;
-}
-
-export function useAdminUsers(
-  args: UseAdminUsersArgs = {},
-): AdminUserRow[] | null {
-  const query = useQuery<AdminUserRow[]>({
-    queryKey: ["admin", "users", args],
-    queryFn: () => fetchAdminUsers(args),
-    staleTime: LIST_STALE_MS,
   });
   return query.data ?? null;
 }

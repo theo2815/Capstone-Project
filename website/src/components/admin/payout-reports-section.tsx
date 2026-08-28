@@ -28,6 +28,8 @@ import {
 import {
   useAdminPayoutReports,
   useAdminPayouts,
+  EMPTY_PAYOUTS,
+  EMPTY_REPORTS,
 } from "@/hooks/use-admin-data";
 import { useToast } from "@/hooks/use-toast";
 import { useUrlState } from "@/hooks/use-url-state";
@@ -68,8 +70,8 @@ export function PayoutReportsSection() {
   const acknowledge = useAdminPayoutReportStore((s) => s.acknowledge);
   const resolve = useAdminPayoutReportStore((s) => s.resolve);
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
-  const serverReports = useAdminPayoutReports() ?? [];
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverReports = useAdminPayoutReports() ?? EMPTY_REPORTS;
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   const queryClient = useQueryClient();
   const { showToast } = useToast();
 

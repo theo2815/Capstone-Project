@@ -18,7 +18,7 @@ import {
   useAdminPayoutStore,
   mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
-import { useAdminPayouts } from "@/hooks/use-admin-data";
+import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -98,7 +98,7 @@ export function PayoutsQueue() {
   // the matching api-admin mutation in the background so the BE catches up
   // before the next refetch. `useAdminPayouts()` returns null while in
   // flight — `?? []` keeps the merge stable.
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   const effective = useMemo(
     () => mergePayoutsWithOverrides(serverPayouts, overrides),
     [serverPayouts, overrides],
@@ -557,7 +557,7 @@ export function PayoutsQueue() {
 
 export function usePendingPayoutsCount(): number {
   const overrides = useAdminPayoutStore((s) => s.overrides);
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   return useMemo(
     () =>
       mergePayoutsWithOverrides(serverPayouts, overrides).filter(
@@ -569,7 +569,7 @@ export function usePendingPayoutsCount(): number {
 
 export function usePendingPayoutsTotal(): number {
   const overrides = useAdminPayoutStore((s) => s.overrides);
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   return useMemo(
     () =>
       mergePayoutsWithOverrides(serverPayouts, overrides)

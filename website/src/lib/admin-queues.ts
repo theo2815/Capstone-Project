@@ -4,7 +4,7 @@ import {
   useAdminPayoutStore,
   mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
-import { useAdminPayouts } from "@/hooks/use-admin-data";
+import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-data";
 import { getAdminUsersDataSnapshot } from "@/lib/admin-users-data";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 
@@ -42,7 +42,7 @@ export interface AdminAttentionTarget {
 }
 
 export function useAdminAttentionTarget(): AdminAttentionTarget | null {
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
 
   // Disputes — read effective state via store overrides + seed + submissions
   const disputeState = useAdminDisputeStore.getState();
@@ -115,7 +115,7 @@ export interface AdminQueueCounts {
 // to render the row-level count and the "QUEUES · N open / all clear"
 // summary line.
 export function useAdminQueueCounts(): AdminQueueCounts {
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   const disputeState = useAdminDisputeStore.getState();
   const payoutOverrides = useAdminPayoutStore.getState().overrides;
 

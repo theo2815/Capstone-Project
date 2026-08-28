@@ -21,7 +21,7 @@ import {
   useAdminDisputeStore,
   mergeDisputesWithOverrides,
 } from "@/store/admin-dispute-store";
-import { useAdminDisputes } from "@/hooks/use-admin-data";
+import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
@@ -90,7 +90,7 @@ export function DisputesQueue() {
   const resolve = useAdminDisputeStore((s) => s.resolve);
   const deny = useAdminDisputeStore((s) => s.deny);
   const escalate = useAdminDisputeStore((s) => s.escalate);
-  const serverDisputes = useAdminDisputes() ?? [];
+  const serverDisputes = useAdminDisputes() ?? EMPTY_DISPUTES;
   const { showToast } = useToast();
 
   const [rowId, setRowId] = useUrlState<string>("row", "");
@@ -405,7 +405,7 @@ export function DisputesQueue() {
 export function useOpenDisputesCount(): number {
   const overrides = useAdminDisputeStore((s) => s.overrides);
   const submissions = useAdminDisputeStore((s) => s.submissions);
-  const serverDisputes = useAdminDisputes() ?? [];
+  const serverDisputes = useAdminDisputes() ?? EMPTY_DISPUTES;
   return useMemo(
     () =>
       mergeDisputesWithOverrides(serverDisputes, overrides, submissions).filter(
@@ -418,7 +418,7 @@ export function useOpenDisputesCount(): number {
 export function useRefundedThisWeekTotal(): number {
   const overrides = useAdminDisputeStore((s) => s.overrides);
   const submissions = useAdminDisputeStore((s) => s.submissions);
-  const serverDisputes = useAdminDisputes() ?? [];
+  const serverDisputes = useAdminDisputes() ?? EMPTY_DISPUTES;
   return useMemo(() => {
     const cutoff = Date.now() - SEVEN_DAYS_MS;
     return mergeDisputesWithOverrides(serverDisputes, overrides, submissions)

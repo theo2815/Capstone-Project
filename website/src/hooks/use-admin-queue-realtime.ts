@@ -37,7 +37,6 @@ export function useAdminQueueRealtime(enabled: boolean): void {
       // so without this a hidden tab pulled the 200-row list every 30 s).
       // The next visible tick catches up.
       if (document.hidden) return;
-      queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "payouts"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });

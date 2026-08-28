@@ -18,7 +18,11 @@ import {
   mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
 import { cn } from "@/lib/utils";
-import { useAdminKpis, useAdminPayouts } from "@/hooks/use-admin-data";
+import {
+  useAdminKpis,
+  useAdminPayouts,
+  EMPTY_PAYOUTS,
+} from "@/hooks/use-admin-data";
 
 // Compact at-a-glance metrics row. Sits above the inbox queue (Phase 1)
 // and any other admin route that wants a one-line read of every queue.
@@ -49,7 +53,7 @@ export function AdminKpiStrip() {
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
   // A-1 followup: hydrate payouts from BE so the fallback path matches the
   // live data shape instead of the empty mock seed.
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   // Live-mode preference: when GET /admin/kpis returns, override the
   // 4 counts the strip surfaces. Falls back to derivation from the merged
   // admin users hook while the kpis endpoint is still loading.

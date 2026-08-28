@@ -19,11 +19,7 @@ import {
   type PerEventEarning,
   type TransactionsResponse,
 } from "@/lib/api-photographer-earnings";
-import {
-  fetchPublicPhotographer,
-  fetchPublicPhotographerEventPhotos,
-  type PublicPhotographerPhotosArgs,
-} from "@/lib/api-photographer-public";
+import { fetchPublicPhotographer } from "@/lib/api-photographer-public";
 import {
   fetchPlatformFees,
   PLATFORM_FEES_FALLBACK,
@@ -40,8 +36,6 @@ import type {
   PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
 import type { PhotographerProfile } from "@/lib/photographer-registry";
-import type { MockPhoto } from "@/types/photo";
-import type { EventDetail } from "@/types/event";
 import type { PaginatedResponse } from "@/types/api";
 
 // React Query hooks for photographer reads.
@@ -196,31 +190,6 @@ export function usePublicPhotographer(
     queryFn: () =>
       handle ? fetchPublicPhotographer(handle) : Promise.resolve(null),
     enabled: !!handle,
-    staleTime: PUBLIC_STALE_MS,
-  });
-  return query.data ?? null;
-}
-
-export function usePublicPhotographerPhotos(
-  handle: string | null,
-  eventSlug: string | null,
-  event: EventDetail | null,
-  expectedCount: number,
-  args: PublicPhotographerPhotosArgs = {},
-): MockPhoto[] | null {
-  const query = useQuery<MockPhoto[]>({
-    queryKey: ["photographer", "public", handle, eventSlug, "photos", args],
-    queryFn: () =>
-      handle && eventSlug && event
-        ? fetchPublicPhotographerEventPhotos(
-            handle,
-            eventSlug,
-            event,
-            expectedCount,
-            args,
-          )
-        : Promise.resolve([]),
-    enabled: !!handle && !!eventSlug && !!event,
     staleTime: PUBLIC_STALE_MS,
   });
   return query.data ?? null;

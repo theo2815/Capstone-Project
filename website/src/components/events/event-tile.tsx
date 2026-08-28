@@ -72,6 +72,8 @@ export function EventTile(props: EventTileProps) {
             src={event.bannerUrl}
             alt=""
             aria-hidden="true"
+            loading="lazy"
+            decoding="async"
             className="absolute inset-0 w-full h-full object-cover"
           />
         ) : (
