@@ -119,9 +119,10 @@ fun OrdersScreen(
     }
 
     LaunchedEffect(selectedOrderId) {
-        if (selectedOrderId != null) {
+        val orderId = selectedOrderId
+        if (orderId != null) {
             viewModel.resetRefundActionState()
-            viewModel.fetchOrderDetail(selectedOrderId!!)
+            viewModel.fetchOrderDetail(orderId)
         } else {
             viewModel.fetchOrders()
             viewModel.resetOrderDetailState()

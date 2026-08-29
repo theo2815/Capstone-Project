@@ -948,8 +948,9 @@ fun RunnerGalleryScreen(
         }
     }
 
-    if (selectedPhotoForDetail != null) {
-        val photo = selectedPhotoForDetail!!
+    val photoForDetail = selectedPhotoForDetail
+    if (photoForDetail != null) {
+        val photo = photoForDetail
         // Pull the whole matched-photos list so the lightbox pager can swipe
         // through every photo, not just the tapped one.
         val allPhotos = (searchState as? PhotosSearchState.Success)?.photos.orEmpty()
