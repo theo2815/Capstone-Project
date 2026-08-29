@@ -232,6 +232,20 @@ class CartRepositoryImpl : CartRepository {
         }
     }
 
+    override suspend fun getGuestOrderDetail(orderId: String, shareToken: String): Result<OrderDetailDto> {
+        return try {
+            val response = api.getGuestOrderDetail(orderId, shareToken)
+            if (response.success && response.data != null) {
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Failed to load order detail"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+
     override suspend fun submitRefund(
         token: String,
         orderId: String,

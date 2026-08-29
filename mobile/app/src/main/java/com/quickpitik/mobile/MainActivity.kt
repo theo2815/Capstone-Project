@@ -650,12 +650,21 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             composable(
-                                route = "orders/return/{orderId}",
-                                arguments = listOf(navArgument("orderId") { type = NavType.StringType }),
+                                route = "orders/return/{orderId}?token={token}",
+                                arguments = listOf(
+                                    navArgument("orderId") { type = NavType.StringType },
+                                    navArgument("token") {
+                                        type = NavType.StringType
+                                        nullable = true
+                                        defaultValue = null
+                                    }
+                                ),
                             ) { entry ->
                                 val orderId = entry.arguments?.getString("orderId").orEmpty()
+                                val shareToken = entry.arguments?.getString("token")
                                 OrderReturnScreen(
                                     orderId = orderId,
+                                    shareToken = shareToken,
                                     cartViewModel = cartViewModel,
                                     onNavigateToOrders = {
                                         cartViewModel.resetOrderReturnState()
@@ -677,6 +686,7 @@ class MainActivity : ComponentActivity() {
                                     },
                                 )
                             }
+
                             }
                         }
 
@@ -748,11 +758,14 @@ class MainActivity : ComponentActivity() {
                         launchSingleTop = true
                     }
                 } else {
-                    navController.navigate("orders/return/$orderId") {
+                    val token = uri.getQueryParameter("token")
+                    val route = if (token.isNullOrBlank()) "orders/return/$orderId" else "orders/return/$orderId?token=$token"
+                    navController.navigate(route) {
                         popUpTo("events") { saveState = true }
                         launchSingleTop = true
                     }
                 }
+
             }
             host == "orders" -> {
                 cartViewModel.closeCartSheet()

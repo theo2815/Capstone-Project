@@ -85,6 +85,7 @@ import java.util.Locale
 @Composable
 fun OrderReturnScreen(
     orderId: String,
+    shareToken: String? = null,
     cartViewModel: CartViewModel,
     onNavigateToOrders: () -> Unit,
     onBrowseEvents: () -> Unit,
@@ -97,8 +98,8 @@ fun OrderReturnScreen(
     val hapticFire = rememberQpHaptic()
     var bulkBusy by remember { mutableStateOf(false) }
 
-    LaunchedEffect(orderId) {
-        cartViewModel.pollOrderReturn(orderId)
+    LaunchedEffect(orderId, shareToken) {
+        cartViewModel.pollOrderReturn(orderId, shareToken)
     }
 
     val downloadOne: (OrderPhotoDetailDto) -> Unit = { photo ->

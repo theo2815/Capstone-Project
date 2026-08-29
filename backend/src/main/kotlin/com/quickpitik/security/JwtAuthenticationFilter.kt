@@ -1,11 +1,15 @@
 package com.quickpitik.security
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.quickpitik.common.ApiError
+import com.quickpitik.common.ApiResponse
 import com.quickpitik.entity.Role
 import io.jsonwebtoken.JwtException
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.http.HttpHeaders
+import org.springframework.http.MediaType
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource
@@ -16,6 +20,7 @@ import java.util.UUID
 @Component
 class JwtAuthenticationFilter(
     private val tokenProvider: JwtTokenProvider,
+    private val objectMapper: ObjectMapper,
 ) : OncePerRequestFilter() {
 
     override fun doFilterInternal(
@@ -43,10 +48,16 @@ class JwtAuthenticationFilter(
                 // returns the standard 401 envelope. The client's refresh attempt
                 // then fails (revoked token, or ACCOUNT_SUSPENDED from
                 // AuthService.refresh), which is what ends the session.
-            } catch (_: JwtException) {
-                // invalid / expired / malformed — leave unauthenticated
-            } catch (_: IllegalArgumentException) {
-                // malformed claims
+            } catch (ex: Exception) {
+                if (ex is JwtException || ex is IllegalArgumentException) {
+                    response.contentType = MediaType.APPLICATION_JSON_VALUE
+                    response.status = HttpServletResponse.SC_UNAUTHORIZED
+                    objectMapper.writeValue(
+                        response.outputStream,
+                        ApiResponse.failure(ApiError(code = "UNAUTHORIZED", message = "Invalid or expired token")),
+                    )
+                    return
+                }
             }
         }
         filterChain.doFilter(request, response)
@@ -57,3 +68,4 @@ class JwtAuthenticationFilter(
         return if (header.startsWith("Bearer ", ignoreCase = true)) header.substring(7) else null
     }
 }
+

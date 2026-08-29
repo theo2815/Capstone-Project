@@ -386,6 +386,13 @@ interface QuickPitikApi {
         @Path("id") orderId: String
     ): ApiResponseEnvelope<OrderDetailDto>
 
+    @GET("api/v1/orders/{id}")
+    suspend fun getGuestOrderDetail(
+        @Path("id") orderId: String,
+        @Query("token") shareToken: String
+    ): ApiResponseEnvelope<OrderDetailDto>
+
+
     @POST("api/v1/me/orders/{id}/refund")
     suspend fun submitRefund(
         @Header("Authorization") token: String,

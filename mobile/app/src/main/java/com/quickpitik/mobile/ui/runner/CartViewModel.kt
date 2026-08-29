@@ -316,9 +316,9 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     // OrdersReturnPage. Stops on PAID / FULFILLED (success) or REFUNDED
     // (terminal failure). On success the local cart is cleared so the floating
     // pill empties before the user comes back to /events.
-    fun pollOrderReturn(orderId: String) {
+    fun pollOrderReturn(orderId: String, shareToken: String? = null) {
         val token = sessionManager.getAccessToken()
-        if (token == null) {
+        if (token == null && shareToken.isNullOrBlank()) {
             _orderReturnState.value = OrderReturnState.Failed("Please log in to view this order.")
             return
         }
@@ -327,7 +327,12 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
             while (attempts < POLL_MAX_ATTEMPTS) {
                 attempts++
                 _orderReturnState.value = OrderReturnState.Polling(attempts)
-                val result = repository.getOrderDetail(token, orderId)
+                val result = if (!shareToken.isNullOrBlank()) {
+                    repository.getGuestOrderDetail(orderId, shareToken)
+                } else {
+                    repository.getOrderDetail(token!!, orderId)
+                }
+
                 result.onSuccess { order ->
                     when (order.status?.uppercase()) {
                         "PAID", "FULFILLED" -> {

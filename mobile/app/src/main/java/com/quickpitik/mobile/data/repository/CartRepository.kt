@@ -20,6 +20,8 @@ interface CartRepository {
     
     suspend fun getOrders(token: String): Result<List<OrderListItemDto>>
     suspend fun getOrderDetail(token: String, orderId: String): Result<OrderDetailDto>
+    suspend fun getGuestOrderDetail(orderId: String, shareToken: String): Result<OrderDetailDto>
+
     suspend fun submitRefund(
         token: String,
         orderId: String,
