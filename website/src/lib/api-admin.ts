@@ -19,6 +19,7 @@ import type {
 import type { ListEvent } from "@/app/events/events-browser";
 import type { DecisionLogEntry } from "@/store/admin-user-store";
 import type { PaginatedResponse } from "@/types/api";
+import { safeUUID } from "@/lib/utils";
 
 // Admin queues fetch a page and then categorize/merge/sort it CLIENT-SIDE
 // (status slabs, optimistic-store overrides, GMV sort), so true offset
@@ -393,7 +394,7 @@ export interface BulkPayoutResult {
 // AdminPayoutsController.bulk — retry safety hinges on it. The header is
 // generated per call so each batch is a distinct logical decision.
 function idempotencyHeader(): { headers: HeadersInit } {
-  return { headers: { "Idempotency-Key": crypto.randomUUID() } };
+  return { headers: { "Idempotency-Key": safeUUID() } };
 }
 
 export async function bulkApprovePayouts(

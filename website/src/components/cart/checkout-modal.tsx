@@ -8,7 +8,7 @@ import { useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
-import { cn, formatPrice } from "@/lib/utils";
+import { cn, formatPrice, safeUUID } from "@/lib/utils";
 import { postOrder } from "@/lib/api-orders";
 import { ApiError } from "@/lib/api";
 
@@ -258,7 +258,7 @@ export function CheckoutModal({
                 setPaymentError(null);
                 // Q-008: regenerate idempotencyKey on method change. Different
                 // method = different intent, must not dedupe against prior.
-                setIdempotencyKey(crypto.randomUUID());
+                setIdempotencyKey(safeUUID());
               }}
               paymentError={paymentError}
               total={total}
