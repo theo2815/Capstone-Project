@@ -1,8 +1,11 @@
 package com.quickpitik.repository
 
 import com.quickpitik.entity.Order
+import com.quickpitik.entity.OrderStatus
+import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
@@ -13,13 +16,53 @@ import java.util.UUID
 interface OrderRepository : JpaRepository<Order, UUID> {
     fun findByUserIdOrderByPaidAtDescCreatedAtDesc(userId: UUID, pageable: Pageable): Page<Order>
 
-    fun findByIdempotencyKey(idempotencyKey: String): List<Order>
+    fun findByUserIdAndIdempotencyKey(userId: UUID, idempotencyKey: String): List<Order>
+
+    fun findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(
+        recipientEmail: String,
+        idempotencyKey: String,
+    ): List<Order>
+
+    @Query(
+        """
+        SELECT DISTINCT o FROM Order o
+        WHERE o.userId = :userId
+          AND o.status IN :statuses
+          AND o.id IN (
+            SELECT oi.id.orderId FROM OrderItem oi WHERE oi.id.photoId IN :photoIds
+          )
+        """,
+    )
+    fun findOverlappingForUser(
+        @Param("userId") userId: UUID,
+        @Param("photoIds") photoIds: Collection<UUID>,
+        @Param("statuses") statuses: Collection<OrderStatus>,
+    ): List<Order>
+
+    @Query(
+        """
+        SELECT DISTINCT o FROM Order o
+        WHERE o.userId IS NULL
+          AND LOWER(o.recipientEmail) = LOWER(:recipientEmail)
+          AND o.status IN :statuses
+          AND o.id IN (
+            SELECT oi.id.orderId FROM OrderItem oi WHERE oi.id.photoId IN :photoIds
+          )
+        """,
+    )
+    fun findOverlappingForGuest(
+        @Param("recipientEmail") recipientEmail: String,
+        @Param("photoIds") photoIds: Collection<UUID>,
+        @Param("statuses") statuses: Collection<OrderStatus>,
+    ): List<Order>
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o WHERE o.id = :id")
+    fun findByIdForUpdate(@Param("id") id: UUID): Order?
 
     // Guest order lookup. Used by `GET /orders/{id}/status?token=…` so the
     // /orders/return page can poll an unauthenticated session. UNIQUE column
     // guarantees at most one match.
-    fun findByShareToken(shareToken: String): Order?
-
     // Atomically claim the right to send this order's receipt. Returns 1 if this
     // caller won the claim, 0 if someone else already holds it.
     //

@@ -53,4 +53,7 @@ data class PaymongoResource(
 data class PaymongoResourceAttributes(
     val metadata: Map<String, String>? = null,
     val status: String? = null,
+    val payments: List<PaymongoPaymentResource> = emptyList(),
+    @JsonProperty("payment_id") val paymentId: String? = null,
+    val amount: Long? = null,
 )

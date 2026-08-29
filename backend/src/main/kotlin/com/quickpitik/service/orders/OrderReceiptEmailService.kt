@@ -42,6 +42,7 @@ class OrderReceiptEmailService(
     private val resendClient: ResendClient,
     private val resendProperties: ResendProperties,
     private val publicProperties: PublicProperties,
+    private val orderAccessTokenService: OrderAccessTokenService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -68,16 +69,6 @@ class OrderReceiptEmailService(
             return
         }
 
-        if (order.shareToken.isNullOrBlank()) {
-            // V18 backfilled every legacy row, and OrderService.create always
-            // mints one — if we ever land here something upstream is broken.
-            log.warn(
-                "Receipt skipped — order {} has no share token; cannot build bundle URL",
-                orderId,
-            )
-            return
-        }
-
         val items = orderItemRepository.findByIdOrderId(order.id)
         if (items.isEmpty()) {
             log.warn("Receipt skipped — order {} has no items", orderId)
@@ -91,7 +82,10 @@ class OrderReceiptEmailService(
         }
 
         val event = eventRepository.findById(order.eventId).orElse(null)
-        val bundleUrl = buildBundleUrl(orderId, order.shareToken!!)
+        val bundleUrl = buildBundleUrl(
+            orderId,
+            orderAccessTokenService.issue(order, OrderCapability.BUNDLE),
+        )
 
         val html = renderHtml(
             order = order,

@@ -17,6 +17,7 @@ import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter
+import org.springframework.security.web.util.matcher.RegexRequestMatcher
 import org.springframework.web.cors.CorsConfigurationSource
 
 @Configuration
@@ -111,17 +112,25 @@ class SecurityConfig(
                 // below: permitted here, authorized in the service layer.
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/events/*/photos/search-by-face").permitAll()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/orders").permitAll()
+                auth.requestMatchers(
+                    HttpMethod.GET,
+                    "/api/v1/orders/mobile-return",
+                    "/api/v1/orders/mobile-cancel",
+                ).permitAll()
                 // Guest order status polling. Service-layer token check enforces auth.
-                auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*/status").permitAll()
+                auth.requestMatchers(
+                    RegexRequestMatcher.regexMatcher(HttpMethod.GET, "$GUEST_ORDER_PATH/status\$"),
+                ).permitAll()
                 // Bundle download (token-gated; works for both runners + guests
                 // because a top-level navigation can't carry the JWT).
-                auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*/download-bundle").permitAll()
+                auth.requestMatchers(
+                    RegexRequestMatcher.regexMatcher(HttpMethod.GET, "$GUEST_ORDER_PATH/download-bundle\$"),
+                ).permitAll()
                 // Guest order detail (token-gated, anti-IDOR via service layer).
-                // ⚠ This single-segment wildcard makes ANY future GET
-                // /api/v1/orders/{x} public by default — a new sibling route
-                // MUST enforce its own authorization in the service layer,
-                // exactly like the token check does here.
-                auth.requestMatchers(HttpMethod.GET, "/api/v1/orders/*").permitAll()
+                // The UUID regex keeps future named sibling routes private.
+                auth.requestMatchers(
+                    RegexRequestMatcher.regexMatcher(HttpMethod.GET, "$GUEST_ORDER_PATH\$"),
+                ).permitAll()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/payments/webhook/**").permitAll()
                 // Internal ai-api job webhook (Phase C). Authorization is the
                 // HMAC verifier, same pattern as the payment webhook above.
@@ -136,5 +145,11 @@ class SecurityConfig(
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)
 
         return http.build()
+    }
+
+    private companion object {
+        const val UUID_PATH =
+            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"
+        const val GUEST_ORDER_PATH = "^/api/v1/orders/$UUID_PATH"
     }
 }

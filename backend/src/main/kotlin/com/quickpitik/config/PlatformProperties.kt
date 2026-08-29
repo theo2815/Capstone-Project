@@ -8,12 +8,11 @@ import java.time.Duration
 data class PlatformProperties(
     val photoPricePhp: BigDecimal = BigDecimal("125"),
     val platformCutRate: BigDecimal = BigDecimal("0.25"),
-    // How long an order's share_token authorizes the three token-gated guest
-    // endpoints (status / detail / download-bundle). Measured from order
-    // creation. Shorter than the 1-year download grant on purpose: the token
-    // is a bearer credential that travels in email, the grant is the actual
-    // entitlement and is reachable with a JWT for as long as it lasts.
+    // Upper bound for emailed bundle capabilities and migrated legacy tokens.
     val shareTokenTtl: Duration = Duration.ofDays(90),
+    // Separate HMAC key for purpose-bound order return/download links.
+    val orderCapabilitySecret: String =
+        "dev-only-order-capability-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random",
 ) {
     val photographerKeepRate: BigDecimal
         get() = BigDecimal.ONE.subtract(platformCutRate)

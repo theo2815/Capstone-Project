@@ -230,6 +230,9 @@ app:
     order-create:
       capacity: 10
       refill-period: PT1M
+    order-read:
+      capacity: 90
+      refill-period: PT1M
     # Public token-gated bundle download: one S3 GET per photo + zip CPU.
     bundle-download:
       capacity: 6
@@ -242,10 +245,9 @@ app:
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
     platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}
-    # Lifetime of an order's share_token (V27). Bounds the guest status /
-    # detail / bundle-download endpoints. Runners keep JWT access to
-    # /me/orders/{id} for the full 1-year download grant regardless.
+    # Upper bound for emailed bundle capabilities and migrated legacy tokens.
     share-token-ttl: ${SHARE_TOKEN_TTL:P90D}
+    order-capability-secret: ${ORDER_CAPABILITY_SECRET:dev-only-order-capability-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random}
   webhooks:
     payment:
       # Production: set PAYMENT_WEBHOOK_HMAC_SECRET to a 256-bit random value,
@@ -277,6 +279,7 @@ app:
       base-url: ${PAYMONGO_BASE_URL:https://api.paymongo.com/v1}
       connect-timeout: PT5S
       read-timeout: PT15S
+      checkout-ttl: ${PAYMONGO_CHECKOUT_TTL:PT30M}
   email:
     resend:
       # Resend transactional email wiring. Free-tier dev sender

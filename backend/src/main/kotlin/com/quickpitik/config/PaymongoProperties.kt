@@ -13,8 +13,7 @@ import java.time.Duration
 //                      header on inbound webhooks. Format is
 //                      `t=<unix>,te=<test_sig>,li=<live_sig>` — verifier
 //                      lives in Phase 3.
-// `successUrl`       — where PayMongo redirects the user after pay
-//                      (Phase 2 appends `?orderId=…&token=…`).
+// `successUrl`       — where PayMongo redirects the user after pay.
 // `cancelUrl`        — where PayMongo redirects after user cancels.
 // `baseUrl`          — PayMongo REST API root.
 @ConfigurationProperties(prefix = "app.payments.paymongo")
@@ -34,4 +33,5 @@ data class PaymongoProperties(
     val baseUrl: String = "https://api.paymongo.com/v1",
     val connectTimeout: Duration = Duration.ofSeconds(5),
     val readTimeout: Duration = Duration.ofSeconds(15),
+    val checkoutTtl: Duration = Duration.ofMinutes(30),
 )

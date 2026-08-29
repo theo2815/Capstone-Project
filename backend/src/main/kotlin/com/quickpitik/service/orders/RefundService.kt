@@ -77,8 +77,17 @@ class RefundService(
         }
 
         val now = OffsetDateTime.now()
+        val refundedPhotoIds = disputeRepository.findByOrderId(orderId)
+            .filter { it.refundStatus == "succeeded" }
+            .mapTo(mutableSetOf()) { it.photoId }
         val createdDisputes = mutableListOf<Dispute>()
         for (photoId in request.photoIds.distinct()) {
+            if (photoId in refundedPhotoIds) {
+                throw ConflictException(
+                    code = ErrorCodes.CONFLICT,
+                    message = "Photo $photoId has already been refunded",
+                )
+            }
             val existing = disputeRepository.findOpenForOrderPhoto(orderId, photoId)
             if (existing != null) {
                 throw ConflictException(

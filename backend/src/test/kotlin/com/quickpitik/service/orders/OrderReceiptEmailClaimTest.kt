@@ -2,6 +2,7 @@ package com.quickpitik.service.orders
 
 import com.quickpitik.config.PublicProperties
 import com.quickpitik.config.ResendProperties
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.email.ResendSendEmailResponse
 import com.quickpitik.entity.DownloadGrant
 import com.quickpitik.entity.DownloadGrantId
@@ -122,6 +123,7 @@ class OrderReceiptEmailClaimTest {
         resendClient,
         ResendProperties(),
         PublicProperties(),
+        OrderAccessTokenService(PlatformProperties()),
     )
 
     private fun stubClaimResult(order: Order, won: Boolean) {
@@ -137,7 +139,6 @@ class OrderReceiptEmailClaimTest {
             paymentMethodWire = PaymentMethod.GCASH.wire,
             status = OrderStatus.PAID,
             totalPhp = BigDecimal("125.00"),
-            shareToken = "tok_" + UUID.randomUUID(),
             tokenExpiresAt = OffsetDateTime.now().plusDays(90),
         )
         val photoId = UUID.randomUUID()

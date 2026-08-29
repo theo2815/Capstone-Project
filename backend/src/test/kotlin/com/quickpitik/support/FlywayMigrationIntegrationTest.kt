@@ -12,7 +12,7 @@ import kotlin.test.assertTrue
  * the entities still match the schema they produce.
  *
  * Most of the value is in the fact that this class loads at all. Flyway runs
- * V1→V30 during context startup, then Hibernate's `ddl-auto: validate` compares
+ * V1→V39 during context startup, then Hibernate's `ddl-auto: validate` compares
  * every `@Entity` against the resulting tables and fails the context if a column
  * is missing, renamed, or the wrong type. Thirty migrations had been applied
  * only to the developer's long-lived local database, where a hand-patched
@@ -43,9 +43,9 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
             "SELECT count(*) FROM flyway_schema_history WHERE success = true",
             Int::class.java,
         ) ?: 0
-        // V1..V30 today. A floor rather than an equality so adding V31 doesn't
+        // V1..V39 today. A floor rather than an equality so adding V40 doesn't
         // fail this test for the wrong reason.
-        assertTrue(applied >= 30, "expected at least 30 applied migrations, found $applied")
+        assertTrue(applied >= 39, "expected at least 39 applied migrations, found $applied")
     }
 
     // The columns V29 and V30 add — the two this session introduced, and the
@@ -66,6 +66,42 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
             Int::class.java,
         )
         assertEquals(1, count)
+    }
+
+    @Test
+    fun `checkout hardening schema is present`() {
+        val orderColumns = jdbcTemplate.queryForList(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'orders'",
+            String::class.java,
+        )
+        assertTrue("legacy_share_token_hash" in orderColumns)
+        assertTrue("share_token" !in orderColumns)
+
+        val paymentColumns = jdbcTemplate.queryForList(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'payments'",
+            String::class.java,
+        )
+        assertTrue("provider_payment_id" in paymentColumns)
+
+        val indexes = jdbcTemplate.queryForList(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'orders'",
+            String::class.java,
+        )
+        assertTrue(
+            indexes.containsAll(
+                listOf(
+                    "uq_orders_user_idempotency_key_event",
+                    "uq_orders_guest_idempotency_key_event",
+                ),
+            ),
+        )
+        assertTrue("uq_orders_idempotency_key_event" !in indexes)
+
+        val statusCheck = jdbcTemplate.queryForObject(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'orders_status_check'",
+            String::class.java,
+        ).orEmpty()
+        assertTrue("EXPIRED" in statusCheck)
     }
 
     // Redundant with ddl-auto=validate, which already ran at context load — but

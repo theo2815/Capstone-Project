@@ -86,6 +86,24 @@ class Dispute(
     @Column(name = "refund_amount_php", precision = 12, scale = 2)
     var refundAmountPhp: BigDecimal? = null,
 
+    @Column(name = "provider_refund_id", length = 100)
+    var providerRefundId: String? = null,
+
+    @Column(name = "refund_status", length = 20)
+    var refundStatus: String? = null,
+
+    @Column(name = "refund_requested_at")
+    var refundRequestedAt: OffsetDateTime? = null,
+
+    @Column(name = "refunded_at")
+    var refundedAt: OffsetDateTime? = null,
+
+    @Column(name = "refund_requested_by")
+    var refundRequestedBy: UUID? = null,
+
+    @Column(name = "refund_reason", columnDefinition = "TEXT")
+    var refundReason: String? = null,
+
     @Column(name = "opened_at", nullable = false, updatable = false)
     val openedAt: OffsetDateTime = OffsetDateTime.now(),
 

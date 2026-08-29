@@ -25,6 +25,9 @@ data class RateLimitProperties(
     // Guest checkout mints a PayMongo session per call — bound the burn rate
     // per IP.
     val orderCreate: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(1)),
+    // Return pages poll every two seconds for one minute; leave room for the
+    // final detail request and a second tab without leaving reads unlimited.
+    val orderRead: Policy = Policy(capacity = 90, refillPeriod = Duration.ofMinutes(1)),
     // Public token-gated bundle download streams one S3 GET per photo + zip
     // CPU per call.
     val bundleDownload: Policy = Policy(capacity = 6, refillPeriod = Duration.ofMinutes(1)),

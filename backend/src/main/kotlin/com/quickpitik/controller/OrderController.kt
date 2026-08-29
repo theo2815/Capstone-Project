@@ -8,6 +8,7 @@ import com.quickpitik.dto.orders.CreateOrderRequest
 import com.quickpitik.dto.orders.OrderDetailDto
 import com.quickpitik.dto.orders.OrderListItemDto
 import com.quickpitik.dto.orders.OrderResponse
+import com.quickpitik.dto.orders.OrderStatusDto
 import com.quickpitik.dto.orders.RefundRequest
 import com.quickpitik.dto.orders.RefundResponse
 import com.quickpitik.dto.orders.RunnerDisputeDto
@@ -80,6 +81,12 @@ class OrderController(
         @PathVariable id: UUID,
     ): OrderDetailDto =
         orderService.getDetail(userId = principal.userId, orderId = id)
+
+    @GetMapping("/me/orders/{id}/status")
+    fun status(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable id: UUID,
+    ): OrderStatusDto = orderService.statusForUser(userId = principal.userId, orderId = id)
 
     @PostMapping("/me/orders/{id}/refund")
     fun refund(

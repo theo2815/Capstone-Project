@@ -4,7 +4,6 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
-import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminDisputeDto
 import com.quickpitik.dto.admin.DisputeActivityEntry
@@ -21,7 +20,6 @@ import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.RunnerMessageKind
-import com.quickpitik.entity.Transaction
 import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
@@ -29,20 +27,19 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.EventRepository
-import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
-import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.runner.RunnerMessagesService
+import com.quickpitik.service.orders.PaymongoRefundService
 import com.quickpitik.service.storage.StorageService
-import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
-import java.math.RoundingMode
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -51,18 +48,17 @@ import java.util.UUID
 class AdminDisputeService(
     private val disputeRepository: DisputeRepository,
     private val orderRepository: OrderRepository,
-    private val orderItemRepository: OrderItemRepository,
     private val photoRepository: PhotoRepository,
     private val eventRepository: EventRepository,
     private val userRepository: UserRepository,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
-    private val transactionRepository: TransactionRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
-    private val platformProperties: PlatformProperties,
     private val adminDecisionLogService: AdminDecisionLogService,
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val runnerMessagesService: RunnerMessagesService,
+    private val paymongoRefundService: PaymongoRefundService,
+    private val transactionTemplate: TransactionTemplate,
 ) {
 
     @Transactional(readOnly = true)
@@ -77,66 +73,20 @@ class AdminDisputeService(
         return PaginatedResponse.of(items, page.totalElements, params)
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun resolve(adminId: UUID, disputeId: UUID, req: ResolveDisputeRequest): AdminDisputeDto {
         val resolution = parseResolution(req.resolution)
-        val dispute = disputeRepository.findById(disputeId).orElseThrow {
-            NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+        if (resolution == DisputeResolution.DENY) {
+            return transactionTemplate.execute { deny(adminId, disputeId, req.reason) }
+                ?: error("Deny resolution returned null")
         }
-        if (dispute.status == DisputeStatus.RESOLVED || dispute.status == DisputeStatus.DENIED) {
-            throw ApiException(
-                status = HttpStatus.CONFLICT,
-                code = ErrorCodes.INVALID_STATE_TRANSITION,
-                message = "Dispute is already ${dispute.status.wire}",
-            )
-        }
-
-        // Refund-bearing resolutions need an amount or fall back to full
-        // refund of the order_item price.
-        val refundAmount = computeRefundAmount(dispute, resolution, req.refundAmount)
-
-        dispute.resolution = resolution
-        dispute.status = if (resolution == DisputeResolution.DENY) DisputeStatus.DENIED else DisputeStatus.RESOLVED
-        dispute.refundAmountPhp = refundAmount
-        dispute.resolvedAt = OffsetDateTime.now()
-        disputeRepository.save(dispute)
-
-        // Materialize the refund as a negative-amount transaction row per
-        // Q-E3 so SUM(amount_kept_php) is net-of-refunds without a parallel
-        // ledger. Skipped on deny.
-        val photographerId = dispute.runnerId?.let { /* photographerId lives on Photo, not dispute */ null }
-            ?: photoRepository.findById(dispute.photoId).map { it.photographerId }.orElse(null)
-
-        if (photographerId != null && resolution != DisputeResolution.DENY && refundAmount != null) {
-            mintRefundTx(dispute, photographerId, refundAmount)
-        }
-
-        val decision = adminDecisionLogService.logDisputeDecision(
-            adminId = adminId,
-            targetDisputeId = dispute.id,
-            decision = "resolved",
-            reason = req.reason,
-            meta = buildMap {
-                put("resolution", resolution.wire)
-                refundAmount?.let { put("refundAmount", it.toPlainString()) }
-            },
-        )
-        if (photographerId != null) {
-            adminDecisionLogService.pushMessage(
-                photographerId = photographerId,
-                kind = PhotographerMessageKind.DISPUTE_RESOLVED,
-                body = "A dispute on photo ${dispute.photoId} was resolved as ${resolution.wire}.",
-                sourceAdminId = adminId,
-                sourceDecisionId = decision.id,
-            )
-        }
-        pushRunnerOutcome(
-            dispute = dispute,
-            kind = RunnerMessageKind.DISPUTE_RESOLVED,
-            body = buildResolvedBody(resolution, refundAmount),
-            sourceAdminId = adminId,
-            sourceDecisionId = decision.id,
-        )
-        return hydrateOne(dispute)
+        paymongoRefundService.request(adminId, disputeId, resolution, req.refundAmount, req.reason)
+        return transactionTemplate.execute {
+            val dispute = disputeRepository.findById(disputeId).orElseThrow {
+                NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+            }
+            hydrateOne(dispute)
+        } ?: error("Refund resolution returned null")
     }
 
     /**
@@ -153,9 +103,8 @@ class AdminDisputeService(
      * Confirmed intended 2026-08-14 — do not "fix" it back.
      */
     fun deny(adminId: UUID, disputeId: UUID, reason: String?): AdminDisputeDto {
-        val dispute = disputeRepository.findById(disputeId).orElseThrow {
+        val dispute = disputeRepository.findByIdForUpdate(disputeId) ?: throw
             NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
-        }
         if (dispute.status == DisputeStatus.RESOLVED || dispute.status == DisputeStatus.DENIED) {
             throw ApiException(
                 status = HttpStatus.CONFLICT,
@@ -262,86 +211,10 @@ class AdminDisputeService(
         )
     }
 
-    private fun buildResolvedBody(
-        resolution: DisputeResolution,
-        refundAmount: BigDecimal?,
-    ): String = when (resolution) {
-        DisputeResolution.REFUND_FULL,
-        DisputeResolution.REFUND_PARTIAL,
-        -> {
-            val amount = refundAmount?.toPlainString()?.let { "₱$it refunded" } ?: "Refund processing"
-            "Your refund has been approved — $amount."
-        }
-        DisputeResolution.DENY -> "Your refund request was declined."
-    }
-
     private fun shortPhotoId(photoId: UUID): String =
         photoId.toString().take(8).uppercase()
 
     // ─── Existing helpers ─────────────────────────────────────────────────
-    private fun computeRefundAmount(
-        dispute: Dispute,
-        resolution: DisputeResolution,
-        fromRequest: BigDecimal?,
-    ): BigDecimal? {
-        if (resolution == DisputeResolution.DENY) return null
-        // FULL refund = the photo's per-item paid price.
-        val itemPrice = orderItemRepository.findByIdOrderId(dispute.orderId)
-            .firstOrNull { it.id.photoId == dispute.photoId }
-            ?.pricePhpAtPurchase
-        return when (resolution) {
-            DisputeResolution.REFUND_FULL -> itemPrice ?: fromRequest
-            DisputeResolution.REFUND_PARTIAL -> fromRequest
-                ?: throw ValidationException(
-                    code = ErrorCodes.REFUND_AMOUNT_REQUIRED,
-                    message = "refundAmount is required for partial refunds",
-                    field = "refundAmount",
-                )
-            DisputeResolution.DENY -> null
-        }
-    }
-
-    private fun mintRefundTx(dispute: Dispute, photographerId: UUID, refundAmount: BigDecimal) {
-        val originating = transactionRepository.findByOrderIdAndPhotoIdAndIsRefund(
-            orderId = dispute.orderId,
-            photoId = dispute.photoId,
-            isRefund = false,
-        )
-        val existing = transactionRepository.findByOrderIdAndPhotoIdAndIsRefund(
-            orderId = dispute.orderId,
-            photoId = dispute.photoId,
-            isRefund = true,
-        )
-        if (existing != null) return
-
-        val keepRate = platformProperties.photographerKeepRate
-        val keptPortionRefunded = refundAmount
-            .multiply(keepRate)
-            .setScale(2, RoundingMode.HALF_UP)
-            .negate()
-
-        val order = orderRepository.findById(dispute.orderId).orElse(null) ?: return
-        try {
-            transactionRepository.save(
-                Transaction(
-                    paidAt = order.paidAt ?: order.createdAt,
-                    photographerId = photographerId,
-                    eventId = order.eventId,
-                    photoId = dispute.photoId,
-                    orderId = dispute.orderId,
-                    buyerId = order.userId,
-                    buyerDisplayName = originating?.buyerDisplayName ?: "",
-                    amountKeptPhp = keptPortionRefunded,
-                    isRefund = true,
-                    refundOf = originating?.id,
-                ),
-            )
-        } catch (ex: DataIntegrityViolationException) {
-            // Concurrent refund mint — clean no-op, the unique
-            // (order_id, photo_id, is_refund=true) index caught it.
-        }
-    }
-
     private fun hydrateMany(disputes: List<Dispute>): List<AdminDisputeDto> {
         if (disputes.isEmpty()) return emptyList()
         // Batch-fetch the page's context (activity, orders, photos, runners,

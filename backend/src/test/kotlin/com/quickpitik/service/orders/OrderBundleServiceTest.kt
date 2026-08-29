@@ -1,6 +1,7 @@
 package com.quickpitik.service.orders
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.entity.DownloadGrant
 import com.quickpitik.entity.DownloadGrantId
 import com.quickpitik.entity.Event
@@ -22,6 +23,8 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.math.BigDecimal
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.Optional
@@ -44,6 +47,7 @@ class OrderBundleServiceTest {
     private lateinit var downloadGrantRepository: DownloadGrantRepository
     private lateinit var storageService: StorageService
     private lateinit var service: OrderBundleService
+    private lateinit var accessTokens: OrderAccessTokenService
 
     private val token = "a".repeat(64)
 
@@ -55,6 +59,7 @@ class OrderBundleServiceTest {
         eventRepository = Mockito.mock(EventRepository::class.java)
         downloadGrantRepository = Mockito.mock(DownloadGrantRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
+        accessTokens = OrderAccessTokenService(PlatformProperties())
         service = OrderBundleService(
             orderRepository,
             orderItemRepository,
@@ -62,6 +67,7 @@ class OrderBundleServiceTest {
             eventRepository,
             downloadGrantRepository,
             storageService,
+            accessTokens,
         )
     }
 
@@ -116,7 +122,9 @@ class OrderBundleServiceTest {
         paymentMethodWire = PaymentMethod.GCASH.wire,
         status = OrderStatus.PAID,
         totalPhp = BigDecimal("125.00"),
-        shareToken = token,
+        legacyShareTokenHash = MessageDigest.getInstance("SHA-256")
+            .digest(token.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) },
         tokenExpiresAt = tokenExpiresAt,
     )
 

@@ -85,6 +85,7 @@ class Bucket4jRateLimiter(
         POLICY_AUTH_VERIFY_RESET_OTP -> properties.authVerifyResetOtp
         POLICY_AUTH_RESET_PASSWORD -> properties.authResetPassword
         POLICY_ORDER_CREATE -> properties.orderCreate
+        POLICY_ORDER_READ -> properties.orderRead
         POLICY_BUNDLE_DOWNLOAD -> properties.bundleDownload
         POLICY_MEDIA_UPLOAD -> properties.mediaUpload
         // Policies are compile-time constants — an unknown string is a call-site
@@ -103,6 +104,7 @@ class Bucket4jRateLimiter(
         const val POLICY_AUTH_VERIFY_RESET_OTP = "auth-verify-reset-otp"
         const val POLICY_AUTH_RESET_PASSWORD = "auth-reset-password"
         const val POLICY_ORDER_CREATE = "order-create"
+        const val POLICY_ORDER_READ = "order-read"
         const val POLICY_BUNDLE_DOWNLOAD = "bundle-download"
         const val POLICY_MEDIA_UPLOAD = "media-upload"
 
@@ -118,6 +120,7 @@ class Bucket4jRateLimiter(
             POLICY_AUTH_VERIFY_RESET_OTP,
             POLICY_AUTH_RESET_PASSWORD,
             POLICY_ORDER_CREATE,
+            POLICY_ORDER_READ,
             POLICY_BUNDLE_DOWNLOAD,
             POLICY_MEDIA_UPLOAD,
         )

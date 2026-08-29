@@ -23,7 +23,7 @@ import java.util.UUID
 
 // Guest-accessible order status. The `/orders/return` page polls this after
 // PayMongo redirects the user back, so guests (no JWT) can confirm their
-// order flipped to PAID. Authed runners use `/me/orders/{id}` for the full
+// order reached FULFILLED. Authed runners use `/me/orders/{id}` for the full
 // hydrated detail; this endpoint stays minimal by design — no item/photo
 // URLs leak without a verified share token + email link (Phase 4).
 //
@@ -41,7 +41,11 @@ class GuestOrderController(
     fun status(
         @PathVariable id: UUID,
         @RequestParam(required = false) token: String?,
-    ): OrderStatusDto = orderService.statusByIdAndToken(orderId = id, token = token)
+        request: HttpServletRequest,
+    ): OrderStatusDto {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_ORDER_READ, clientIp(request))
+        return orderService.statusByIdAndToken(orderId = id, token = token)
+    }
 
     // Hydrated detail for the /orders/return success state. Same shape as
     // `/me/orders/{id}` but gated on the share token (anti-IDOR; failures
@@ -50,7 +54,11 @@ class GuestOrderController(
     fun detail(
         @PathVariable id: UUID,
         @RequestParam(required = false) token: String?,
-    ): OrderDetailDto = orderService.detailByIdAndToken(orderId = id, token = token)
+        request: HttpServletRequest,
+    ): OrderDetailDto {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_ORDER_READ, clientIp(request))
+        return orderService.detailByIdAndToken(orderId = id, token = token)
+    }
 
     // Token-only because <a download> can't carry the JWT — same endpoint
     // serves runners and guests. Response is a streamed body via

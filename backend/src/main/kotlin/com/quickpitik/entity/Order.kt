@@ -45,16 +45,13 @@ class Order(
     @Column(name = "paid_at")
     var paidAt: OffsetDateTime? = null,
 
-    // Opaque token minted for guest orders so /orders/{id}?token=... is
-    // reachable from the email receipt without an account. NULL for authed
-    // orders — those reach the page via JWT.
-    @Column(name = "share_token", length = 64, unique = true)
-    var shareToken: String? = null,
+    // SHA-256 of the pre-V39 bearer token. New orders use signed capabilities
+    // and leave this null; the hash keeps already-sent links valid.
+    @Column(name = "legacy_share_token_hash", length = 64, unique = true)
+    var legacyShareTokenHash: String? = null,
 
-    // When the share_token stops authorizing the three token-gated endpoints
-    // (V27). OrderService sets this from `app.platform.share-token-ttl` at
-    // create time — the default here only covers rows built outside that path.
-    // Signed-in runners are unaffected: /me/orders/{id} is JWT-gated.
+    // Upper bound for legacy tokens and signed bundle capabilities. The return
+    // capability has its own shorter expiry inside its signed payload.
     @Column(name = "token_expires_at", nullable = false)
     var tokenExpiresAt: OffsetDateTime = OffsetDateTime.now().plusDays(90),
 

@@ -28,6 +28,11 @@ class Payment(
     @Column(name = "provider_ref", length = 100)
     var providerRef: String? = null,
 
+    // Actual pay_... resource created by the Checkout Session. Refunds target
+    // this ID, not the cs_... session stored in providerRef.
+    @Column(name = "provider_payment_id", length = 100)
+    var providerPaymentId: String? = null,
+
     @Column(name = "amount_php", nullable = false, precision = 12, scale = 2)
     var amountPhp: BigDecimal,
 

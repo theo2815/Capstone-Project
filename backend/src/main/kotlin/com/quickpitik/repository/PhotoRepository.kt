@@ -3,9 +3,11 @@ package com.quickpitik.repository
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
@@ -14,6 +16,10 @@ import java.time.OffsetDateTime
 import java.util.UUID
 
 interface PhotoRepository : JpaRepository<Photo, UUID> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT DISTINCT p FROM Photo p WHERE p.id IN :ids ORDER BY p.id")
+    fun findAllByIdForUpdate(@Param("ids") ids: Collection<UUID>): List<Photo>
 
     // Bulk re-prices every photo under the event. Used by admin event PATCH
     // when the operator changes events.price_per_photo so existing photos
