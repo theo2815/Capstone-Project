@@ -48,19 +48,29 @@ class JwtAuthenticationFilter(
                 // returns the standard 401 envelope. The client's refresh attempt
                 // then fails (revoked token, or ACCOUNT_SUSPENDED from
                 // AuthService.refresh), which is what ends the session.
-            } catch (ex: Exception) {
-                if (ex is JwtException || ex is IllegalArgumentException) {
-                    response.contentType = MediaType.APPLICATION_JSON_VALUE
-                    response.status = HttpServletResponse.SC_UNAUTHORIZED
-                    objectMapper.writeValue(
-                        response.outputStream,
-                        ApiResponse.failure(ApiError(code = "UNAUTHORIZED", message = "Invalid or expired token")),
-                    )
-                    return
-                }
+            } catch (_: JwtException) {
+                // invalid / expired / malformed — reject outright so a public
+                // endpoint can't silently treat the caller as a guest
+                writeUnauthorized(response)
+                return
+            } catch (_: IllegalArgumentException) {
+                // malformed claims (bad UUID subject, unknown role)
+                writeUnauthorized(response)
+                return
             }
+            // Anything else propagates: an unexpected failure must surface as
+            // a 500, not silently de-authenticate the request.
         }
         filterChain.doFilter(request, response)
+    }
+
+    private fun writeUnauthorized(response: HttpServletResponse) {
+        response.contentType = MediaType.APPLICATION_JSON_VALUE
+        response.status = HttpServletResponse.SC_UNAUTHORIZED
+        objectMapper.writeValue(
+            response.outputStream,
+            ApiResponse.failure(ApiError(code = "UNAUTHORIZED", message = "Invalid or expired token")),
+        )
     }
 
     private fun extractToken(request: HttpServletRequest): String? {

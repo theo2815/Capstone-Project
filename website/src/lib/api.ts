@@ -75,6 +75,16 @@ class ApiClient {
     ) {
       const refreshed = retried ? false : await refreshAccessToken();
       if (refreshed) return this.fetchRaw<T>(path, options, true);
+      // Dead session (token attached but unrefreshable). The backend 401s a
+      // stale Authorization header even on permitAll routes, so before
+      // concluding the user must log in, drop the dead tokens and retry once
+      // anonymously: public endpoints (guest checkout, galleries) succeed —
+      // a guest must never be bounced to /login mid-flow — while protected
+      // ones 401 again and reach redirectToLogin on the retry.
+      if (!retried && token) {
+        clearTokens();
+        return this.fetchRaw<T>(path, options, true);
+      }
       this.redirectToLogin();
       throw new Error("Unauthorized");
     }
