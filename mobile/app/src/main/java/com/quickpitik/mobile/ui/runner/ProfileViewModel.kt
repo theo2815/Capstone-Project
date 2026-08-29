@@ -4,8 +4,8 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.MAX_UPLOAD_BYTES
+import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.readAtMost
 import com.quickpitik.mobile.data.remote.SelfieRefDto
 import com.quickpitik.mobile.data.repository.ProfileRepository

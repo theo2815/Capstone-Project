@@ -1,6 +1,7 @@
 package com.quickpitik.mobile.data.remote
 
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.remote.WsState.Failed
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay

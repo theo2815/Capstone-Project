@@ -1,15 +1,15 @@
 package com.quickpitik.mobile
 
-import com.quickpitik.mobile.data.remote.rewriteLoopbackUrl
 import com.quickpitik.mobile.data.readAtMost
+import com.quickpitik.mobile.data.remote.rewriteLoopbackUrl
 import com.quickpitik.mobile.ui.runner.isSafeCheckoutUrl
-import java.io.ByteArrayInputStream
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
 
 class NetworkSafetyTest {
     @Test

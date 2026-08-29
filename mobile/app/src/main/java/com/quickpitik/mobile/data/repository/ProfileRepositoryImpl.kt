@@ -1,6 +1,11 @@
 package com.quickpitik.mobile.data.repository
 
-import com.quickpitik.mobile.data.remote.*
+import com.quickpitik.mobile.data.remote.EmailChangeRequest
+import com.quickpitik.mobile.data.remote.PasswordChangeRequest
+import com.quickpitik.mobile.data.remote.ProfileUpdateRequest
+import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.SelfieRefDto
+import com.quickpitik.mobile.data.remote.UserDto
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody

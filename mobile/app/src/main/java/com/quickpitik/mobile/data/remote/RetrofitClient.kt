@@ -1,16 +1,16 @@
 package com.quickpitik.mobile.data.remote
 
 import android.content.Context
+import com.google.gson.Gson
 import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.local.SessionManager
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-import com.google.gson.Gson
-import retrofit2.HttpException
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException

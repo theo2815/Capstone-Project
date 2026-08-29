@@ -2,6 +2,8 @@ package com.quickpitik.mobile.data.usb.ptp
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import com.quickpitik.mobile.data.usb.ptp.UsbEventCaptureController.Companion.MAX_PULL_ATTEMPTS
+import com.quickpitik.mobile.data.usb.ptp.UsbEventCaptureController.Companion.RECONNECT_BUDGET_MS
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay

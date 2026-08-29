@@ -19,14 +19,17 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.MAX_UPLOAD_BYTES
-import com.quickpitik.mobile.data.readAtMost
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.TetherEvents
 import com.quickpitik.mobile.data.local.UploadRecord
+import com.quickpitik.mobile.data.readAtMost
+import com.quickpitik.mobile.data.remote.EarningsOverviewDto
+import com.quickpitik.mobile.data.remote.PayoutBalanceDto
 import com.quickpitik.mobile.data.remote.PhotoExistsRequest
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerMessageFrame
+import com.quickpitik.mobile.data.remote.PhotographerTransactionDto
 import com.quickpitik.mobile.data.remote.QpWebSocket
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.WsState
@@ -38,20 +41,7 @@ import com.quickpitik.mobile.data.usb.ptp.UsbCardImportController
 import com.quickpitik.mobile.data.usb.ptp.UsbEventCaptureController
 import com.quickpitik.mobile.service.TetherIngestService
 import com.quickpitik.mobile.ui.runner.canUploadToEvent
-import com.quickpitik.mobile.data.remote.EarningsOverviewDto
-import com.quickpitik.mobile.data.remote.PayoutBalanceDto
-import com.quickpitik.mobile.data.remote.PhotographerPayoutDto
-import com.quickpitik.mobile.data.remote.PhotographerTransactionDto
 import com.quickpitik.mobile.worker.PhotoUploadWorker
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.MultipartBody
-import okhttp3.RequestBody.Companion.toRequestBody
-
-import java.io.File
-import java.io.OutputStream
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -65,7 +55,14 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
+import java.io.OutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 
 sealed class EventsState {
