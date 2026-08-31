@@ -1,6 +1,6 @@
 # CLAUDE.md — Backend (Kotlin + Spring Boot)
 
-**Status:** All phases shipped and hardened (last reconciled 2026-08-29). 31 controllers under `controller/` (photo-alert opt-in added 2026-08-26); all four roles locked; suite at **325 unit + 21 integration** (2026-08-29, `./gradlew test` / `integrationTest`; `test` is Docker-free, `integrationTest` needs Docker). 2026-08-29: **checkout/payment hardening shipped** (V39) — actor-scoped idempotency, duplicate-session prevention + expiry, signed guest capabilities, locked fulfillment, and provider-backed PayMongo refunds. Earlier the same day: **Google sign-in shipped** (V38) — `POST /auth/google` ID-token exchange serving the website GIS button and mobile Credential Manager. 2026-08-28: OTP reset (V37) + async watermark pipeline (V36). Remaining work is gap-driven, tracked in vault `backend/tasks.md`.
+**Status:** All phases shipped and hardened; all four roles locked. Recent milestones — checkout/payment hardening (V39: actor-scoped idempotency, duplicate-session expiry, signed guest capabilities, locked fulfillment, PayMongo refunds), Google sign-in (V38: `POST /auth/google` for the website GIS button + mobile Credential Manager), OTP reset (V37), async watermark (V36). **Live status and the controller / test counts are not pinned here** — they drift. Read vault `VAULT-INDEX.md` / `backend/index.md` for status, and run `.\gradlew.bat test` (unit, Docker-free) + `.\gradlew.bat integrationTest` (Docker) for the totals. Remaining work is gap-driven in vault `backend/tasks.md`.
 
 The live route reference — every endpoint, its auth, and **which clients consume it** — is vault `backend/api-surface.md`. Read that before adding an endpoint or assuming one is missing.
 
@@ -77,7 +77,7 @@ App boots on `http://localhost:8080`. Frontend talks to `http://localhost:8080/a
 
 `test` runs the Mockito unit suite and **excludes** anything tagged `integration`, so it still
 works on a machine with nothing but a JDK. `integrationTest` runs the other half against a
-throwaway Postgres 16 container: Flyway V1→V39 applying to a virgin database, `ddl-auto: validate`
+throwaway Postgres 16 container: Flyway V1→latest applying to a virgin database, `ddl-auto: validate`
 proving the entities still match, the `uq_photos_photographer_content_hash` partial index, and the
 lockout counter's survival of a rolled-back login transaction. Extend `PostgresIntegrationTest`
 to add one. End-to-end is verified via `curl` (see Smoke Test below).

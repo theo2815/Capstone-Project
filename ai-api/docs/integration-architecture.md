@@ -136,7 +136,7 @@ Each backend gets its own API key with appropriate scopes. ai-api isolates data 
 
 | Backend | API Key Scopes | Rate Tier |
 |---------|--------------|-----------|
-| Desktop Backend | `blur:read`, `jobs:read` (+ `webhooks:*` if using webhook callbacks) | Internal (1000 req/min) |
+| Desktop Backend | `blur:read`, `jobs:read` (+ `webhooks:*` if using webhook callbacks) | `pro` (300/min) — canonical in `docs/api-keys.md` |
 | Web/Mobile Backend | `faces:read`, `faces:write`, `faces:delete`, `bibs:read`, `jobs:read`, `webhooks:read`, `webhooks:write` — or a single `*` super-scope | Internal (1000 req/min) |
 
 - **No `blur:read` for the Web/Mobile Backend.** Blur is desktop-only (root rule 6) — photographers cull in BatchMyPhotos before uploading, so the web and mobile upload paths never call a blur endpoint. Matches `integration-contracts.md`.
@@ -326,7 +326,7 @@ to every event and the per-event override exists for when it doesn't.
 
 ```
 localhost:3000  ← Desktop Backend
-localhost:4000  ← Web/Mobile Backend (Spring Boot)
+localhost:8080  ← Web/Mobile Backend (Spring Boot)
 localhost:8000  ← ai-api (FastAPI)
 localhost:5432  ← PostgreSQL
 localhost:6379  ← Redis

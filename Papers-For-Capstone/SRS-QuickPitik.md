@@ -30,6 +30,8 @@
 > Right — *Document Version: 1.0 / Published Date: 04 May 2026*
 > Bottom-right — *Page X of Y*
 
+> **Point-in-time document (frozen).** This SRS is the capstone deliverable as published **04 May 2026** — an IEEE-830 requirements snapshot, **not** a description of the current implementation. Routes here use the `/v1/...` proposal form (the shipped API is `/api/v1/...`); status and architecture reflect May 2026. For current architecture read the repo `docs/` and module `CLAUDE.md` files; for live status, the vault `VAULT-INDEX.md`. Do not "correct" this file to match the code — it is a historical artifact governed by the Document Skill.
+
 ---
 
 ## Change History

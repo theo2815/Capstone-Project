@@ -137,7 +137,7 @@ providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 ### Database
 - PostgreSQL scales vertically first (bigger machine)
 - Add read replicas for search-heavy workloads
-- If face embeddings exceed ~10M, consider migrating vector search to dedicated Milvus
+- If face embeddings exceed ~10M, consider migrating vector search to dedicated Qdrant
 
 ### Redis
 - Single node is fine for startup scale

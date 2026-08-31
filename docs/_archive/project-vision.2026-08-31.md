@@ -234,7 +234,7 @@ photographer wants to clean up the set (see Journey 2).
 |-----------|-----------|---------|
 | **Mobile App** | Kotlin (Android first, iOS planned) | Google Play Store |
 | **Website** | Next.js | Vercel |
-| **Desktop App** | Electron (already built) | Microsoft Store |
+| **Desktop App** | Electron (already built) | Direct download |
 | **Web/Mobile Backend** | Spring Boot (Kotlin) | AWS EC2 |
 | **Desktop Backend** | (own backend, own database) | TBD |
 | **AI Services (ai-api)** | FastAPI + Celery (Python) — already built | AWS EC2 |
@@ -343,7 +343,15 @@ See `ai-api/docs/integration-architecture.md` and `ai-api/docs/integration-contr
 
 ## Current Development Status
 
-Per-module status, ship-state, and test counts are **not pinned here** — they drift. Read the vault `VAULT-INDEX.md` (day-to-day dashboard) and `docs/IMPLEMENTATION_PLAN.md` (phase history + live roadmap). This document owns the *vision*, not the *status*.
+> Live status home: root `CLAUDE.md` module table + `docs/IMPLEMENTATION_PLAN.md` (vault `VAULT-INDEX.md` is the day-to-day dashboard). Snapshot below refreshed 2026-08-19 — the previous revision still said three shipped products were "Not started".
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| **ai-api** | Phases 1-6 complete + hardened | Blur, face, bib, batch; prod compose hardened 2026-08-14 (suite 304/304). Public deployment pending. |
+| **Desktop App** | Built — v1.0.5, maintenance mode | Electron app for photographers. Own backend + database. Blur pipeline migrated to ai-api `/blur/classify/stream`. |
+| **Backend** | Shipped + hardened | Spring Boot (Kotlin) — 30 controllers, all four roles locked, suite 228 unit + 15 integration. |
+| **Mobile App** | Parity reached; device verification in progress | Kotlin/Compose. Hardware tether verification (Canon R6) is the final milestone. |
+| **Website** | Four roles feature-complete | Next.js (Vercel target); wired to the live backend, no mock fallback. |
 
 **Next priorities:**
 1. Mobile emulator/device verification → hardware tether verification on the R6

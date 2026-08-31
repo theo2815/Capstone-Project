@@ -1,8 +1,8 @@
 # CLAUDE.md — Website (Next.js)
 
-**Status:** All four roles (Guest · Runner · Photographer · Admin) feature-complete; last reconciled 2026-08-16. Wired to the live Spring Boot backend throughout — **there is no mock fallback and no `NEXT_PUBLIC_BACKEND_LIVE` gate** (that flag was never wired and is dead code; see vault `website/decisions.md` 2026-05-18). Per-surface truth lives in vault `ROLE-STATUS.md`.
+**Status:** All four roles (Guest · Runner · Photographer · Admin) feature-complete. Wired to the live Spring Boot backend throughout — **there is no mock fallback and no `NEXT_PUBLIC_BACKEND_LIVE` gate** (that flag was never wired and is dead code; see vault `website/decisions.md` 2026-05-18). Per-surface truth lives in vault `ROLE-STATUS.md`.
 
-Baselines to hold: `npx tsc --noEmit` clean · `npm run lint` 0 errors / **126** warnings · `npm run build` succeeds. (Measured 2026-08-28 after the security/perf audit — deleting verified-dead files carried 143 down to 126. If your count differs, re-measure on a clean tree before assuming you added warnings.)
+Baselines to hold: `npx tsc --noEmit` clean · `npm run lint` 0 errors, non-zero warnings baseline · `npm run build` succeeds. (The warning count drifts — the current baseline is in vault `website/tasks.md`; always re-measure on a clean tree before assuming you added warnings.)
 
 ## Role in the project
 
@@ -54,7 +54,7 @@ These three vault notes are the design contract for the website. Read the releva
 
 | Note | Why |
 |------|-----|
-| `QuickPitik Vault/website/notes/design-system.md` | Quiet Studio tokens, type system, hard rules. The single source of truth for "does this match the aesthetic." |
+| `QuickPitik Vault/website/notes/design-system.md` | The current design tokens, type system, and hard rules (rewritten 2026-08-25). The single source of truth for "does this match the aesthetic" — read it rather than assuming a token set. |
 | `QuickPitik Vault/website/notes/components.md` | Locked + provisional component vocabulary. Reuse before recreating. |
 | `QuickPitik Vault/website/notes/ui-pitfalls.md` | Append-only log of UI bugs that shipped, with root cause + how-to-avoid. Read before any non-trivial change. |
 

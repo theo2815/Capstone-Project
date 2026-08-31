@@ -23,7 +23,7 @@ import org.springframework.context.annotation.Configuration
  * reaches the wire, but springdoc reads the *declared* return type — so out of
  * the box the spec would promise `AuthResponse` on `POST /auth/login` while the
  * response actually carries `{"success":true,"data":{…}}`. A generated document
- * that misdescribes all 29 controllers is worse than none, so the schemas get
+ * that misdescribes every controller is worse than none, so the schemas get
  * rewritten to match reality.
  *
  * That advice is scoped `basePackages = ["com.quickpitik.controller"]`, so

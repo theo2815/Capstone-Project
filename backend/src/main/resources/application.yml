@@ -312,8 +312,8 @@ springdoc:
   swagger-ui:
     enabled: ${API_DOCS_ENABLED:true}
     path: /swagger-ui.html
-    # Alphabetical instead of controller-declaration order — 29 controllers is
-    # too many to scan otherwise.
+    # Alphabetical instead of controller-declaration order — too many controllers
+    # to scan in declaration order otherwise.
     operations-sorter: alpha
     tags-sorter: alpha
 

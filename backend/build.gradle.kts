@@ -113,7 +113,7 @@ tasks.test {
 
 // Spins a throwaway Postgres 16 per run via Testcontainers; requires a running
 // Docker daemon. Shares the `test` source set rather than adding a second one —
-// three test classes do not justify the extra Gradle wiring.
+// too few integration classes to justify the extra Gradle wiring.
 val integrationTest by tasks.registering(Test::class) {
 	description = "Runs @Tag(\"integration\") tests against a Testcontainers Postgres."
 	group = "verification"

@@ -1,6 +1,6 @@
 # QuickPitik — Implementation Plan (phase map)
 
-> Created 2026-08-19. This path had been referenced as the "phased roadmap" from four documents without the file ever existing; it now holds the phase history plus the live roadmap. Day-to-day status lives in the root `CLAUDE.md` module table and the vault's `VAULT-INDEX.md` — this file changes only when a phase opens or closes.
+> Created 2026-08-19. This path had been referenced as the "phased roadmap" from four documents without the file ever existing; it now holds the phase history plus the live roadmap. Day-to-day status lives in the vault's `VAULT-INDEX.md` (the root `CLAUDE.md` no longer carries a status table — it points here and to the vault) — this file changes only when a phase opens or closes.
 
 ## Phase history (shipped)
 
@@ -17,7 +17,7 @@
 
 1. **Mobile verification** — emulator/device passes (in progress since 2026-08-19), then the final milestone: hardware tether verification on the Canon R6 (shutter-watch wiring done; protocol in vault `_journal/2026-08-14-mobile-live-auto-upload-wiring`).
 2. **ai-api public deployment** — prod compose is hardened and builds; deploy to a public host, issue the desktop's restricted `blur:read`/`jobs:read` key, slim the CUDA-laden image (#p2).
-3. **Google OAuth** — a cross-module build, not a wiring gap: the backend half does not exist and it is blocked on Google credentials (vault `_project/decisions.md`, 2026-08-15).
+3. **Google OAuth** — backend shipped (V38, `POST /auth/google` ID-token exchange); website GIS button + mobile Credential Manager wired. Runtime is blocked on Google Cloud credentials (no project provisioned yet), not on code. See vault `_project/decisions.md` (2026-08-29).
 4. **Real-event beta** — one Cebu marathon end-to-end, then payments launch (PayMongo checkout + webhook already live in dev).
 
 ## Capstone track

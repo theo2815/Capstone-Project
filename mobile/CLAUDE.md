@@ -129,40 +129,40 @@ graph TD
 
 ### 1. Model Layer (Data Source)
 * **Local Persistence (Room SQLite):**
-  * [UploadRecord.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/local/UploadRecord.kt): Table storing queue items, filePath, eventId, uploadState, retryCounts, and network errors.
-  * [UploadQueueDao.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/local/UploadQueueDao.kt): DAO query declarations (INSERT, UPDATE, DELETE, status modification).
-  * [AppDatabase.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/local/AppDatabase.kt): Thread-safe Room Database singleton launcher.
-  * [SessionManager.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/local/SessionManager.kt): Thread-safe SharedPreference wrapper caching the user's JWT access token, email, name, and database role.
+  * [UploadRecord.kt](app/src/main/java/com/quickpitik/mobile/data/local/UploadRecord.kt): Table storing queue items, filePath, eventId, uploadState, retryCounts, and network errors.
+  * [UploadQueueDao.kt](app/src/main/java/com/quickpitik/mobile/data/local/UploadQueueDao.kt): DAO query declarations (INSERT, UPDATE, DELETE, status modification).
+  * [AppDatabase.kt](app/src/main/java/com/quickpitik/mobile/data/local/AppDatabase.kt): Thread-safe Room Database singleton launcher.
+  * [SessionManager.kt](app/src/main/java/com/quickpitik/mobile/data/local/SessionManager.kt): Thread-safe SharedPreference wrapper caching the user's JWT access token, email, name, and database role.
 * **Remote Integration (Retrofit HTTP):**
-  * [AuthDto.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/remote/AuthDto.kt): JSON-serializable requests and response models.
-  * [ApiResponseEnvelope.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/remote/ApiResponseEnvelope.kt): Standard generic wrapper matching Spring Boot's envelope body adviser.
-  * [QuickPitikApi.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/remote/QuickPitikApi.kt): Retrofit interface mapping POST logins, POST registrations, Multipart S3 image uploads, selfie library management, and account settings.
-  * [RetrofitClient.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/remote/RetrofitClient.kt): HTTP network engine singleton carrying GSON and HTTP packet Logcat logging interceptors.
+  * [AuthDto.kt](app/src/main/java/com/quickpitik/mobile/data/remote/AuthDto.kt): JSON-serializable requests and response models.
+  * [ApiResponseEnvelope.kt](app/src/main/java/com/quickpitik/mobile/data/remote/ApiResponseEnvelope.kt): Standard generic wrapper matching Spring Boot's envelope body adviser.
+  * [QuickPitikApi.kt](app/src/main/java/com/quickpitik/mobile/data/remote/QuickPitikApi.kt): Retrofit interface mapping POST logins, POST registrations, Multipart S3 image uploads, selfie library management, and account settings.
+  * [RetrofitClient.kt](app/src/main/java/com/quickpitik/mobile/data/remote/RetrofitClient.kt): HTTP network engine singleton carrying GSON and HTTP packet Logcat logging interceptors.
 
 ### 2. Repository Layer (Data Coordinator)
-* [ProfileRepository.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/repository/ProfileRepository.kt) (Contract) & [ProfileRepositoryImpl.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/repository/ProfileRepositoryImpl.kt) (Implementation): Manages profile name updates, password changes, and selfie file uploads/removals/primary declarations.
+* [ProfileRepository.kt](app/src/main/java/com/quickpitik/mobile/data/repository/ProfileRepository.kt) (Contract) & [ProfileRepositoryImpl.kt](app/src/main/java/com/quickpitik/mobile/data/repository/ProfileRepositoryImpl.kt) (Implementation): Manages profile name updates, password changes, and selfie file uploads/removals/primary declarations.
 
 ### 3. ViewModel Layer (State Holder)
-* [AuthViewModel.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/ui/auth/AuthViewModel.kt): Coordinates async HTTP login/register routines under `viewModelScope`.
-* [ProfileViewModel.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileViewModel.kt): Manages selfie library state flows, profile name editing validations, and password update logic.
+* [AuthViewModel.kt](app/src/main/java/com/quickpitik/mobile/ui/auth/AuthViewModel.kt): Coordinates async HTTP login/register routines under `viewModelScope`.
+* [ProfileViewModel.kt](app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileViewModel.kt): Manages selfie library state flows, profile name editing validations, and password update logic.
 
 ### 4. Background Sync Layer (WorkManager)
-* [PhotoUploadWorker.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/worker/PhotoUploadWorker.kt): Background CoroutineWorker executing background sync for DSLRs.
+* [PhotoUploadWorker.kt](app/src/main/java/com/quickpitik/mobile/worker/PhotoUploadWorker.kt): Background CoroutineWorker executing background sync for DSLRs.
 
 ### 5. View Layer (Jetpack Compose UI)
-* [MainActivity.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/MainActivity.kt): Setups `NavHost` state routes. Instantiates shared ViewModels.
+* [MainActivity.kt](app/src/main/java/com/quickpitik/mobile/MainActivity.kt): Setups `NavHost` state routes. Instantiates shared ViewModels.
 * **Authentication Screens:**
-  * [LoginScreen.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/ui/auth/LoginScreen.kt) & [RegisterScreen.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/ui/auth/RegisterScreen.kt).
+  * [LoginScreen.kt](app/src/main/java/com/quickpitik/mobile/ui/auth/LoginScreen.kt) & [RegisterScreen.kt](app/src/main/java/com/quickpitik/mobile/ui/auth/RegisterScreen.kt).
 * **Runner Screens & Settings:**
-  * [GalleryScreen.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/GalleryScreen.kt): Features a clean dropdown navigation menu attached to the user's avatar.
-  * [ProfileScreen.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileScreen.kt): Display's user data, their race log, and interactive selfie cards (showing AI quality scores, primary badges, and set/delete capabilities).
-  * [AccountSettingsScreen.kt](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/AccountSettingsScreen.kt): Forms for editing name and securely changing the runner's password.
+  * [GalleryScreen.kt](app/src/main/java/com/quickpitik/mobile/ui/runner/GalleryScreen.kt): Features a clean dropdown navigation menu attached to the user's avatar.
+  * [ProfileScreen.kt](app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileScreen.kt): Display's user data, their race log, and interactive selfie cards (showing AI quality scores, primary badges, and set/delete capabilities).
+  * [AccountSettingsScreen.kt](app/src/main/java/com/quickpitik/mobile/ui/runner/AccountSettingsScreen.kt): Forms for editing name and securely changing the runner's password.
 
 ---
 
 ## 🚦 Integration Details & Settings
-* **Permissions & Sandbox ([AndroidManifest.xml](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/AndroidManifest.xml))**
-* **Libraries ([libs.versions.toml](file:///c:/Users/USER/Documents/School/3rd%20Year%202nd%20Semester/IT332%20-%20Capstone%20and%20Research%201/CAPSTONE%20PROJECT/Capstone-Project/mobile/gradle/libs.versions.toml))**
+* **Permissions & Sandbox ([AndroidManifest.xml](app/src/main/AndroidManifest.xml))**
+* **Libraries ([libs.versions.toml](gradle/libs.versions.toml))**
 
 ---
 
@@ -170,7 +170,7 @@ graph TD
 
 **Priority order is governed by the [Build Mandate](#-build-mandate--website-parity-protocol-read-first) — parity first, tether last.** The authoritative, always-current list lives in vault `mobile/tasks.md`. Summary (refreshed 2026-08-19):
 
-1. **Emulator/device verification (in progress):** parity closed 2026-08-14 and the Room/WorkManager tests shipped (18/18, Robolectric — no device needed); current work is runtime verification — emulator login retest, photographer-byline device pass, foreground-service checks.
+1. **Emulator/device verification (in progress):** parity closed 2026-08-14 and the Room/WorkManager tests shipped (Robolectric — no device needed; current count in vault `mobile/tasks.md`, or run `.\gradlew.bat testDebugUnitTest`); current work is runtime verification — emulator login retest, photographer-byline device pass, foreground-service checks.
 2. **FINAL milestone:** USB-C tethered-camera auto-upload **runtime verification on the Canon R6** — the wiring is done (shutter watch on the Capture tab since 2026-08-14); what remains is the on-camera protocol in vault `_journal/2026-08-14-mobile-live-auto-upload-wiring`.
 
 > Done since the last revision: full website parity + WebSocket layer + session resilience (2026-08-14), runtime-settable backend URL + worker tests (2026-08-16), emulator base-URL fix + settings/signup polish (2026-08-19). See vault `mobile/tasks.md`.

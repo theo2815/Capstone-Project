@@ -299,7 +299,7 @@ Detect faces and search stored embeddings.
 - `file` (required)
 - `threshold` (query, optional, default `0.4`): minimum cosine similarity
 - `top_k` (query, optional, default `10`, max `100`): max matches per detected face
-- `event_id` (query, optional): restrict search to this event
+- `event_id` (query, **required**): restrict search to this event — enforced fail-closed since 2026-06-02, per root rule 5 and the §Face Recognition preamble above
 
 **Response:**
 ```json
