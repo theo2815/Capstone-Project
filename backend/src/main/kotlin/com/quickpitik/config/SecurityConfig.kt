@@ -118,19 +118,13 @@ class SecurityConfig(
                     "/api/v1/orders/mobile-cancel",
                 ).permitAll()
                 // Guest order status polling. Service-layer token check enforces auth.
-                auth.requestMatchers(
-                    RegexRequestMatcher.regexMatcher(HttpMethod.GET, "$GUEST_ORDER_PATH/status\$"),
-                ).permitAll()
+                auth.requestMatchers(guestOrderGet("/status")).permitAll()
                 // Bundle download (token-gated; works for both runners + guests
                 // because a top-level navigation can't carry the JWT).
-                auth.requestMatchers(
-                    RegexRequestMatcher.regexMatcher(HttpMethod.GET, "$GUEST_ORDER_PATH/download-bundle\$"),
-                ).permitAll()
+                auth.requestMatchers(guestOrderGet("/download-bundle")).permitAll()
                 // Guest order detail (token-gated, anti-IDOR via service layer).
                 // The UUID regex keeps future named sibling routes private.
-                auth.requestMatchers(
-                    RegexRequestMatcher.regexMatcher(HttpMethod.GET, "$GUEST_ORDER_PATH\$"),
-                ).permitAll()
+                auth.requestMatchers(guestOrderGet("")).permitAll()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/payments/webhook/**").permitAll()
                 // Internal ai-api job webhook (Phase C). Authorization is the
                 // HMAC verifier, same pattern as the payment webhook above.
@@ -147,9 +141,22 @@ class SecurityConfig(
         return http.build()
     }
 
-    private companion object {
-        const val UUID_PATH =
+    internal companion object {
+        private const val UUID_PATH =
             "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"
-        const val GUEST_ORDER_PATH = "^/api/v1/orders/$UUID_PATH"
+        private const val GUEST_ORDER_PATH = "^/api/v1/orders/$UUID_PATH"
+
+        // Matcher for a token-gated guest order route (detail = "", plus
+        // "/status", "/download-bundle"). `internal` so SecurityConfigGuestOrderTest
+        // can exercise the exact production pattern against a real query string.
+        //
+        // RegexRequestMatcher matches against `servletPath + '?' + queryString`,
+        // NOT the path alone — so the anchor goes after the PATH, then an optional
+        // query string. Every guest route is reached with ?token=..., and a bare
+        // `...$` here rejected the real request, 401'd the guest, and bounced web
+        // to /login (mobile hung). `(?:\?.*)?` keeps sibling paths private while
+        // permitting the token param.
+        internal fun guestOrderGet(suffix: String): RegexRequestMatcher =
+            RegexRequestMatcher.regexMatcher(HttpMethod.GET, "$GUEST_ORDER_PATH$suffix(?:\\?.*)?\$")
     }
 }
