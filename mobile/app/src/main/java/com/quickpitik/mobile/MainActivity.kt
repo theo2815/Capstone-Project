@@ -518,6 +518,7 @@ class MainActivity : ComponentActivity() {
                                     // via "photographer/{handle}".
                                     val publicVm: PublicPhotographerViewModel = viewModel()
                                     val brandSettings by vm.brandSettings.collectAsState()
+                                    val isBrandSettingsLoading by vm.isFetchingBrandSettings.collectAsState()
                                     LaunchedEffect(Unit) {
                                         if (brandSettings == null) vm.fetchBrandSettings()
                                     }
@@ -526,6 +527,7 @@ class MainActivity : ComponentActivity() {
                                             handle = brandSettings?.handle,
                                             viewModel = publicVm,
                                             onBack = { navController.popBackStack() },
+                                            isBrandSettingsLoading = isBrandSettingsLoading,
                                         )
                                     }
                                 }

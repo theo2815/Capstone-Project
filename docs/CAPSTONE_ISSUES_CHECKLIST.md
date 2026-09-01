@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 15
-- **✅ Already Solved:** 2 (Items 9, 14)
-- **⏳ Pending / To Be Worked On:** 13
+- **✅ Already Solved:** 3 (Items 1, 9, 14)
+- **⏳ Pending / To Be Worked On:** 12
 
 ---
 
@@ -16,13 +16,9 @@
 
 ### 📱 Mobile Application
 
-- [ ] **1. Photographer — Fix "Preview Public profile" button & Photo Preview**
-  - **Issue:** Tapping *Preview public profile* in the Studio avatar menu either fails or renders an empty state before brand settings load, and previewing photos in public event gallery does not support owner review mode.
-  - **Affected Files:**
-    - `mobile/app/src/main/java/com/quickpitik/mobile/MainActivity.kt`
-    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/photographer/StudioShell.kt`
-    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/photographer/PhotographerPublicProfileScreen.kt`
-  - **Action Plan:** Add loading state while `brandSettings` fetches, handle missing handle gracefully, and wire `PhotoPreview` with appropriate preview mode.
+- [x] **1. Photographer — Fix "Preview Public profile" button & Photo Preview**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** `isFetchingBrandSettings` added to `PhotographerDashboardViewModel` to show a `CircularProgressIndicator` instead of an empty state when fetching. `PhotoPreviewMode.OwnerReview` passed explicitly in `PhotographerPublicProfileScreen` when previewed from studio mode (`cartViewModel == null`).
 
 - [ ] **2. Runner — Selfie Library "Gallery" button layout overflow (Mobile & Desktop)**
   - **Issue:** The header in `ProfileScreen.kt` squashes the *Camera* and *Gallery* pill buttons on narrower viewports. On desktop web, upload tile sizing needs responsive cleanup.

@@ -89,10 +89,8 @@ fun PhotographerPublicProfileScreen(
     handle: String?,
     viewModel: PublicPhotographerViewModel,
     onBack: () -> Unit,
-    // Present only in RUNNER contexts (the photographer/{handle} route) —
-    // enables the gallery's add-to-cart flow. The studio's own profile
-    // preview passes nothing and stays a viewer.
     cartViewModel: CartViewModel? = null,
+    isBrandSettingsLoading: Boolean = false,
 ) {
     val profileState by viewModel.publicProfileState.collectAsState()
     val resolvedHandle = handle?.takeIf { it.isNotBlank() }
@@ -129,7 +127,11 @@ fun PhotographerPublicProfileScreen(
             // Only reachable from the photographer's own preview: the runner
             // byline is a tap target only when the handle is non-null, so a
             // runner can never land here handle-less.
-            if (resolvedHandle == null) {
+            if (resolvedHandle == null && isBrandSettingsLoading) {
+                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Fresh)
+                }
+            } else if (resolvedHandle == null) {
                 EmptyStateCard("Set your public handle in the Settings tab to preview your profile.")
             } else {
                 when (val state = profileState) {
@@ -442,6 +444,7 @@ private fun ProfileEventGalleryView(
                 photos = previewPhotos,
                 currentIndex = currentIndex,
                 commerceEnabled = commerce,
+                mode = if (cartViewModel == null) com.quickpitik.mobile.ui.runner.PhotoPreviewMode.OwnerReview else com.quickpitik.mobile.ui.runner.PhotoPreviewMode.Browse,
                 isInCart = { data -> cartItems.any { it.photoId == data.id } },
                 onToggleCart = onToggleCart@{ data ->
                     val cart = cartViewModel ?: return@onToggleCart

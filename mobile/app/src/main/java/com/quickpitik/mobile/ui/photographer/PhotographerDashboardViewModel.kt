@@ -216,6 +216,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     private val _payoutActionState = MutableStateFlow<String?>(null)
     val payoutActionState: StateFlow<String?> = _payoutActionState
 
+    private val _isFetchingBrandSettings = MutableStateFlow(false)
+    val isFetchingBrandSettings: StateFlow<Boolean> = _isFetchingBrandSettings
+
     private val _brandSettings = MutableStateFlow<com.quickpitik.mobile.data.remote.BrandSettingsResponseDto?>(null)
     val brandSettings: StateFlow<com.quickpitik.mobile.data.remote.BrandSettingsResponseDto?> = _brandSettings
 
@@ -893,6 +896,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     }
 
     private suspend fun loadBrandSettings(token: String) {
+        _isFetchingBrandSettings.value = true
         try {
             val response = RetrofitClient.apiService.getBrandSettings("Bearer $token")
             if (response.success && response.data != null) {
@@ -905,6 +909,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             if (_brandSettings.value == null) {
                 _settingsLoadError.value = RetrofitClient.parseError(e)
             }
+        } finally {
+            _isFetchingBrandSettings.value = false
         }
     }
 
