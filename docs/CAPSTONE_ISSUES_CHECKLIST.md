@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 15
-- **✅ Already Solved:** 3 (Items 1, 9, 14)
-- **⏳ Pending / To Be Worked On:** 12
+- **✅ Already Solved:** 4 (Items 1, 2, 9, 14)
+- **⏳ Pending / To Be Worked On:** 11
 
 ---
 
@@ -20,12 +20,9 @@
   - **Status:** **ALREADY SOLVED**
   - **Verification:** `isFetchingBrandSettings` added to `PhotographerDashboardViewModel` to show a `CircularProgressIndicator` instead of an empty state when fetching. `PhotoPreviewMode.OwnerReview` passed explicitly in `PhotographerPublicProfileScreen` when previewed from studio mode (`cartViewModel == null`).
 
-- [ ] **2. Runner — Selfie Library "Gallery" button layout overflow (Mobile & Desktop)**
-  - **Issue:** The header in `ProfileScreen.kt` squashes the *Camera* and *Gallery* pill buttons on narrower viewports. On desktop web, upload tile sizing needs responsive cleanup.
-  - **Affected Files:**
-    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileScreen.kt`
-    - `website/src/components/profile/selfie-library.tsx`
-  - **Action Plan:** Refactor the mobile header layout to stack or use a responsive button group so buttons never clip. Polish web upload tile grid breakpoints.
+- [x] **2. Runner — Selfie Library "Gallery" button layout overflow (Mobile & Desktop)**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** Refactored the mobile header layout (`ProfileScreen.kt`) to stack the Camera/Gallery buttons below the title using a `Column` instead of squeezing them in a `Row(SpaceBetween)`. On desktop web (`selfie-library.tsx`), added `md:grid-cols-4` to smooth out responsive upload tile scaling.
 
 - [x] **9. Photographer — Payout request on Mobile**
   - **Status:** **ALREADY SOLVED**

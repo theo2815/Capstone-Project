@@ -204,10 +204,9 @@ fun ProfileScreen(
                 // Selfie Library Section
                 item {
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        Row(
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Column {
                                 Kicker("01 · Selfie library")
@@ -225,6 +224,7 @@ fun ProfileScreen(
                                 )
                             }
                             Row(
+                                modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
