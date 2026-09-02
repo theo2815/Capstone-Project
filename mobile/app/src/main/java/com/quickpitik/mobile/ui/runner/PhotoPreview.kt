@@ -4,6 +4,12 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,21 +37,36 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Size
+import kotlinx.coroutines.launch
 import com.quickpitik.mobile.data.remote.CartItemDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
@@ -313,10 +334,8 @@ fun PhotoPreview(
                             val pagePhoto = photos[page]
                             Box(modifier = Modifier.fillMaxSize()) {
                                 if (pagePhoto.imageUrl != null) {
-                                    AsyncImage(
-                                        model = RetrofitClient.resolveImageUrl(pagePhoto.imageUrl),
-                                        contentDescription = "Race photo",
-                                        contentScale = ContentScale.Fit,
+                                    ZoomableImage(
+                                        url = RetrofitClient.resolveImageUrl(pagePhoto.imageUrl)!!,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 } else {
@@ -557,3 +576,101 @@ fun PhotoPreview(
         }
     }
 }
+
+// Pinch-to-zoom + double-tap-to-zoom over the preview. Pans while zoomed and
+// hands the drag back to the HorizontalPager at 1×, so a swipe still pages.
+// Decodes at the preview's native size (Size.ORIGINAL) — Coil would otherwise
+// downsample to the view and a 3× zoom would be a blur of the blur.
+//
+// What is zoomed is exactly what was served: the watermarked preview for a
+// browser, the clean original only for an owner (cleanUrl). Zoom never
+// requests a different asset.
+@Composable
+private fun ZoomableImage(url: String, modifier: Modifier = Modifier) {
+    val scope = rememberCoroutineScope()
+    val scale = remember { Animatable(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    var zoomed by remember { mutableStateOf(false) }
+
+    fun clamp(o: Offset, s: Float): Offset {
+        val maxX = (size.width * (s - 1)) / 2
+        val maxY = (size.height * (s - 1)) / 2
+        return Offset(o.x.coerceIn(-maxX, maxX), o.y.coerceIn(-maxY, maxY))
+    }
+
+    Box(
+        modifier = modifier
+            .onSizeChanged { size = it }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onDoubleTap = { tap ->
+                        val target = if (scale.value > 1.05f) 1f else DOUBLE_TAP_SCALE
+                        val centre = Offset(size.width / 2f, size.height / 2f)
+                        // Zoom into the tapped point; the offset moves so that point stays put.
+                        val next = if (target == 1f) Offset.Zero else clamp((centre - tap) * (target - 1), target)
+                        zoomed = target > 1f
+                        scope.launch {
+                            offset = next
+                            scale.animateTo(target, tween(ZOOM_ANIM_MS))
+                        }
+                    },
+                )
+            }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val zoom = event.calculateZoom()
+                        val pan = event.calculatePan()
+                        val pinching = event.changes.size > 1
+                        if (pinching || scale.value > 1f) {
+                            val s = (scale.value * zoom).coerceIn(1f, MAX_SCALE)
+                            val centroid = event.calculateCentroid()
+                            val centre = Offset(size.width / 2f, size.height / 2f)
+                            // Keep the pinch centroid fixed while scaling around the centre.
+                            val scaled = (offset - (centroid - centre)) * (s / scale.value) + (centroid - centre)
+                            offset = clamp(scaled + pan, s)
+                            scope.launch { scale.snapTo(s) }
+                            zoomed = s > 1f
+                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
+                    if (scale.value <= 1.02f) {
+                        zoomed = false
+                        scope.launch { offset = Offset.Zero; scale.snapTo(1f) }
+                    }
+                }
+            },
+    ) {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current).data(url).size(Size.ORIGINAL).build(),
+            contentDescription = "Race photo",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = scale.value
+                    scaleY = scale.value
+                    translationX = offset.x
+                    translationY = offset.y
+                },
+        )
+        // Gesture hint — invisible gestures don't ship. Gone once the runner has zoomed.
+        if (!zoomed) {
+            Text(
+                text = "PINCH OR DOUBLE-TAP TO ZOOM",
+                style = Typography.labelSmall,
+                color = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(12.dp),
+            )
+        }
+    }
+}
+
+private const val DOUBLE_TAP_SCALE = 2.5f
+private const val MAX_SCALE = 4f
+private const val ZOOM_ANIM_MS = 220
