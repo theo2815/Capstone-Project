@@ -15,7 +15,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -107,6 +109,22 @@ fun ProfileScreen(
             }
         }
     }
+    val launchCamera: () -> Unit = {
+        try {
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.TITLE, "captured_selfie_${System.currentTimeMillis()}")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            }
+            val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            tempImageUri = uri
+            if (uri != null) cameraLauncher.launch(uri)
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(context, "Unable to open camera.", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    // Single add affordance (2026-09-02): the grid's "+" opens this chooser
+    // instead of the old Camera / Gallery header pills nobody understood.
+    var showAddSheet by rememberSaveable { mutableStateOf(false) }
 
     val hapticFire = rememberQpHaptic()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -212,56 +230,16 @@ fun ProfileScreen(
                                 Kicker("01 · Selfie library")
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    // Header line tracks primary-state, as on web:
-                                    // once a primary exists, searches are live.
-                                    text = if (selfies.any { it.isPrimary }) {
-                                        "Searches running across every event you join."
-                                    } else {
-                                        "Pick a primary selfie below."
+                                    text = when {
+                                        selfies.isEmpty() ->
+                                            "Add up to $SELFIE_MAX selfies from different angles — every event search uses all of them."
+                                        selfies.any { it.isPrimary } ->
+                                            "${selfies.size} of $SELFIE_MAX · searches use every selfie here."
+                                        else -> "Tap a selfie to make it your primary."
                                     },
                                     style = Typography.bodySmall,
                                     color = Slate
                                 )
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        try {
-                                            val values = ContentValues().apply {
-                                                put(MediaStore.Images.Media.TITLE, "captured_selfie_${System.currentTimeMillis()}")
-                                                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                                            }
-                                            val uri = context.contentResolver.insert(
-                                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                                                values
-                                            )
-                                            tempImageUri = uri
-                                            if (uri != null) {
-                                                cameraLauncher.launch(uri)
-                                            }
-                                        } catch (e: Exception) {
-                                            android.widget.Toast.makeText(context, "Unable to open camera.", android.widget.Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    shape = PillShape,
-                                    border = BorderStroke(1.dp, Ink),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
-                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                                ) {
-                                    Text("Camera", style = Typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                                }
-                                Button(
-                                    onClick = { galleryLauncher.launch("image/*") },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Color.White),
-                                    shape = PillShape,
-                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                                ) {
-                                    Text("Gallery", style = Typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                                }
                             }
                         }
                         
@@ -280,16 +258,24 @@ fun ProfileScreen(
                             SelfieRowSkeleton()
                         } else if (selfies.isEmpty()) {
                             Spacer(modifier = Modifier.height(16.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .border(1.dp, Line, FieldShape)
-                                    .padding(24.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            // Empty state (Mobile Design skill): one glyph, one
+                            // sentence of what appears here, the primary action to
+                            // seed it — and the tips a runner needs to pick a photo
+                            // that actually matches.
+                            QpCard(modifier = Modifier.fillMaxWidth()) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Face,
+                                        contentDescription = null,
+                                        tint = Slate,
+                                        modifier = Modifier.size(40.dp),
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
                                     Text(
-                                        text = "Build your selfie library.",
+                                        text = "Add your first selfie",
                                         color = Ink,
                                         textAlign = TextAlign.Center,
                                         style = Typography.titleMedium,
@@ -297,11 +283,23 @@ fun ProfileScreen(
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "Upload up to $SELFIE_MAX clear, frontal selfies so we can " +
-                                            "match you across every event you join.",
+                                        text = "Face the camera, good light, no sunglasses or cap. " +
+                                            "Add a few angles and we'll find you in every race photo.",
                                         color = Slate,
                                         textAlign = TextAlign.Center,
-                                        style = Typography.bodyMedium
+                                        style = Typography.bodyMedium,
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    PrimaryCta(
+                                        text = "Take a selfie",
+                                        onClick = launchCamera,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    GhostCta(
+                                        text = "Upload a photo",
+                                        onClick = { galleryLauncher.launch("image/*") },
+                                        modifier = Modifier.fillMaxWidth(),
                                     )
                                 }
                             }
@@ -315,20 +313,50 @@ fun ProfileScreen(
                                     viewModel.setPrimarySelfie(id)
                                     snackbarMessage = "Primary selfie updated."
                                 },
-                                onAdd = { galleryLauncher.launch("image/*") },
+                                onAdd = { showAddSheet = true },
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "${selfies.size} / $SELFIE_MAX selfies stored.",
-                                style = Typography.bodySmall,
-                                color = Slate,
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "Reused across every event you join — no re-uploading per race.",
+                                text = "Different angles help — a side profile and a smile match more race photos.",
                                 style = Typography.bodySmall,
                                 color = SlateSoft,
                             )
+                        }
+                    }
+                }
+                item {
+                    if (showAddSheet) {
+                        ModalBottomSheet(
+                            onDismissRequest = { showAddSheet = false },
+                            containerColor = Bone,
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp)
+                                    .padding(bottom = 28.dp),
+                            ) {
+                                Kicker("Add a selfie")
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Face the camera, good light, no sunglasses or cap. " +
+                                        "${selfies.size} of $SELFIE_MAX used.",
+                                    style = Typography.bodyMedium,
+                                    color = Slate,
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                PrimaryCta(
+                                    text = "Take a selfie",
+                                    onClick = { showAddSheet = false; launchCamera() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                GhostCta(
+                                    text = "Upload a photo",
+                                    onClick = { showAddSheet = false; galleryLauncher.launch("image/*") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
                         }
                     }
                 }

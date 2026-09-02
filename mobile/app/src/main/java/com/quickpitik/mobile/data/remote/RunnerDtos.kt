@@ -63,7 +63,9 @@ data class PhotoDto(
 )
 
 data class SearchByFaceJsonRequest(
-    val selfieId: String,
+    val selfieId: String? = null,
+    // True = the backend matches with every selfie in the library (union).
+    val allSelfies: Boolean? = null,
     val offset: Int = 0,
     val limit: Int = 100
 )

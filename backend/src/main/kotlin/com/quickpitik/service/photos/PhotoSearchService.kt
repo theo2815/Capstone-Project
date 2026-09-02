@@ -103,4 +103,75 @@ class PhotoSearchService(
         }
         return photoService.findByEventAndPersonIds(eventId, matchedPersonIds, pagination, requesterUserId)
     }
+
+    /** One stored selfie's bytes, as read back from storage. */
+    data class SelfieSample(val bytes: ByteArray, val contentType: String, val filename: String)
+
+    /**
+     * Search with EVERY selfie in the runner's library (2026-09-02). Each
+     * sample is matched on its own and the matched person ids are unioned
+     * before the single photo query, so a face caught only from the side or
+     * with sunglasses still pulls its photos in and pagination stays exact.
+     * One AI call per selfie (library cap is 5). A selfie the provider
+     * rejects (no face, too small — a 4xx) is skipped; the search only fails
+     * if every selfie was rejected or the provider is down.
+     */
+    fun searchByFaces(
+        eventId: UUID,
+        samples: List<SelfieSample>,
+        pagination: PaginationParams,
+        requesterUserId: UUID? = null,
+    ): PaginatedResponse<PhotoDto> {
+        require(samples.isNotEmpty()) {
+            throw ValidationException(
+                code = ErrorCodes.SELFIE_REQUIRED,
+                message = "at least one selfie is required",
+                field = "selfieId",
+            )
+        }
+        if (!aiApiProperties.enabled) {
+            throw AiApiException(
+                status = HttpStatus.SERVICE_UNAVAILABLE,
+                aiCode = null,
+                message = "ai-api is disabled — face search unavailable",
+            )
+        }
+        val threshold = aiApiProperties.faceMatchThresholdDefault
+        val personIds = LinkedHashSet<String>()
+        var accepted = 0
+        var lastRejection: AiApiException? = null
+        for (sample in samples) {
+            val matches = try {
+                meterRegistry.timer("qp.ai.call", "op", "search").recordCallable {
+                    aiApiClient.facesSearch(
+                        file = sample.bytes,
+                        contentType = sample.contentType,
+                        filename = sample.filename,
+                        eventId = eventId,
+                        threshold = threshold,
+                        topK = 50,
+                    )
+                }!!
+            } catch (ex: AiApiException) {
+                if (ex.status.is4xxClientError) {
+                    lastRejection = ex
+                    continue
+                }
+                throw ex
+            } catch (ex: Exception) {
+                log.warn("ai-api faces/search failed for event {}: {}", eventId, ex.message)
+                throw AiApiException(
+                    status = HttpStatus.SERVICE_UNAVAILABLE,
+                    aiCode = null,
+                    message = "Face search is temporarily unavailable",
+                    cause = ex,
+                )
+            }
+            accepted++
+            matches.matches.filter { it.similarity >= threshold }.mapTo(personIds) { it.person_id }
+        }
+        if (accepted == 0 && lastRejection != null) throw lastRejection
+        if (personIds.isEmpty()) return PaginatedResponse.empty(pagination)
+        return photoService.findByEventAndPersonIds(eventId, personIds, pagination, requesterUserId)
+    }
 }

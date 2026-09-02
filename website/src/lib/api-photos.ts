@@ -36,6 +36,8 @@ export async function fetchEventPhotos(
 
 export interface SearchByFaceArgs {
   selfieId?: string;
+  /** Match with every selfie in the signed-in runner's library (union). */
+  allSelfies?: boolean;
   selfieFile?: File;
   offset?: number;
   limit?: number;
@@ -56,8 +58,11 @@ export async function searchEventByFace(
     form.append("limit", String(limit));
     return api.post<PaginatedResponse<Photo>>(path, form);
   }
+  if (args.allSelfies) {
+    return api.post<PaginatedResponse<Photo>>(path, { allSelfies: true, offset, limit });
+  }
   if (!args.selfieId) {
-    throw new Error("searchEventByFace requires selfieId or selfieFile");
+    throw new Error("searchEventByFace requires selfieId, allSelfies, or selfieFile");
   }
   return api.post<PaginatedResponse<Photo>>(path, {
     selfieId: args.selfieId,

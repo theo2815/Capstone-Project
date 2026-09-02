@@ -5,6 +5,9 @@ import { useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
+import { useQueryClient } from "@tanstack/react-query";
+import { uploadSelfie } from "@/lib/api-selfies";
+import { SELFIE_MAX } from "@/store/user-media-store";
 import { useEffectiveRole } from "@/hooks/use-effective-role";
 import { ROUTES } from "@/lib/constants";
 import {
@@ -133,12 +136,18 @@ export function SelfieSearchPanel({
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  // Save-and-search (2026-09-02): keep a fresh selfie in the library without
+  // a detour to /profile. Default on; hidden when the library is full.
+  const [saveToLibrary, setSaveToLibrary] = useState(true);
+  const [notice, setNotice] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   // Photographers don't have a runner selfie library — treat as guest for
   // the library affordance, but they still get upload/take in case they're
   // looking for themselves in another photographer's gallery.
   const isPhotographer = role === "PHOTOGRAPHER";
   const hasLibrary = isAuthenticated && !isPhotographer && selfies.length > 0;
+  const canSave = isAuthenticated && !isPhotographer && selfies.length < SELFIE_MAX;
   const here = pathname || `/events/${eventSlug}`;
 
   function humanizeError(err: unknown): string {
@@ -165,9 +174,38 @@ export function SelfieSearchPanel({
       return;
     }
     setError(null);
+    setNotice(null);
     setIsSearching(true);
     try {
-      const result = await searchEventByFace(eventSlug, { selfieFile: file });
+      let result: EventPhotosResult | null = null;
+      if (canSave && saveToLibrary) {
+        // Save first, then match with the whole library (which now includes
+        // it). A refused save (no face, limit) is a notice, not a failure —
+        // the one-shot file search below still runs.
+        try {
+          await uploadSelfie(file);
+          void queryClient.invalidateQueries({ queryKey: ["me", "selfies"] });
+          setNotice("Saved to your selfie library.");
+          result = await searchEventByFace(eventSlug, { allSelfies: true });
+        } catch (saveErr) {
+          const why = saveErr instanceof ApiError ? saveErr.message : "upload failed";
+          setNotice(`Not saved to your library (${why}) — searching with it anyway.`);
+        }
+      }
+      if (!result) result = await searchEventByFace(eventSlug, { selfieFile: file });
+      onSearchSuccess(result);
+    } catch (err) {
+      setError(humanizeError(err));
+    } finally {
+      setIsSearching(false);
+    }
+  }
+
+  async function searchWithAllSelfies() {
+    setError(null);
+    setIsSearching(true);
+    try {
+      const result = await searchEventByFace(eventSlug, { allSelfies: true });
       onSearchSuccess(result);
     } catch (err) {
       setError(humanizeError(err));
@@ -227,9 +265,35 @@ export function SelfieSearchPanel({
               setLibraryOpen(false);
               void searchWithSelfieId(s.id);
             }}
+            onMatchAll={() => {
+              setLibraryOpen(false);
+              void searchWithAllSelfies();
+            }}
           />
         )}
       </div>
+
+      {canSave && (
+        <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-3 font-sans text-sm text-slate select-none">
+          <input
+            type="checkbox"
+            checked={saveToLibrary}
+            onChange={(e) => setSaveToLibrary(e.target.checked)}
+            disabled={isSearching}
+            className="size-4 accent-fresh"
+          />
+          <span>
+            Also save it to my selfie library{" "}
+            <span className="font-mono tnum">({selfies.length} of {SELFIE_MAX})</span>
+          </span>
+        </label>
+      )}
+
+      {notice && (
+        <p role="status" className="mt-2 font-sans text-sm text-slate">
+          {notice}
+        </p>
+      )}
 
       <FieldError
         message={error}
@@ -374,6 +438,8 @@ interface SelfieLibraryCardProps {
   onToggle: () => void;
   selfies: SelfieRef[];
   onPick: (selfie: SelfieRef) => void;
+  /** Match with the whole library at once (backend unions the matches). */
+  onMatchAll: () => void;
 }
 
 // Library card collapses into the same action-row shape as Take/Upload when
@@ -387,6 +453,7 @@ function SelfieLibraryCard({
   onToggle,
   selfies,
   onPick,
+  onMatchAll,
 }: SelfieLibraryCardProps) {
   const count = selfies.length;
   return (
@@ -443,6 +510,23 @@ function SelfieLibraryCard({
           className="mt-3 rounded-xl border border-line bg-bone-deep p-3"
           style={{ animation: "fade-in 0.2s ease-out both" }}
         >
+          {/* Whole-library match first: every saved selfie is another angle of
+              the same runner, and the backend unions the matches (2026-09-02).
+              Ink, not Fresh — the card header above already carries the accent. */}
+          <button
+            type="button"
+            onClick={onMatchAll}
+            disabled={disabled}
+            className="mb-3 w-full rounded-lg bg-ink px-4 py-3 text-left text-bone transition-colors hover:bg-ink/90 disabled:opacity-60 disabled:cursor-wait focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep"
+          >
+            <span className="block font-display text-sm font-medium tracking-tight">
+              Match with all <span className="font-mono tnum">{count}</span>{" "}
+              {count === 1 ? "selfie" : "selfies"}
+            </span>
+            <span className="block font-sans text-sm text-bone/70 mt-0.5">
+              Best results — different angles find more of your photos. Or pick one below.
+            </span>
+          </button>
           <ul className="grid grid-cols-3 gap-2.5 sm:grid-cols-4">
             {selfies.map((s) => (
               <li key={s.id}>

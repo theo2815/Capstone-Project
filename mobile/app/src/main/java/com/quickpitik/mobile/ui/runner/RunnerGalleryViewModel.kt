@@ -95,6 +95,21 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     private val _selfies = MutableStateFlow<List<SelfieRefDto>>(emptyList())
     val selfies: StateFlow<List<SelfieRefDto>> = _selfies
 
+    // "Also save to my selfie library" on the event's selfie match (2026-09-02):
+    // a runner searching with a fresh selfie shouldn't have to go to Profile
+    // to keep it. Default on; the screen hides the toggle when the library is
+    // full or the viewer isn't a runner.
+    private val _saveSelfieToLibrary = MutableStateFlow(true)
+    val saveSelfieToLibrary: StateFlow<Boolean> = _saveSelfieToLibrary
+    fun setSaveSelfieToLibrary(enabled: Boolean) { _saveSelfieToLibrary.value = enabled }
+
+    // One line under the selfie card: "Saved to your library" or why it wasn't.
+    private val _selfieSaveNotice = MutableStateFlow<String?>(null)
+    val selfieSaveNotice: StateFlow<String?> = _selfieSaveNotice
+
+    private val profileRepository: com.quickpitik.mobile.data.repository.ProfileRepository =
+        com.quickpitik.mobile.data.repository.ProfileRepositoryImpl()
+
     fun loadGalleryMetadata(photoAlertSlug: String?) {
         viewModelScope.launch {
             if (photoAlertSlug != null) _photoAlert.value = PhotoAlertUiState.Loading
@@ -454,6 +469,11 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         "SELFIE_REJECTED", "LOW_QUALITY", "NO_FACES" ->
             message ?: "Selfie rejected — try a clearer, frontal shot."
         "AI_API_UNAVAILABLE" -> "Face search is offline right now. Try again in a few minutes."
+        // The row exists but its file doesn't (storage backend changed, object
+        // deleted out-of-band). Device-verified 2026-09-02: four selfies saved
+        // under local-disk storage were unreadable once the backend moved to R2.
+        "SELFIE_NOT_FOUND" ->
+            "This saved selfie's photo is missing. Remove it in your profile and add a new one, or take a selfie now."
         else -> message ?: "Could not match your face right now. Try again."
     }
 
@@ -541,6 +561,31 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     return@launch
                 }
                 cacheFile = file
+                // Save-and-search: keep the selfie in the library, then match
+                // with the whole library (which now includes it). If the save
+                // is refused (no face, limit reached, offline), say so and fall
+                // back to a one-shot search with the file — the runner still
+                // gets their photos either way.
+                val token = SessionManager.getInstance(getApplication()).getAccessToken()
+                _selfieSaveNotice.value = null
+                if (_saveSelfieToLibrary.value && token != null && _selfies.value.size < SELFIE_MAX) {
+                    val saved = profileRepository.uploadSelfie(
+                        token = token,
+                        fileBytes = withContext(Dispatchers.IO) { file.readBytes() },
+                        filename = "selfie_${System.currentTimeMillis()}.jpg",
+                        contentType = "image/jpeg",
+                    )
+                    saved.onSuccess {
+                        runCatching { RetrofitClient.apiService.getSelfies("Bearer $token") }
+                            .getOrNull()?.data?.let { _selfies.value = it }
+                        _selfieSaveNotice.value = "Saved to your selfie library."
+                        searchWithAllSelfies()
+                        return@launch
+                    }.onFailure { err ->
+                        _selfieSaveNotice.value =
+                            "Not saved to your library (${err.message ?: "upload failed"}) — searching with it anyway."
+                    }
+                }
                 searchBySelfie(file)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -555,7 +600,12 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
      * Face search with a SPECIFIC stored selfie — the cockpit's picker grid
      * (web SelfieSearchPanel parity: tapping a thumbnail fires the search).
      */
-    fun searchBySelfieId(selfieId: String) {
+    fun searchBySelfieId(selfieId: String) = searchWithStoredSelfies(SearchByFaceJsonRequest(selfieId = selfieId))
+
+    /** Every selfie in the library at once — different angles, one union of matches. */
+    fun searchWithAllSelfies() = searchWithStoredSelfies(SearchByFaceJsonRequest(allSelfies = true))
+
+    private fun searchWithStoredSelfies(request: SearchByFaceJsonRequest) {
         val event = _activeEvent.value ?: return
         _isFiltered.value = true
         isFaceSearchMode = true
@@ -570,7 +620,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 val response = RetrofitClient.apiService.searchPhotosByFaceJson(
                     token = "Bearer $token",
                     slug = event.slug,
-                    request = SearchByFaceJsonRequest(selfieId = selfieId)
+                    request = request
                 )
                 if (response.success && response.data != null) {
                     _searchState.value = PhotosSearchState.Success(
@@ -589,9 +639,10 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun searchByStoredSelfie() {
-        val cached = _selfies.value.firstOrNull { it.isPrimary }
-        if (cached != null) {
-            searchBySelfieId(cached.id)
+        // A library exists: match with all of it (2026-09-02), not just the
+        // primary — each saved selfie is another angle of the same runner.
+        if (_selfies.value.isNotEmpty()) {
+            searchWithAllSelfies()
             return
         }
         // The CTA that lands here renders exactly when the cached library is

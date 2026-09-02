@@ -118,6 +118,40 @@ class EventPhotoController(
                 message = "Sign in to search with a stored selfie.",
             )
         }
+        // allSelfies (2026-09-02): match against the whole library, not one
+        // pick. Every selfie the runner saved is a different angle of the
+        // same face; unioning them is what lets a side-on race photo match.
+        if (body.allSelfies == true) {
+            val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
+                ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+            val library = userSelfieRepository.findByUserIdOrderByUploadedAtDesc(principal.userId)
+            if (library.isEmpty()) {
+                throw NotFoundException(code = ErrorCodes.SELFIE_NOT_FOUND, message = "Selfie not found")
+            }
+            // Skip rows whose object is gone (storage backend changed, deleted
+            // out-of-band) rather than failing the whole search on one of them.
+            val samples = library.take(MAX_LIBRARY_SELFIES).mapNotNull { s ->
+                runCatching { storageService.getBytes(s.s3Key) }.getOrNull()?.let { bytes ->
+                    PhotoSearchService.SelfieSample(
+                        bytes = bytes,
+                        contentType = contentTypeOf(s.s3Key),
+                        filename = s.s3Key.substringAfterLast('/'),
+                    )
+                }
+            }
+            if (samples.isEmpty()) {
+                throw NotFoundException(
+                    code = ErrorCodes.SELFIE_NOT_FOUND,
+                    message = "Selfie file is no longer available",
+                )
+            }
+            return photoSearchService.searchByFaces(
+                eventId = event.id,
+                samples = samples,
+                pagination = PaginationParams.of(body.offset, body.limit),
+                requesterUserId = principal.userId,
+            )
+        }
         val rawId = body.selfieId?.trim().orEmpty()
         if (rawId.isEmpty()) {
             throw ValidationException(
@@ -210,11 +244,15 @@ class EventPhotoController(
 
     data class SearchByFaceJsonRequest(
         val selfieId: String? = null,
+        // True = ignore selfieId and match with every selfie in the library.
+        val allSelfies: Boolean? = null,
         val offset: Int? = null,
         val limit: Int? = null,
     )
 
     private companion object {
+        // Mirrors the selfie-library cap (SELFIE_MAX = 5 on both clients).
+        const val MAX_LIBRARY_SELFIES = 5
         const val MAX_SELFIE_BYTES = 5L * 1024 * 1024
         val SUPPORTED_SELFIE_TYPES = setOf("image/jpeg", "image/jpg", "image/png", "image/webp")
     }

@@ -165,6 +165,51 @@ class PhotoSearchServiceTest {
         assertTrue(Mockito.mockingDetails(aiApiClient).invocations.isEmpty())
     }
 
+    // ─── Whole-library search (2026-09-02) ────────────────────────────────
+
+    @Test
+    fun `searching with all selfies unions the person ids and skips a rejected selfie`() {
+        val service = service()
+        // Selfie 1 → person A; selfie 2 rejected by the provider (no face, 4xx);
+        // selfie 3 → persons A + B. Expect exactly {A, B}, one photo lookup.
+        whenFacesSearch()
+            .thenReturn(FacesSearchResult(matches = listOf(FaceMatch(person_id = "p-a", similarity = 0.9))))
+            .thenThrow(AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, "NO_FACES", "no face"))
+            .thenReturn(
+                FacesSearchResult(
+                    matches = listOf(
+                        FaceMatch(person_id = "p-a", similarity = 0.8),
+                        FaceMatch(person_id = "p-b", similarity = 0.7),
+                        FaceMatch(person_id = "p-weak", similarity = 0.2),
+                    ),
+                ),
+            )
+        stubPhotoLookup()
+        val samples = (1..3).map { PhotoSearchService.SelfieSample(byteArrayOf(it.toByte()), "image/jpeg", "s$it.jpg") }
+
+        service.searchByFaces(eventId, samples, pagination)
+
+        @Suppress("UNCHECKED_CAST")
+        val captor = org.mockito.ArgumentCaptor.forClass(Collection::class.java)
+            as org.mockito.ArgumentCaptor<Collection<String>>
+        Mockito.verify(photoService).findByEventAndPersonIds(anyArg(), capture(captor), anyArg(), anyArg())
+        assertEquals(setOf("p-a", "p-b"), captor.value.toSet())
+    }
+
+    @Test
+    fun `all-selfies search fails only when every selfie was rejected`() {
+        val service = service()
+        whenFacesSearch().thenThrow(AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, "NO_FACES", "no face"))
+        val samples = listOf(PhotoSearchService.SelfieSample(selfie, "image/jpeg", "s.jpg"))
+
+        val ex = org.junit.jupiter.api.assertThrows<AiApiException> {
+            service.searchByFaces(eventId, samples, pagination)
+        }
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.status)
+        Mockito.verify(photoService, Mockito.never())
+            .findByEventAndPersonIds(anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────
 
     private fun service(enabled: Boolean = true, fallback: Boolean = false): PhotoSearchService =
@@ -198,6 +243,10 @@ class PhotoSearchServiceTest {
     }
 
     private fun <T> anyArg(): T = Mockito.any()
+
+    // Mockito's capture() returns null; declared as platform T so Kotlin inserts
+    // no null check on the non-null parameter it stands in for.
+    private fun <T> capture(c: org.mockito.ArgumentCaptor<T>): T = c.capture()
 
     // Mockito.eq returns a platform-typed null that Kotlin's non-null check
     // rejects before Mockito can register the matcher. Falling back to `value`

@@ -52,6 +52,10 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -574,6 +578,15 @@ fun RunnerGalleryScreen(
                                 // library hasn't loaded (or is empty).
                                 val librarySelfies by viewModel.selfies.collectAsState()
                                 if (librarySelfies.isNotEmpty()) {
+                                    // Whole-library match is the default action: every
+                                    // saved selfie is another angle, and the backend
+                                    // unions the matches (2026-09-02).
+                                    PrimaryCta(
+                                        text = "Search with all my selfies (${librarySelfies.size})",
+                                        onClick = { viewModel.searchWithAllSelfies() },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
                                     Row(
                                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                                         modifier = Modifier.fillMaxWidth(),
@@ -612,7 +625,7 @@ fun RunnerGalleryScreen(
                                     }
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "Tap a selfie to search with it.",
+                                        text = "Or tap one selfie to search with just that one.",
                                         style = Typography.bodySmall,
                                         color = SlateSoft,
                                         textAlign = TextAlign.Center,
@@ -657,6 +670,45 @@ fun RunnerGalleryScreen(
                                         text = "Upload",
                                         onClick = { selfieGalleryLauncher.launch("image/*") },
                                         modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                // Save-and-search (2026-09-02): keep the new selfie
+                                // without a trip to Profile. Hidden when the library
+                                // is full or the viewer isn't a runner (the endpoint
+                                // is RUNNER-gated server-side).
+                                val saveToLibrary by viewModel.saveSelfieToLibrary.collectAsState()
+                                val saveNotice by viewModel.selfieSaveNotice.collectAsState()
+                                if (isTrueRunner && librarySelfies.size < SELFIE_MAX) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 48.dp)
+                                            .toggleable(
+                                                value = saveToLibrary,
+                                                role = Role.Checkbox,
+                                                onValueChange = { viewModel.setSaveSelfieToLibrary(it) },
+                                            ),
+                                    ) {
+                                        Checkbox(
+                                            checked = saveToLibrary,
+                                            onCheckedChange = null,
+                                            colors = CheckboxDefaults.colors(checkedColor = Ink, checkmarkColor = Bone),
+                                        )
+                                        Text(
+                                            text = "Also save it to my selfie library (${librarySelfies.size} of $SELFIE_MAX)",
+                                            style = Typography.bodySmall,
+                                            color = Slate,
+                                        )
+                                    }
+                                }
+                                saveNotice?.let { notice ->
+                                    Text(
+                                        text = notice,
+                                        style = Typography.bodySmall,
+                                        color = SlateSoft,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth(),
                                     )
                                 }
                             }
