@@ -244,7 +244,7 @@ fun ProfileScreen(
                                                 cameraLauncher.launch(uri)
                                             }
                                         } catch (e: Exception) {
-                                            // Handle exception
+                                            android.widget.Toast.makeText(context, "Unable to open camera.", android.widget.Toast.LENGTH_SHORT).show()
                                         }
                                     },
                                     shape = PillShape,

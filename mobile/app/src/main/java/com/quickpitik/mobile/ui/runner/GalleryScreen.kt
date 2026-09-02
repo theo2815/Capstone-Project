@@ -651,7 +651,7 @@ fun RunnerGalleryScreen(
                                                 pendingSelfieUri = uri
                                                 if (uri != null) selfieCameraLauncher.launch(uri)
                                             } catch (e: Exception) {
-                                                // Swallow — camera unavailable; user can still use Upload/Stored.
+                                                android.widget.Toast.makeText(context, "Unable to open camera.", android.widget.Toast.LENGTH_SHORT).show()
                                             }
                                         },
                                         modifier = Modifier.weight(1f),

@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 15
-- **✅ Already Solved:** 4 (Items 1, 2, 9, 14)
-- **⏳ Pending / To Be Worked On:** 11
+- **✅ Already Solved:** 5 (Items 1, 2, 9, 12, 14)
+- **⏳ Pending / To Be Worked On:** 10
 
 ---
 
@@ -45,12 +45,9 @@
     - `backend/src/main/kotlin/com/quickpitik/service/EmailService.kt`
   - **Action Plan:** Add mobile route / dialog to handle confirmation token or deep-link into the app.
 
-- [ ] **12. Runner — Camera silent failure exception swallowed**
-  - **Issue:** Exceptions during camera launch / MediaStore URI insertion in `ProfileScreen.kt` and `GalleryScreen.kt` are caught in empty catch blocks without user feedback.
-  - **Affected Files:**
-    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileScreen.kt`
-    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/GalleryScreen.kt`
-  - **Action Plan:** Add user-facing feedback (Toast / Snackbar / inline error state) when camera launch fails (e.g., camera permission denied or storage failure).
+- [x] **12. Runner — Camera silent failure exception swallowed**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** Replaced empty catch blocks with an `android.widget.Toast` in `ProfileScreen.kt` and `GalleryScreen.kt` so users receive immediate "Unable to open camera" feedback instead of silent failure.
 
 - [x] **14. Runner — `GalleryScreen` `activeEvent!!` crash risk**
   - **Status:** **ALREADY SOLVED**
