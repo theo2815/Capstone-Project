@@ -60,6 +60,7 @@ import com.quickpitik.mobile.ui.runner.rememberIsTrueRunner
 import com.quickpitik.mobile.ui.runner.toPreviewData
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.SecureScreen
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.BrandLogo
 import com.quickpitik.mobile.ui.theme.ErrorRed
@@ -294,6 +295,10 @@ private fun ProfileEventGalleryView(
     onBack: () -> Unit,
     cartViewModel: CartViewModel? = null,
 ) {
+    // Runner context (cart present) = unpurchased previews → block screenshots.
+    // The photographer's own profile preview (no cart) stays unrestricted.
+    if (cartViewModel != null) SecureScreen()
+
     val photosState by viewModel.profileEventPhotosState.collectAsState()
     val eventDetail by viewModel.galleryEventDetail.collectAsState()
     var selectedPhoto by remember { mutableStateOf<PhotoDto?>(null) }
@@ -400,18 +405,6 @@ private fun ProfileEventGalleryView(
                                                 contentDescription = photo.alt ?: "Photo",
                                                 contentScale = ContentScale.Crop,
                                                 modifier = Modifier.fillMaxSize()
-                                            )
-                                        }
-                                        Box(
-                                            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.04f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = "QUICKPITIK\nPREVIEW",
-                                                color = Color.White.copy(alpha = 0.35f),
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                textAlign = TextAlign.Center
                                             )
                                         }
                                     }

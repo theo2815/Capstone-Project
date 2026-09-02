@@ -118,7 +118,7 @@ import com.quickpitik.mobile.ui.theme.StatusChip
 import com.quickpitik.mobile.ui.theme.StatusTone
 import com.quickpitik.mobile.ui.theme.TileShape
 import com.quickpitik.mobile.ui.theme.Typography
-import com.quickpitik.mobile.ui.theme.WatermarkInk
+import com.quickpitik.mobile.ui.theme.SecureScreen
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -137,6 +137,10 @@ fun RunnerGalleryScreen(
     onOpenPhotographer: (String) -> Unit,
     onLogout: () -> Unit
 ) {
+    // Runner browse surface — every photo here is an unpurchased preview, so
+    // screenshots/recording/casting are blocked for the whole screen.
+    SecureScreen()
+
     // rememberSaveable: the typed bib + chosen search tab survive rotation.
     var bibSearchQuery by rememberSaveable { mutableStateOf("") }
     var activeSearchTab by rememberSaveable { mutableStateOf(0) } // 0 = Selfie, 1 = Bib Number
@@ -931,29 +935,10 @@ fun RunnerGalleryScreen(
                                             modifier = Modifier.fillMaxSize(),
                                             contentScale = ContentScale.Crop
                                         )
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .background(WatermarkInk)
-                                        )
                                     }
-
-                                    // Premium transparent watermark overlay (Fulfills NFR-P-2 security preview)
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .background(Color.Black.copy(alpha = 0.04f)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = "QUICKPITIK\nPREVIEW",
-                                            color = Color.White.copy(alpha = 0.35f),
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            textAlign = TextAlign.Center,
-                                            letterSpacing = 1.5.sp
-                                        )
-                                    }
+                                    // No client-side scrim or "PREVIEW" text:
+                                    // the backend bakes the QuickPitik credit
+                                    // + photographer logo into imageUrl.
 
                                     // Inline cart / buy actions — bottom-right of tile.
                                     Row(

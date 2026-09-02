@@ -36,7 +36,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -53,7 +52,7 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.BadgeShape
 import com.quickpitik.mobile.ui.theme.Bone
-import com.quickpitik.mobile.ui.theme.BrandLogo
+import com.quickpitik.mobile.ui.theme.SecureScreen
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.GhostCta
 import com.quickpitik.mobile.ui.theme.Ink
@@ -65,7 +64,6 @@ import com.quickpitik.mobile.ui.theme.PillShape
 import com.quickpitik.mobile.ui.theme.PrimaryCta
 import com.quickpitik.mobile.ui.theme.QpCardShape
 import com.quickpitik.mobile.ui.theme.SlateSoft
-import com.quickpitik.mobile.ui.theme.TileShape
 import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.Typography
 
@@ -236,6 +234,9 @@ fun PhotoPreview(
             dismissOnClickOutside = true,
         ),
     ) {
+        // The Dialog is its own Window: Browse = unpurchased preview, so block
+        // screenshots of it here (the host screen's flag doesn't reach it).
+        if (mode == PhotoPreviewMode.Browse) SecureScreen()
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -332,23 +333,10 @@ fun PhotoPreview(
                                         )
                                     }
                                 }
-                                // QuickPitik watermark (bottom-left of each
-                                // page) — Browse only. A runner in Owned mode
-                                // PAID for the unwatermarked shot, and a
-                                // photographer reviewing their own uploads
-                                // needs no client-side mark either (web
-                                // suppresses it when cleanUrl is present).
-                                if (mode == PhotoPreviewMode.Browse) {
-                                    BrandLogo(
-                                        compact = true,
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .align(Alignment.BottomStart)
-                                            .padding(12.dp)
-                                            .alpha(0.72f)
-                                            .clip(TileShape),
-                                    )
-                                }
+                                // No client-side platform mark: the backend
+                                // bakes the QuickPitik credit + photographer
+                                // logo into imageUrl; cleanUrl (owned) is
+                                // deliberately unmarked.
                             }
                         }
                         // "In cart" pill — overlay outside the pager so it doesn't
