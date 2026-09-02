@@ -1,9 +1,9 @@
 "use client";
 
+import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { BrandLogo } from "@/components/layout/brand-logo";
 import { Kicker } from "@/components/ui/kicker";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn, formatPrice } from "@/lib/utils";
@@ -242,23 +242,9 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             animation: "fade-in 0.4s ease-out both",
           }}
         >
-          {mode === "browse" && hasImage && imageLoaded && !imageFailed && !photo.cleanUrl && (
-            // Platform watermark — bottom-LEFT of the image area. Pairs with the
-            // BE-baked photographer watermark in the bottom-RIGHT of the JPEG
-            // (see backend WatermarkService.drawWatermark). Two corner marks:
-            // photographer (BE) + QuickPitik (FE). No diagonal/tile overlays.
-            //
-            // Suppressed when the BE handed us a `cleanUrl` — the requester
-            // owns the photo, so the FE-rendered platform mark would defeat
-            // the point of serving the unwatermarked original.
-            //
-            <div
-              aria-hidden="true"
-              className="absolute bottom-3 left-3 sm:bottom-4 sm:left-4 z-10 pointer-events-none select-none"
-            >
-              <BrandLogo className="h-8 w-32 opacity-80" />
-            </div>
-          )}
+          {/* No client-side platform mark: the backend bakes the QuickPitik
+              credit tiles + caption + photographer logo into imageUrl, and
+              cleanUrl (owned) is deliberately unmarked. */}
 
           {(mode === "owned" || mode === "review") && !hasImage && (
             <div
@@ -285,9 +271,10 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               onError={() => setImageFailed(true)}
               className={cn(
                 "absolute inset-0 w-full h-full object-contain transition-opacity duration-500",
+                PROTECTED_IMG_CLASS,
                 imageLoaded ? "opacity-100" : "opacity-0",
               )}
-              draggable={false}
+              {...PROTECTED_IMG_PROPS}
             />
           )}
 

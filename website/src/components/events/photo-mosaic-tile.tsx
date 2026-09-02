@@ -1,5 +1,6 @@
 "use client";
 
+import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image";
 import { useEffect, useState, type MouseEvent } from "react";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
@@ -124,9 +125,10 @@ export function PhotoMosaicTile({
               onError={() => setImageFailed(true)}
               className={cn(
                 "absolute inset-0 w-full h-full object-cover transition-opacity duration-500",
+                PROTECTED_IMG_CLASS,
                 imageLoaded ? "opacity-100" : "opacity-0",
               )}
-              draggable={false}
+              {...PROTECTED_IMG_PROPS}
             />
           )}
           <span

@@ -1,5 +1,6 @@
 "use client";
 
+import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -634,8 +635,9 @@ function PhotoStrip({
               <img
                 src={thumb}
                 alt={id.replace(/^mock-/, "")}
-                className="size-full object-cover"
+                className={`size-full object-cover ${PROTECTED_IMG_CLASS}`}
                 loading="lazy"
+                {...PROTECTED_IMG_PROPS}
               />
             ) : (
               <Kicker tnum className="px-2 truncate">

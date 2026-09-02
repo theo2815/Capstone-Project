@@ -22,6 +22,7 @@ export const ROUTES = {
   VERIFY_EMAIL: "/verify-email",
   ONBOARDING: "/onboarding",
   EVENTS: "/events",
+  VERIFY: "/verify",
   ORDERS: "/orders",
   PROFILE: "/profile",
   ACCOUNT: "/account",

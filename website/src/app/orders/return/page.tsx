@@ -1,5 +1,6 @@
 "use client";
 
+import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image";
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -330,8 +331,8 @@ function PhotoCard({
           <img
             src={previewSrc}
             alt={photo.bib ? `Race photo ${photo.bib}` : "Untagged race photo"}
-            className="absolute inset-0 w-full h-full object-cover"
-            draggable={false}
+            className={`absolute inset-0 w-full h-full object-cover ${PROTECTED_IMG_CLASS}`}
+            {...PROTECTED_IMG_PROPS}
           />
         ) : (
           <span className="absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.14em] text-[10px] text-bone/40 -rotate-[18deg]">

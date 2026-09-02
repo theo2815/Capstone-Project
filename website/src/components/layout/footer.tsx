@@ -39,6 +39,7 @@ export function Footer() {
           </FooterColumn>
 
           <FooterColumn title="Support">
+            <FooterLink href={ROUTES.VERIFY}>Verify a photo</FooterLink>
             <li>
               <a
                 href="mailto:support@quickpitik.ph"

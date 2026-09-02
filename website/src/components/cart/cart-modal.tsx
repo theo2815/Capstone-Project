@@ -1,5 +1,6 @@
 "use client";
 
+import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -431,8 +432,8 @@ function CartRow({
             <img
               src={item.thumbnailUrl}
               alt=""
-              className="absolute inset-0 w-full h-full object-cover"
-              draggable={false}
+              className={`absolute inset-0 w-full h-full object-cover ${PROTECTED_IMG_CLASS}`}
+              {...PROTECTED_IMG_PROPS}
             />
           ) : (
             <span className="absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.14em] text-[8px] text-bone/40 rotate-[-18deg]">
