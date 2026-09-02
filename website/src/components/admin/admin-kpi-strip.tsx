@@ -10,16 +10,13 @@ import {
   getEffectiveDisputes,
 } from "@/store/admin-dispute-store";
 import {
-  useAdminFlagStore,
-  getEffectiveFlags,
-} from "@/store/admin-flag-store";
-import {
   useAdminPayoutStore,
   mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
 import { cn } from "@/lib/utils";
 import {
   useAdminKpis,
+  useAdminFlags,
   useAdminPayouts,
   EMPTY_PAYOUTS,
 } from "@/hooks/use-admin-data";
@@ -49,7 +46,7 @@ export function AdminKpiStrip() {
   const { rows: userRows } = useAdminUsersData();
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
-  const flagOverrides = useAdminFlagStore((s) => s.overrides);
+  const serverOpenFlags = useAdminFlags({ status: "open" })?.total ?? 0;
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
   // A-1 followup: hydrate payouts from BE so the fallback path matches the
   // live data shape instead of the empty mock seed.
@@ -75,9 +72,7 @@ export function AdminKpiStrip() {
       disputeOverrides,
       disputeSubmissions,
     ).filter((d) => d.status === "open").length;
-    let openFlags = getEffectiveFlags(flagOverrides).filter(
-      (f) => f.status === "open",
-    ).length;
+    let openFlags = serverOpenFlags;
     let pendingPayouts = mergePayoutsWithOverrides(
       serverPayouts,
       payoutOverrides,
@@ -127,7 +122,7 @@ export function AdminKpiStrip() {
     userRows,
     disputeOverrides,
     disputeSubmissions,
-    flagOverrides,
+    serverOpenFlags,
     payoutOverrides,
     serverPayouts,
     liveKpis,

@@ -58,27 +58,28 @@ class AdminFlagService(
     ): PaginatedResponse<AdminFlagDto> {
         ensureEnabled()
         val statusWire = statusFilter?.takeIf { it.isNotBlank() }?.let { parseStatus(it).wire }
-        val q = query?.takeIf { it.isNotBlank() }
+        // ponytail: LIKE wildcards in q are left as-is (admin-only search); only the length is capped.
+        val q = query?.takeIf { it.isNotBlank() }?.take(100)
         val page = flagRepository.pageForAdmin(statusWire, q, OffsetLimitPageable(params))
         if (page.isEmpty) return PaginatedResponse.empty(params)
         val items = hydrateMany(page.content)
         return PaginatedResponse.of(items, page.totalElements, params)
     }
 
-    fun resolve(adminId: UUID, flagId: UUID, resolutionNote: String?): AdminFlagDto {
-        ensureEnabled()
-        val flag = loadFlag(flagId)
-        flag.status = FlagStatus.RESOLVED
-        flag.resolutionNote = resolutionNote
-        flag.resolvedBy = adminId
-        flag.resolvedAt = OffsetDateTime.now()
-        flagRepository.save(flag)
-        return hydrateOne(flag)
-    }
+    // Transitions: OPEN → hide / dismiss / resolve / escalate; ESCALATED → hide /
+    // dismiss / resolve; HIDDEN → dismiss / resolve (restores the photo when no
+    // other hidden flag still targets it). Everything else is 409.
+
+    fun resolve(adminId: UUID, flagId: UUID, resolutionNote: String?): AdminFlagDto =
+        close(adminId, flagId, resolutionNote, FlagStatus.RESOLVED)
+
+    fun dismiss(adminId: UUID, flagId: UUID, resolutionNote: String?): AdminFlagDto =
+        close(adminId, flagId, resolutionNote, FlagStatus.DISMISSED)
 
     fun hide(adminId: UUID, flagId: UUID, resolutionNote: String?): AdminFlagDto {
         ensureEnabled()
         val flag = loadFlag(flagId)
+        requireStatus(flag, FlagStatus.OPEN, FlagStatus.ESCALATED)
         flag.status = FlagStatus.HIDDEN
         flag.resolutionNote = resolutionNote
         flag.resolvedBy = adminId
@@ -95,26 +96,54 @@ class AdminFlagService(
         return hydrateOne(flag)
     }
 
-    fun dismiss(adminId: UUID, flagId: UUID, resolutionNote: String?): AdminFlagDto {
+    fun escalate(adminId: UUID, flagId: UUID, resolutionNote: String?): AdminFlagDto {
         ensureEnabled()
         val flag = loadFlag(flagId)
-        flag.status = FlagStatus.DISMISSED
+        requireStatus(flag, FlagStatus.OPEN)
+        flag.status = FlagStatus.ESCALATED
+        // Escalation is not a resolution — the reviewer stamp stays empty until
+        // the higher tier hides or dismisses.
         flag.resolutionNote = resolutionNote
-        flag.resolvedBy = adminId
-        flag.resolvedAt = OffsetDateTime.now()
         flagRepository.save(flag)
         return hydrateOne(flag)
     }
 
-    fun escalate(adminId: UUID, flagId: UUID, resolutionNote: String?): AdminFlagDto {
+    private fun close(adminId: UUID, flagId: UUID, resolutionNote: String?, target: FlagStatus): AdminFlagDto {
         ensureEnabled()
         val flag = loadFlag(flagId)
-        flag.status = FlagStatus.ESCALATED
+        requireStatus(flag, FlagStatus.OPEN, FlagStatus.ESCALATED, FlagStatus.HIDDEN)
+        val wasHidden = flag.status == FlagStatus.HIDDEN
+        flag.status = target
         flag.resolutionNote = resolutionNote
         flag.resolvedBy = adminId
         flag.resolvedAt = OffsetDateTime.now()
         flagRepository.save(flag)
+        if (wasHidden) restorePhotoIfUnflagged(flag)
         return hydrateOne(flag)
+    }
+
+    private fun requireStatus(flag: Flag, vararg allowed: FlagStatus) {
+        if (flag.status !in allowed) {
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "Flag is already ${flag.statusWire}",
+            )
+        }
+    }
+
+    private fun restorePhotoIfUnflagged(flag: Flag) {
+        if (flag.targetKind != FlagTargetKind.PHOTO) return
+        val stillHiddenByAnother = flagRepository.existsByTargetKindWireAndTargetIdAndStatusWireAndIdNot(
+            flag.targetKindWire, flag.targetId, FlagStatus.HIDDEN.wire, flag.id,
+        )
+        if (stillHiddenByAnother) return
+        photoRepository.findById(flag.targetId).ifPresent { photo ->
+            if (photo.status == PhotoStatus.HIDDEN) {
+                photo.status = PhotoStatus.LIVE
+                photoRepository.save(photo)
+            }
+        }
     }
 
     private fun loadFlag(flagId: UUID): Flag =
@@ -166,8 +195,9 @@ class AdminFlagService(
                 ?: reviewerUser?.email?.ifBlank { null }
                 ?: if (flag.resolvedBy != null) "admin" else null
 
-            val thumbnailUrl = photo?.let { p ->
-                val key = p.thumbnailS3Key ?: p.watermarkS3Key ?: p.s3Key
+            // Never the original s3Key: a still-PROCESSING photo has no derived
+            // asset yet and the card falls back to its gradient placeholder.
+            val thumbnailUrl = (photo?.watermarkS3Key ?: photo?.thumbnailS3Key)?.let { key ->
                 storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
             }
 

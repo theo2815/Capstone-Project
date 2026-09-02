@@ -104,6 +104,26 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         assertTrue("EXPIRED" in statusCheck)
     }
 
+    // V41 widens the status CHECK. `DROP CONSTRAINT IF EXISTS` would silently
+    // no-op on a misnamed constraint and leave the old one rejecting
+    // 'escalated' at runtime - so assert both the widened definition and that
+    // exactly one status check survived.
+    @Test
+    fun `flags accept the escalated status`() {
+        val statusCheck = jdbcTemplate.queryForObject(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'flags_status_check'",
+            String::class.java,
+        ).orEmpty()
+        assertTrue("escalated" in statusCheck, "flags_status_check does not allow 'escalated': $statusCheck")
+
+        val statusChecks = jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM pg_constraint WHERE conrelid = 'flags'::regclass AND contype = 'c' " +
+                "AND pg_get_constraintdef(oid) LIKE '%status%'",
+            Int::class.java,
+        )
+        assertEquals(1, statusChecks, "V41 left more than one status CHECK on flags")
+    }
+
     // Redundant with ddl-auto=validate, which already ran at context load — but
     // it names the mapping explicitly, so a future entity/migration drift on
     // User reports here instead of only in a startup stack trace.

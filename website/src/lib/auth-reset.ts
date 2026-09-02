@@ -5,7 +5,6 @@ import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useUserMediaStore } from "@/store/user-media-store";
 import { useAdminDisputeStore } from "@/store/admin-dispute-store";
 import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
-import { useAdminFlagStore } from "@/store/admin-flag-store";
 import { useAdminLegendStore } from "@/store/admin-legend-store";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { useAdminPayoutStore } from "@/store/admin-payout-store";
@@ -73,7 +72,6 @@ export function resetUserScopedStores(): void {
   useAdminPayoutStore.getState().clear();
   useAdminPayoutReportStore.getState().clear();
   useAdminDisputeStore.getState().clear();
-  useAdminFlagStore.getState().clear();
   useAdminEventOverridesStore.getState().clear();
   useAdminUsersServerStore.getState().clear();
   useAdminPaletteStore.getState().setOpen(false);

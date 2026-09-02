@@ -30,4 +30,11 @@ interface FlagRepository : JpaRepository<Flag, UUID> {
     ): Page<Flag>
 
     fun countByStatusWire(statusWire: String): Long
+
+    fun existsByTargetKindWireAndTargetIdAndStatusWireAndIdNot(
+        targetKindWire: String,
+        targetId: UUID,
+        statusWire: String,
+        id: UUID,
+    ): Boolean
 }

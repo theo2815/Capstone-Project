@@ -1,12 +1,15 @@
 import { useAdminDisputeStore, getEffectiveDisputes } from "@/store/admin-dispute-store";
-import { useAdminFlagStore, getEffectiveFlags } from "@/store/admin-flag-store";
 import {
   useAdminPayoutStore,
   mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
-import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-data";
+import {
+  useAdminFlags,
+  useAdminPayouts,
+  EMPTY_PAYOUTS,
+} from "@/hooks/use-admin-data";
 import { getAdminUsersDataSnapshot } from "@/lib/admin-users-data";
-import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
+import { ROUTES } from "@/lib/constants";
 
 function countPendingPhotographers(): number {
   let count = 0;
@@ -43,6 +46,8 @@ export interface AdminAttentionTarget {
 
 export function useAdminAttentionTarget(): AdminAttentionTarget | null {
   const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
+  // BE-hydrated; useAdminFlags is a no-op when the feature gate is off.
+  const openFlags = useAdminFlags({ status: "open" })?.total ?? 0;
 
   // Disputes — read effective state via store overrides + seed + submissions
   const disputeState = useAdminDisputeStore.getState();
@@ -58,19 +63,12 @@ export function useAdminAttentionTarget(): AdminAttentionTarget | null {
     };
   }
 
-  // Flags — skipped entirely when the v1 feature gate is off.
-  if (ADMIN_FLAGS_ENABLED) {
-    const flagOverrides = useAdminFlagStore.getState().overrides;
-    const openFlags = getEffectiveFlags(flagOverrides).filter(
-      (f) => f.status === "open",
-    ).length;
-    if (openFlags > 0) {
-      return {
-        href: ROUTES.ADMIN_FLAGS,
-        count: openFlags,
-        label: "Flags",
-      };
-    }
+  if (openFlags > 0) {
+    return {
+      href: ROUTES.ADMIN_FLAGS,
+      count: openFlags,
+      label: "Flags",
+    };
   }
 
   // Verifications — attention dot lights up the Inbox row, since Inbox is
@@ -116,6 +114,7 @@ export interface AdminQueueCounts {
 // summary line.
 export function useAdminQueueCounts(): AdminQueueCounts {
   const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
+  const flags = useAdminFlags({ status: "open" })?.total ?? 0;
   const disputeState = useAdminDisputeStore.getState();
   const payoutOverrides = useAdminPayoutStore.getState().overrides;
 
@@ -123,11 +122,6 @@ export function useAdminQueueCounts(): AdminQueueCounts {
     disputeState.overrides,
     disputeState.submissions,
   ).filter((d) => d.status === "open").length;
-  const flags = ADMIN_FLAGS_ENABLED
-    ? getEffectiveFlags(useAdminFlagStore.getState().overrides).filter(
-        (f) => f.status === "open",
-      ).length
-    : 0;
   const payouts = mergePayoutsWithOverrides(
     serverPayouts,
     payoutOverrides,

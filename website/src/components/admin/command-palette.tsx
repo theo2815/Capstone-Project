@@ -12,7 +12,6 @@ import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { useAdminDisputeStore } from "@/store/admin-dispute-store";
-import { useAdminFlagStore } from "@/store/admin-flag-store";
 import { useAdminPayoutStore } from "@/store/admin-payout-store";
 import { useAdminUsersData } from "@/lib/admin-users-data";
 import {
@@ -22,6 +21,7 @@ import {
   type PaletteEntry,
 } from "@/lib/admin-palette-index";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
+import { useAdminFlags, EMPTY_FLAGS } from "@/hooks/use-admin-data";
 import { cn } from "@/lib/utils";
 
 // Phase 5 admin ⌘K command palette. Reads live snapshots from the four
@@ -50,7 +50,7 @@ export function CommandPalette() {
 
   const { rows: userPool } = useAdminUsersData();
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
-  const flagOverrides = useAdminFlagStore((s) => s.overrides);
+  const flags = useAdminFlags()?.items ?? EMPTY_FLAGS;
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
 
   const router = useRouter();
@@ -65,10 +65,10 @@ export function CommandPalette() {
       buildPaletteIndex({
         userPool,
         disputeOverrides,
-        flagOverrides,
+        flags,
         payoutOverrides,
       }),
-    [userPool, disputeOverrides, flagOverrides, payoutOverrides],
+    [userPool, disputeOverrides, flags, payoutOverrides],
   );
 
   const indexById = useMemo(() => {

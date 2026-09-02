@@ -8,10 +8,7 @@ import type {
   Dispute,
   DisputeResolution,
 } from "@/lib/admin-disputes";
-import type {
-  Flag,
-  FlagStatus,
-} from "@/lib/admin-flags";
+import type { Flag, FlagStatus } from "@/lib/admin-flags";
 import type {
   AdminPayoutCycle,
   AdminPayoutStatus,
@@ -352,22 +349,11 @@ function buildFlagsQs(args: AdminFlagListArgs): string {
   return p.toString();
 }
 
-export async function fetchAdminFlags(
+export function fetchAdminFlags(
   args: AdminFlagListArgs = {},
-): Promise<Flag[]> {
-  const res = await api.get<PaginatedResponse<Flag>>(
+): Promise<PaginatedResponse<Flag>> {
+  return api.get<PaginatedResponse<Flag>>(
     `/admin/flags?${buildFlagsQs(args)}`,
-  );
-  return res.items;
-}
-
-export async function resolveAdminFlag(
-  flagId: string,
-  resolutionNote?: string | null,
-): Promise<Flag> {
-  return api.post<Flag>(
-    `/admin/flags/${encodeURIComponent(flagId)}/resolve`,
-    { resolutionNote },
   );
 }
 

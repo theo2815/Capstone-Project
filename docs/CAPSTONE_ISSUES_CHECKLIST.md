@@ -24,26 +24,6 @@
   - **Status:** **ALREADY SOLVED**
   - **Verification:** Refactored the mobile header layout (`ProfileScreen.kt`) to stack the Camera/Gallery buttons below the title using a `Column` instead of squeezing them in a `Row(SpaceBetween)`. On desktop web (`selfie-library.tsx`), added `md:grid-cols-4` to smooth out responsive upload tile scaling.
 
-- [x] **6. Admin — Dispute store & queue wired to backend API**
-  - **Status:** **ALREADY SOLVED**
-  - **Verification:** `disputes-queue.tsx` uses `useAdminDisputes()` from `use-admin-data.ts` to hydrate live server data from `GET /api/v1/admin/disputes`. Admin resolve, deny, and escalate actions in `admin-dispute-store.ts` fire `apiResolveDispute()`, `apiDenyDispute()`, and `apiEscalateDispute()` calls in `api-admin.ts` backed by `AdminDisputeService.kt` and `PaymongoRefundService.kt`.
-
-- [x] **7. Admin — Flag store & queue wired to backend API**
-  - **Status:** **ALREADY SOLVED**
-  - **Verification:** `AdminFlagService.kt` and `AdminFlagsController.kt` shipped on backend. `fetchAdminFlags()`, `resolveAdminFlag()`, `hideAdminFlag()`, `dismissAdminFlag()`, and `escalateAdminFlag()` wired in `api-admin.ts`. `useAdminFlags()` React Query hook integrated in `flags-queue.tsx` with optimistic store overrides in `admin-flag-store.ts`. Presigned S3 thumbnail previews rendered on `admin-flag-card.tsx` and aligned `FlagStatus` type with `"resolved"`.
-
-- [x] **8. Photographer — Settings hydrated from backend API**
-  - **Status:** **ALREADY SOLVED**
-  - **Verification:** `api-photographer-settings.ts` provides backend API endpoints for brand (`putBrand`), handle (`putHandle`), region (`putRegion`), cover (`postCover`), watermark (`postWatermark`), socials, and payout accounts. `usePhotographerSettingsHydration()` mounted in `DashboardShell` populates store from `/me/photographer/brand` on login.
-
-- [x] **13. Photographer — Google OAuth backend & onboarding flow**
-  - **Status:** **ALREADY SOLVED IN CODE**
-  - **Verification:** `GoogleAuthService.kt` (backend V38) implements `POST /auth/google` with auto-account linking, ID-token validation, and role onboarding selection (`ROLE_REQUIRED` 422). `google-button.tsx` uses Google Identity Services (GIS) and routes new users to `/onboarding`. Only requires configuring `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in production environment.
-
-- [x] **15. SRS / Wireframe — Add updated Module 3 1.1 mobile wireframe**
-  - **Status:** **ALREADY SOLVED**
-  - **Verification:** Added `website/src/app/wireframes/srs/m3-1/page.tsx` rendering `UC-M3-1.1` Mobile Authentication & Verification wireframe. Registered route `UC-M3-1.1` in `website/src/app/wireframes/srs/page.tsx`.
-
 - [x] **9. Photographer — Payout request on Mobile**
   - **Status:** **ALREADY SOLVED**
   - **Verification:** Implemented in `PhotographerEarningsScreen.kt` via `WalletSlab`, `OpenRequestBlock`, and `submitPayoutRequest()`.
@@ -66,6 +46,33 @@
 
 ---
 
+### 🌐 Website & Admin Panel
+
+- [x] **6. Admin — Dispute store & queue wired to backend API**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** `disputes-queue.tsx` uses `useAdminDisputes()` from `use-admin-data.ts` to hydrate live server data from `GET /api/v1/admin/disputes`. Admin resolve, deny, and escalate actions in `admin-dispute-store.ts` fire `apiResolveDispute()`, `apiDenyDispute()`, and `apiEscalateDispute()` calls in `api-admin.ts` backed by `AdminDisputeService.kt` and `PaymongoRefundService.kt`.
+
+- [x] **7. Admin — Flag store & queue wired to backend API**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** `AdminFlagService.kt` (transition guards, hide→HIDDEN cascade, dismiss/resolve of a hidden flag restores LIVE) + `AdminFlagsController.kt` (list/hide/dismiss/escalate/resolve, `q`). Website reads `GET /admin/flags` via `useAdminFlags()` (open + history pages) and mutates through `useFlagActions()` — server-authoritative, no optimistic override; failures surface as error toasts. Presigned thumbnails on `admin-flag-card.tsx`. Reviewed + hardened 2026-09-02 (`AdminFlagServiceTest`, V41 assertion in `FlywayMigrationIntegrationTest`). **No runner-side flag filing exists yet — the queue is empty until it lands.**
+
+- [x] **8. Photographer — Settings hydrated from backend API**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** `api-photographer-settings.ts` provides backend API endpoints for brand (`putBrand`), handle (`putHandle`), region (`putRegion`), cover (`postCover`), watermark (`postWatermark`), socials, and payout accounts. `usePhotographerSettingsHydration()` mounted in `DashboardShell` populates store from `/me/photographer/brand` on login.
+
+- [x] **13. Photographer — Google OAuth backend & onboarding flow**
+  - **Status:** **ALREADY SOLVED IN CODE**
+  - **Verification:** `GoogleAuthService.kt` (backend V38) implements `POST /auth/google` with auto-account linking, ID-token validation, and role onboarding selection (`ROLE_REQUIRED` 422). `google-button.tsx` uses Google Identity Services (GIS) and routes new users to `/onboarding`. Only requires configuring `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in production environment.
+
+---
+### 📄 Documentation & Wireframes (SRS)
+
+- [x] **15. SRS / Wireframe — Add updated Module 3 1.1 mobile wireframe**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** Added `website/src/app/wireframes/srs/m3-1/page.tsx` rendering `UC-M3-1.1` Mobile Authentication & Verification wireframe. Registered route `UC-M3-1.1` in `website/src/app/wireframes/srs/page.tsx`.
+
+---
+
 ### 💻 Desktop Application (BatchMyPhotos)
 
 - [ ] **3. Desktop — Settings Page Missing**
@@ -85,5 +92,4 @@
   - **Affected Files:**
     - `BatchMyPhotos` (Desktop password reset flow)
   - **Action Plan:** Update Desktop app to implement the 2-step OTP verification flow matching web/mobile.
-
 

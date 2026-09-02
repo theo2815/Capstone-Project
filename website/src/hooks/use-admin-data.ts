@@ -1,11 +1,15 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminKpis,
   fetchAdminKpiTrend,
   fetchAdminDisputes,
   fetchAdminFlags,
+  hideAdminFlag,
+  dismissAdminFlag,
+  escalateAdminFlag,
   fetchAdminPayouts,
   fetchAdminPayoutReports,
   fetchAdminEvents,
@@ -30,6 +34,8 @@ import type {
   PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
 import type { ListEvent } from "@/app/events/events-browser";
+import type { PaginatedResponse } from "@/types/api";
+import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 
 // React Query hooks for admin reads.
 // Keys: ["admin", <domain>, ...]
@@ -87,15 +93,45 @@ export function useAdminDisputes(args: {
 
 // ───────────────────────────────────────────── Flags
 
+// Returns the page (items + total) so callers can tell when the 200-row
+// cap truncated the list. Gated on ADMIN_FLAGS_ENABLED here, once, so every
+// consumer can call it unconditionally (rules-of-hooks) without firing a
+// request the backend would 403.
 export function useAdminFlags(
   args: AdminFlagListArgs = {},
-): Flag[] | null {
-  const query = useQuery<Flag[]>({
+): PaginatedResponse<Flag> | null {
+  const query = useQuery<PaginatedResponse<Flag>>({
     queryKey: ["admin", "flags", args],
     queryFn: () => fetchAdminFlags(args),
     staleTime: LIST_STALE_MS,
+    enabled: ADMIN_FLAGS_ENABLED,
   });
   return query.data ?? null;
+}
+
+// Flag actions are server-authoritative: no optimistic override, the call
+// awaits the backend and then refetches every flags list + the KPI counts.
+// Callers catch the rejection and show an error toast — a lost moderation
+// action must never look like a success.
+export function useFlagActions() {
+  const qc = useQueryClient();
+  return useMemo(() => {
+    const settle = async (p: Promise<unknown>) => {
+      await p;
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["admin", "flags"] }),
+        qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
+      ]);
+    };
+    return {
+      hide: (flagId: string, reason: string | null) =>
+        settle(hideAdminFlag(flagId, reason)),
+      dismiss: (flagId: string, reason: string | null = null) =>
+        settle(dismissAdminFlag(flagId, reason)),
+      escalate: (flagId: string, note: string | null) =>
+        settle(escalateAdminFlag(flagId, note)),
+    };
+  }, [qc]);
 }
 
 // ───────────────────────────────────────────── Payouts
