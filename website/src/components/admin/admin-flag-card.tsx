@@ -120,13 +120,23 @@ export function AdminFlagCard({
           : ""
       } ${focused ? "ring-2 ring-ink ring-offset-2 ring-offset-bone" : ""}`}
     >
-      <div
-        className="aspect-[3/2] border-b border-line"
-        style={{
-          background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
-        }}
-        aria-label={flag.photoSnapshot.alt}
-      />
+      {flag.photoSnapshot.thumbnailUrl ? (
+        <div className="aspect-[3/2] border-b border-line overflow-hidden bg-bone-deep relative">
+          <img
+            src={flag.photoSnapshot.thumbnailUrl}
+            alt={flag.photoSnapshot.alt}
+            className="w-full h-full object-cover"
+          />
+        </div>
+      ) : (
+        <div
+          className="aspect-[3/2] border-b border-line"
+          style={{
+            background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
+          }}
+          aria-label={flag.photoSnapshot.alt}
+        />
+      )}
       <div className="p-5 md:p-6 space-y-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">

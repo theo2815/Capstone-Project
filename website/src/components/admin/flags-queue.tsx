@@ -583,13 +583,23 @@ function FlagDetailBody({ flag }: { flag: Flag }) {
         <Kicker as="p" tone="soft" className="mb-3">
           Photo
         </Kicker>
-        <div
-          className="aspect-[16/9] rounded-2xl border border-line"
-          style={{
-            background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
-          }}
-          aria-label={flag.photoSnapshot.alt}
-        />
+        {flag.photoSnapshot.thumbnailUrl ? (
+          <div className="aspect-[16/9] rounded-2xl border border-line overflow-hidden bg-bone-deep relative">
+            <img
+              src={flag.photoSnapshot.thumbnailUrl}
+              alt={flag.photoSnapshot.alt}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        ) : (
+          <div
+            className="aspect-[16/9] rounded-2xl border border-line"
+            style={{
+              background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
+            }}
+            aria-label={flag.photoSnapshot.alt}
+          />
+        )}
         <p className="font-sans text-sm text-ink-soft mt-3">
           {flag.photoSnapshot.alt}
         </p>
