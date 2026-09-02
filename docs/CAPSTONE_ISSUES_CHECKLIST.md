@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 15
-- **✅ Already Solved:** 11 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14)
-- **⏳ Pending / To Be Worked On:** 4
+- **✅ Already Solved:** 12 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+- **⏳ Pending / To Be Worked On:** 3
 
 ---
 
@@ -39,6 +39,10 @@
 - [x] **13. Photographer — Google OAuth backend & onboarding flow**
   - **Status:** **ALREADY SOLVED IN CODE**
   - **Verification:** `GoogleAuthService.kt` (backend V38) implements `POST /auth/google` with auto-account linking, ID-token validation, and role onboarding selection (`ROLE_REQUIRED` 422). `google-button.tsx` uses Google Identity Services (GIS) and routes new users to `/onboarding`. Only requires configuring `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in production environment.
+
+- [x] **15. SRS / Wireframe — Add updated Module 3 1.1 mobile wireframe**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** Added `website/src/app/wireframes/srs/m3-1/page.tsx` rendering `UC-M3-1.1` Mobile Authentication & Verification wireframe. Registered route `UC-M3-1.1` in `website/src/app/wireframes/srs/page.tsx`.
 
 - [x] **9. Photographer — Payout request on Mobile**
   - **Status:** **ALREADY SOLVED**
@@ -82,14 +86,4 @@
     - `BatchMyPhotos` (Desktop password reset flow)
   - **Action Plan:** Update Desktop app to implement the 2-step OTP verification flow matching web/mobile.
 
----
 
-### 📄 Documentation & Wireframes (SRS)
-
-- [ ] **15. SRS / Wireframe — Add updated Module 3 1.1 mobile wireframe**
-  - **Issue:** Module 3 currently only has Web wireframes (`m3-3` through `m3-8`) and a text placeholder for M3.1 auth in `SRS-QuickPitik.md`.
-  - **Affected Files:**
-    - `website/src/app/wireframes/srs/`
-    - `website/src/app/wireframes/srs/page.tsx`
-    - `Papers-For-Capstone/SRS-QuickPitik.md`
-  - **Action Plan:** Add the mobile wireframe page for Module 3 1.1 and update the SRS document links.

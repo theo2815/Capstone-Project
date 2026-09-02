@@ -8,11 +8,12 @@ const ROUTES = [
   { idx: "05", uc: "UC-M1-1.5", screen: "Notification + Filtered Gallery", href: "/wireframes/srs/m1-5", group: "Module 1 · Mobile App" },
   { idx: "06", uc: "UC-M2-2.2", screen: "Blur Analysis & Manual Override", href: "/wireframes/srs/m2-2", group: "Module 2 · Desktop (BatchMyPhotos)" },
   { idx: "07", uc: "UC-M2-2.3", screen: "Batch Sort & Folder Output", href: "/wireframes/srs/m2-3", group: "Module 2 · Desktop (BatchMyPhotos)" },
-  { idx: "08", uc: "UC-M3-3.3", screen: "Search by Selfie · AI Face Match", href: "/wireframes/srs/m3-3", group: "Module 3 · Marketplace (Web)" },
-  { idx: "09", uc: "UC-M3-3.4", screen: "Search by Bib Number · AI OCR", href: "/wireframes/srs/m3-4", group: "Module 3 · Marketplace (Web)" },
-  { idx: "10", uc: "UC-M3-3.6", screen: "Cart Drawer · Photo Review", href: "/wireframes/srs/m3-6", group: "Module 3 · Marketplace (Web)" },
-  { idx: "11", uc: "UC-M3-3.7", screen: "Checkout & Payment · PayMongo", href: "/wireframes/srs/m3-7", group: "Module 3 · Marketplace (Web)" },
-  { idx: "12", uc: "UC-3.3",    screen: "Receipt & Bundle Download · Post-Payment", href: "/wireframes/srs/m3-8", group: "Module 3 · Marketplace (Web)" },
+  { idx: "08", uc: "UC-M3-1.1", screen: "Mobile Authentication & Verification", href: "/wireframes/srs/m3-1", group: "Module 3 · Mobile / Web Auth" },
+  { idx: "09", uc: "UC-M3-3.3", screen: "Search by Selfie · AI Face Match", href: "/wireframes/srs/m3-3", group: "Module 3 · Marketplace (Web)" },
+  { idx: "10", uc: "UC-M3-3.4", screen: "Search by Bib Number · AI OCR", href: "/wireframes/srs/m3-4", group: "Module 3 · Marketplace (Web)" },
+  { idx: "11", uc: "UC-M3-3.6", screen: "Cart Drawer · Photo Review", href: "/wireframes/srs/m3-6", group: "Module 3 · Marketplace (Web)" },
+  { idx: "12", uc: "UC-M3-3.7", screen: "Checkout & Payment · PayMongo", href: "/wireframes/srs/m3-7", group: "Module 3 · Marketplace (Web)" },
+  { idx: "13", uc: "UC-3.3",    screen: "Receipt & Bundle Download · Post-Payment", href: "/wireframes/srs/m3-8", group: "Module 3 · Marketplace (Web)" },
 ];
 
 export default function WireframesIndex() {
