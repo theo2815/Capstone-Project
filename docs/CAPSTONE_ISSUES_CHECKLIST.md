@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 15
-- **✅ Already Solved:** 10 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 14)
-- **⏳ Pending / To Be Worked On:** 5
+- **✅ Already Solved:** 11 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+- **⏳ Pending / To Be Worked On:** 4
 
 ---
 
@@ -35,6 +35,10 @@
 - [x] **8. Photographer — Settings hydrated from backend API**
   - **Status:** **ALREADY SOLVED**
   - **Verification:** `api-photographer-settings.ts` provides backend API endpoints for brand (`putBrand`), handle (`putHandle`), region (`putRegion`), cover (`postCover`), watermark (`postWatermark`), socials, and payout accounts. `usePhotographerSettingsHydration()` mounted in `DashboardShell` populates store from `/me/photographer/brand` on login.
+
+- [x] **13. Photographer — Google OAuth backend & onboarding flow**
+  - **Status:** **ALREADY SOLVED IN CODE**
+  - **Verification:** `GoogleAuthService.kt` (backend V38) implements `POST /auth/google` with auto-account linking, ID-token validation, and role onboarding selection (`ROLE_REQUIRED` 422). `google-button.tsx` uses Google Identity Services (GIS) and routes new users to `/onboarding`. Only requires configuring `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in production environment.
 
 - [x] **9. Photographer — Payout request on Mobile**
   - **Status:** **ALREADY SOLVED**
@@ -77,18 +81,6 @@
   - **Affected Files:**
     - `BatchMyPhotos` (Desktop password reset flow)
   - **Action Plan:** Update Desktop app to implement the 2-step OTP verification flow matching web/mobile.
-
----
-
-### 🌐 Website & Admin Panel
-
-- [ ] **13. Photographer — Google OAuth `OAUTH_ENABLED = false`**
-  - **Issue:** `google-button.tsx` disables Google sign-in when `NEXT_PUBLIC_GOOGLE_CLIENT_ID` is empty. Also, backend Google OAuth currently defaults new accounts to `RUNNER`.
-  - **Affected Files:**
-    - `website/src/components/auth/google-button.tsx`
-    - `website/src/lib/constants.ts`
-    - `backend/src/main/kotlin/com/quickpitik/service/auth/GoogleAuthService.kt`
-  - **Action Plan:** Supply Google Cloud client ID configuration and handle role selection/onboarding for photographers signing up via Google.
 
 ---
 
