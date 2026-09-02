@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import { Kicker } from "@/components/ui/kicker";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn, formatPrice } from "@/lib/utils";
@@ -251,20 +252,11 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             // owns the photo, so the FE-rendered platform mark would defeat
             // the point of serving the unwatermarked original.
             //
-            // TODO: replace the `bg-bone/35` square with the QuickPitik logo SVG
-            // once the asset lands in /public. Keep the flex row + spacing so
-            // the wordmark sits beside the logo at the same baseline.
             <div
               aria-hidden="true"
-              className="absolute bottom-3 left-3 sm:bottom-4 sm:left-4 z-10 pointer-events-none select-none flex items-center gap-1.5 mix-blend-overlay"
+              className="absolute bottom-3 left-3 sm:bottom-4 sm:left-4 z-10 pointer-events-none select-none"
             >
-              <span
-                className="size-3.5 rounded-sm bg-bone/35"
-                aria-hidden="true"
-              />
-              <span className="font-mono uppercase tracking-[0.14em] text-[10px] sm:text-[11px] text-bone/55">
-                QuickPitik
-              </span>
+              <BrandLogo className="h-8 w-32 opacity-80" />
             </div>
           )}
 

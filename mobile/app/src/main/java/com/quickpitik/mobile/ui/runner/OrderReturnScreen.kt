@@ -51,6 +51,7 @@ import com.quickpitik.mobile.data.remote.OrderPhotoDetailDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.BrandLogo
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.GhostCta
@@ -203,8 +204,10 @@ private fun ReturnTopBar(onClose: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        BrandLogo(compact = true)
         IconButton(onClick = onClose) {
             Icon(
                 imageVector = Icons.Default.Close,

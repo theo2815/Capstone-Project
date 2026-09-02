@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -42,6 +45,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.quickpitik.mobile.R
 
 // ── Finish Line shared primitives ───────────────────────────────────────────
 // Encode the website's hard rules ONCE so screens stop hand-rolling styles:
@@ -58,6 +62,23 @@ val PillShape = RoundedCornerShape(100)
 
 /** Card radius (website `rounded-2xl` = 16px). */
 val QpCardShape = RoundedCornerShape(16.dp)
+
+/** Official camera-mark + wordmark lockup from the shared QuickPitik asset. */
+@Composable
+fun BrandLogo(
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    contentDescription: String? = "QuickPitik",
+) {
+    Image(
+        painter = painterResource(R.drawable.quickpitik_logo),
+        contentDescription = contentDescription,
+        contentScale = ContentScale.Fit,
+        modifier = modifier
+            .width(if (compact) 112.dp else 144.dp)
+            .height(if (compact) 28.dp else 36.dp),
+    )
+}
 
 /**
  * Anton hero headline — the website's `.font-hero` (Finish Line). UPPERCASES

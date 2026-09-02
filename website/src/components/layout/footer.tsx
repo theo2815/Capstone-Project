@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import { ROUTES } from "@/lib/constants";
 
 export function Footer() {
@@ -16,16 +17,10 @@ export function Footer() {
           <div className="col-span-2 md:col-span-1">
             <Link
               href={ROUTES.HOME}
-              className="inline-flex items-center gap-2.5 text-ink transition-opacity hover:opacity-75"
+              className="inline-flex items-center text-ink transition-opacity hover:opacity-75"
               aria-label="QuickPitik home"
             >
-              <svg className="size-7" viewBox="0 0 28 28" fill="none" aria-hidden="true">
-                <circle cx="14" cy="14" r="13" stroke="currentColor" strokeWidth="1.5" />
-                <circle cx="14" cy="14" r="5" className="fill-fresh" />
-              </svg>
-              <span className="font-display text-lg font-extrabold tracking-tight">
-                QuickPitik
-              </span>
+              <BrandLogo className="h-12 w-48" />
             </Link>
             <p className="mt-4 max-w-xs font-sans text-sm leading-relaxed text-slate">
               Race photos delivered minutes after the finish line. Find yours by

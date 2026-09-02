@@ -65,6 +65,7 @@ import com.quickpitik.mobile.ui.runner.PhotoPreviewData
 import com.quickpitik.mobile.ui.runner.PhotoPreviewMode
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.BrandLogo
 import com.quickpitik.mobile.ui.theme.ErrorView
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.GhostCta
@@ -136,17 +137,24 @@ fun PhotographerEventShareScreen(
                 .navigationBarsPadding()
                 .padding(20.dp)
         ) {
-            // Back
+            // Back + brand
             Row(
-                modifier = Modifier
-                    .clip(TileShape)
-                    .clickable { onBack() }
-                    .padding(vertical = 6.dp, horizontal = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Slate)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("BACK TO EVENTS", style = Typography.labelMedium, color = Slate, fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier
+                        .clip(TileShape)
+                        .clickable { onBack() }
+                        .padding(vertical = 6.dp, horizontal = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Slate)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("BACK TO EVENTS", style = Typography.labelMedium, color = Slate, fontWeight = FontWeight.Bold)
+                }
+                BrandLogo(compact = true)
             }
             Spacer(modifier = Modifier.height(20.dp))
 

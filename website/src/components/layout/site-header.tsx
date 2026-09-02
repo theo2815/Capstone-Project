@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { UserMenu } from "@/components/layout/user-menu";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { RunnerNotificationBell } from "@/components/layout/runner-notification-bell";
 import { useViewModeStore } from "@/store/view-mode-store";
@@ -47,27 +48,10 @@ export function SiteHeader({
       <div className="px-6 md:px-10 h-full flex items-center justify-between max-w-7xl mx-auto">
         <Link
           href={ROUTES.HOME}
-          className="flex items-center gap-2 text-ink transition-opacity hover:opacity-75"
+          className="flex items-center text-ink transition-opacity hover:opacity-75"
           aria-label="Back to QuickPitik home"
         >
-          <svg
-            className="size-6"
-            viewBox="0 0 28 28"
-            fill="none"
-            aria-hidden="true"
-          >
-            <circle
-              cx="14"
-              cy="14"
-              r="13"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            />
-            <circle cx="14" cy="14" r="5" className="fill-fresh" />
-          </svg>
-          <span className="font-display text-base font-extrabold tracking-tight">
-            QuickPitik
-          </span>
+          <BrandLogo className="md:h-11 md:w-44" priority />
         </Link>
         <nav className="flex items-center gap-6 md:gap-8">
           {!hidePublicNav && (

@@ -86,6 +86,7 @@ import com.quickpitik.mobile.data.remote.PhotographerMessageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.BrandLogo
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.Ink
@@ -445,12 +446,7 @@ private fun PhotographerTopBar(
                     style = Typography.labelMedium,
                     color = Slate,
                 )
-                Text(
-                    text = "QuickPitik",
-                    style = Typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Ink,
-                )
+                BrandLogo(compact = true)
             }
         },
         actions = {

@@ -92,6 +92,7 @@ import com.quickpitik.mobile.data.remote.WsState
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.BrandLogo
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.ErrorView
 import com.quickpitik.mobile.ui.theme.FieldShape
@@ -239,12 +240,7 @@ fun RunnerGalleryScreen(
                             style = Typography.labelMedium,
                             color = Slate
                         )
-                        Text(
-                            text = "QuickPitik",
-                            style = Typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = Ink
-                        )
+                        BrandLogo(compact = true)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         // Save-event affordance ON the event page (web parity:

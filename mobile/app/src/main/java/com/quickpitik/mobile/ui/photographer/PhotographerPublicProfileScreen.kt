@@ -61,6 +61,7 @@ import com.quickpitik.mobile.ui.runner.toPreviewData
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.BrandLogo
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.FieldShape
 import com.quickpitik.mobile.ui.theme.Fresh
@@ -480,15 +481,22 @@ private fun ProfileEventGalleryView(
 @Composable
 private fun BackRow(label: String, onBack: () -> Unit) {
     Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable { onBack() }
-            .padding(vertical = 6.dp, horizontal = 2.dp),
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Slate)
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(label, style = Typography.labelMedium, color = Slate, fontWeight = FontWeight.Bold)
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onBack() }
+                .padding(vertical = 6.dp, horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Slate)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(label, style = Typography.labelMedium, color = Slate, fontWeight = FontWeight.Bold)
+        }
+        BrandLogo(compact = true)
     }
 }
 

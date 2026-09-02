@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.sp
 import com.quickpitik.mobile.data.local.isPhotographerRole
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.BrandLogo
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.Ink
@@ -108,36 +109,7 @@ fun RegisterScreen(
         ) {
             Spacer(modifier = Modifier.height(40.dp))
 
-            // Logo Row
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(bottom = 24.dp)
-            ) {
-                Box(
-                    modifier = Modifier.size(28.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                        drawCircle(
-                            color = Ink,
-                            radius = size.minDimension / 2f,
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
-                        )
-                        drawCircle(
-                            color = Fresh,
-                            radius = size.minDimension / 5.6f
-                        )
-                    }
-                }
-                Text(
-                    text = "QuickPitik",
-                    style = Typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Ink,
-                    fontSize = 18.sp
-                )
-            }
+            BrandLogo(modifier = Modifier.padding(bottom = 24.dp))
 
             // Eyebrow kicker
             Text(
@@ -511,33 +483,9 @@ fun RegisterScreen(
                         label = "scale"
                     )
                     
-                    Box(
+                    BrandLogo(
                         modifier = Modifier
-                            .size(80.dp)
-                            .graphicsLayer(scaleX = scale, scaleY = scale),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                            drawCircle(
-                                color = Ink,
-                                radius = size.minDimension / 2f,
-                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4.dp.toPx())
-                            )
-                            drawCircle(
-                                color = Fresh,
-                                radius = size.minDimension / 5.6f
-                            )
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(24.dp))
-                    
-                    Text(
-                        text = "QuickPitik",
-                        style = Typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Ink,
-                        fontSize = 22.sp
+                            .graphicsLayer(scaleX = scale, scaleY = scale)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(

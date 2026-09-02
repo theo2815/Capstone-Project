@@ -36,6 +36,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -52,6 +53,7 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.BadgeShape
 import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.BrandLogo
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.GhostCta
 import com.quickpitik.mobile.ui.theme.Ink
@@ -63,6 +65,7 @@ import com.quickpitik.mobile.ui.theme.PillShape
 import com.quickpitik.mobile.ui.theme.PrimaryCta
 import com.quickpitik.mobile.ui.theme.QpCardShape
 import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.TileShape
 import com.quickpitik.mobile.ui.theme.Typography
 
 // Unified photo lightbox — the one preview surface used by both the cart sheet
@@ -330,22 +333,15 @@ fun PhotoPreview(
                                 // photographer reviewing their own uploads
                                 // needs no client-side mark either (web
                                 // suppresses it when cleanUrl is present).
-                                if (mode == PhotoPreviewMode.Browse) Row(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomStart)
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Box(
+                                if (mode == PhotoPreviewMode.Browse) {
+                                    BrandLogo(
+                                        compact = true,
+                                        contentDescription = null,
                                         modifier = Modifier
-                                            .size(12.dp)
-                                            .background(Color.White.copy(alpha = 0.35f)),
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "QUICKPITIK",
-                                        style = Typography.labelSmall,
-                                        color = Color.White.copy(alpha = 0.55f),
+                                            .align(Alignment.BottomStart)
+                                            .padding(12.dp)
+                                            .alpha(0.72f)
+                                            .clip(TileShape),
                                     )
                                 }
                             }

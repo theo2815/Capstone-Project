@@ -33,6 +33,7 @@ import com.quickpitik.mobile.data.local.ViewMode
 import com.quickpitik.mobile.data.local.isPhotographerRole
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.BrandLogo
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.Slate
@@ -40,13 +41,12 @@ import com.quickpitik.mobile.ui.theme.Typography
 
 /**
  * Standard sticky top bar across all runner tabs (Browse, Profile, Orders, Settings).
- * Includes the page kicker, QuickPitik title, optional trailing actions (e.g. inbox bell),
+ * Includes the page kicker, QuickPitik logo, optional trailing actions (e.g. inbox bell),
  * and the user avatar circle with a logout dropdown.
  */
 @Composable
 fun RunnerTopBar(
     kicker: String,
-    title: String = "QuickPitik",
     userName: String? = null,
     avatarUrl: String? = null,
     onLogout: () -> Unit = {},
@@ -75,12 +75,7 @@ fun RunnerTopBar(
                 style = Typography.labelMedium,
                 color = Slate
             )
-            Text(
-                text = title,
-                style = Typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = Ink
-            )
+            BrandLogo(compact = true)
         }
 
         Row(

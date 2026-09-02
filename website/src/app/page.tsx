@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import { ROUTES } from "@/lib/constants";
 
 export default function SplashPage() {
@@ -7,7 +8,9 @@ export default function SplashPage() {
       {/* ── Top bar ── */}
       <header className="border-b border-line">
         <div className="max-w-6xl mx-auto w-full px-5 md:px-10 h-16 flex items-center justify-between">
-          <Logo />
+          <Link href={ROUTES.HOME} aria-label="QuickPitik home">
+            <BrandLogo className="h-11 w-44" priority />
+          </Link>
           <p className="hidden sm:block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
             Cebu · Philippines
           </p>
@@ -154,24 +157,6 @@ function PhotographerCard() {
 }
 
 /* ───────────────────────────── Bits ───────────────────────────── */
-
-function Logo() {
-  return (
-    <Link
-      href={ROUTES.HOME}
-      className="flex items-center gap-2.5 text-ink"
-      aria-label="QuickPitik home"
-    >
-      <svg className="size-7" viewBox="0 0 28 28" fill="none" aria-hidden="true">
-        <circle cx="14" cy="14" r="13" stroke="currentColor" strokeWidth="1.5" />
-        <circle cx="14" cy="14" r="5" className="fill-fresh" />
-      </svg>
-      <span className="font-display text-lg font-extrabold tracking-tight">
-        QuickPitik
-      </span>
-    </Link>
-  );
-}
 
 function Arrow() {
   return (
