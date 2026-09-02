@@ -95,8 +95,8 @@ app:
     bootstrap-email: ${ADMIN_BOOTSTRAP_EMAIL:admin@quickpitik.local}
     bootstrap-password: ${ADMIN_BOOTSTRAP_PASSWORD:changeme123}
     bootstrap-name: ${ADMIN_BOOTSTRAP_NAME:QuickPitik Admin}
-    # Q-A5 follow-up — flagging surface is off by default in v1.
-    flags-enabled: ${ADMIN_FLAGS_ENABLED:false}
+    # Q-A5 follow-up — flagging surface is enabled.
+    flags-enabled: ${ADMIN_FLAGS_ENABLED:true}
   storage:
     backend: ${STORAGE_BACKEND:LOCAL}
     bucket: ${STORAGE_BUCKET:quickpitik-dev}

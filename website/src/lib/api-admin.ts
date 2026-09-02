@@ -9,6 +9,10 @@ import type {
   DisputeResolution,
 } from "@/lib/admin-disputes";
 import type {
+  Flag,
+  FlagStatus,
+} from "@/lib/admin-flags";
+import type {
   AdminPayoutCycle,
   AdminPayoutStatus,
 } from "@/lib/admin-payouts";
@@ -327,6 +331,73 @@ export async function escalateDispute(
   return api.post<Dispute>(
     `/admin/disputes/${encodeURIComponent(disputeId)}/escalate`,
     { reason },
+  );
+}
+
+// ───────────────────────────────────────────── Flags
+
+export interface AdminFlagListArgs {
+  status?: FlagStatus;
+  q?: string;
+  offset?: number;
+  limit?: number;
+}
+
+function buildFlagsQs(args: AdminFlagListArgs): string {
+  const p = new URLSearchParams();
+  if (args.status) p.set("status", args.status);
+  if (args.q) p.set("q", args.q);
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return p.toString();
+}
+
+export async function fetchAdminFlags(
+  args: AdminFlagListArgs = {},
+): Promise<Flag[]> {
+  const res = await api.get<PaginatedResponse<Flag>>(
+    `/admin/flags?${buildFlagsQs(args)}`,
+  );
+  return res.items;
+}
+
+export async function resolveAdminFlag(
+  flagId: string,
+  resolutionNote?: string | null,
+): Promise<Flag> {
+  return api.post<Flag>(
+    `/admin/flags/${encodeURIComponent(flagId)}/resolve`,
+    { resolutionNote },
+  );
+}
+
+export async function hideAdminFlag(
+  flagId: string,
+  resolutionNote?: string | null,
+): Promise<Flag> {
+  return api.post<Flag>(
+    `/admin/flags/${encodeURIComponent(flagId)}/hide`,
+    { resolutionNote },
+  );
+}
+
+export async function dismissAdminFlag(
+  flagId: string,
+  resolutionNote?: string | null,
+): Promise<Flag> {
+  return api.post<Flag>(
+    `/admin/flags/${encodeURIComponent(flagId)}/dismiss`,
+    { resolutionNote },
+  );
+}
+
+export async function escalateAdminFlag(
+  flagId: string,
+  resolutionNote?: string | null,
+): Promise<Flag> {
+  return api.post<Flag>(
+    `/admin/flags/${encodeURIComponent(flagId)}/escalate`,
+    { resolutionNote },
   );
 }
 

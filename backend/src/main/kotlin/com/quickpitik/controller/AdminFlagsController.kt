@@ -27,10 +27,11 @@ class AdminFlagsController(
     @GetMapping
     fun list(
         @RequestParam(required = false) status: String?,
+        @RequestParam(required = false) q: String?,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
     ): PaginatedResponse<AdminFlagDto> =
-        adminFlagService.list(status, PaginationParams.of(offset, limit))
+        adminFlagService.list(status, q, PaginationParams.of(offset, limit))
 
     @PostMapping("/{flagId}/resolve")
     fun resolve(
@@ -52,4 +53,11 @@ class AdminFlagsController(
         @PathVariable flagId: UUID,
         @RequestBody(required = false) body: FlagActionRequest?,
     ): AdminFlagDto = adminFlagService.dismiss(principal.userId, flagId, body?.resolutionNote)
+
+    @PostMapping("/{flagId}/escalate")
+    fun escalate(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable flagId: UUID,
+        @RequestBody(required = false) body: FlagActionRequest?,
+    ): AdminFlagDto = adminFlagService.escalate(principal.userId, flagId, body?.resolutionNote)
 }

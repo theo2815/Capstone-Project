@@ -1,23 +1,35 @@
 package com.quickpitik.dto.admin
 
 import jakarta.validation.constraints.Size
+import java.math.BigDecimal
 import java.util.UUID
 
-// Minimal flag DTO. The FE doesn't yet have a strict shape since
-// ADMIN_FLAGS_ENABLED is off by default; we ship a plausible default that
-// can be tightened once the queue ingestion path lands.
+data class FlagPhotoSnapshotDto(
+    val alt: String = "",
+    val kmMark: BigDecimal? = null,
+    val bib: String? = null,
+    val thumbnailUrl: String? = null,
+)
+
 data class AdminFlagDto(
     val id: UUID,
-    val targetKind: String,
-    val targetId: UUID,
-    val reporterId: UUID?,
+    val photoId: UUID?,
+    val eventId: UUID?,
+    val eventName: String?,
+    val photographerHandle: String,
+    val photographerName: String?,
+    val reportedBy: String,
     val reason: String,
     val note: String,
     val status: String,
-    val resolutionNote: String?,
-    val resolvedBy: UUID?,
-    val resolvedAt: String?,
-    val createdAt: String,
+    val reportedAt: String,
+    val reviewedAt: String?,
+    val reviewedBy: String?,
+    val reviewerNote: String?,
+    val photoSnapshot: FlagPhotoSnapshotDto,
+    val targetKind: String,
+    val targetId: UUID,
+    val reporterId: UUID?,
 )
 
 data class FlagActionRequest(

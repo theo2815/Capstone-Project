@@ -5,6 +5,7 @@ import {
   fetchAdminKpis,
   fetchAdminKpiTrend,
   fetchAdminDisputes,
+  fetchAdminFlags,
   fetchAdminPayouts,
   fetchAdminPayoutReports,
   fetchAdminEvents,
@@ -13,11 +14,13 @@ import {
   type AdminKpis,
   type AdminTrendPoint,
   type AdminDisputeStatusFilter,
+  type AdminFlagListArgs,
   type AdminSalesEventRow,
   type AdminSalesKpis,
   type AdminSalesRange,
 } from "@/lib/api-admin";
 import type { Dispute } from "@/lib/admin-disputes";
+import type { Flag } from "@/lib/admin-flags";
 import type {
   AdminPayoutCycle,
   AdminPayoutStatus,
@@ -42,6 +45,7 @@ const SALES_STALE_MS = 60_000;
 // derive chain recomputes per render). Same trick as the upload page's
 // EMPTY_SEED.
 export const EMPTY_DISPUTES: Dispute[] = [];
+export const EMPTY_FLAGS: Flag[] = [];
 export const EMPTY_PAYOUTS: AdminPayoutCycle[] = [];
 export const EMPTY_REPORTS: PayoutReport[] = [];
 
@@ -76,6 +80,19 @@ export function useAdminDisputes(args: {
   const query = useQuery<Dispute[]>({
     queryKey: ["admin", "disputes", args],
     queryFn: () => fetchAdminDisputes(args),
+    staleTime: LIST_STALE_MS,
+  });
+  return query.data ?? null;
+}
+
+// ───────────────────────────────────────────── Flags
+
+export function useAdminFlags(
+  args: AdminFlagListArgs = {},
+): Flag[] | null {
+  const query = useQuery<Flag[]>({
+    queryKey: ["admin", "flags", args],
+    queryFn: () => fetchAdminFlags(args),
     staleTime: LIST_STALE_MS,
   });
   return query.data ?? null;

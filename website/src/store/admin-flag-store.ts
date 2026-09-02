@@ -1,17 +1,26 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { ADMIN_FLAGS, type Flag } from "@/lib/admin-flags";
+import {
+  hideAdminFlag,
+  dismissAdminFlag,
+  escalateAdminFlag,
+  resolveAdminFlag,
+} from "@/lib/api-admin";
 
-// Mock-only store of admin actions on the moderation flag queue. Real
-// backend ships in Phase F. Same shape as admin-dispute-store: overrides
-// + capped log + per-action mutators.
+// Store of admin actions on the moderation flag queue.
+// Applies optimistic local overrides while firing real backend API calls in the background.
 //
-// Persisted to localStorage so flag actions survive a page refresh —
-// without this, hiding/dismissing/escalating a flag and then refreshing
-// brings the flag back. Cleared on logout by `resetUserScopedStores()`
-// (lib/auth-reset.ts) so cross-admin sessions don't leak decisions.
+// Persisted to localStorage so flag actions survive a page refresh.
+// Cleared on logout by `resetUserScopedStores()` (lib/auth-reset.ts) so cross-admin sessions don't leak decisions.
 
-export type FlagDecision = "hidden" | "dismissed" | "escalated";
+function fireBackendFlagAction(label: string, p: Promise<unknown>): void {
+  void p.catch((err) => {
+    console.error(`[admin/flags] ${label} backend call failed`, err);
+  });
+}
+
+export type FlagDecision = "hidden" | "dismissed" | "escalated" | "resolved";
 
 export interface FlagLogEntry {
   flagId: string;
@@ -24,8 +33,9 @@ interface AdminFlagStoreState {
   overrides: Record<string, Partial<Flag>>;
   log: FlagLogEntry[];
   hide: (flagId: string, reason: string | null) => void;
-  dismiss: (flagId: string) => void;
+  dismiss: (flagId: string, reason?: string | null) => void;
   escalate: (flagId: string, reason: string | null) => void;
+  resolve: (flagId: string, reason: string | null) => void;
   clear: () => void;
 }
 
@@ -38,7 +48,7 @@ export const useAdminFlagStore = create<AdminFlagStoreState>()(
     (set) => ({
       overrides: {},
       log: [],
-      hide: (flagId, reason) =>
+      hide: (flagId, reason) => {
         set((s) => ({
           overrides: {
             ...s.overrides,
@@ -56,8 +66,10 @@ export const useAdminFlagStore = create<AdminFlagStoreState>()(
             reason,
             decidedAt: new Date().toISOString(),
           }),
-        })),
-      dismiss: (flagId) =>
+        }));
+        fireBackendFlagAction("hide", hideAdminFlag(flagId, reason));
+      },
+      dismiss: (flagId, reason = null) => {
         set((s) => ({
           overrides: {
             ...s.overrides,
@@ -66,23 +78,28 @@ export const useAdminFlagStore = create<AdminFlagStoreState>()(
               status: "dismissed",
               reviewedAt: new Date().toISOString(),
               reviewedBy: "admin",
-              reviewerNote: null,
+              reviewerNote: reason,
             },
           },
           log: appendLog(s.log, {
             flagId,
             decision: "dismissed",
-            reason: null,
+            reason,
             decidedAt: new Date().toISOString(),
           }),
-        })),
-      escalate: (flagId, reason) =>
+        }));
+        fireBackendFlagAction("dismiss", dismissAdminFlag(flagId, reason));
+      },
+      escalate: (flagId, reason) => {
         set((s) => ({
           overrides: {
             ...s.overrides,
             [flagId]: {
               ...s.overrides[flagId],
               status: "escalated",
+              reviewedAt: new Date().toISOString(),
+              reviewedBy: "admin",
+              reviewerNote: reason,
             },
           },
           log: appendLog(s.log, {
@@ -91,7 +108,30 @@ export const useAdminFlagStore = create<AdminFlagStoreState>()(
             reason,
             decidedAt: new Date().toISOString(),
           }),
-        })),
+        }));
+        fireBackendFlagAction("escalate", escalateAdminFlag(flagId, reason));
+      },
+      resolve: (flagId, reason) => {
+        set((s) => ({
+          overrides: {
+            ...s.overrides,
+            [flagId]: {
+              ...s.overrides[flagId],
+              status: "open", // or resolved if frontend defines it
+              reviewedAt: new Date().toISOString(),
+              reviewedBy: "admin",
+              reviewerNote: reason,
+            },
+          },
+          log: appendLog(s.log, {
+            flagId,
+            decision: "resolved",
+            reason,
+            decidedAt: new Date().toISOString(),
+          }),
+        }));
+        fireBackendFlagAction("resolve", resolveAdminFlag(flagId, reason));
+      },
       clear: () => set({ overrides: {}, log: [] }),
     }),
     {
@@ -109,7 +149,17 @@ export function mergeFlag(
 }
 
 export function getEffectiveFlags(
-  overrides: Record<string, Partial<Flag>>,
+  overrides: Record<string, Partial<Flag>> = {},
 ): Flag[] {
   return ADMIN_FLAGS.map((f) => mergeFlag(f, overrides[f.id]));
+}
+
+/**
+ * Merges live server data with local overrides for instant feedback after admin actions.
+ */
+export function mergeFlagsWithOverrides(
+  serverData: ReadonlyArray<Flag>,
+  overrides: Record<string, Partial<Flag>> = {},
+): Flag[] {
+  return serverData.map((f) => mergeFlag(f, overrides[f.id]));
 }

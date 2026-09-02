@@ -12,8 +12,9 @@ import { AdminFlagHideModal } from "@/components/admin/admin-flag-hide-modal";
 import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
 import {
   useAdminFlagStore,
-  getEffectiveFlags,
+  mergeFlagsWithOverrides,
 } from "@/store/admin-flag-store";
+import { useAdminFlags, EMPTY_FLAGS } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -59,6 +60,7 @@ function statusTone(status: FlagStatus): AdminStatusPillTone {
 // escDisabled stands down whenever any of them is open.
 
 export function FlagsQueue() {
+  const apiFlags = useAdminFlags();
   const overrides = useAdminFlagStore((s) => s.overrides);
   const hide = useAdminFlagStore((s) => s.hide);
   const dismiss = useAdminFlagStore((s) => s.dismiss);
@@ -71,7 +73,10 @@ export function FlagsQueue() {
   const [drawerEscalateOpen, setDrawerEscalateOpen] = useState(false);
   const [drawerConfirmDismiss, setDrawerConfirmDismiss] = useState(false);
 
-  const effective = useMemo(() => getEffectiveFlags(overrides), [overrides]);
+  const effective = useMemo(
+    () => mergeFlagsWithOverrides(apiFlags ?? EMPTY_FLAGS, overrides),
+    [apiFlags, overrides],
+  );
 
   const byId = useMemo(() => {
     const map = new Map<string, Flag>();
@@ -386,20 +391,26 @@ export function FlagsQueue() {
 }
 
 export function useOpenFlagsCount(): number {
+  const apiFlags = useAdminFlags();
   const overrides = useAdminFlagStore((s) => s.overrides);
   return useMemo(
     () =>
-      getEffectiveFlags(overrides).filter((f) => f.status === "open").length,
-    [overrides],
+      mergeFlagsWithOverrides(apiFlags ?? EMPTY_FLAGS, overrides).filter(
+        (f) => f.status === "open",
+      ).length,
+    [apiFlags, overrides],
   );
 }
 
 export function useHiddenFlagsCount(): number {
+  const apiFlags = useAdminFlags();
   const overrides = useAdminFlagStore((s) => s.overrides);
   return useMemo(
     () =>
-      getEffectiveFlags(overrides).filter((f) => f.status === "hidden").length,
-    [overrides],
+      mergeFlagsWithOverrides(apiFlags ?? EMPTY_FLAGS, overrides).filter(
+        (f) => f.status === "hidden",
+      ).length,
+    [apiFlags, overrides],
   );
 }
 

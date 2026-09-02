@@ -59,4 +59,4 @@ export const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 // to revive the rail row, KPI tile, inbox chip, palette entries, and the
 // /admin/flags focus-mode route. Underlying store + queue body are kept
 // intact so reviving needs no code change beyond this constant.
-export const ADMIN_FLAGS_ENABLED: boolean = false;
+export const ADMIN_FLAGS_ENABLED: boolean = true;
