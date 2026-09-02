@@ -58,6 +58,26 @@ class WatermarkServiceTest {
     }
 
     @Test
+    fun `statement block claims the centre of the frame`() {
+        val marked = ImageIO.read(ByteArrayInputStream(service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit).jpeg))
+        val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
+
+        // The middle band (where the runner's torso and bib sit) must carry a
+        // dense mark — cropping to the subject cannot yield a clean copy.
+        fun changedRatio(x0: Int, x1: Int, y0: Int, y1: Int): Double {
+            var changed = 0
+            for (y in y0 until y1) for (x in x0 until x1) {
+                if (channelDelta(marked.getRGB(x, y), plain.getRGB(x, y)) >= 40) changed++
+            }
+            return changed.toDouble() / ((x1 - x0) * (y1 - y0))
+        }
+        val centre = changedRatio(marked.width / 4, marked.width * 3 / 4, marked.height * 2 / 5, marked.height * 3 / 5)
+        val topEdge = changedRatio(0, marked.width, 0, marked.height / 10)
+        assertTrue(centre > 0.10, "centre band too lightly marked: ${"%.3f".format(centre)}")
+        assertTrue(centre > topEdge * 2, "centre ($centre) should be marked far heavier than the edge ($topEdge)")
+    }
+
+    @Test
     fun `credit is embedded as XMP metadata`() {
         val marked = service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit)
 

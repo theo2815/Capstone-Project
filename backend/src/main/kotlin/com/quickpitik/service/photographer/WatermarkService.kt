@@ -40,16 +40,19 @@ class WatermarkService {
     // dropped (orientation is applied to the pixels first) and replaced by the
     // XMP credit packet.
     //
-    // Three layers, bottom to top:
-    //   1. QuickPitik credit tiles — wordmark rows alternating with
-    //      "© Name · @handle · QuickPitik" rows across the WHOLE frame at low
-    //      opacity, rotated, phase/angle jittered per photo, each tile drawn
+    // Four layers, bottom to top:
+    //   1. QuickPitik credit stripes — wordmark rows alternating with
+    //      continuous "© Name · @handle · QuickPitik" runs across the WHOLE
+    //      frame, rotated, phase/angle jittered per photo, each run drawn
     //      light or dark against what is under it. Cropping can't remove it,
-    //      a fixed template can't be subtracted, and inpainting it away has
-    //      to hallucinate across the runner.
-    //   2. Crisp bottom-left caption with the same credit — the attribution
-    //      that stays legible at phone size where the tiles are just texture.
-    //   3. The photographer's own uploaded logo, corner + center, on top.
+    //      and a continuous run leaves no gap to seed an inpainting mask.
+    //   2. Statement block on the middle band — wordmark + credit + "purchase
+    //      to remove" at high opacity where the runner's torso and bib sit
+    //      (race frames are centre-composed). The face above stays readable so
+    //      a runner can still confirm it's them; the body is claimed.
+    //   3. Crisp bottom-left caption with the same credit — the attribution
+    //      that stays legible at phone size where the stripes are just texture.
+    //   4. The photographer's own uploaded logo, corner, on top.
     fun processThumbnail(input: ByteArray, watermarkImage: ByteArray, credit: WatermarkCredit): MarkedPreview {
         val source = ImageIO.read(ByteArrayInputStream(input))
             ?: throw IllegalArgumentException("Unreadable image bytes")
@@ -58,6 +61,7 @@ class WatermarkService {
         val watermark = ImageIO.read(ByteArrayInputStream(watermarkImage))
             ?: throw IllegalArgumentException("Unreadable watermark image bytes")
         drawCreditTiles(target, credit)
+        drawStatement(target, credit)
         drawCaption(target, credit)
         drawWatermarkImage(target, watermark)
         val phash = PerceptualHash.of(target)
@@ -109,7 +113,9 @@ class WatermarkService {
             var y = -reach - rowPitch + phaseY
             while (y <= reach + rowPitch) {
                 val textRow = row % 2 == 1 && text != null
-                val pitchX = if (textRow) text!!.width + markW / 2 else (markW * TILE_GAP_RATIO).toInt()
+                // Text runs are continuous (one glyph-width apart) — no clean
+                // gap between repeats for an inpainting mask to start from.
+                val pitchX = if (textRow) text!!.width + text.height else (markW * TILE_GAP_RATIO).toInt()
                 var x = -reach - pitchX + phaseX + if (row % 2 == 1) pitchX / 2 else 0
                 while (x <= reach + pitchX) {
                     val bright = isBrightUnder(photo, g, x + pitchX / 2.0, y + rowPitch / 2.0)
@@ -124,6 +130,51 @@ class WatermarkService {
                 y += rowPitch
                 row++
             }
+        } finally {
+            g.dispose()
+        }
+    }
+
+    // Horizontal block centred on the middle band: wordmark, credit line,
+    // statement line. Adaptive polarity with a 1px opposite shadow like the
+    // caption. Sits slightly below frame centre so it lands on the torso/bib
+    // rather than the face.
+    private fun drawStatement(photo: BufferedImage, credit: WatermarkCredit) {
+        val w = photo.width
+        val h = photo.height
+        val markW = (w * STATEMENT_MARK_RATIO).toInt().coerceAtLeast(120)
+        val markH = (markW * wordmarkLight.height / wordmarkLight.width.toDouble()).toInt().coerceAtLeast(1)
+        val g = photo.createGraphics()
+        try {
+            hints(g)
+            val creditSize = (w * STATEMENT_TEXT_RATIO).toFloat().coerceIn(16f, 48f)
+            val creditStr = creditLine(credit)
+            val creditText = textMetrics(g, creditSize, creditStr)
+            val statementText = textMetrics(g, creditSize, STATEMENT_LINE)
+            val gap = markH / 3
+            val blockH = markH + (creditText?.let { it.height + gap } ?: 0) + (statementText?.let { it.height + gap } ?: 0)
+            val cy = (h * STATEMENT_CENTER_Y).toInt()
+            g.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, STATEMENT_OPACITY)
+            var y = cy - blockH / 2
+            // Polarity is sampled per element: the block spans bib and shorts,
+            // which are rarely the same tone.
+            val markBright = isBrightUnder(photo, g, w / 2.0, y + markH / 2.0)
+            g.drawImage(if (markBright) wordmarkDark else wordmarkLight, (w - markW) / 2, y, markW, markH, null)
+            y += markH + gap
+            fun line(text: TextMetrics?, s: String) {
+                if (text == null) return
+                g.font = creditFont!!.deriveFont(creditSize)
+                val x = (w - text.width) / 2
+                val baseline = y + text.ascent
+                val bright = isBrightUnder(photo, g, w / 2.0, baseline - text.ascent / 2.0)
+                g.color = if (bright) Color.WHITE else INK
+                g.drawString(s, x + 1, baseline + 1)
+                g.color = if (bright) INK else Color.WHITE
+                g.drawString(s, x, baseline)
+                y += text.height + gap
+            }
+            line(creditText, creditStr)
+            line(statementText, STATEMENT_LINE)
         } finally {
             g.dispose()
         }
@@ -188,23 +239,8 @@ class WatermarkService {
         } finally {
             gCorner.dispose()
         }
-
-        // Center mark — diagonal across the photo, low opacity. Bigger so it's
-        // hard to crop out, low opacity so it doesn't dominate the preview.
-        val centerWidth = (photo.width * CENTER_WIDTH_RATIO).toInt().coerceAtLeast(120)
-        val centerScale = centerWidth.toDouble() / watermark.width
-        val centerHeight = (watermark.height * centerScale).toInt().coerceAtLeast(1)
-
-        val gCenter = photo.createGraphics()
-        try {
-            hints(gCenter)
-            gCenter.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, CENTER_OPACITY)
-            gCenter.translate(photo.width / 2.0, photo.height / 2.0)
-            gCenter.rotate(Math.toRadians(BASE_ROTATION_DEG))
-            gCenter.drawImage(watermark, -centerWidth / 2, -centerHeight / 2, centerWidth, centerHeight, null)
-        } finally {
-            gCenter.dispose()
-        }
+        // The 18% centre logo (2026-05-18) is gone: the statement block owns
+        // the centre now, and the faint logo was invisible in practice.
     }
 
     private fun creditLine(c: WatermarkCredit): String =
@@ -294,22 +330,26 @@ class WatermarkService {
         private const val FONT_RESOURCE = "/fonts/Archivo-SemiBold.ttf"
         private val INK = Color(0x11, 0x11, 0x11)
 
-        // QuickPitik credit tiles — wordmark ~22% of width, rows alternate
-        // wordmark / credit text, 25% opacity, -18° ± 4° per photo.
+        // QuickPitik credit stripes — wordmark ~22% of width, rows alternate
+        // wordmark / continuous credit text, 35% opacity, -18° ± 4° per photo.
         private const val TILE_WIDTH_RATIO = 0.22
         private const val TILE_GAP_RATIO = 1.6
-        private const val TILE_TEXT_RATIO = 0.024
-        private const val TILE_OPACITY = 0.25f
+        private const val TILE_TEXT_RATIO = 0.036
+        private const val TILE_OPACITY = 0.35f
         private const val BASE_ROTATION_DEG = -18.0
         private const val ROTATION_JITTER_DEG = 4.0
+        // Statement block — wordmark ~34% of width, 65% opacity, centred a
+        // little below frame centre (torso/bib zone, face left readable).
+        private const val STATEMENT_MARK_RATIO = 0.34
+        private const val STATEMENT_TEXT_RATIO = 0.038
+        private const val STATEMENT_OPACITY = 0.65f
+        private const val STATEMENT_CENTER_Y = 0.56
+        private const val STATEMENT_LINE = "PREVIEW · PURCHASE TO REMOVE WATERMARK"
         // Bottom-left credit caption — the legible-at-phone-size attribution.
         private const val CAPTION_TEXT_RATIO = 0.028
         private const val CAPTION_OPACITY = 0.85f
-        // Photographer's logo — corner 15% of photo width, 70% opacity; center
-        // diagonal 50% of width, 18% opacity. Unchanged since 2026-05-18.
+        // Photographer's logo — corner 15% of photo width, 70% opacity.
         private const val CORNER_WIDTH_RATIO = 0.15
         private const val CORNER_OPACITY = 0.70f
-        private const val CENTER_WIDTH_RATIO = 0.50
-        private const val CENTER_OPACITY = 0.18f
     }
 }
