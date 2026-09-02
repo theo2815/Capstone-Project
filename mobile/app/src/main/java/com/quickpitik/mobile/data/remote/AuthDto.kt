@@ -45,6 +45,10 @@ data class VerifyEmailRequest(
     val token: String
 )
 
+data class EmailChangeConfirmRequest(
+    val token: String
+)
+
 // Body for POST /auth/logout. Mirrors backend dto/auth/LogoutRequest, whose
 // field is nullable — the endpoint is a no-op rather than an error when the
 // token is absent. Revoking server-side is what stops a signed-out phone's

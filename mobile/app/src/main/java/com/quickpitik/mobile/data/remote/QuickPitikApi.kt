@@ -45,6 +45,9 @@ interface QuickPitikApi {
     @POST("api/v1/auth/verify-email")
     suspend fun verifyEmail(@Body request: VerifyEmailRequest): ApiResponseEnvelope<MessageResponse>
 
+    @POST("api/v1/auth/confirm-email-change")
+    suspend fun confirmEmailChange(@Body request: EmailChangeConfirmRequest): ApiResponseEnvelope<MessageResponse>
+
     // Auth recovery. Both are public (SecurityConfig permits /auth/**) so they
     // carry no Authorization header, and TokenAuthenticator skips /auth/* — a
     // 4xx here can never trigger a refresh or a forced logout.

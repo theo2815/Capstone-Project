@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 15
-- **✅ Already Solved:** 6 (Items 1, 2, 9, 10, 12, 14)
-- **⏳ Pending / To Be Worked On:** 9
+- **✅ Already Solved:** 7 (Items 1, 2, 9, 10, 11, 12, 14)
+- **⏳ Pending / To Be Worked On:** 8
 
 ---
 
@@ -32,13 +32,9 @@
   - **Status:** **ALREADY SOLVED**
   - **Verification:** Added `intent-filter` for `/verify-email` in `AndroidManifest.xml` targeting `localhost` and `ngrok`. `MainActivity.kt` now routes `verify-email` Deep Links into the `NavHost`. Created `VerifyEmailScreen.kt` in Jetpack Compose to consume the token and submit it to `QuickPitikApi.verifyEmail()`.
 
-- [ ] **11. Runner — Confirm email change screen on Mobile**
-  - **Issue:** Email change initiated from mobile sends confirmation email linking to the web app (`/confirm-email-change`). No mobile UI completes step 2.
-  - **Affected Files:**
-    - `mobile/app/src/main/java/com/quickpitik/mobile/data/remote/QuickPitikApi.kt`
-    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileScreen.kt`
-    - `backend/src/main/kotlin/com/quickpitik/service/EmailService.kt`
-  - **Action Plan:** Add mobile route / dialog to handle confirmation token or deep-link into the app.
+- [x] **11. Runner — Confirm email change screen on Mobile**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** Added `intent-filter` pathPrefix `/confirm-email-change` in `AndroidManifest.xml`. `MainActivity.kt` routes `/confirm-email-change` deep links into Compose `NavHost`. Created `ConfirmEmailChangeScreen.kt` to process the token via `QuickPitikApi.confirmEmailChange()`, clearing local session and prompting user to re-authenticate with their new email.
 
 - [x] **12. Runner — Camera silent failure exception swallowed**
   - **Status:** **ALREADY SOLVED**

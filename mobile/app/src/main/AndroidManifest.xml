@@ -85,6 +85,7 @@
                 <data android:host="localhost" />
                 <data android:host="snippet-sheath-cloak.ngrok-free.dev" />
                 <data android:pathPrefix="/verify-email" />
+                <data android:pathPrefix="/confirm-email-change" />
             </intent-filter>
             <!--
                 Camera attach. Paired with res/xml/device_filter.xml so the OS

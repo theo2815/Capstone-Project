@@ -71,6 +71,7 @@ import com.quickpitik.mobile.ui.auth.AuthViewModel
 import com.quickpitik.mobile.ui.auth.ForgotPasswordScreen
 import com.quickpitik.mobile.ui.auth.LoginScreen
 import com.quickpitik.mobile.ui.auth.RegisterScreen
+import com.quickpitik.mobile.ui.auth.ConfirmEmailChangeScreen
 import com.quickpitik.mobile.ui.auth.VerifyEmailScreen
 import com.quickpitik.mobile.ui.photographer.EventsState
 import com.quickpitik.mobile.ui.photographer.PhotographerCaptureScreen
@@ -398,6 +399,20 @@ class MainActivity : ComponentActivity() {
                                         val target = if (isPhotographer) "studio" else "runner"
                                         if (!isPhotographer) cartViewModel.fetchCart()
                                         navController.navigate(target) {
+                                            popUpTo("login") { inclusive = true }
+                                        }
+                                    }
+                                )
+                            }
+                            composable(
+                                route = "confirm-email-change?token={token}",
+                                arguments = listOf(navArgument("token") { type = NavType.StringType; nullable = true; defaultValue = null })
+                            ) { backStackEntry ->
+                                val token = backStackEntry.arguments?.getString("token")
+                                ConfirmEmailChangeScreen(
+                                    token = token,
+                                    onNavigateToLogin = {
+                                        navController.navigate("login") {
                                             popUpTo("login") { inclusive = true }
                                         }
                                     }
@@ -738,8 +753,9 @@ class MainActivity : ComponentActivity() {
     private fun pickQuickpitikUri(intent: Intent?): Uri? {
         val data = intent?.data ?: return null
         if (data.scheme.equals("quickpitik", ignoreCase = true)) return data
+        val path = data.path?.lowercase().orEmpty()
         if ((data.scheme.equals("http", ignoreCase = true) || data.scheme.equals("https", ignoreCase = true)) &&
-            data.path?.lowercase() == "/verify-email") {
+            (path == "/verify-email" || path == "/confirm-email-change")) {
             return data
         }
         return null
@@ -770,6 +786,12 @@ class MainActivity : ComponentActivity() {
             return
         }
         when {
+            host == "confirm-email-change" || path == "/confirm-email-change" -> {
+                val token = uri.getQueryParameter("token").orEmpty()
+                navController.navigate("confirm-email-change?token=$token") {
+                    launchSingleTop = true
+                }
+            }
             host == "verify-email" || path == "/verify-email" -> {
                 val token = uri.getQueryParameter("token").orEmpty()
                 navController.navigate("verify-email?token=$token") {
