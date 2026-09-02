@@ -117,7 +117,7 @@ export const useAdminFlagStore = create<AdminFlagStoreState>()(
             ...s.overrides,
             [flagId]: {
               ...s.overrides[flagId],
-              status: "open", // or resolved if frontend defines it
+              status: "resolved",
               reviewedAt: new Date().toISOString(),
               reviewedBy: "admin",
               reviewerNote: reason,

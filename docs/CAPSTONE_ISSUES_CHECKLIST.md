@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 15
-- **✅ Already Solved:** 7 (Items 1, 2, 9, 10, 11, 12, 14)
-- **⏳ Pending / To Be Worked On:** 8
+- **✅ Already Solved:** 8 (Items 1, 2, 7, 9, 10, 11, 12, 14)
+- **⏳ Pending / To Be Worked On:** 7
 
 ---
 
@@ -23,6 +23,10 @@
 - [x] **2. Runner — Selfie Library "Gallery" button layout overflow (Mobile & Desktop)**
   - **Status:** **ALREADY SOLVED**
   - **Verification:** Refactored the mobile header layout (`ProfileScreen.kt`) to stack the Camera/Gallery buttons below the title using a `Column` instead of squeezing them in a `Row(SpaceBetween)`. On desktop web (`selfie-library.tsx`), added `md:grid-cols-4` to smooth out responsive upload tile scaling.
+
+- [x] **7. Admin — Flag store & queue wired to backend API**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** `AdminFlagService.kt` and `AdminFlagsController.kt` shipped on backend. `fetchAdminFlags()`, `resolveAdminFlag()`, `hideAdminFlag()`, `dismissAdminFlag()`, and `escalateAdminFlag()` wired in `api-admin.ts`. `useAdminFlags()` React Query hook integrated in `flags-queue.tsx` with optimistic store overrides in `admin-flag-store.ts`. Presigned S3 thumbnail previews rendered on `admin-flag-card.tsx` and aligned `FlagStatus` type with `"resolved"`.
 
 - [x] **9. Photographer — Payout request on Mobile**
   - **Status:** **ALREADY SOLVED**
@@ -78,13 +82,6 @@
     - `website/src/lib/admin-dispute-view.ts`
     - `website/src/lib/api-admin.ts`
   - **Action Plan:** Wire real query hydration from `fetchAdminDisputes()` in `api-admin.ts` to populate the dispute queue with live server data.
-
-- [ ] **7. Admin — Flag store is mock-only**
-  - **Issue:** `admin-flag-store.ts` stores moderation flags purely in `localStorage` without backend integration.
-  - **Affected Files:**
-    - `website/src/store/admin-flag-store.ts`
-    - `backend` (Admin Flag API endpoints if required by SRS)
-  - **Action Plan:** Connect flag store to backend moderation endpoints or formally document mock status for demo scope.
 
 - [ ] **8. Photographer — `photographer-settings-store` uses `localStorage`**
   - **Issue:** Zustand store persists state in `localStorage` via `persist()`, which can go stale or exceed localStorage limits with base64/data URLs.

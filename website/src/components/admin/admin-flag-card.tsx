@@ -39,6 +39,7 @@ interface AdminFlagCardProps {
 
 const STATUS_LABEL: Record<FlagStatus, string> = {
   open: "Open",
+  resolved: "Resolved",
   hidden: "Hidden",
   dismissed: "Dismissed",
   escalated: "Escalated",
@@ -48,6 +49,8 @@ function statusTone(status: FlagStatus): AdminStatusPillTone {
   switch (status) {
     case "open":
       return "amber";
+    case "resolved":
+      return "fresh";
     case "hidden":
       return "ink";
     case "dismissed":

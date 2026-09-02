@@ -29,6 +29,7 @@ import { formatLongDate } from "@/lib/format";
 
 const STATUS_LABEL: Record<FlagStatus, string> = {
   open: "Open",
+  resolved: "Resolved",
   hidden: "Hidden",
   dismissed: "Dismissed",
   escalated: "Escalated",
@@ -38,6 +39,8 @@ function statusTone(status: FlagStatus): AdminStatusPillTone {
   switch (status) {
     case "open":
       return "amber";
+    case "resolved":
+      return "fresh";
     case "hidden":
       return "ink";
     case "dismissed":
@@ -129,7 +132,7 @@ export function FlagsQueue() {
   );
   const dismissed = useMemo(
     () =>
-      [...filtered.filter((f) => f.status === "dismissed")].sort((a, b) =>
+      [...filtered.filter((f) => f.status === "dismissed" || f.status === "resolved")].sort((a, b) =>
         (b.reviewedAt ?? "").localeCompare(a.reviewedAt ?? ""),
       ),
     [filtered],

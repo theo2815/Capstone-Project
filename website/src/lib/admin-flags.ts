@@ -5,7 +5,7 @@
 // store. When backend lands in Phase F, snapshots stay — they're set
 // when the flag is filed.
 
-export type FlagStatus = "open" | "hidden" | "dismissed" | "escalated";
+export type FlagStatus = "open" | "resolved" | "hidden" | "dismissed" | "escalated";
 export type FlagReason =
   | "wrong_runner"
   | "low_quality"
