@@ -1,10 +1,10 @@
 "use client";
 
-import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
+import { ZoomableImage } from "@/components/photos/zoomable-image";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn, formatPrice } from "@/lib/utils";
 
@@ -258,8 +258,9 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           )}
 
           {hasImage && !imageFailed && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            // Pinch / double-click zoom over whatever was served: the
+            // watermarked preview, or the clean original for an owner.
+            <ZoomableImage
               src={renderedSrc ?? ""}
               alt={
                 photo.alt ??
@@ -267,14 +268,9 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                   ? `Race photo of bib ${photo.bib}`
                   : "Untagged race photo")
               }
+              loaded={imageLoaded}
               onLoad={() => setImageLoaded(true)}
               onError={() => setImageFailed(true)}
-              className={cn(
-                "absolute inset-0 w-full h-full object-contain transition-opacity duration-500",
-                PROTECTED_IMG_CLASS,
-                imageLoaded ? "opacity-100" : "opacity-0",
-              )}
-              {...PROTECTED_IMG_PROPS}
             />
           )}
 
