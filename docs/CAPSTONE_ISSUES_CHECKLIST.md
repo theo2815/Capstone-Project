@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 15
-- **✅ Already Solved:** 5 (Items 1, 2, 9, 12, 14)
-- **⏳ Pending / To Be Worked On:** 10
+- **✅ Already Solved:** 6 (Items 1, 2, 9, 10, 12, 14)
+- **⏳ Pending / To Be Worked On:** 9
 
 ---
 
@@ -28,14 +28,9 @@
   - **Status:** **ALREADY SOLVED**
   - **Verification:** Implemented in `PhotographerEarningsScreen.kt` via `WalletSlab`, `OpenRequestBlock`, and `submitPayoutRequest()`.
 
-- [ ] **10. Runner — Email verification screen & deep linking on Mobile**
-  - **Issue:** Registration email link opens `$frontendOrigin/verify-email?token=...` in the browser. Mobile has no deep link handler or native `VerifyEmailScreen`.
-  - **Affected Files:**
-    - `mobile/app/src/main/AndroidManifest.xml`
-    - `mobile/app/src/main/java/com/quickpitik/mobile/MainActivity.kt`
-    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/auth/VerifyEmailScreen.kt` (New)
-    - `backend/src/main/kotlin/com/quickpitik/service/EmailService.kt`
-  - **Action Plan:** Register deep link scheme for verification and create mobile verification screen or universal link handling.
+- [x] **10. Runner — Email verification screen & deep linking on Mobile**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** Added `intent-filter` for `/verify-email` in `AndroidManifest.xml` targeting `localhost` and `ngrok`. `MainActivity.kt` now routes `verify-email` Deep Links into the `NavHost`. Created `VerifyEmailScreen.kt` in Jetpack Compose to consume the token and submit it to `QuickPitikApi.verifyEmail()`.
 
 - [ ] **11. Runner — Confirm email change screen on Mobile**
   - **Issue:** Email change initiated from mobile sends confirmation email linking to the web app (`/confirm-email-change`). No mobile UI completes step 2.

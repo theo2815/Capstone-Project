@@ -72,6 +72,21 @@
                 <data android:scheme="quickpitik" />
             </intent-filter>
             <!--
+                Deep-link entry point for email verification links.
+                Intercepts both localhost and the ngrok tunnel so runners
+                can verify their emails without being dumped into a browser.
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="localhost" />
+                <data android:host="snippet-sheath-cloak.ngrok-free.dev" />
+                <data android:pathPrefix="/verify-email" />
+            </intent-filter>
+            <!--
                 Camera attach. Paired with res/xml/device_filter.xml so the OS
                 offers "always open QuickPitik for this device" — that tick is
                 what grants persistent USB permission and stops the prompt from

@@ -42,6 +42,9 @@ interface QuickPitikApi {
         @Body request: LogoutRequest
     ): ApiResponseEnvelope<Map<String, Boolean>>
 
+    @POST("api/v1/auth/verify-email")
+    suspend fun verifyEmail(@Body request: VerifyEmailRequest): ApiResponseEnvelope<MessageResponse>
+
     // Auth recovery. Both are public (SecurityConfig permits /auth/**) so they
     // carry no Authorization header, and TokenAuthenticator skips /auth/* — a
     // 4xx here can never trigger a refresh or a forced logout.
@@ -401,6 +404,8 @@ interface QuickPitikApi {
         @Path("id") orderId: String,
         @Query("token") shareToken: String
     ): ApiResponseEnvelope<OrderDetailDto>
+
+
 
 
     @POST("api/v1/me/orders/{id}/refund")

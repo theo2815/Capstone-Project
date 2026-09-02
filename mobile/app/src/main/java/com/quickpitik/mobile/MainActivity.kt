@@ -71,6 +71,7 @@ import com.quickpitik.mobile.ui.auth.AuthViewModel
 import com.quickpitik.mobile.ui.auth.ForgotPasswordScreen
 import com.quickpitik.mobile.ui.auth.LoginScreen
 import com.quickpitik.mobile.ui.auth.RegisterScreen
+import com.quickpitik.mobile.ui.auth.VerifyEmailScreen
 import com.quickpitik.mobile.ui.photographer.EventsState
 import com.quickpitik.mobile.ui.photographer.PhotographerCaptureScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
@@ -372,6 +373,28 @@ class MainActivity : ComponentActivity() {
                                         navController.navigate("login")
                                     },
                                     onRegisterSuccess = { isPhotographer ->
+                                        val target = if (isPhotographer) "studio" else "runner"
+                                        if (!isPhotographer) cartViewModel.fetchCart()
+                                        navController.navigate(target) {
+                                            popUpTo("login") { inclusive = true }
+                                        }
+                                    }
+                                )
+                            }
+                            composable(
+                                route = "verify-email?token={token}",
+                                arguments = listOf(navArgument("token") { type = NavType.StringType; nullable = true; defaultValue = null })
+                            ) { backStackEntry ->
+                                val token = backStackEntry.arguments?.getString("token")
+                                VerifyEmailScreen(
+                                    token = token,
+                                    onNavigateToLogin = {
+                                        navController.navigate("login") {
+                                            popUpTo("login") { inclusive = true }
+                                        }
+                                    },
+                                    onNavigateToDashboard = { isPhotographer ->
+                                        sessionNotice = null
                                         val target = if (isPhotographer) "studio" else "runner"
                                         if (!isPhotographer) cartViewModel.fetchCart()
                                         navController.navigate(target) {
@@ -714,7 +737,12 @@ class MainActivity : ComponentActivity() {
 
     private fun pickQuickpitikUri(intent: Intent?): Uri? {
         val data = intent?.data ?: return null
-        return if (data.scheme.equals("quickpitik", ignoreCase = true)) data else null
+        if (data.scheme.equals("quickpitik", ignoreCase = true)) return data
+        if ((data.scheme.equals("http", ignoreCase = true) || data.scheme.equals("https", ignoreCase = true)) &&
+            data.path?.lowercase() == "/verify-email") {
+            return data
+        }
+        return null
     }
 
     // Maps:
@@ -742,6 +770,12 @@ class MainActivity : ComponentActivity() {
             return
         }
         when {
+            host == "verify-email" || path == "/verify-email" -> {
+                val token = uri.getQueryParameter("token").orEmpty()
+                navController.navigate("verify-email?token=$token") {
+                    launchSingleTop = true
+                }
+            }
             host == "orders" && path.startsWith("/return") -> {
                 val orderId = uri.getQueryParameter("orderId")
                 cartViewModel.closeCartSheet()
