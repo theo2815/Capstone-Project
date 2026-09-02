@@ -3,6 +3,7 @@ package com.quickpitik.service.photographer
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.photographer.DirectUploadBeginResponse
 import com.quickpitik.dto.photographer.PhotoExistsResponse
 import com.quickpitik.dto.photographer.PhotoExistsResult
 import com.quickpitik.dto.photographer.UploadedPhotoDto
@@ -68,6 +69,155 @@ class PhotoUploadService(
         // validation rejects return before the stop) — the number that matters
         // for marathon-day capacity planning.
         val timerSample = Timer.start(meterRegistry)
+        val (event, settings) = gate(photographerId, eventId)
+
+        val contentType = file.contentType?.lowercase()
+        if (file.isEmpty || contentType == null || contentType !in ALLOWED_CONTENT_TYPES) {
+            throw ApiException(
+                status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "Upload must be image/jpeg, image/png, or image/webp.",
+            )
+        }
+
+        val bytes = file.bytes
+
+        // Decompression-bomb guard: header-only dimension check BEFORE the full
+        // ImageIO decode below. The 25 MB multipart cap bounds the compressed
+        // bytes, not the decoded raster — a bomb under 25 MB is unbounded heap.
+        if (ImagePixelGuard.exceedsPixelBudget(bytes)) {
+            throw ApiException(
+                status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "Image dimensions exceed the supported maximum.",
+            )
+        }
+
+        // Duplicate detection (enterprise dedup). A photo's identity is the
+        // SHA-256 of its ORIGINAL bytes, hashed HERE — before watermarking,
+        // which would change them — so a client- and server-side hash of the
+        // same file agree. Boundary is per-photographer across all events: the
+        // same shot can't be uploaded twice. A same-event re-upload (the
+        // stop-on-mobile / continue-on-web case) returns the existing photo
+        // idempotently; a different-event re-upload is rejected. The partial
+        // unique index (photographer_id, content_hash) from V24 is the
+        // race-safe backstop (see the saveAndFlush below).
+        val contentHash = sha256Hex(bytes)
+        duplicateOf(photographerId, eventId, contentHash)?.let { return existingPhotoDto(it) }
+
+        // Blur culling is desktop-only (BatchMyPhotos). Web upload assumes
+        // photos have already been culled by the photographer's desktop
+        // workflow — see backend/decisions 2026-05-18 "Blur removed from
+        // BE upload" + website/decisions 2026-05-06 "Blur removed from web."
+
+        val photoId = UUID.randomUUID()
+        val originalKey = originalKeyFor(eventId, photoId)
+
+        // Watermark generation moved OFF this request (2026-08-28): the decode +
+        // composite (~200-500ms CPU) and the watermark PUT now run async in
+        // PhotoWatermarkService, which flips the photo PROCESSING → LIVE when
+        // the derivative lands. The upload's 200 guarantees only that the
+        // ORIGINAL is durably stored (the mobile worker deletes its local copy
+        // on 200, so that invariant is load-bearing). A cheap pointer check
+        // keeps the actionable WATERMARK_MISSING 422 for the common
+        // misconfiguration; the storage-drift case (pointer present, bytes
+        // gone) now surfaces async and the sweep retries it after the
+        // photographer re-uploads the logo in Settings.
+        requireWatermark(settings)
+
+        storageService.put(originalKey, bytes, contentType)
+
+        val dto = persistNew(photoId, eventId, photographerId, originalKey, contentHash, event)
+        timerSample.stop(meterRegistry.timer("qp.upload.duration"))
+        return dto
+    }
+
+    // ── Direct-to-storage upload (2026-09-02) ───────────────────────────────
+    // The multipart path pushes every byte through this server twice (in from
+    // the phone, out to storage) — measured at ~6 s per 1.2 MB frame on the
+    // 2026-09-02 device session, all of it the storage PUT. These two steps let
+    // the client PUT straight to S3/R2 with a presigned URL and then register
+    // the object. The gates, dedup and persist are the SAME code as upload();
+    // only who moves the bytes changes.
+    //
+    // Trust note: contentHash is client-asserted here (the server never sees
+    // the bytes in-request). A photographer can only mislead their own dedupe
+    // with it; the async watermark pass still decodes the object and guards
+    // the pixel budget, so a bad object stalls in PROCESSING, owner-only.
+
+    fun beginDirectUpload(
+        photographerId: UUID,
+        eventId: UUID,
+        contentHash: String,
+        contentType: String,
+        sizeBytes: Long,
+    ): DirectUploadBeginResponse {
+        val (_, settings) = gate(photographerId, eventId)
+        val type = contentType.lowercase()
+        if (type !in ALLOWED_CONTENT_TYPES || sizeBytes > MAX_DIRECT_UPLOAD_BYTES) {
+            throw ApiException(
+                status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "Upload must be image/jpeg, image/png, or image/webp under 25 MB.",
+            )
+        }
+        duplicateOf(photographerId, eventId, contentHash.lowercase())?.let {
+            return DirectUploadBeginResponse(mode = "existing", existing = existingPhotoDto(it))
+        }
+        requireWatermark(settings)
+        if (!storageService.supportsDirectUpload) return DirectUploadBeginResponse(mode = "multipart")
+        val photoId = UUID.randomUUID()
+        val key = originalKeyFor(eventId, photoId)
+        return DirectUploadBeginResponse(
+            mode = "direct",
+            photoId = photoId,
+            key = key,
+            uploadUrl = storageService.presignedPutUrl(key, DIRECT_PUT_TTL, type),
+            expiresInSeconds = DIRECT_PUT_TTL.seconds,
+        )
+    }
+
+    fun commitDirectUpload(
+        photographerId: UUID,
+        eventId: UUID,
+        photoId: UUID,
+        key: String,
+        contentHash: String,
+    ): UploadedPhotoDto {
+        val timerSample = Timer.start(meterRegistry)
+        val (event, settings) = gate(photographerId, eventId)
+        // The key is derived, never trusted: a client can only commit the
+        // object slot that begin() issued for this event.
+        if (key != originalKeyFor(eventId, photoId)) {
+            throw ApiException(
+                status = HttpStatus.UNPROCESSABLE_ENTITY,
+                code = ErrorCodes.UPLOAD_KEY_MISMATCH,
+                message = "That upload key doesn't match the photo it was issued for.",
+            )
+        }
+        if (!storageService.exists(key)) {
+            throw ApiException(
+                status = HttpStatus.UNPROCESSABLE_ENTITY,
+                code = ErrorCodes.UPLOAD_OBJECT_MISSING,
+                message = "The uploaded file wasn't found in storage. Upload it again.",
+            )
+        }
+        val hash = contentHash.lowercase()
+        duplicateOf(photographerId, eventId, hash)?.let { existing ->
+            // Lost a race with an identical upload — drop the orphan object.
+            runCatching { storageService.delete(key) }
+            return existingPhotoDto(existing)
+        }
+        requireWatermark(settings)
+        val dto = persistNew(photoId, eventId, photographerId, key, hash, event)
+        timerSample.stop(meterRegistry.timer("qp.upload.duration"))
+        return dto
+    }
+
+    private data class Gate(val event: com.quickpitik.entity.Event, val settings: com.quickpitik.entity.PhotographerSettings)
+
+    /** Everything that must hold before ANY upload path may store a photo. */
+    private fun gate(photographerId: UUID, eventId: UUID): Gate {
         val event = eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         if (event.status !in UPLOADABLE_STATUSES) {
@@ -112,43 +262,19 @@ class PhotoUploadService(
                 message = "Submit your photographer verification before uploading.",
             )
         }
+        return Gate(event, settings)
+    }
 
-        val contentType = file.contentType?.lowercase()
-        if (file.isEmpty || contentType == null || contentType !in ALLOWED_CONTENT_TYPES) {
-            throw ApiException(
-                status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
-                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
-                message = "Upload must be image/jpeg, image/png, or image/webp.",
-            )
-        }
-
-        val bytes = file.bytes
-
-        // Decompression-bomb guard: header-only dimension check BEFORE the full
-        // ImageIO decode below. The 25 MB multipart cap bounds the compressed
-        // bytes, not the decoded raster — a bomb under 25 MB is unbounded heap.
-        if (ImagePixelGuard.exceedsPixelBudget(bytes)) {
-            throw ApiException(
-                status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
-                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
-                message = "Image dimensions exceed the supported maximum.",
-            )
-        }
-
-        // Duplicate detection (enterprise dedup). A photo's identity is the
-        // SHA-256 of its ORIGINAL bytes, hashed HERE — before watermarking,
-        // which would change them — so a client- and server-side hash of the
-        // same file agree. Boundary is per-photographer across all events: the
-        // same shot can't be uploaded twice. A same-event re-upload (the
-        // stop-on-mobile / continue-on-web case) returns the existing photo
-        // idempotently; a different-event re-upload is rejected. The partial
-        // unique index (photographer_id, content_hash) from V24 is the
-        // race-safe backstop (see the saveAndFlush below).
-        val contentHash = sha256Hex(bytes)
+    /**
+     * Per-photographer, cross-event dedup on the SHA-256 of the original bytes.
+     * Returns the existing photo for a same-event repeat (idempotent), throws
+     * for a different-event repeat, null when the bytes are new.
+     */
+    private fun duplicateOf(photographerId: UUID, eventId: UUID, contentHash: String): Photo? {
         photoRepository.findFirstByPhotographerIdAndContentHash(photographerId, contentHash)?.let { existing ->
             if (existing.eventId == eventId) {
                 meterRegistry.counter("qp.upload.dedup", "outcome", "same_event").increment()
-                return existingPhotoDto(existing)
+                return existing
             }
             meterRegistry.counter("qp.upload.dedup", "outcome", "different_event").increment()
             val otherEvent = eventRepository.findById(existing.eventId).orElse(null)
@@ -158,25 +284,10 @@ class PhotoUploadService(
             )
         }
         meterRegistry.counter("qp.upload.dedup", "outcome", "new").increment()
+        return null
+    }
 
-        // Blur culling is desktop-only (BatchMyPhotos). Web upload assumes
-        // photos have already been culled by the photographer's desktop
-        // workflow — see backend/decisions 2026-05-18 "Blur removed from
-        // BE upload" + website/decisions 2026-05-06 "Blur removed from web."
-
-        val photoId = UUID.randomUUID()
-        val originalKey = "events/$eventId/photos/$photoId/original.jpg"
-
-        // Watermark generation moved OFF this request (2026-08-28): the decode +
-        // composite (~200-500ms CPU) and the watermark PUT now run async in
-        // PhotoWatermarkService, which flips the photo PROCESSING → LIVE when
-        // the derivative lands. The upload's 200 guarantees only that the
-        // ORIGINAL is durably stored (the mobile worker deletes its local copy
-        // on 200, so that invariant is load-bearing). A cheap pointer check
-        // keeps the actionable WATERMARK_MISSING 422 for the common
-        // misconfiguration; the storage-drift case (pointer present, bytes
-        // gone) now surfaces async and the sweep retries it after the
-        // photographer re-uploads the logo in Settings.
+    private fun requireWatermark(settings: com.quickpitik.entity.PhotographerSettings) {
         if (settings.watermarkS3Key == null) {
             throw ApiException(
                 status = HttpStatus.UNPROCESSABLE_ENTITY,
@@ -184,9 +295,23 @@ class PhotoUploadService(
                 message = "Your watermark image is missing from storage. Re-upload it in Settings before uploading photos.",
             )
         }
+    }
 
-        storageService.put(originalKey, bytes, contentType)
+    private fun originalKeyFor(eventId: UUID, photoId: UUID): String =
+        "events/$eventId/photos/$photoId/original.jpg"
 
+    /**
+     * Row + counters + async triggers for an original that is already durably
+     * in storage under [originalKey]. Shared by the multipart and direct paths.
+     */
+    private fun persistNew(
+        photoId: UUID,
+        eventId: UUID,
+        photographerId: UUID,
+        originalKey: String,
+        contentHash: String,
+        event: com.quickpitik.entity.Event,
+    ): UploadedPhotoDto {
         // PROCESSING until PhotoWatermarkService stores the watermark and flips
         // it LIVE. Runner/public queries filter status = LIVE, so the clean
         // original can never be served to a non-owner while the watermark is
@@ -303,7 +428,6 @@ class PhotoUploadService(
         // clients treat it as informational. "none" when ai-api is disabled.
         val aiDetectionStatus = if (aiApiProperties.enabled) "pending" else "none"
 
-        timerSample.stop(meterRegistry.timer("qp.upload.duration"))
         return UploadedPhotoDto(
             id = photoId,
             status = "processing",
@@ -388,6 +512,11 @@ class PhotoUploadService(
         val ALLOWED_CONTENT_TYPES: Set<String> = setOf("image/jpeg", "image/png", "image/webp")
         val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
         const val UPLOAD_GRACE_DAYS = 4
+        // Direct path: same ceiling as the multipart cap in application.yml.
+        const val MAX_DIRECT_UPLOAD_BYTES = 25L * 1024 * 1024
+        // Long enough for a 25 MB frame on a bad venue uplink, short enough that
+        // a leaked URL is useless by the time anyone could reuse it.
+        val DIRECT_PUT_TTL: java.time.Duration = java.time.Duration.ofMinutes(15)
 
         // The V24 partial unique index. The race backstop only treats THIS
         // constraint as a duplicate; any other violation is rethrown.

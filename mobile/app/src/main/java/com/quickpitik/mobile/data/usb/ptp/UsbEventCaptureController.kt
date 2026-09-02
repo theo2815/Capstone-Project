@@ -54,12 +54,34 @@ class UsbEventCaptureController(
 ) {
     private enum class PullOutcome { UPLOADED, SKIPPED, FAILED }
 
+    /**
+     * [catchUpAfter] is the highest handle the previous session for this event
+     * finished with (null on a first run). Card objects above it at baseline
+     * time were shot while auto-upload was stopped, so they are NOT treated as
+     * known — the first card scan pulls them. [onHighWater] reports each new
+     * maximum so the caller can persist it.
+     */
     suspend fun run(
+        catchUpAfter: Long? = null,
+        onHighWater: (Long) -> Unit = {},
         onLog: (String) -> Unit,
         onStarted: () -> Unit,
         onReconnecting: (Boolean) -> Unit,
         onCapture: suspend (filename: String, writeTo: (OutputStream) -> Unit) -> Boolean,
     ) {
+        // Only handles of frames we actually PULLED move the mark. Canon's
+        // handle space is not one monotonic sequence: the card's folder object
+        // sits at 0x6008xxxx while frames run 0x5192xxxx, and a baseline "max"
+        // once pinned the mark at the folder so no frame was ever above it
+        // (device-verified 2026-09-02). A handle from a different family (top
+        // 16 bits) replaces the mark instead of being compared to it.
+        var highWater = catchUpAfter ?: -1L
+        val bump: (Long) -> Unit = { h ->
+            if (h > highWater || !sameFamily(h, highWater)) {
+                highWater = h
+                onHighWater(h)
+            }
+        }
         // These outlive any single PTP session, and that is the whole point of
         // the outer loop: on a reconnect we must NOT re-baseline. Handles shot
         // while the camera was away are absent from `seen`, so the card-diff
@@ -79,9 +101,9 @@ class UsbEventCaptureController(
                     // Never got going at all: a setup problem, not a blip.
                     if (!baselined) {
                         onLog(
-                            "Couldn't start auto-upload. Wake the camera (half-press the shutter), set " +
-                                "Auto power off → Disable, confirm the USB permission was allowed, then " +
-                                "tap Start auto-upload again."
+                            "The camera isn't answering over USB. Unplug and replug the cable " +
+                                "(or switch the camera off and on), wait a few seconds, then tap " +
+                                "Start auto-upload again. Photos already pulled keep uploading."
                         )
                         return
                     }
@@ -91,7 +113,7 @@ class UsbEventCaptureController(
                 }
 
                 if (!baselined) {
-                    if (!setBaseline(session, seen, onLog)) {
+                    if (!setBaseline(session, seen, catchUpAfter, bump, onLog)) {
                         runCatching { session.close() }
                         return
                     }
@@ -105,7 +127,7 @@ class UsbEventCaptureController(
 
                 val sessionStart = System.currentTimeMillis()
                 try {
-                    watch(session, seen, attempts, onLog, onCapture)
+                    watch(session, seen, attempts, bump, onLog, onCapture)
                 } catch (e: CancellationException) {
                     throw e // the photographer stopped — never treat this as a drop
                 } catch (e: Exception) {
@@ -135,7 +157,7 @@ class UsbEventCaptureController(
                 delay(RECONNECT_WAIT_MS)
             }
         } finally {
-            onLog("Auto-upload stopped.")
+            onLog("Auto-upload stopped. The camera stays in PC-connection mode while plugged in — unplug it to shoot offline.")
         }
     }
 
@@ -144,6 +166,9 @@ class UsbEventCaptureController(
      * [RECONNECT_BUDGET_MS] — the point where "the cable got knocked" stops
      * being the likely explanation and "the photographer packed up" starts.
      */
+    /** Same top-16-bit handle family (see the high-water note in [run]). */
+    private fun sameFamily(a: Long, b: Long): Boolean = (a ushr 16) == (b ushr 16)
+
     private fun outOfPatience(linkLostAt: Long, onLog: (String) -> Unit): Boolean {
         if (linkLostAt == 0L) return false
         if (System.currentTimeMillis() - linkLostAt < RECONNECT_BUDGET_MS) return false
@@ -163,10 +188,16 @@ class UsbEventCaptureController(
     private suspend fun setBaseline(
         session: PtpSession,
         seen: HashSet<Long>,
+        catchUpAfter: Long?,
+        bump: (Long) -> Unit,
         onLog: (String) -> Unit,
     ): Boolean {
+        // The body queues ObjectAdded events for frames shot while nobody was
+        // polling, so this drain would otherwise mark exactly the frames the
+        // catch-up below is meant to pull. Same high-water filter applies.
         runCatching { EosEvents.parse(session.eosGetEvent()) }.getOrDefault(emptyList())
-            .filter { it.isObjectArrival }.forEach { seen.add(it.handle) }
+            .filter { it.isObjectArrival && (catchUpAfter == null || it.handle <= catchUpAfter) }
+            .forEach { seen.add(it.handle) }
 
         var baseCard: List<Long>? = null
         for (attempt in 1..BASELINE_ATTEMPTS) {
@@ -182,7 +213,25 @@ class UsbEventCaptureController(
             )
             return false
         }
-        seen.addAll(baseCard)
+        // Frames shot while auto-upload was stopped sit above the previous
+        // session's high-water mark. Leave them out of `seen` so the first card
+        // scan pulls them — unless there are implausibly many (a different
+        // card), in which case card import is the right tool and we say so.
+        val (known, pending) = baseCard.partition {
+            catchUpAfter == null || it <= catchUpAfter || !sameFamily(it, catchUpAfter)
+        }
+        if (pending.isNotEmpty() && pending.size <= CATCH_UP_CAP) {
+            seen.addAll(known)
+            onLog("Catching up on ${pending.size} frame(s) shot since you last stopped.")
+        } else {
+            seen.addAll(baseCard)
+            if (pending.isNotEmpty()) {
+                onLog(
+                    "${pending.size} new objects since you last stopped — more than $CATCH_UP_CAP, so " +
+                        "skipping catch-up. Use Import from camera card for those."
+                )
+            }
+        }
         onLog("Baseline set — ${baseCard.size} card object(s) known. Shoot now.")
         return true
     }
@@ -197,50 +246,75 @@ class UsbEventCaptureController(
         session: PtpSession,
         seen: HashSet<Long>,
         attempts: HashMap<Long, Int>,
+        bump: (Long) -> Unit,
         onLog: (String) -> Unit,
         onCapture: suspend (String, (OutputStream) -> Unit) -> Boolean,
     ) {
         val loggedCodes = HashSet<Int>()
         var lastKeepAlive = System.currentTimeMillis()
         var lastCardScan = System.currentTimeMillis()
+        var lastEventPoll = 0L
         var lastHeartbeat = System.currentTimeMillis()
         var consecutiveErrors = 0
 
         while (currentCoroutineContext().isActive) {
-            // ── Detector 1: EOS event stream ────────────────────────────────
-            val blob = try {
-                session.eosGetEvent()
-            } catch (e: Exception) {
-                consecutiveErrors++
-                if (consecutiveErrors == 1 || consecutiveErrors % 25 == 0) {
-                    onLog("GetEvent error (${e.message}) ×$consecutiveErrors")
-                }
-                if (consecutiveErrors >= ERRORS_BEFORE_STOP) {
-                    onLog("Camera stopped answering (${e.message}) — dropping this session.")
-                    return
-                }
-                delay(POLL_MS)
-                continue
-            }
-            consecutiveErrors = 0
-            val events = EosEvents.parse(blob)
-            for (ev in events) if (loggedCodes.add(ev.code)) onLog("event 0x%04X seen".format(ev.code))
-            for (ev in events) {
-                if (!ev.isObjectArrival || ev.handle in seen) continue
-                settlePull(seen, attempts, ev.handle, pullViaEvent(session, ev.handle, onLog, onCapture), onLog)
-            }
+            var now = System.currentTimeMillis()
 
-            val now = System.currentTimeMillis()
+            // ── Detector 1: EOS event stream (throttled) ────────────────────
+            // Kept for shutter-alive mode and as the second detector, but no
+            // longer every loop: on the R6 it detected 0 of 111 frames
+            // (2026-09-02) while costing a stalled pipe + two control transfers
+            // per empty poll. Card-diff below is the detector that fires.
+            if (now - lastEventPoll > EVENT_POLL_MS) {
+                lastEventPoll = now
+                val blob = try {
+                    session.eosGetEvent()
+                } catch (e: Exception) {
+                    consecutiveErrors++
+                    if (consecutiveErrors == 1 || consecutiveErrors % 25 == 0) {
+                        onLog("GetEvent error (${e.message}) ×$consecutiveErrors")
+                    }
+                    if (consecutiveErrors >= ERRORS_BEFORE_STOP) {
+                        onLog("Camera stopped answering (${e.message}) — dropping this session.")
+                        return
+                    }
+                    delay(POLL_MS)
+                    continue
+                }
+                consecutiveErrors = 0
+                val events = EosEvents.parse(blob)
+                for (ev in events) if (loggedCodes.add(ev.code)) onLog("event 0x%04X seen".format(ev.code))
+                for (ev in events) {
+                    if (!ev.isObjectArrival || ev.handle in seen) continue
+                    settlePull(seen, attempts, ev.handle, pullViaEvent(session, ev.handle, onLog, onCapture), bump, onLog)
+                }
+                now = System.currentTimeMillis()
+            }
 
             // ── Detector 2: throttled card-listing diff ─────────────────────
             if (now - lastCardScan > CARD_SCAN_MS) {
                 lastCardScan = now
-                val handles = runCatching { allCardHandles(session) }.getOrNull()
+                val handles = try {
+                    allCardHandles(session)
+                } catch (e: Exception) {
+                    // With GetEvent throttled this is the call that notices a
+                    // dead link, so it shares the same error budget.
+                    consecutiveErrors++
+                    if (consecutiveErrors == 1 || consecutiveErrors % 25 == 0) {
+                        onLog("Card scan error (${e.message}) ×$consecutiveErrors")
+                    }
+                    if (consecutiveErrors >= ERRORS_BEFORE_STOP) {
+                        onLog("Camera stopped answering (${e.message}) — dropping this session.")
+                        return
+                    }
+                    null
+                }
                 if (handles != null) {
+                    consecutiveErrors = 0
                     val fresh = handles.filter { it !in seen }.sorted()
                     if (fresh.isNotEmpty()) onLog("card-diff: ${fresh.size} new object(s) on card")
                     for (h in fresh) {
-                        settlePull(seen, attempts, h, pullViaCard(session, h, onLog, onCapture), onLog)
+                        settlePull(seen, attempts, h, pullViaCard(session, h, onLog, onCapture), bump, onLog)
                     }
                 }
             }
@@ -267,12 +341,15 @@ class UsbEventCaptureController(
         attempts: HashMap<Long, Int>,
         handle: Long,
         outcome: PullOutcome,
+        bump: (Long) -> Unit,
         onLog: (String) -> Unit,
     ) {
         when (outcome) {
             PullOutcome.UPLOADED, PullOutcome.SKIPPED -> {
                 seen.add(handle)
                 attempts.remove(handle)
+                // UPLOADED only: a SKIPPED association/RAW must not move the mark.
+                if (outcome == PullOutcome.UPLOADED) bump(handle)
             }
             PullOutcome.FAILED -> {
                 val n = (attempts[handle] ?: 0) + 1
@@ -414,6 +491,14 @@ class UsbEventCaptureController(
                 continue
             }
             try {
+                // A previous attempt got no reply: the body's PTP stack is stalled
+                // and a fresh OpenSession alone never clears it (see
+                // PtpSession.resetDevice). Reset first, then give it a moment.
+                if (attempt > 1) {
+                    onLog("  resetting camera USB link…")
+                    s.resetDevice()
+                    delay(RESET_SETTLE_MS)
+                }
                 delay(SETTLE_MS)
                 // OpenSession must be the FIRST transaction (TransactionID 0) — the
                 // R6 treats a reused id 0 as a retransmit and never really opens.
@@ -432,6 +517,9 @@ class UsbEventCaptureController(
                 return s
             } catch (e: Exception) {
                 onLog("  init attempt $attempt failed: ${e.message}")
+                // Don't send CloseSession down a pipe that just stopped answering —
+                // it only burns another 5 s timeout. Reset, then release.
+                runCatching { s.resetDevice() }
                 runCatching { s.close() }
                 delay(RETRY_MS)
             }
@@ -449,13 +537,25 @@ class UsbEventCaptureController(
         // risks clearing a halt mid-data-phase and desyncing container framing.
         // Tune these constants using the timing log from the R6 verification
         // protocol, never blind.
-        const val POLL_MS = 300L
+        // Camera-battery budget (2026-09-02 on-device data): the loop used to
+        // issue ~55 camera transactions a minute at idle. GetEvent now runs
+        // every EVENT_POLL_MS instead of every loop, KeepDeviceOn every 30 s
+        // (it only has to beat the body's auto-power-off timer), and the card
+        // scan — the detector that actually fires — keeps its 3 s cadence.
+        // Detection latency is unchanged or better: GetEvent no longer blocks
+        // ~3 s in front of every card scan.
+        const val POLL_MS = 500L
+        const val EVENT_POLL_MS = 5000L
         const val CARD_SCAN_MS = 3000L
-        const val KEEPALIVE_MS = 4000L
+        const val KEEPALIVE_MS = 30_000L
+        // Catch-up ceiling: more pending objects than this at Start almost
+        // certainly means a different card, not a stopped session.
+        const val CATCH_UP_CAP = 200
         const val HEARTBEAT_MS = 10000L
         const val INIT_ATTEMPTS = 4
         const val RETRY_MS = 1000L
         const val SETTLE_MS = 200L
+        const val RESET_SETTLE_MS = 1500L
         const val ERRORS_BEFORE_STOP = 12
         const val BASELINE_ATTEMPTS = 3
         const val MAX_PULL_ATTEMPTS = 3

@@ -26,7 +26,7 @@ class PhotoWatermarkTrigger(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    @Async("imageProcessing")
+    @Async("watermarkProcessing")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     fun onPhotoUploaded(event: PhotoUploadedForWatermark) {
         // Never let a watermark failure escape the async worker — the row stays
@@ -60,6 +60,8 @@ class PhotoWatermarkTrigger(
 
     private companion object {
         const val RECONCILE_GRACE_SECONDS = 120L
-        const val RECONCILE_BATCH_SIZE = 25
+        // 25 capped recovery at 25 photos/min — a 1,000-frame backlog took 40
+        // minutes to surface. 200/min covers a burst; the pool bounds the rest.
+        const val RECONCILE_BATCH_SIZE = 200
     }
 }

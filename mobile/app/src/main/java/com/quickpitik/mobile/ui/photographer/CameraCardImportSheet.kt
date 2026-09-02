@@ -367,7 +367,9 @@ private fun CardPhotoRow(
         // bodies that don't expose GetThumb). Decoded once per handle via
         // remember(photo.handle) — the bytes don't change so the Bitmap is
         // reusable across recompositions of the same row.
-        val thumb = remember(photo.handle) {
+        // Keyed on the bytes too: thumbnails now arrive progressively after the
+        // list is shown, so the same handle goes null → bytes once.
+        val thumb = remember(photo.handle, photo.thumbnailBytes) {
             photo.thumbnailBytes?.let {
                 runCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }
                     .getOrNull()

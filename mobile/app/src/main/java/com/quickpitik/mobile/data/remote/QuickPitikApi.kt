@@ -74,6 +74,22 @@ interface QuickPitikApi {
         @Part file: MultipartBody.Part
     ): ApiResponseEnvelope<UploadedPhotoDto>
 
+    // Direct-to-storage upload, steps 1 and 2 — see DirectUploadBeginRequest.
+    // PhotoUploadWorker tries this first and falls back to uploadPhoto().
+    @POST("api/v1/me/photographer/events/{eventId}/photos/direct")
+    suspend fun beginDirectUpload(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: DirectUploadBeginRequest
+    ): ApiResponseEnvelope<DirectUploadBeginResponse>
+
+    @POST("api/v1/me/photographer/events/{eventId}/photos/direct/commit")
+    suspend fun commitDirectUpload(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: DirectUploadCommitRequest
+    ): ApiResponseEnvelope<UploadedPhotoDto>
+
     // Dedup pre-flight — see PhotoExistsRequest. Read-only; the cost (and the
     // rate limit) lives on the upload this is trying to avoid.
     @POST("api/v1/me/photographer/events/{eventId}/photos/exists")

@@ -11,7 +11,13 @@ import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.UploadRecord
+import com.quickpitik.mobile.data.local.UploadSpool
+import com.quickpitik.mobile.data.remote.ApiResponseEnvelope
+import com.quickpitik.mobile.data.remote.DirectUploadBeginRequest
+import com.quickpitik.mobile.data.remote.DirectUploadCommitRequest
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.UploadedPhotoDto
+import okhttp3.Request
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -47,7 +53,22 @@ class PhotoUploadWorker(
         database.uploadQueueDao().getRecordsWithStatus("UPLOADING")
             .forEach { database.uploadQueueDao().updateStatus(it.id, "QUEUED", null) }
 
+        // 2b. Prune the COMPLETED ledger. Rows older than any event's upload
+        // window can't dedupe a re-import any more (the backend refuses such
+        // uploads), so drop them and their thumbnails — this is what keeps the
+        // spool at MBs over a season instead of growing forever.
+        val cutoff = System.currentTimeMillis() - COMPLETED_TTL_MS
+        database.uploadQueueDao().getCompletedPathsBefore(cutoff)
+            .forEach { runCatching { File(it).delete() } }
+        database.uploadQueueDao().deleteCompletedBefore(cutoff)
+
         val hasFailures = AtomicBoolean(false)
+        // Set on the first connection-level failure. Every record after that
+        // requeues at once instead of each waiting out its own 30 s connect
+        // timeout (measured: a 2-minute backend stop cost 12 × 30 s inside one
+        // run, 2026-09-02). The run then ends with retry() and the 10 s linear
+        // backoff, not the timeout, decides when we look again.
+        val offline = AtomicBoolean(false)
         // Parallel upload gate. The 2026-05-28 diagnosis showed wall-clock per
         // photo was ~33s on demo Wi-Fi while PTP + persist combined was <0.1s —
         // the worker's serial loop was the bottleneck. 3 concurrent uploads
@@ -55,7 +76,14 @@ class PhotoUploadWorker(
         // under Spring Boot tomcat's default 200-thread pool. A 24-photo race
         // batch drops from ~13 min to ~4-5 min. Bumping above 3 starts to
         // contend with the phone's radio and gives diminishing returns.
-        val gate = Semaphore(permits = 3)
+        // Adaptive since 2026-09-02: start at 3, climb one step after three
+        // consecutive fast uploads, drop one step on a slow upload or a dropped
+        // connection. The hard cap is the Semaphore; the soft level is what the
+        // pacer moves. Ceiling in practice is the phone's uplink — more
+        // parallelism past that just makes each upload slower.
+        val gate = Semaphore(permits = Pacer.MAX_CONCURRENCY)
+        val pacer = Pacer()
+        val inFlight = java.util.concurrent.atomic.AtomicInteger(0)
 
         // 3. Drain until the queue is empty. Re-querying after each batch picks
         // up rows inserted mid-run (live capture enqueues while uploads are in
@@ -74,7 +102,16 @@ class PhotoUploadWorker(
             coroutineScope {
                 for (record in batch) {
                     launch {
-                        gate.withPermit { uploadOne(record, sessionManager, database, hasFailures) }
+                        gate.withPermit {
+                            // Soft gate: wait until a slot under the current level frees.
+                            while (inFlight.get() >= pacer.level.get()) kotlinx.coroutines.delay(200)
+                            inFlight.incrementAndGet()
+                            try {
+                                uploadOne(record, sessionManager, database, hasFailures, offline, pacer)
+                            } finally {
+                                inFlight.decrementAndGet()
+                            }
+                        }
                     }
                 }
             }
@@ -88,7 +125,14 @@ class PhotoUploadWorker(
         sessionManager: SessionManager,
         database: AppDatabase,
         hasFailures: AtomicBoolean,
+        offline: AtomicBoolean,
+        pacer: Pacer,
     ) {
+        if (offline.get()) {
+            // Budget untouched, row stays QUEUED for the next run.
+            hasFailures.set(true)
+            return
+        }
         // Mark record as UPLOADING to prevent duplicate workers picking it up
         database.uploadQueueDao().updateStatus(record.id, "UPLOADING", null)
 
@@ -112,18 +156,23 @@ class PhotoUploadWorker(
 
         val uploadStart = System.currentTimeMillis()
         try {
-            val requestFile = file.asRequestBody("image/jpeg".toMediaTypeOrNull())
-            val body = MultipartBody.Part.createFormData(
-                "file", // Must match backend @RequestPart("file") parameter name
-                file.name,
-                requestFile,
-            )
-
-            val responseEnvelope = RetrofitClient.apiService.uploadPhoto(
-                token = "Bearer $token",
-                eventId = record.eventId,
-                file = body,
-            )
+            // Direct-to-storage first (bytes go phone → R2, never through the
+            // backend); null means "not available here", so fall back to the
+            // classic multipart POST the backend has always accepted.
+            val responseEnvelope = tryDirectUpload(file, token, record.eventId)
+                ?: run {
+                    val requestFile = file.asRequestBody("image/jpeg".toMediaTypeOrNull())
+                    val body = MultipartBody.Part.createFormData(
+                        "file", // Must match backend @RequestPart("file") parameter name
+                        file.name,
+                        requestFile,
+                    )
+                    RetrofitClient.apiService.uploadPhoto(
+                        token = "Bearer $token",
+                        eventId = record.eventId,
+                        file = body,
+                    )
+                }
 
             val uploadMs = System.currentTimeMillis() - uploadStart
             val ok = responseEnvelope.success && responseEnvelope.data != null
@@ -134,6 +183,7 @@ class PhotoUploadWorker(
                 )
             }
 
+            pacer.observe(uploadMs, failed = !ok)
             if (ok) {
                 // Status flip MUST stay before the shrink below: a crash before
                 // the flip re-uploads the still-intact original (idempotent
@@ -148,7 +198,9 @@ class PhotoUploadWorker(
                 // is deliberately KEPT — it is the card-import re-import dedupe
                 // ledger (getActiveOrCompletedForEvent). Only files we spooled
                 // into our own cacheDir are touched.
-                if (file.absolutePath.startsWith(applicationContext.cacheDir.absolutePath)) {
+                val ours = file.absolutePath.startsWith(applicationContext.cacheDir.absolutePath) ||
+                    file.absolutePath.startsWith(UploadSpool.dir(applicationContext).absolutePath)
+                if (ours) {
                     if (!runCatching { shrinkToThumbnail(file) }.getOrDefault(false)) {
                         runCatching { file.delete() }
                     }
@@ -180,8 +232,85 @@ class PhotoUploadWorker(
             val apiError = RetrofitClient.parseHttpError(e)
             val terminal = apiError != null && apiError.code in TERMINAL_UPLOAD_ERROR_CODES
             val errorMsg = apiError?.message ?: e.localizedMessage ?: "Network connection timeout."
-            settleFailure(record, terminal, errorMsg, database, hasFailures)
+            // No HTTP response at all (connection refused, reset, timed out):
+            // the backend never saw the photo, so this says nothing about the
+            // photo. It must not consume the record's retry budget — otherwise
+            // ~15 minutes of "Wi-Fi up, backend unreachable" settles every
+            // queued frame FAILED for good (5 runs on exponential backoff).
+            val transport = e is java.io.IOException
+            if (transport) offline.set(true)
+            pacer.observe(uploadMs, failed = true)
+            settleFailure(record, terminal, errorMsg, database, hasFailures, transport)
         }
+    }
+
+    /**
+     * Direct-to-storage path (backend 2026-09-02): hash → begin → PUT the file
+     * to the presigned URL → commit. Returns the commit envelope, an envelope
+     * wrapping the existing photo when the bytes were already in this event,
+     * or NULL when this path isn't usable — an older backend (404), a
+     * local-disk deployment ("multipart"), or a storage PUT that didn't
+     * succeed — so the caller runs the multipart upload instead.
+     *
+     * Backend business answers (409 duplicate, 422 window closed, 403…) are
+     * rethrown untouched: they mean the same thing on either path and the
+     * terminal-code logic in the caller must see them.
+     */
+    private suspend fun tryDirectUpload(
+        file: File,
+        token: String,
+        eventId: String,
+    ): ApiResponseEnvelope<UploadedPhotoDto>? {
+        val contentType = "image/jpeg"
+        val hash = sha256Hex(file)
+        val begin = try {
+            RetrofitClient.apiService.beginDirectUpload(
+                "Bearer $token",
+                eventId,
+                DirectUploadBeginRequest(contentHash = hash, contentType = contentType, sizeBytes = file.length()),
+            )
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404) return null // backend predates the endpoint
+            throw e
+        }
+        val plan = begin.data ?: return null
+        return when (plan.mode) {
+            "existing" -> ApiResponseEnvelope(success = true, data = plan.existing)
+            "direct" -> {
+                val url = plan.uploadUrl ?: return null
+                val photoId = plan.photoId ?: return null
+                val key = plan.key ?: return null
+                val put = Request.Builder()
+                    .url(url)
+                    .put(file.asRequestBody(contentType.toMediaTypeOrNull()))
+                    .build()
+                val stored = try {
+                    RetrofitClient.rawClient.newCall(put).execute().use { it.isSuccessful }
+                } catch (e: java.io.IOException) {
+                    false
+                }
+                if (!stored) return null
+                RetrofitClient.apiService.commitDirectUpload(
+                    "Bearer $token",
+                    eventId,
+                    DirectUploadCommitRequest(photoId = photoId, key = key, contentHash = hash, contentType = contentType),
+                )
+            }
+            else -> null
+        }
+    }
+
+    private fun sha256Hex(file: File): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     /**
@@ -200,9 +329,16 @@ class PhotoUploadWorker(
         errorMsg: String,
         database: AppDatabase,
         hasFailures: AtomicBoolean,
+        transport: Boolean = false,
     ) {
         if (terminal) {
             database.uploadQueueDao().updateStatus(record.id, "FAILED", errorMsg)
+            return
+        }
+        if (transport) {
+            // Requeue with the budget intact; WorkManager's backoff paces us.
+            database.uploadQueueDao().updateStatus(record.id, "QUEUED", errorMsg)
+            hasFailures.set(true)
             return
         }
         database.uploadQueueDao().incrementRetryCount(record.id)
@@ -265,7 +401,44 @@ class PhotoUploadWorker(
         return encoded
     }
 
+    /**
+     * Additive-increase / multiplicative-free concurrency pacer. Deliberately
+     * dumb: three fast uploads in a row earn one more slot, any slow or failed
+     * upload gives one back. Bounded by [MIN_CONCURRENCY]..[MAX_CONCURRENCY].
+     */
+    class Pacer {
+        val level = java.util.concurrent.atomic.AtomicInteger(INITIAL_CONCURRENCY)
+        private val fastStreak = java.util.concurrent.atomic.AtomicInteger(0)
+
+        fun observe(uploadMs: Long, failed: Boolean) {
+            if (failed || uploadMs > SLOW_MS) {
+                fastStreak.set(0)
+                level.updateAndGet { maxOf(MIN_CONCURRENCY, it - 1) }
+            } else if (uploadMs < FAST_MS) {
+                if (fastStreak.incrementAndGet() >= FAST_STREAK) {
+                    fastStreak.set(0)
+                    level.updateAndGet { minOf(MAX_CONCURRENCY, it + 1) }
+                }
+            } else {
+                fastStreak.set(0)
+            }
+        }
+
+        companion object {
+            const val MIN_CONCURRENCY = 2
+            const val INITIAL_CONCURRENCY = 3
+            const val MAX_CONCURRENCY = 6
+            const val FAST_MS = 4_000L
+            const val SLOW_MS = 15_000L
+            const val FAST_STREAK = 3
+        }
+    }
+
     private companion object {
+        // COMPLETED rows older than this are pruned at the start of each run.
+        // Seven days comfortably exceeds the backend's 4-day upload window.
+        const val COMPLETED_TTL_MS = 7L * 24 * 60 * 60 * 1000
+
         // Rejections that can NEVER succeed on retry, so they END the record
         // instead of driving the exponential-backoff loop. Beyond the two
         // dedup codes, PhotoUploadService also throws these permanently-fatal
@@ -297,7 +470,12 @@ class PhotoUploadWorker(
         // Post-upload in-place thumbnail: long edge + JPEG quality. ~20 KB per
         // synced frame keeps the sync strip renderable without hoarding
         // multi-MB originals in cacheDir.
-        const val THUMBNAIL_LONG_EDGE_PX = 320
-        const val THUMBNAIL_JPEG_QUALITY = 80
+        // Was 320px/q80 (~20 KB). The strip tile is 64dp, but the tile now opens
+        // the lightbox, and a 320px frame is unreadable there. 1024px/q75 is
+        // ~100 KB — a 1,000-frame race keeps ~100 MB on the phone.
+        // ponytail: fixed size; prune-by-age (7 days) bounds it, add a
+        // "keep thumbnails" setting if a photographer ever asks.
+        const val THUMBNAIL_LONG_EDGE_PX = 1024
+        const val THUMBNAIL_JPEG_QUALITY = 75
     }
 }

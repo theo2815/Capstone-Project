@@ -5,8 +5,10 @@ import com.quickpitik.entity.EventPhotographer
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotEmpty
 import jakarta.validation.constraints.Pattern
+import jakarta.validation.constraints.Positive
 import jakarta.validation.constraints.Size
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -202,3 +204,38 @@ fun Photo.toLibraryDto(
         span = span.wire,
         thumbnailUrl = thumbnailUrlResolver(this),
     )
+
+// ── Direct-to-storage upload (2026-09-02) ─────────────────────────────────
+// Two-step alternative to the multipart POST for S3/R2 deployments: the client
+// asks for a presigned PUT (begin), streams the original straight to storage,
+// then commits. Bytes never cross the backend. `mode` tells the client what to
+// do: "direct" (PUT to uploadUrl, then commit), "multipart" (this deployment
+// stores on local disk — use the classic endpoint), or "existing" (these bytes
+// are already in this event — nothing to upload; `existing` is the photo).
+data class DirectUploadBeginRequest(
+    @field:Pattern(regexp = "^[0-9a-fA-F]{64}\$", message = "contentHash must be a 64-character hex SHA-256.")
+    val contentHash: String,
+    @field:NotBlank
+    val contentType: String,
+    @field:Positive
+    val sizeBytes: Long,
+)
+
+data class DirectUploadBeginResponse(
+    val mode: String,
+    val photoId: UUID? = null,
+    val key: String? = null,
+    val uploadUrl: String? = null,
+    val expiresInSeconds: Long? = null,
+    val existing: UploadedPhotoDto? = null,
+)
+
+data class DirectUploadCommitRequest(
+    val photoId: UUID,
+    @field:NotBlank
+    val key: String,
+    @field:Pattern(regexp = "^[0-9a-fA-F]{64}\$", message = "contentHash must be a 64-character hex SHA-256.")
+    val contentHash: String,
+    @field:NotBlank
+    val contentType: String,
+)

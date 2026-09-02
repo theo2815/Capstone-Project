@@ -69,6 +69,14 @@ class PhotoWatermarkService(
         val watermarked = try {
             val original = storageService.getBytes(photo.s3Key)
             val logo = watermarkLogoCache.get(watermarkKeySetting)
+            // Direct-to-storage uploads (2026-09-02) never pass through the
+            // request-time pixel guard, so the decompression-bomb check has to
+            // live here, before the only full decode of client bytes. Semantic:
+            // the object never changes, so burn an attempt.
+            if (com.quickpitik.service.image.ImagePixelGuard.exceedsPixelBudget(original)) {
+                settleSemanticFailure(photo.id, photo.processingAttempts, "image exceeds the pixel budget")
+                return
+            }
             try {
                 watermarkService.processThumbnail(original, logo)
             } catch (ex: IllegalArgumentException) {

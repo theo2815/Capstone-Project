@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap
 class S3StorageService(
     private val props: StorageProperties,
 ) : StorageService, AutoCloseable {
+    override val supportsDirectUpload: Boolean = true
     private val log = LoggerFactory.getLogger(javaClass)
     private val client: S3Client = buildClient()
     private val presigner: S3Presigner = buildPresigner()

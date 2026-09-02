@@ -20,6 +20,7 @@ class LocalFsStorageService(
     private val props: StorageProperties,
     private val environment: Environment,
 ) : StorageService {
+    override val supportsDirectUpload: Boolean = false
     private val log = LoggerFactory.getLogger(javaClass)
     private val root: Path = Paths.get(props.localRoot).toAbsolutePath().also(Files::createDirectories)
 

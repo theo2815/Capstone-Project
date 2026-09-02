@@ -66,6 +66,7 @@ import com.quickpitik.mobile.ui.theme.PrimaryCta
 import com.quickpitik.mobile.ui.theme.QpCardShape
 import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.TileShape
+import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.Typography
 
 // Unified photo lightbox — the one preview surface used by both the cart sheet
@@ -89,6 +90,8 @@ data class PhotoPreviewData(
     // verification) — the byline renders as plain text, never a tap target.
     val photographerHandle: String? = null,
     val photographerName: String? = null,
+    // LocalReview mode only — one line under the frame (filename · sync state).
+    val caption: String? = null,
 )
 
 // PhotoPreview has two flavors. Browse is the runner buy-flow (Add to cart /
@@ -97,7 +100,9 @@ data class PhotoPreviewData(
 // "X sold" stat in place of price.
 // Owned is the runner's post-purchase view (website PhotoPreviewCard
 // mode="owned"): no price, no cart — just "Yours to keep" and a download.
-enum class PhotoPreviewMode { Browse, OwnerReview, Owned }
+// LocalReview: the photographer inspecting a frame still on the phone (the
+// Capture tab's sync strip) — imageUrl is a file:// URI, no server, no commerce.
+enum class PhotoPreviewMode { Browse, OwnerReview, Owned, LocalReview }
 
 fun PhotoDto.toPreviewData(eventName: String?): PhotoPreviewData = PhotoPreviewData(
     id = id,
@@ -439,6 +444,21 @@ fun PhotoPreview(
                                 PrimaryCta(
                                     text = "Download photo ↓",
                                     onClick = { onDownload(activePhoto) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                            PhotoPreviewMode.LocalReview -> {
+                                activePhoto.caption?.let { caption ->
+                                    Text(
+                                        text = caption,
+                                        style = Typography.bodyMedium,
+                                        color = Slate,
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                }
+                                GhostCta(
+                                    text = "Close",
+                                    onClick = onClose,
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             }

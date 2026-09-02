@@ -5,6 +5,9 @@ import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.photographer.PhotographerDownloadDto
 import com.quickpitik.dto.photographer.PhotographerEventDetailDto
 import com.quickpitik.dto.photographer.PhotographerEventSummaryDto
+import com.quickpitik.dto.photographer.DirectUploadBeginRequest
+import com.quickpitik.dto.photographer.DirectUploadBeginResponse
+import com.quickpitik.dto.photographer.DirectUploadCommitRequest
 import com.quickpitik.dto.photographer.PhotoExistsRequest
 import com.quickpitik.dto.photographer.PhotoExistsResponse
 import com.quickpitik.dto.photographer.PhotographerLibraryPhotoDto
@@ -103,6 +106,43 @@ class MePhotographerController(
             photographerId = principal.userId,
             eventId = eventId,
             file = file,
+        )
+    }
+
+    // Direct-to-storage upload, step 1 of 2 (2026-09-02). Cheap: gates + dedup
+    // + a presign, no bytes. The rate-limited step is the commit, where the
+    // photo actually becomes a row — same policy as the multipart upload.
+    @PostMapping("/events/{eventId}/photos/direct")
+    fun beginDirectUpload(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody body: DirectUploadBeginRequest,
+    ): DirectUploadBeginResponse =
+        photoUploadService.beginDirectUpload(
+            photographerId = principal.userId,
+            eventId = eventId,
+            contentHash = body.contentHash,
+            contentType = body.contentType,
+            sizeBytes = body.sizeBytes,
+        )
+
+    // Direct-to-storage upload, step 2 of 2: the object is in storage; register it.
+    @PostMapping("/events/{eventId}/photos/direct/commit")
+    fun commitDirectUpload(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody body: DirectUploadCommitRequest,
+    ): UploadedPhotoDto {
+        rateLimiter.acquireOrThrow(
+            policy = Bucket4jRateLimiter.POLICY_PHOTOGRAPHER_UPLOAD,
+            key = principal.userId.toString(),
+        )
+        return photoUploadService.commitDirectUpload(
+            photographerId = principal.userId,
+            eventId = eventId,
+            photoId = body.photoId,
+            key = body.key,
+            contentHash = body.contentHash,
         )
     }
 

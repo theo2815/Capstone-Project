@@ -58,12 +58,28 @@ class TetherIngestService : Service() {
                 ensureChannel()
                 // Re-calling startForeground on an already-foreground service is
                 // how the text gets updated — there is no separate update call.
-                ServiceCompat.startForeground(
-                    this,
-                    NOTIFICATION_ID,
-                    buildNotification(notice),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-                )
+                //
+                // Android 14+ only permits the connectedDevice type while the
+                // app holds a live USB device grant. The instant the cable is
+                // pulled that grant is gone, and the very next notice update
+                // ("reconnecting…") makes this call throw SecurityException —
+                // which crashed the whole process mid-shoot (device-verified
+                // 2026-09-02). The service is a lifeline, not the owner of the
+                // ingest loop, so losing it must never take the loop down:
+                // stand down quietly and let the next USB attach restart us.
+                try {
+                    ServiceCompat.startForeground(
+                        this,
+                        NOTIFICATION_ID,
+                        buildNotification(notice),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+                    )
+                } catch (e: RuntimeException) {
+                    // SecurityException (no USB grant) or the API 31+
+                    // ForegroundServiceStartNotAllowedException (backgrounded).
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
                 acquireWakeLock()
             }
         }

@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -56,6 +57,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.quickpitik.mobile.ui.runner.PhotoPreview
+import com.quickpitik.mobile.ui.runner.PhotoPreviewData
+import com.quickpitik.mobile.ui.runner.PhotoPreviewMode
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -147,6 +152,38 @@ private fun TetherConsoleView(
             .toList()
     }
     val pendingWork = queueStats.queuedCount + queueStats.uploadingCount + queueStats.failedCount
+
+    // Tapping a strip tile opens the shared lightbox on the local file: the
+    // full original while it waits to upload, the 1024px thumbnail afterwards.
+    var previewIndex by rememberSaveable { mutableStateOf<Int?>(null) }
+    previewIndex?.let { index ->
+        if (index !in recentForEvent.indices) {
+            previewIndex = null
+        } else {
+            PhotoPreview(
+                photos = recentForEvent.map { record ->
+                    PhotoPreviewData(
+                        id = record.id.toString(),
+                        price = 0.0,
+                        imageUrl = File(record.filePath).toURI().toString(),
+                        eventName = activeEvent?.name,
+                        // dslr_import_<ts>_<original> → <original>; other spool names as-is.
+                        caption = "${File(record.filePath).name.split('_', limit = 4).getOrNull(3) ?: File(record.filePath).name} · " +
+                            when (record.uploadStatus) {
+                                "COMPLETED" -> "synced"
+                                "UPLOADING" -> "uploading"
+                                "FAILED" -> "failed" + (record.errorMessage?.let { ": $it" } ?: "")
+                                else -> "waiting to upload"
+                            },
+                    )
+                },
+                currentIndex = index,
+                onClose = { previewIndex = null },
+                onIndexChange = { previewIndex = it },
+                mode = PhotoPreviewMode.LocalReview,
+            )
+        }
+    }
 
     // Android 13+ suppresses TetherIngestService's notification unless
     // POST_NOTIFICATIONS is granted. The ingest itself runs either way — what's
@@ -343,8 +380,8 @@ private fun TetherConsoleView(
                         .fillMaxWidth()
                         .padding(top = 14.dp),
                 ) {
-                    items(recentForEvent, key = { it.id }) { record ->
-                        SyncQueueTile(record)
+                    itemsIndexed(recentForEvent, key = { _, r -> r.id }) { index, record ->
+                        SyncQueueTile(record, onClick = { previewIndex = index })
                     }
                 }
             }
@@ -555,13 +592,20 @@ private fun CameraConnectedCard(
                         enabled = canStartWatch && state !is ShutterWatchState.Starting,
                         loading = state is ShutterWatchState.Starting,
                     )
-                    if (!canStartWatch) {
-                        Text(
-                            text = "This event's upload window has closed.",
-                            color = Slate,
-                            style = Typography.bodyMedium
-                        )
-                    }
+                    Text(
+                        text = if (!canStartWatch) {
+                            "This event's upload window has closed."
+                        } else {
+                            // Canon behaviour, device-verified 2026-09-02: a body plugged
+                            // into a USB host with no active session shows the PC-connection
+                            // screen and locks the shutter. Only our watch session keeps
+                            // it live, so "connected but not watching" means "can't shoot".
+                            "While the cable is in and auto-upload is off, the camera stays in " +
+                                "PC-connection mode and won't shoot. Start auto-upload, or unplug to shoot offline."
+                        },
+                        color = Slate,
+                        style = Typography.bodyMedium
+                    )
                 }
             }
         }
@@ -684,7 +728,7 @@ private const val RECENT_STRIP_MAX_TILES = 30
  * precedent — semantic state, not accent CTAs, so the one-Fresh rule holds.
  */
 @Composable
-private fun SyncQueueTile(record: UploadRecord) {
+private fun SyncQueueTile(record: UploadRecord, onClick: () -> Unit = {}) {
     val stateLabel = when (record.uploadStatus) {
         "UPLOADING" -> "uploading"
         "COMPLETED" -> "synced"
@@ -696,6 +740,7 @@ private fun SyncQueueTile(record: UploadRecord) {
             .size(64.dp)
             .clip(TileShape)
             .background(BoneDeep)
+            .clickable(onClick = onClick)
     ) {
         AsyncImage(
             model = File(record.filePath),

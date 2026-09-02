@@ -292,3 +292,29 @@ data class PhotographerProfileDto(
     val watermarkLabel: String? = null,
     val events: List<PhotographerEventCoverageDto> = emptyList()
 )
+
+// ── Direct-to-storage upload (backend 2026-09-02) ─────────────────────────
+// begin → PUT the file to `uploadUrl` → commit. `mode` = "direct" | "multipart"
+// (local-disk dev backend — use the classic endpoint) | "existing" (bytes are
+// already in this event; `existing` is the photo, nothing to upload).
+data class DirectUploadBeginRequest(
+    val contentHash: String,
+    val contentType: String,
+    val sizeBytes: Long,
+)
+
+data class DirectUploadBeginResponse(
+    val mode: String? = null,
+    val photoId: String? = null,
+    val key: String? = null,
+    val uploadUrl: String? = null,
+    val expiresInSeconds: Long? = null,
+    val existing: UploadedPhotoDto? = null,
+)
+
+data class DirectUploadCommitRequest(
+    val photoId: String,
+    val key: String,
+    val contentHash: String,
+    val contentType: String,
+)

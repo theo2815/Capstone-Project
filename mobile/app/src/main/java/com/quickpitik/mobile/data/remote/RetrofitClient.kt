@@ -163,6 +163,12 @@ object RetrofitClient {
             .build()
     }
 
+    // The shared client for requests that aren't to our API — today only the
+    // presigned PUT straight to object storage. Same pool, same timeouts; the
+    // authenticator is inert there (storage answers 403, never 401).
+    val rawClient: OkHttpClient
+        get() = okHttpClient
+
     // Separate client for POST /auth/refresh, deliberately WITHOUT the
     // authenticator: the refresh call must never be able to trigger the refresh
     // path that issued it. TokenAuthenticator also guards on the path, so this

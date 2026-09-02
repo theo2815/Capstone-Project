@@ -10,6 +10,8 @@ import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
@@ -198,6 +200,58 @@ class PhotoUploadServiceTest {
         Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
         Mockito.verify(storageService, Mockito.never())
             .put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
+    }
+
+    @Test
+    fun `direct upload begin falls back to multipart when storage cannot presign PUTs`() {
+        stubValidationsPass()
+        Mockito.`when`(storageService.supportsDirectUpload).thenReturn(false)
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
+            .thenReturn(null)
+
+        val res = service(AiApiProperties(enabled = false))
+            .beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", 1_000)
+
+        assertEquals("multipart", res.mode)
+        Mockito.verify(storageService, Mockito.never()).presignedPutUrl(anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `direct upload begin issues a presigned PUT and commit persists the row`() {
+        stubValidationsPass()
+        Mockito.`when`(storageService.supportsDirectUpload).thenReturn(true)
+        Mockito.`when`(storageService.presignedPutUrl(anyArg(), anyArg(), anyArg())).thenReturn("https://put")
+        Mockito.`when`(storageService.exists(anyArg())).thenReturn(true)
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
+            .thenReturn(null)
+        val svc = service(AiApiProperties(enabled = false))
+
+        val begin = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", 1_000)
+        assertEquals("direct", begin.mode)
+        assertEquals("https://put", begin.uploadUrl)
+        assertEquals("events/$eventId/photos/${begin.photoId}/original.jpg", begin.key)
+
+        val dto = svc.commitDirectUpload(photographerId, eventId, begin.photoId!!, begin.key!!, helloSha256)
+
+        val captor = ArgumentCaptor.forClass(Photo::class.java)
+        Mockito.verify(photoRepository).saveAndFlush(capture(captor))
+        assertEquals(helloSha256, captor.value.contentHash)
+        assertEquals(begin.key, captor.value.s3Key)
+        assertEquals("processing", dto.status)
+        // The bytes never touched this server: no storage PUT in either step.
+        Mockito.verify(storageService, Mockito.never()).put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
+        Mockito.verify(eventPublisher).publishEvent(anyArg<PhotoUploadedForWatermark>())
+    }
+
+    @Test
+    fun `direct upload commit refuses a key that was not issued for the photo`() {
+        stubValidationsPass()
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false))
+                .commitDirectUpload(photographerId, eventId, UUID.randomUUID(), "events/other/original.jpg", helloSha256)
+        }
+        assertEquals(ErrorCodes.UPLOAD_KEY_MISMATCH, ex.code)
+        Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
     }
 
     @Test

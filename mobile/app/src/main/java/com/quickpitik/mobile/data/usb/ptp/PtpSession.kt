@@ -420,6 +420,23 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
         runCatching { connection.controlTransfer(0x02, 1, 0, ep.address, null, 0, 1000) }
     }
 
+    /**
+     * USB Still Image Capture class "Device Reset Request" (bmRequestType 0x21 =
+     * host→device, class, recipient interface; bRequest 0x66) followed by a
+     * halt-clear on both bulk pipes. This is what libgphoto2 sends when a body
+     * stops answering. Device-observed 2026-09-02 on the R6: after an unclean
+     * drop, or straight after a card import, OpenSession returned OK but the
+     * next command got no reply and every later bulk-OUT timed out until the
+     * cable was pulled — a camera-side PTP stall that only a reset clears.
+     * Best-effort; the caller retries the open afterwards.
+     */
+    fun resetDevice() {
+        runCatching { connection.controlTransfer(0x21, 0x66, 0, iface.id, null, 0, 2000) }
+        clearHalt(bulkOut)
+        clearHalt(bulkIn)
+        sessionOpen = false
+    }
+
     private fun containerType(c: ByteArray): Int =
         ByteBuffer.wrap(c, 4, 2).order(ByteOrder.LITTLE_ENDIAN).short.toInt() and 0xFFFF
 

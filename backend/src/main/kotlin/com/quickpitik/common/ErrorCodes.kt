@@ -19,6 +19,11 @@ object ErrorCodes {
 
     const val PHOTO_NOT_FOUND = "PHOTO_NOT_FOUND"
     const val PHOTO_DUPLICATE_SAME_EVENT = "PHOTO_DUPLICATE_SAME_EVENT"
+    // Direct-to-storage upload (2026-09-02): commit named an object that
+    // isn't in storage (PUT never happened or expired), or a key that doesn't
+    // belong to the photo id issued at begin.
+    const val UPLOAD_OBJECT_MISSING = "UPLOAD_OBJECT_MISSING"
+    const val UPLOAD_KEY_MISMATCH = "UPLOAD_KEY_MISMATCH"
     const val PHOTO_DUPLICATE_DIFFERENT_EVENT = "PHOTO_DUPLICATE_DIFFERENT_EVENT"
     const val SELFIE_REQUIRED = "SELFIE_REQUIRED"
     const val SELFIE_REJECTED = "SELFIE_REJECTED"

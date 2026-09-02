@@ -76,6 +76,6 @@ class PhotoIndexingTrigger(
         val RETRYABLE_STATUSES =
             listOf(IndexingStatus.PENDING, IndexingStatus.FAILED, IndexingStatus.PARTIAL)
         const val RECONCILE_GRACE_SECONDS = 120L
-        const val RECONCILE_BATCH_SIZE = 25
+        const val RECONCILE_BATCH_SIZE = 200 // see PhotoWatermarkTrigger
     }
 }

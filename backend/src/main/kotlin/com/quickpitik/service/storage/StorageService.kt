@@ -4,6 +4,11 @@ import java.io.InputStream
 import java.time.Duration
 
 interface StorageService {
+    // True when clients can PUT straight to storage with presignedPutUrl —
+    // S3/R2. The local-disk dev backend serves GET only, so photo uploads
+    // fall back to the multipart endpoint there.
+    val supportsDirectUpload: Boolean
+
     fun put(key: String, bytes: ByteArray, contentType: String): StoredObject
 
     fun put(key: String, stream: InputStream, contentLength: Long, contentType: String): StoredObject

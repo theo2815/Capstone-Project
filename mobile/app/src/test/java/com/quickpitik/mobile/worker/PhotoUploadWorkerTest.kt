@@ -75,7 +75,42 @@ class PhotoUploadWorkerTest {
      */
     private fun startServer(vararg responses: MockResponse): MockWebServer =
         MockWebServer().apply {
-            responses.forEach { enqueue(it) }
+            // The worker probes the direct-upload endpoint first; answer it
+            // like a backend that predates it (404) so these tests keep
+            // exercising the multipart path with the enqueued responses.
+            val queue = ArrayDeque(responses.toList())
+            dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse =
+                    if (request.path?.endsWith("/photos/direct") == true) MockResponse().setResponseCode(404)
+                    else queue.removeFirstOrNull() ?: MockResponse().setResponseCode(500)
+            }
+            start()
+            server = this
+            RetrofitClient.setBaseUrl(url("/").toString())
+        }
+
+    /**
+     * A backend + storage pair for the direct path: begin hands out a PUT URL
+     * on this same server, the PUT is accepted, commit returns the photo.
+     */
+    private fun startDirectServer(): MockWebServer =
+        MockWebServer().apply {
+            dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = when {
+                    request.path?.endsWith("/photos/direct") == true -> MockResponse()
+                        .setResponseCode(200)
+                        .setHeader("Content-Type", "application/json")
+                        .setBody(
+                            """{"success":true,"data":{"mode":"direct","photoId":"p-1",
+                               "key":"events/$EVENT/photos/p-1/original.jpg",
+                               "uploadUrl":"${url("/r2/events/$EVENT/photos/p-1/original.jpg")}"}}""",
+                        )
+                    request.method == "PUT" && request.path?.startsWith("/r2/") == true ->
+                        MockResponse().setResponseCode(200)
+                    request.path?.endsWith("/photos/direct/commit") == true -> ok()
+                    else -> MockResponse().setResponseCode(500)
+                }
+            }
             start()
             server = this
             RetrofitClient.setBaseUrl(url("/").toString())
@@ -212,7 +247,10 @@ class PhotoUploadWorkerTest {
         assertTrue(result is ListenableWorker.Result.Success)
         // The path carries the event, so a mis-templated URL would silently
         // upload every frame to the wrong gallery.
-        val request = http.takeRequest()
+        // Skip the direct-upload probe; the multipart POST is the one under test.
+        val request = http.takeRequest().let { first ->
+            if (first.path?.endsWith("/photos/direct") == true) http.takeRequest() else first
+        }
         assertEquals("POST", request.method)
         assertTrue(request.path!!.endsWith("/api/v1/me/photographer/events/$EVENT/photos"))
         assertEquals("Bearer test-access-token", request.getHeader("Authorization"))
@@ -223,6 +261,22 @@ class PhotoUploadWorkerTest {
      * the success-body guard runs, so the terminal check has to happen in the
      * catch. Getting this wrong re-POSTs the same bytes forever.
      */
+    @Test
+    fun `direct upload PUTs the bytes to storage and commits, no multipart POST`() = runTest {
+        signIn()
+        val http = startDirectServer()
+        val id = enqueue(filePath = realJpeg().absolutePath)
+
+        val result = runWorker()
+
+        assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
+        assertTrue(result is ListenableWorker.Result.Success)
+        val paths = (1..http.requestCount).map { http.takeRequest().let { r -> "${r.method} ${r.path}" } }
+        assertTrue(paths.any { it.startsWith("PUT /r2/") })
+        assertTrue(paths.any { it.endsWith("/photos/direct/commit") })
+        assertTrue(paths.none { it == "POST /api/v1/me/photographer/events/$EVENT/photos" })
+    }
+
     @Test
     fun `a 409 same-event duplicate is terminal and does not drive a retry`() = runTest {
         signIn()
@@ -235,7 +289,8 @@ class PhotoUploadWorkerTest {
         assertEquals("FAILED", stored.uploadStatus)
         assertEquals(0, stored.retryCount)
         assertTrue(result is ListenableWorker.Result.Success)
-        assertEquals(1, http.requestCount)
+        // 1 direct-upload probe (answered 404 by startServer) + exactly 1 multipart attempt.
+        assertEquals(2, http.requestCount)
     }
 
     @Test
@@ -273,7 +328,8 @@ class PhotoUploadWorkerTest {
         assertEquals("FAILED", stored.uploadStatus)
         assertEquals(0, stored.retryCount)
         assertTrue(result is ListenableWorker.Result.Success)
-        assertEquals(1, http.requestCount)
+        // 1 direct-upload probe (answered 404 by startServer) + exactly 1 multipart attempt.
+        assertEquals(2, http.requestCount)
     }
 
     /**
@@ -325,6 +381,25 @@ class PhotoUploadWorkerTest {
         assertTrue(!spooled.exists())
     }
 
+    /**
+     * A connection that never yields an HTTP response says nothing about the
+     * photo, so it must requeue WITHOUT spending the retry budget — a backend
+     * outage longer than five backoff rounds used to fail every queued frame.
+     */
+    @Test
+    fun `a dropped connection requeues without consuming the retry budget`() = runTest {
+        signIn()
+        startServer(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AT_START))
+        val id = enqueue(filePath = realJpeg().absolutePath, retryCount = 4)
+
+        val result = runWorker()
+
+        val stored = requireNotNull(db.uploadQueueDao().getRecordById(id))
+        assertEquals("QUEUED", stored.uploadStatus)
+        assertEquals(4, stored.retryCount)
+        assertTrue(result is ListenableWorker.Result.Retry)
+    }
+
     @Test
     fun `a 500 requeues the record and asks WorkManager to come back`() = runTest {
         signIn()
@@ -341,7 +416,8 @@ class PhotoUploadWorkerTest {
         assertTrue(result is ListenableWorker.Result.Retry)
         // Exactly one attempt: the `attempted` filter must stop the requeued row
         // from being picked straight back up inside the same run.
-        assertEquals(1, http.requestCount)
+        // 1 direct-upload probe (answered 404 by startServer) + exactly 1 multipart attempt.
+        assertEquals(2, http.requestCount)
     }
 
     /**
