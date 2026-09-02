@@ -58,8 +58,19 @@ class PhotoWatermarkTrigger(
         }
     }
 
+    // Fingerprint registry catch-up (V42): LIVE previews that predate the
+    // phash column get hashed here, a bounded batch per tick.
+    @Scheduled(fixedDelayString = "\${app.watermark.reconcile-interval-ms:60000}")
+    fun backfillPhash() {
+        val backlog = photoRepository.findPhashBacklog(PageRequest.of(0, PHASH_BATCH_SIZE))
+        if (backlog.isEmpty()) return
+        log.info("Backfilling phash for {} live photo(s)", backlog.size)
+        backlog.forEach { watermarkService.backfillPhash(it) }
+    }
+
     private companion object {
         const val RECONCILE_GRACE_SECONDS = 120L
+        const val PHASH_BATCH_SIZE = 50
         // 25 capped recovery at 25 photos/min — a 1,000-frame backlog took 40
         // minutes to surface. 200/min covers a burst; the pool bounds the rest.
         const val RECONCILE_BATCH_SIZE = 200

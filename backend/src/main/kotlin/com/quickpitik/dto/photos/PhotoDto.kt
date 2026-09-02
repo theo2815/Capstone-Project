@@ -8,8 +8,10 @@ import java.util.UUID
 
 // Mirrors website/src/app/events/[slug]/mock-photos.ts MockPhoto.
 //
-// `imageUrl` is the watermarked thumbnail every requester sees (photographer
-// mark + QuickPitik diagonal tile baked in at upload by WatermarkService).
+// `imageUrl` is the watermarked preview every requester sees: QuickPitik credit
+// tiles + bottom-left credit caption + the photographer's logo, baked in
+// off-request by WatermarkService (async since V36), with an XMP credit packet
+// and a pHash registered for /public/photos/verify (V42).
 //
 // `cleanUrl` is the presigned URL for the unmodified original (photo.s3Key),
 // populated only when the requester owns the photo via a valid DownloadGrant.

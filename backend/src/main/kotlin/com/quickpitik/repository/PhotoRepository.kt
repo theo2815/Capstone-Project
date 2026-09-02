@@ -74,18 +74,52 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     // sweep is the self-heal for the other direction).
     @Modifying
     @Query(
-        "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, " +
+        "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, p.phash = :phash, " +
             "p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
             "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING",
     )
     fun publishWatermarked(
         @Param("id") id: UUID,
         @Param("key") key: String,
+        @Param("phash") phash: Long,
     ): Int
 
     @Modifying
     @Query("UPDATE Photo p SET p.processingAttempts = p.processingAttempts + 1 WHERE p.id = :id")
     fun incrementProcessingAttempts(@Param("id") id: UUID): Int
+
+    // Fingerprint registry (V42) catch-up: LIVE previews that predate the
+    // phash column. PhotoWatermarkTrigger.backfillPhash hashes them in batches.
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.status = com.quickpitik.entity.PhotoStatus.LIVE
+          AND p.phash IS NULL
+          AND p.watermarkS3Key IS NOT NULL
+        ORDER BY p.uploadedAt ASC
+        """,
+    )
+    fun findPhashBacklog(pageable: Pageable): List<Photo>
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.phash = :phash WHERE p.id = :id")
+    fun setPhash(@Param("id") id: UUID, @Param("phash") phash: Long): Int
+
+    // Nearest stored fingerprint by Hamming distance, for POST
+    // /public/photos/verify. Returns [photographer_id, event_id, distance] —
+    // deliberately no photo id, so the answer can never become a photo URL.
+    // ponytail: full scan of LIVE rows; a BK-tree or pg extension when photos > ~1M.
+    @Query(
+        value = """
+        SELECT p.photographer_id, p.event_id, bit_count(CAST((p.phash # :h) AS bit(64))) AS d
+        FROM photos p
+        WHERE p.status = 'LIVE' AND p.phash IS NOT NULL
+        ORDER BY d ASC
+        LIMIT 1
+        """,
+        nativeQuery = true,
+    )
+    fun findNearestByPhash(@Param("h") h: Long): List<Array<Any>>
 
     // No-bib fast path for the event grid: skips the bibs join + DISTINCT that
     // searchForEvent pays even when there is nothing to filter — the LEFT JOIN

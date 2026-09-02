@@ -132,7 +132,8 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `AI_MAX_INDEXING_ATTEMPTS` | `5` | Per-photo indexing retry budget. Only *semantic* failures (bad image, 4xx) consume it — transport failures (provider unreachable) return the photo to PENDING with the budget intact. `POST /admin/events/{id}/photos/reindex` re-drives exhausted/stale photos (`?all=true` after a provider flip). |
 | `AI_RECONCILE_INTERVAL_MS` | `60000` | Cadence of the per-photo indexing reconcile sweep. |
 | `WATERMARK_MAX_ATTEMPTS` | `5` | Async-watermark retry budget per photo (V36). Only semantic failures (undecodable bytes) consume it; transport failures leave it intact so the sweep keeps re-driving. Exhausted photos stay `PROCESSING` (owner-visible, runner-invisible) — watch `qp.watermark.outcome{outcome=failed}`. |
-| `WATERMARK_RECONCILE_INTERVAL_MS` | `60000` | Cadence of the watermark reconcile sweep (re-drives stuck `PROCESSING` photos). |
+| `WATERMARK_RECONCILE_INTERVAL_MS` | `60000` | Cadence of the watermark reconcile sweep (re-drives stuck `PROCESSING` photos) and of the V42 pHash backfill. |
+| `WATERMARK_VERIFY_MAX_DISTANCE` | `12` | Max Hamming distance (of 64 pHash bits) for `POST /public/photos/verify` to report a match; ≤ 6 reports `strong`, 7–12 `weak`. |
 | `DB_POOL_SIZE` | `10` | Hikari `maximum-pool-size`. |
 | `LOG_LEVEL_APP` | `INFO` | `com.quickpitik` log level (set `DEBUG` for local debugging). |
 | `API_DOCS_ENABLED` | `true` | Serves `/swagger-ui.html` + `/v3/api-docs`. **Set `false` in production** — a full route inventory is free reconnaissance. |
@@ -243,3 +244,4 @@ See vault `QuickPitik Vault/backend/`:
 | `org.postgresql.util.PSQLException: Connection refused` | Postgres not started | `docker compose up -d postgres` |
 | `validate ddl-auto` errors on entity rename | Entity ↔ migration mismatch | Either change migration (dev) or write a new one (prod-shaped) |
 | 401 on every authenticated request | `Authorization: Bearer ...` header missing or expired | Re-login or refresh |
+| Previews show the QuickPitik wordmark tiles but no credit text | JDK image lacks fontconfig/freetype, so `WatermarkService` disabled text (one WARN at first render) | `apt-get install -y fontconfig` in the runtime image |

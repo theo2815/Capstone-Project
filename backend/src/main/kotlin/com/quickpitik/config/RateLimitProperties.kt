@@ -35,6 +35,9 @@ data class RateLimitProperties(
     // watermark / payout QR) share one per-user bucket — selfie uploads can
     // trigger AI quality inference, the rest are storage writes.
     val mediaUpload: Policy = Policy(capacity = 20, refillPeriod = Duration.ofMinutes(1)),
+    // Public photo verification: a decode + pHash + full-table Hamming scan per
+    // call, reachable by anyone. Same posture as face search.
+    val photoVerify: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(15)),
 ) {
     data class Policy(
         val capacity: Long,

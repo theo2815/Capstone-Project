@@ -91,6 +91,13 @@ class Photo(
     @Column(name = "processing_attempts", nullable = false)
     var processingAttempts: Int = 0,
 
+    // 64-bit perceptual hash of the MARKED preview (watermark.jpg) — the leak
+    // surface a screenshot is matched against by POST /public/photos/verify
+    // (V42). Null until PhotoWatermarkService computes it at the LIVE flip or
+    // the reconcile sweep backfills it.
+    @Column(name = "phash")
+    var phash: Long? = null,
+
     @Column(name = "indexing_error", columnDefinition = "TEXT")
     var indexingError: String? = null,
 

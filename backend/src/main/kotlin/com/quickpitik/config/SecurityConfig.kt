@@ -102,6 +102,11 @@ class SecurityConfig(
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/regions").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/platform/**").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
+                // Photo verification is public by design — whoever holds a
+                // screenshot may ask whose photo it is. IP-keyed rate bucket
+                // + MIME/size gate in the controller; the answer is
+                // attribution only, never a photo URL.
+                auth.requestMatchers(HttpMethod.POST, "/api/v1/public/photos/verify").permitAll()
                 // Face search is a guest surface — a visitor finds their photos
                 // first and signs up at checkout, if at all. The multipart
                 // variant is written for it (nullable principal, IP-keyed rate
