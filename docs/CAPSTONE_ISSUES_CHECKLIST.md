@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 15
-- **✅ Already Solved:** 8 (Items 1, 2, 7, 9, 10, 11, 12, 14)
-- **⏳ Pending / To Be Worked On:** 7
+- **✅ Already Solved:** 10 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 14)
+- **⏳ Pending / To Be Worked On:** 5
 
 ---
 
@@ -24,9 +24,17 @@
   - **Status:** **ALREADY SOLVED**
   - **Verification:** Refactored the mobile header layout (`ProfileScreen.kt`) to stack the Camera/Gallery buttons below the title using a `Column` instead of squeezing them in a `Row(SpaceBetween)`. On desktop web (`selfie-library.tsx`), added `md:grid-cols-4` to smooth out responsive upload tile scaling.
 
+- [x] **6. Admin — Dispute store & queue wired to backend API**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** `disputes-queue.tsx` uses `useAdminDisputes()` from `use-admin-data.ts` to hydrate live server data from `GET /api/v1/admin/disputes`. Admin resolve, deny, and escalate actions in `admin-dispute-store.ts` fire `apiResolveDispute()`, `apiDenyDispute()`, and `apiEscalateDispute()` calls in `api-admin.ts` backed by `AdminDisputeService.kt` and `PaymongoRefundService.kt`.
+
 - [x] **7. Admin — Flag store & queue wired to backend API**
   - **Status:** **ALREADY SOLVED**
   - **Verification:** `AdminFlagService.kt` and `AdminFlagsController.kt` shipped on backend. `fetchAdminFlags()`, `resolveAdminFlag()`, `hideAdminFlag()`, `dismissAdminFlag()`, and `escalateAdminFlag()` wired in `api-admin.ts`. `useAdminFlags()` React Query hook integrated in `flags-queue.tsx` with optimistic store overrides in `admin-flag-store.ts`. Presigned S3 thumbnail previews rendered on `admin-flag-card.tsx` and aligned `FlagStatus` type with `"resolved"`.
+
+- [x] **8. Photographer — Settings hydrated from backend API**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:** `api-photographer-settings.ts` provides backend API endpoints for brand (`putBrand`), handle (`putHandle`), region (`putRegion`), cover (`postCover`), watermark (`postWatermark`), socials, and payout accounts. `usePhotographerSettingsHydration()` mounted in `DashboardShell` populates store from `/me/photographer/brand` on login.
 
 - [x] **9. Photographer — Payout request on Mobile**
   - **Status:** **ALREADY SOLVED**
@@ -73,22 +81,6 @@
 ---
 
 ### 🌐 Website & Admin Panel
-
-- [ ] **6. Admin — Dispute store is mock-only**
-  - **Issue:** `admin-dispute-store.ts` uses local state and `ADMIN_DISPUTES = []` rather than querying `GET /api/v1/admin/disputes`.
-  - **Affected Files:**
-    - `website/src/store/admin-dispute-store.ts`
-    - `website/src/lib/admin-disputes.ts`
-    - `website/src/lib/admin-dispute-view.ts`
-    - `website/src/lib/api-admin.ts`
-  - **Action Plan:** Wire real query hydration from `fetchAdminDisputes()` in `api-admin.ts` to populate the dispute queue with live server data.
-
-- [ ] **8. Photographer — `photographer-settings-store` uses `localStorage`**
-  - **Issue:** Zustand store persists state in `localStorage` via `persist()`, which can go stale or exceed localStorage limits with base64/data URLs.
-  - **Affected Files:**
-    - `website/src/store/photographer-settings-store.ts`
-    - `website/src/hooks/use-photographer-settings-hydration.ts`
-  - **Action Plan:** Transition from local `persist` middleware to server-authoritative React Query / cache fetching.
 
 - [ ] **13. Photographer — Google OAuth `OAUTH_ENABLED = false`**
   - **Issue:** `google-button.tsx` disables Google sign-in when `NEXT_PUBLIC_GOOGLE_CLIENT_ID` is empty. Also, backend Google OAuth currently defaults new accounts to `RUNNER`.
