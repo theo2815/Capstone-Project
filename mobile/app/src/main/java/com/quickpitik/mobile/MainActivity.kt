@@ -132,7 +132,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        deepLinkUri = pickQuickpitikUri(intent)
+        // Only consume the launch intent's deep link on a FRESH start. On a
+        // config change / process-death restore the NavController restores its
+        // own back stack — re-handling the intent here would re-navigate and,
+        // for one-shot email tokens, re-POST an already-spent token.
+        if (savedInstanceState == null) {
+            deepLinkUri = pickQuickpitikUri(intent)
+        }
         setContent {
             QuickPitikMobileTheme {
                 val navController = rememberNavController()
@@ -389,9 +395,15 @@ class MainActivity : ComponentActivity() {
                                 val token = backStackEntry.arguments?.getString("token")
                                 VerifyEmailScreen(
                                     token = token,
+                                    // popUpTo(0): the deep link can arrive with
+                                    // any stack underneath (login OR a live
+                                    // runner/studio graph) — popping to a named
+                                    // route would silently no-op when it isn't
+                                    // on the stack and leave dead screens behind.
                                     onNavigateToLogin = {
                                         navController.navigate("login") {
-                                            popUpTo("login") { inclusive = true }
+                                            popUpTo(0) { inclusive = true }
+                                            launchSingleTop = true
                                         }
                                     },
                                     onNavigateToDashboard = { isPhotographer ->
@@ -399,7 +411,8 @@ class MainActivity : ComponentActivity() {
                                         val target = if (isPhotographer) "studio" else "runner"
                                         if (!isPhotographer) cartViewModel.fetchCart()
                                         navController.navigate(target) {
-                                            popUpTo("login") { inclusive = true }
+                                            popUpTo(0) { inclusive = true }
+                                            launchSingleTop = true
                                         }
                                     }
                                 )
@@ -412,8 +425,18 @@ class MainActivity : ComponentActivity() {
                                 ConfirmEmailChangeScreen(
                                     token = token,
                                     onNavigateToLogin = {
+                                        // On success the screen cleared the
+                                        // session — finish the logout the same
+                                        // way forcedLogout does: cart + the
+                                        // in-memory runner-view flag, which
+                                        // survives the prefs wipe.
+                                        if (sessionManager.getAccessToken() == null) {
+                                            cartViewModel.clearCart()
+                                            ViewMode.reset(sessionManager)
+                                        }
                                         navController.navigate("login") {
-                                            popUpTo("login") { inclusive = true }
+                                            popUpTo(0) { inclusive = true }
+                                            launchSingleTop = true
                                         }
                                     }
                                 )
@@ -557,6 +580,7 @@ class MainActivity : ComponentActivity() {
                                     val publicVm: PublicPhotographerViewModel = viewModel()
                                     val brandSettings by vm.brandSettings.collectAsState()
                                     val isBrandSettingsLoading by vm.isFetchingBrandSettings.collectAsState()
+                                    val brandSettingsError by vm.settingsLoadError.collectAsState()
                                     LaunchedEffect(Unit) {
                                         if (brandSettings == null) vm.fetchBrandSettings()
                                     }
@@ -565,7 +589,14 @@ class MainActivity : ComponentActivity() {
                                             handle = brandSettings?.handle,
                                             viewModel = publicVm,
                                             onBack = { navController.popBackStack() },
-                                            isBrandSettingsLoading = isBrandSettingsLoading,
+                                            // "|| brandSettings == null": the fetch
+                                            // starts in a LaunchedEffect AFTER the
+                                            // first frame, so on that frame the
+                                            // loading flag is still false — without
+                                            // this the no-handle card flashes once.
+                                            isBrandSettingsLoading = isBrandSettingsLoading ||
+                                                (brandSettings == null && brandSettingsError == null),
+                                            brandSettingsError = brandSettingsError,
                                         )
                                     }
                                 }
@@ -754,8 +785,10 @@ class MainActivity : ComponentActivity() {
         val data = intent?.data ?: return null
         if (data.scheme.equals("quickpitik", ignoreCase = true)) return data
         val path = data.path?.lowercase().orEmpty()
+        // startsWith, not ==: the manifest filter uses pathPrefix, so the OS
+        // also delivers "/verify-email/" — an exact match would drop it.
         if ((data.scheme.equals("http", ignoreCase = true) || data.scheme.equals("https", ignoreCase = true)) &&
-            (path == "/verify-email" || path == "/confirm-email-change")) {
+            (path.startsWith("/verify-email") || path.startsWith("/confirm-email-change"))) {
             return data
         }
         return null
@@ -774,6 +807,27 @@ class MainActivity : ComponentActivity() {
         // as scheme=quickpitik, host=orders, path=/return.
         val host = uri.host?.lowercase() ?: return
         val path = uri.path?.lowercase().orEmpty()
+        // Email-token links are role-neutral auth surfaces — route them BEFORE
+        // the photographer guard below, or a photographer's own verification /
+        // email-change link would bounce to studio with the token unredeemed.
+        // startsWith mirrors the manifest's pathPrefix so a trailing slash
+        // still routes.
+        when {
+            host == "confirm-email-change" || path.startsWith("/confirm-email-change") -> {
+                val token = uri.getQueryParameter("token").orEmpty()
+                navController.navigate("confirm-email-change?token=$token") {
+                    launchSingleTop = true
+                }
+                return
+            }
+            host == "verify-email" || path.startsWith("/verify-email") -> {
+                val token = uri.getQueryParameter("token").orEmpty()
+                navController.navigate("verify-email?token=$token") {
+                    launchSingleTop = true
+                }
+                return
+            }
+        }
         // Every quickpitik:// target below is a runner surface. A photographer
         // token would 403 the cart fetch and land on screens with no way back,
         // so route them home instead. Handled here (not only in the route
@@ -786,18 +840,6 @@ class MainActivity : ComponentActivity() {
             return
         }
         when {
-            host == "confirm-email-change" || path == "/confirm-email-change" -> {
-                val token = uri.getQueryParameter("token").orEmpty()
-                navController.navigate("confirm-email-change?token=$token") {
-                    launchSingleTop = true
-                }
-            }
-            host == "verify-email" || path == "/verify-email" -> {
-                val token = uri.getQueryParameter("token").orEmpty()
-                navController.navigate("verify-email?token=$token") {
-                    launchSingleTop = true
-                }
-            }
             host == "orders" && path.startsWith("/return") -> {
                 val orderId = uri.getQueryParameter("orderId")
                 cartViewModel.closeCartSheet()

@@ -22,7 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,10 +51,17 @@ fun VerifyEmailScreen(
     onNavigateToDashboard: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
-    var uiState by remember { mutableStateOf(VerifyEmailState.Loading) }
-    var errorMessage by remember { mutableStateOf("") }
+    // rememberSaveable + requestFired: the token is one-shot server-side.
+    // Plain remember would reset on rotation/process death, re-fire the
+    // LaunchedEffect, and turn a real success into "Verification Failed"
+    // (the website guards the same hazard with a useRef).
+    var uiState by rememberSaveable { mutableStateOf(VerifyEmailState.Loading) }
+    var errorMessage by rememberSaveable { mutableStateOf("") }
+    var requestFired by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(token) {
+        if (requestFired) return@LaunchedEffect
+        requestFired = true
         if (token.isNullOrBlank()) {
             errorMessage = "Invalid or missing verification token."
             uiState = VerifyEmailState.Error

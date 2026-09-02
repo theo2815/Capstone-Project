@@ -22,7 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,11 +49,17 @@ fun ConfirmEmailChangeScreen(
     onNavigateToLogin: () -> Unit,
 ) {
     val context = LocalContext.current
-    var uiState by remember { mutableStateOf(ConfirmEmailChangeState.Loading) }
-    var errorMessage by remember { mutableStateOf("") }
-    var successMessage by remember { mutableStateOf("Email updated successfully! Please sign in again with your new address.") }
+    // rememberSaveable + requestFired: the token is one-shot server-side.
+    // Plain remember would reset on rotation/process death, re-fire the
+    // LaunchedEffect, and turn a real success into "Confirmation Failed".
+    var uiState by rememberSaveable { mutableStateOf(ConfirmEmailChangeState.Loading) }
+    var errorMessage by rememberSaveable { mutableStateOf("") }
+    var successMessage by rememberSaveable { mutableStateOf("Email updated successfully! Please sign in again with your new address.") }
+    var requestFired by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(token) {
+        if (requestFired) return@LaunchedEffect
+        requestFired = true
         if (token.isNullOrBlank()) {
             errorMessage = "Invalid or missing email confirmation token."
             uiState = ConfirmEmailChangeState.Error

@@ -75,8 +75,12 @@
                 Deep-link entry point for email verification links.
                 Intercepts both localhost and the ngrok tunnel so runners
                 can verify their emails without being dumped into a browser.
+                autoVerify stays FALSE: Digital Asset Links can't verify
+                localhost/ngrok (no assetlinks.json), and a failed autoVerify
+                makes Android 12+ skip the app entirely. Production needs a
+                real domain serving assetlinks.json before flipping this.
             -->
-            <intent-filter android:autoVerify="true">
+            <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />

@@ -92,6 +92,7 @@ fun PhotographerPublicProfileScreen(
     onBack: () -> Unit,
     cartViewModel: CartViewModel? = null,
     isBrandSettingsLoading: Boolean = false,
+    brandSettingsError: String? = null,
 ) {
     val profileState by viewModel.publicProfileState.collectAsState()
     val resolvedHandle = handle?.takeIf { it.isNotBlank() }
@@ -132,6 +133,10 @@ fun PhotographerPublicProfileScreen(
                 Box(modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Fresh)
                 }
+            } else if (resolvedHandle == null && brandSettingsError != null) {
+                // Fetch failed — don't claim the handle is missing when we
+                // simply couldn't load it.
+                EmptyStateCard(brandSettingsError)
             } else if (resolvedHandle == null) {
                 EmptyStateCard("Set your public handle in the Settings tab to preview your profile.")
             } else {
