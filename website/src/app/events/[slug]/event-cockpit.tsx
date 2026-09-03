@@ -226,10 +226,18 @@ export function EventCockpit({ event, initialPhotos }: Props) {
     );
   }
 
+  // No photos yet: there is nothing to search, so the bib/selfie cockpit is
+  // replaced by a "get notified" prompt. Browse-all stays reachable (its own
+  // friendly empty state lives in BrowseMode).
+  if (event.photoCount === 0) {
+    return <EmptyCockpit event={event} onBrowseAll={switchToBrowse} />;
+  }
+
   return (
     <CockpitMode
       event={event}
       photoCount={event.photoCount}
+      mosaicPhotos={initialPhotos.items}
       bibInput={bibInput}
       onBibChange={setBibInput}
       onSubmit={submitBib}
@@ -246,6 +254,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
 function CockpitMode({
   event,
   photoCount,
+  mosaicPhotos,
   bibInput,
   onBibChange,
   onSubmit,
@@ -256,6 +265,7 @@ function CockpitMode({
 }: {
   event: EventDetail;
   photoCount: number;
+  mosaicPhotos: MockPhoto[];
   bibInput: string;
   onBibChange: (v: string) => void;
   onSubmit: (v: string) => void;
@@ -271,39 +281,10 @@ function CockpitMode({
 
   return (
     <>
-      <div className="bg-bone">
-        <div className="max-w-7xl mx-auto px-6 md:px-10 pt-5 md:pt-6 flex items-center justify-between gap-4">
-          <Kicker
-            as={Link}
-            href="/events"
-            className="group inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
-          >
-            <span
-              aria-hidden="true"
-              className="transition-transform group-hover:-translate-x-0.5"
-            >
-              ←
-            </span>
-            <span>Back to events</span>
-          </Kicker>
-          <SaveButton
-            eventId={event.id}
-            event={{
-              id: event.id,
-              slug: event.slug,
-              name: event.name,
-              date: event.date,
-              state: deriveEventState(event.date),
-              bannerUrl: event.bannerUrl ?? null,
-              location: event.location,
-            }}
-            variant="inline"
-          />
-        </div>
-      </div>
+      <CockpitTopBar event={event} />
 
       <section className="relative bg-bone overflow-hidden">
-        <DimWall />
+        <DimWall photos={mosaicPhotos} />
 
         <div className="relative px-6 md:px-10 py-16 md:py-24 min-h-[78vh] flex flex-col items-center justify-center">
           <div className="w-full max-w-md">
@@ -362,28 +343,172 @@ function CockpitMode({
   );
 }
 
-function DimWall() {
-  const TILES = 80;
+// Backdrop behind the cockpit card: a clean, evenly-spaced tile grid — the same
+// tidy layout whether or not the event has photos. When it does, each tile holds
+// a real event photo, softened (faded + light blur over a bone base) so the grid
+// reads as a calm, smooth texture with clear gaps between tiles rather than a
+// packed photo wall. A bottom gradient fades it into the page so the "Browse all
+// photos" link and the About strip below stay clean. No photos yet → faint tiles.
+function DimWall({ photos }: { photos?: MockPhoto[] }) {
+  // 28 tiles → 4 rows of 7 on large screens (grid-cols-7). Shared by the photo
+  // grid and the faint-tile placeholder so both render the identical layout;
+  // the bottom (4th) row lands in the gradient's fade zone and fades out.
+  const TILES = 28;
+  const pics = (photos ?? []).filter((p) => p.imageUrl);
+  const hasPics = pics.length > 0;
   return (
     <div
       aria-hidden="true"
       className="absolute inset-0 pointer-events-none select-none overflow-hidden"
       style={{ animation: "fade-in 0.9s 0.1s both" }}
     >
-      <div className="absolute inset-0 grid gap-2 p-3 md:gap-3 md:p-6 grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 content-start">
+      {/* inset-x-0 top-0 (NOT inset-0): the grid must size to its content so
+          each row is the tile's natural aspect-ratio height with a real 32px
+          gap. Pinning bottom-0 too made this a fixed-height grid, which
+          squeezed the rows shorter than the tiles and overlapped them. The
+          grid now overflows downward and the parent's overflow-hidden clips it,
+          which is what leaves the 4th row half-shown + fading at the bottom. */}
+      <div className="absolute inset-x-0 top-0 grid gap-5 p-4 md:gap-8 md:p-8 grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-7 content-start">
         {Array.from({ length: TILES }).map((_, i) => {
+          const pic = hasPics ? pics[i % pics.length] : null;
+          if (pic) {
+            return (
+              <div
+                key={i}
+                className="rounded-2xl overflow-hidden bg-bone-deep aspect-[3/4]"
+              >
+                {/* scale-110: the blur fades the image's flush edges toward
+                    transparent; zooming slightly pushes those faded edges past
+                    the tile's overflow-hidden clip so every tile keeps a crisp
+                    boundary and the gaps between tiles read clearly. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={pic.imageUrl ?? undefined}
+                  alt=""
+                  aria-hidden="true"
+                  loading="lazy"
+                  className="w-full h-full object-cover opacity-[0.55] blur-[1.5px] scale-110"
+                />
+              </div>
+            );
+          }
           const op = 0.05 + ((i * 17) % 11) * 0.009;
           return (
             <div
               key={i}
-              className="rounded-xl bg-ink aspect-[3/4]"
+              className="rounded-2xl bg-ink aspect-[3/4]"
               style={{ opacity: op }}
             />
           );
         })}
       </div>
-      <div className="absolute inset-0 bg-gradient-to-b from-bone/0 via-bone/55 via-[55%] to-bone pointer-events-none" />
+      <div
+        className={cn(
+          "absolute inset-0 bg-gradient-to-b to-bone pointer-events-none",
+          hasPics
+            ? "from-bone/0 via-bone/10 via-[62%]"
+            : "from-bone/0 via-bone/55 via-[55%]",
+        )}
+      />
     </div>
+  );
+}
+
+// Shared cockpit top bar (back-to-events + save). Used by both the search
+// cockpit and the no-photos EmptyCockpit so the two never drift.
+function CockpitTopBar({ event }: { event: EventDetail }) {
+  return (
+    <div className="bg-bone">
+      <div className="max-w-7xl mx-auto px-6 md:px-10 pt-5 md:pt-6 flex items-center justify-between gap-4">
+        <Kicker
+          as={Link}
+          href="/events"
+          className="group inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        >
+          <span
+            aria-hidden="true"
+            className="transition-transform group-hover:-translate-x-0.5"
+          >
+            ←
+          </span>
+          <span>Back to events</span>
+        </Kicker>
+        <SaveButton
+          eventId={event.id}
+          event={{
+            id: event.id,
+            slug: event.slug,
+            name: event.name,
+            date: event.date,
+            state: deriveEventState(event.date),
+            bannerUrl: event.bannerUrl ?? null,
+            location: event.location,
+          }}
+          variant="inline"
+        />
+      </div>
+    </div>
+  );
+}
+
+// No-photos cockpit: the event has zero photos, so there is nothing to search.
+// Mirrors CockpitMode's frame (top bar, centered card, browse-all link, About
+// strip) but swaps the bib/selfie panel for a "get notified" prompt.
+function EmptyCockpit({
+  event,
+  onBrowseAll,
+}: {
+  event: EventDetail;
+  onBrowseAll: () => void;
+}) {
+  return (
+    <>
+      <CockpitTopBar event={event} />
+
+      <section className="relative bg-bone overflow-hidden">
+        <DimWall />
+
+        <div className="relative px-6 md:px-10 py-16 md:py-24 min-h-[78vh] flex flex-col items-center justify-center">
+          <div className="w-full max-w-md">
+            <div
+              className="rounded-2xl bg-surface border border-line shadow-[var(--shadow-lift)] p-8 md:p-10"
+              style={{ animation: "fade-up 0.7s 0.05s both", opacity: 0 }}
+            >
+              <Kicker as="p" className="mb-5">
+                {event.name}
+              </Kicker>
+              <h1 className="font-hero text-ink text-4xl md:text-5xl">
+                Photos aren&apos;t
+                <br />
+                <span className="text-fresh">ready yet.</span>
+              </h1>
+              <p className="mt-5 font-sans text-base text-ink-soft leading-relaxed">
+                Photographers have a few days from race day to upload. Get
+                notified the moment your shots land.
+              </p>
+            </div>
+
+            <PhotoAlertToggle eventSlug={event.slug} />
+          </div>
+
+          <Kicker
+            as="button"
+            type="button"
+            onClick={onBrowseAll}
+            size="md"
+            className="mt-10 md:mt-14 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-4 focus-visible:ring-offset-bone"
+            style={{ animation: "fade-in 0.6s 0.55s both", opacity: 0 }}
+          >
+            Browse all photos
+            <span aria-hidden="true">↓</span>
+          </Kicker>
+        </div>
+      </section>
+
+      <AboutStrip event={event} />
+
+      <Footer />
+    </>
   );
 }
 
@@ -740,6 +865,8 @@ function BrowseMode({
           <BibEmptyResult event={event} bib={bibFilter} onClear={onClearBib} />
         ) : isFaceMode && visible.length === 0 ? (
           <FaceEmptyResult onClear={onClearFace} />
+        ) : !isAnyFilter && visible.length === 0 && !isLoadingPhotos ? (
+          <GalleryEmptyResult eventSlug={event.slug} />
         ) : (
           <div className="px-6 md:px-10 py-10 md:py-14 pb-20">
             <div className="max-w-7xl mx-auto">
@@ -814,6 +941,30 @@ function BrowseMode({
       )}
 
       <Footer />
+    </section>
+  );
+}
+
+// Browse-all with zero photos: nothing to skim, so explain the timeline and
+// offer the notify opt-in (same control as the cockpit).
+function GalleryEmptyResult({ eventSlug }: { eventSlug: string }) {
+  return (
+    <section className="px-6 md:px-10 py-16 md:py-24 bg-bone min-h-[40vh] flex items-center">
+      <div className="max-w-md mx-auto w-full">
+        <div className="text-center">
+          <Kicker as="p" className="mb-3">
+            No photos yet
+          </Kicker>
+          <p className="font-display font-extrabold text-3xl md:text-4xl text-ink tracking-tight">
+            Race photos aren&apos;t available yet.
+          </p>
+          <p className="font-sans text-base md:text-lg text-ink-soft mt-4">
+            Photographers upload within a few days of race day. Get notified the
+            moment your photos land.
+          </p>
+        </div>
+        <PhotoAlertToggle eventSlug={eventSlug} />
+      </div>
     </section>
   );
 }

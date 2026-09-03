@@ -6,6 +6,7 @@ import {
   AdminFieldHint,
   AdminFieldLabel,
   AdminTextInput,
+  AdminTextarea,
 } from "@/components/admin/admin-form-fields";
 import type { ListEvent } from "@/app/events/events-browser";
 import {
@@ -43,6 +44,10 @@ interface AdminEventFormModalProps {
      *  from the prefilled value; on create, always send. The BE re-prices
      *  every existing photo under the event when this changes. */
     pricePerPhoto: number;
+    /** Organizer name + race-day notes for the "About this race" strip.
+     *  Trimmed; the caller forwards each only when changed on edit. */
+    organizerName: string;
+    description: string;
     cover: File | null;
     /** True when the user removed an existing cover and didn't pick a new
      *  file — signals to the caller to send `removeCover` to the backend.
@@ -66,6 +71,10 @@ export function AdminEventFormModal({
   // ListEvent.pricePerPhoto so the input doesn't churn on every catalog
   // refetch while editing.
   const [price, setPrice] = useState("");
+  // Organizer name + race-day notes for the "About this race" strip. Free
+  // text; trimmed at submit. Prefilled from the event in edit mode.
+  const [organizerName, setOrganizerName] = useState("");
+  const [description, setDescription] = useState("");
   // `coverFile` is a newly picked file. `existingBannerUrl` is the URL
   // already on the event in edit mode. Preview prefers coverFile.
   const [coverFile, setCoverFile] = useState<File | null>(null);
@@ -88,6 +97,8 @@ export function AdminEventFormModal({
       setLocation(event.location);
       setDate(event.date);
       setPrice(formatPriceForInput(event.pricePerPhoto));
+      setOrganizerName(event.organizerName ?? "");
+      setDescription(event.description ?? "");
       setExistingBannerUrl(event.bannerUrl);
       setInitialHadCover(Boolean(event.bannerUrl));
     } else {
@@ -95,6 +106,8 @@ export function AdminEventFormModal({
       setLocation("");
       setDate("");
       setPrice("");
+      setOrganizerName("");
+      setDescription("");
       setExistingBannerUrl(undefined);
       setInitialHadCover(false);
     }
@@ -148,6 +161,8 @@ export function AdminEventFormModal({
         location: trimmedLocation,
         date,
         pricePerPhoto: parsedPrice,
+        organizerName: organizerName.trim(),
+        description: description.trim(),
         cover: coverFile,
         removeCover,
       });
@@ -222,6 +237,26 @@ export function AdminEventFormModal({
         placeholder="80"
         inputClassName="tnum"
         hint={priceHint}
+      />
+
+      <AdminTextInput
+        id="event-organizer"
+        label="Organizer"
+        value={organizerName}
+        onChange={setOrganizerName}
+        maxLength={120}
+        showCounter
+        placeholder="Cebu Runners Club"
+      />
+
+      <AdminTextarea
+        id="event-description"
+        label="Race day notes"
+        value={description}
+        onChange={setDescription}
+        maxLength={600}
+        rows={4}
+        placeholder="Chip-timed 21K along the coastal road. Water stations every 3 km, finisher medals for all runners."
       />
 
       <CoverField

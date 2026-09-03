@@ -553,6 +553,9 @@ export interface CreateAdminEventArgs {
    *  via EventCoverService — sending the raw file avoids the data-URL
    *  detour that overflowed banner_url VARCHAR(512) and 500'd the create. */
   cover?: File | null;
+  /** Organizer name + race-day notes for the "About this race" strip. */
+  organizerName?: string;
+  description?: string;
 }
 
 export async function createAdminEvent(
@@ -563,6 +566,10 @@ export async function createAdminEvent(
   form.append("date", args.date);
   form.append("location", args.location);
   form.append("pricePerPhoto", String(args.pricePerPhoto));
+  if (args.organizerName !== undefined)
+    form.append("organizerName", args.organizerName);
+  if (args.description !== undefined)
+    form.append("description", args.description);
   if (args.cover) form.append("cover", args.cover);
   return api.post<ListEvent>("/admin/events", form);
 }
@@ -583,6 +590,10 @@ export interface UpdateAdminEventPatch {
   cover?: File | null;
   /** Clear the existing cover key on the server. Ignored if `cover` is set. */
   removeCover?: boolean;
+  /** New organizer name / race-day notes. Only forwarded when changed in the
+   *  modal; blank is a no-op on the backend (same contract as title/location). */
+  organizerName?: string;
+  description?: string;
 }
 
 export async function updateAdminEvent(
@@ -596,6 +607,10 @@ export async function updateAdminEvent(
   if (patch.pricePerPhoto !== undefined) {
     form.append("pricePerPhoto", String(patch.pricePerPhoto));
   }
+  if (patch.organizerName !== undefined)
+    form.append("organizerName", patch.organizerName);
+  if (patch.description !== undefined)
+    form.append("description", patch.description);
   if (patch.cover) form.append("cover", patch.cover);
   if (patch.removeCover) form.append("removeCover", "true");
   return api.fetch<ListEvent>(

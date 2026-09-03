@@ -36,6 +36,10 @@ export type EventOverridePatch = Partial<
   /** New admin-set per-photo price in PHP. Optional — only forwarded to the
    *  BE when it actually changed in the modal. */
   pricePerPhoto?: number;
+  /** Organizer name / race-day notes for the "About this race" strip. Only
+   *  forwarded to the BE when changed in the modal. */
+  organizerName?: string;
+  description?: string;
 };
 
 export interface CreateEventInput {
@@ -48,6 +52,9 @@ export interface CreateEventInput {
   /** Raw cover file picked from disk. Uploaded as multipart; the backend
    *  re-encodes to JPEG and returns the presigned URL on the response. */
   cover?: File | null;
+  /** Organizer name / race-day notes for the "About this race" strip. */
+  organizerName?: string;
+  description?: string;
 }
 
 interface AdminEventOverridesState {
@@ -124,6 +131,12 @@ export const useAdminEventOverridesStore = create<AdminEventOverridesState>(
         ...(patch.pricePerPhoto !== undefined
           ? { pricePerPhoto: patch.pricePerPhoto }
           : {}),
+        ...(patch.organizerName !== undefined
+          ? { organizerName: patch.organizerName }
+          : {}),
+        ...(patch.description !== undefined
+          ? { description: patch.description }
+          : {}),
         ...(cover ? { cover } : {}),
         ...(removeCover ? { removeCover: true } : {}),
       };
@@ -140,6 +153,8 @@ export const useAdminEventOverridesStore = create<AdminEventOverridesState>(
         date: input.date,
         location: input.location.trim(),
         pricePerPhoto: input.pricePerPhoto,
+        organizerName: input.organizerName,
+        description: input.description,
         cover: input.cover ?? null,
       });
       const event: ListEvent = {

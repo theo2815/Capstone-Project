@@ -105,6 +105,8 @@ export default function AdminEventsPage() {
     location: string;
     date: string;
     pricePerPhoto: number;
+    organizerName: string;
+    description: string;
     cover: File | null;
     removeCover: boolean;
   }) {
@@ -114,6 +116,8 @@ export default function AdminEventsPage() {
         location: payload.location,
         date: payload.date,
         pricePerPhoto: payload.pricePerPhoto,
+        organizerName: payload.organizerName,
+        description: payload.description,
         cover: payload.cover,
       });
       // Refetch the admin list so the optimistic submission gets replaced
@@ -137,6 +141,8 @@ export default function AdminEventsPage() {
     location: string;
     date: string;
     pricePerPhoto: number;
+    organizerName: string;
+    description: string;
     cover: File | null;
     removeCover: boolean;
   }) {
@@ -148,11 +154,18 @@ export default function AdminEventsPage() {
       const priceChanged =
         editTarget.pricePerPhoto === undefined ||
         editTarget.pricePerPhoto !== payload.pricePerPhoto;
+      // Same minimal-payload treatment for organizer + notes.
+      const organizerChanged =
+        (editTarget.organizerName ?? "") !== payload.organizerName;
+      const descriptionChanged =
+        (editTarget.description ?? "") !== payload.description;
       await editEvent(editTarget.id, {
         name: payload.name,
         location: payload.location,
         date: payload.date,
         ...(priceChanged ? { pricePerPhoto: payload.pricePerPhoto } : {}),
+        ...(organizerChanged ? { organizerName: payload.organizerName } : {}),
+        ...(descriptionChanged ? { description: payload.description } : {}),
         cover: payload.cover,
         removeCover: payload.removeCover,
       });
