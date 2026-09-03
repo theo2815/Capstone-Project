@@ -84,8 +84,9 @@ fun PhotographerEarningsScreen(
     val earningsState by viewModel.earningsUiState.collectAsState()
     val payoutActionState by viewModel.payoutActionState.collectAsState()
     val verificationState by viewModel.verificationState.collectAsState()
-    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
-    val isApproved = currentStatus == "approved"
+    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase()
+    // null = status not loaded yet or fetch failed. Never block on unknown; the backend enforces.
+    val isApproved = currentStatus == null || currentStatus == "approved"
     val isPending = currentStatus == "pending"
     var showSetupAlert by remember { mutableStateOf(false) }
 

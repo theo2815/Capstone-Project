@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.BottomSheetDefaults
@@ -747,7 +748,11 @@ fun RunnerGalleryScreen(
                                     }
                                 }
                             } else null,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            // Bibs are alphanumeric (web parity: text input, uppercased).
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                capitalization = KeyboardCapitalization.Characters,
+                            ),
                             singleLine = true,
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = BoneDeep,

@@ -58,6 +58,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
@@ -546,7 +547,7 @@ fun AccountSettingsScreen(
                                 Kicker("03 · Update password")
                             }
                             Text(
-                                text = "Ensure your password is at least 8 characters long and contains a mix of letters and numbers.",
+                                text = "Use at least 8 characters.",
                                 style = Typography.bodySmall,
                                 color = Slate
                             )
@@ -662,7 +663,7 @@ fun AccountSettingsScreen(
                                         text = if (pwdSessionKept) {
                                             "Password changed. Other devices were signed out."
                                         } else {
-                                            "Password changed successfully."
+                                            "Password changed. You'll be signed out on this device shortly."
                                         },
                                         color = Fresh,
                                         style = Typography.bodySmall,
@@ -738,7 +739,7 @@ fun AccountSettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text("App Version", style = Typography.bodyMedium, color = Ink, fontWeight = FontWeight.Medium)
-                                Text("QuickPitik v1.0.0", style = Typography.bodySmall, color = SlateSoft)
+                                Text("QuickPitik v${BuildConfig.VERSION_NAME}", style = Typography.bodySmall, color = SlateSoft)
                             }
                         }
                     }

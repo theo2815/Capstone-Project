@@ -124,11 +124,9 @@ import java.time.LocalDate
 @Composable
 fun PhotographerCaptureScreen(viewModel: PhotographerDashboardViewModel) {
     val activeEvent by viewModel.activeEvent.collectAsState()
-    val verificationState by viewModel.verificationState.collectAsState()
-    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
-    val isApproved = currentStatus == "approved"
-
-    if (activeEvent == null || !isApproved) {
+    // No approval gate here: PublicEventPickerList already refuses to select an
+    // event unless verification is approved, so an active event implies approval.
+    if (activeEvent == null) {
         PublicEventPickerList(
             viewModel = viewModel,
             onSelectEvent = { event -> viewModel.selectEvent(event) }

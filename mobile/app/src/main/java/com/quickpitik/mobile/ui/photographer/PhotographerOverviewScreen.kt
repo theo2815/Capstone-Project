@@ -180,7 +180,11 @@ fun PhotographerOverviewScreen(
                             .background(dotColor),
                     )
                     Text(
-                        text = if (completedCount == setupItems.size) "READY FOR REVIEW" else "SETUP PENDING · $completedCount OF ${setupItems.size}",
+                        text = when {
+                            currentStatus == "pending" || isRejected || currentStatus == "rejected" -> chipText.uppercase()
+                            completedCount == setupItems.size -> "READY FOR REVIEW"
+                            else -> "SETUP PENDING · $completedCount OF ${setupItems.size}"
+                        },
                         style = Typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
                         color = Bone,
                     )
@@ -207,7 +211,7 @@ fun PhotographerOverviewScreen(
                     isRejected || currentStatus == "rejected" ->
                         rejectionReason ?: "Some details need updates before runners can find you."
                     else ->
-                        "Finish your 8 studio requirements below to start covering events and uploading photos."
+                        "Finish your ${setupItems.size} studio requirements below to start covering events and uploading photos."
                 },
                 color = Slate,
                 fontSize = 14.sp,
