@@ -55,19 +55,19 @@
 
 ## Phase 2: Admin Shell, Navigation & Command Palette
 
-- [ ] **TC-ADM-05: Sidebar Rail Navigation Links**
+- [x] **TC-ADM-05: Sidebar Rail Navigation Links**
   - **Action:** Click through each link in the left Admin Rail: Overview, Inbox, Events, Verifications, Disputes, Payouts, Photographers, Flags, Sales.
   - **Expected Result:** Each route mounts smoothly with active indicator dot/pill on the rail. No full page reloads.
-- [ ] **TC-ADM-06: Mobile Strip Responsive Behavior**
+- [x] **TC-ADM-06: Mobile Strip Responsive Behavior**
   - **Action:** Shrink browser viewport to mobile width (<768px).
   - **Expected Result:** Desktop sidebar tucks away; bottom/top mobile admin strip appears with horizontally scrollable section tabs.
-- [ ] **TC-ADM-07: Command Palette Trigger (`Cmd+K` / `Ctrl+K`)**
+- [x] **TC-ADM-07: Command Palette Trigger (`Cmd+K` / `Ctrl+K`)**
   - **Action:** Press `Ctrl+K` (Windows) or `Cmd+K` (macOS).
   - **Expected Result:** Centered search modal opens instantly with a frosted backdrop blur. Focus is automatically placed in the search input.
-- [ ] **TC-ADM-08: Command Palette Navigation & Search**
+- [x] **TC-ADM-08: Command Palette Navigation & Search**
   - **Action:** Type "payouts" or "verifications" in the palette and press `Enter`.
   - **Expected Result:** Dialog closes and the browser navigates immediately to the selected section.
-- [ ] **TC-ADM-09: Keyboard Shortcuts Legend (`?` Key)**
+- [x] **TC-ADM-09: Keyboard Shortcuts Legend (`?` Key)**
   - **Action:** Press `?` on the keyboard while on any admin page.
   - **Expected Result:** The Keyboard Shortcuts legend modal pops up, displaying shortcuts for fast navigation (`G then O` for overview, `G then I` for inbox, `Escape` to close).
 
