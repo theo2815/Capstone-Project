@@ -145,14 +145,10 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
 
     // ---- Live photo arrival (/ws/events/{id}/photos) ------------------------
     //
-    // The website prepends each pushed photo straight into its query cache. We
-    // deliberately do NOT: the push frame carries only
-    // {id, bib, tone, span, imageUrl, uploadedAt}, while PhotoDto types `time`
-    // and `price` non-null. A prepended row would render "₱0.00" in the
-    // lightbox (PhotoPreview) and could be added to the cart at that price.
-    // Instead the frame is a signal — count it, then re-run the search that's
-    // already on screen so every field comes from the authoritative REST DTO.
-    // Net effect for the runner is identical: photos land on their own.
+    // A push is only a signal. Keep the current gallery snapshot stable until
+    // the runner taps the badge, then pull a fresh diversity-ranked first page
+    // from REST. The frame is also only a partial PhotoDto, so it must never be
+    // inserted directly into the grid/cart.
 
     private val liveSocket = QpWebSocket(SessionManager.getInstance(application), viewModelScope)
     private val gson = Gson()
@@ -162,41 +158,22 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
 
     val liveState: StateFlow<WsState> = liveSocket.state
 
-    // The bib query currently on screen. searchByBib() takes it as a parameter
-    // and only a boolean survived in _isFiltered, so an auto-refresh had no way
-    // to re-run the SAME search without this.
+    // The bib query currently on screen, reused by explicit live refreshes.
     private var activeBibQuery: String = ""
 
-    // Face-search results live in the same _searchState as bib results, so an
-    // unguarded auto-refresh would silently replace a runner's match set with
-    // the unfiltered event list. In face mode we only count.
+    // Face-search results live in the same _searchState as bib results, so a
+    // live refresh must not replace a runner's match set with the event list.
     private var isFaceSearchMode: Boolean = false
 
-    private var liveRefreshJob: Job? = null
-
-    // Whether this channel has been open before for the CURRENT event. The very
-    // first open follows selectEvent's own fetch, so refetching then would just
-    // double a request; only a RE-open (backgrounded, dropped Wi-Fi) has a gap
-    // to close. Reset whenever the selected event changes.
-    private var liveChannelHasOpened = false
+    // Returned by the first unfiltered page and reused for later offsets so a
+    // live upload cannot shift or duplicate rows while the runner pages.
+    private var gallerySnapshotAt: String? = null
 
     init {
         observeLivePhotos()
     }
 
     private fun observeLivePhotos() {
-        viewModelScope.launch {
-            liveSocket.state.collect { state ->
-                if (state !is WsState.Open) return@collect
-                // Reconnect grace: anything published while the socket was down
-                // was never pushed to us. Mirrors the inbox channels and the
-                // website's ws.onopen refetch.
-                if (liveChannelHasOpened && !isFaceSearchMode) {
-                    runBibSearch(activeBibQuery, showLoading = false)
-                }
-                liveChannelHasOpened = true
-            }
-        }
         viewModelScope.launch {
             liveSocket.frames.collect { raw ->
                 val type = runCatching {
@@ -207,14 +184,6 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 // UI — drop it, and anything else we don't know, quietly.
                 if (type != "photo.published") return@collect
                 _newPhotoCount.value = _newPhotoCount.value + 1
-                if (isFaceSearchMode) return@collect
-                // Debounced: a photographer uploading a burst would otherwise
-                // fire one refetch per photo mid-race.
-                liveRefreshJob?.cancel()
-                liveRefreshJob = viewModelScope.launch {
-                    delay(LIVE_REFRESH_DEBOUNCE_MS)
-                    runBibSearch(activeBibQuery, showLoading = false)
-                }
             }
         }
     }
@@ -236,12 +205,13 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
 
     fun disconnectLivePhotos() {
         liveSocket.close()
-        liveRefreshJob?.cancel()
     }
 
-    /** Pill tap — the runner has seen them. */
-    fun resetNewPhotoCount() {
+    /** Badge tap: start a fresh server-ranked snapshot, then clear the count. */
+    fun refreshLivePhotos() {
         _newPhotoCount.value = 0
+        if (_activeEvent.value == null || isFaceSearchMode) return
+        runBibSearch(activeBibQuery, showLoading = false)
     }
 
     /**
@@ -249,14 +219,12 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
      * start the socket over from a clean attempt count.
      */
     fun retryLivePhotos() {
-        _newPhotoCount.value = 0
         if (_activeEvent.value == null) return
-        if (!isFaceSearchMode) runBibSearch(activeBibQuery, showLoading = false)
+        refreshLivePhotos()
         // Force the socket shut rather than dropping one subscriber: this resets
         // the attempt counter, so the retry starts from a clean backoff instead
         // of waiting out the 30s cap it had climbed to. connectLivePhotos()
         // below restores the cockpit's own subscription.
-        liveRefreshJob?.cancel()
         liveSocket.release()
         connectLivePhotos()
     }
@@ -319,14 +287,11 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     if (_activeEvent.value?.slug == event.slug) _eventDetail.value = detail.data
                 }
         }
-        // Only channel STATE is reset here; the socket itself is owned by the
-        // cockpit's lifecycle effect, which is keyed on the active event id and
-        // so tears down / reopens on its own when this value changes. A pending
-        // refresh must not fire against the newly selected event.
-        liveRefreshJob?.cancel()
+        // Only derived channel state is reset here; the socket itself is owned
+        // by the cockpit lifecycle effect keyed on the active event id.
         bibSearchJob?.cancel()
         bibRequestJob?.cancel()
-        liveChannelHasOpened = false
+        gallerySnapshotAt = null
         _newPhotoCount.value = 0
         // Pre-race-day events have no gallery yet — the website never loads
         // photos for one, and the cockpit renders an "opens on race day" notice
@@ -348,10 +313,9 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         _eventDetail.value = null
         // As in selectEvent: the lifecycle effect closes the socket when the
         // active event id changes. Here we only drop the derived state.
-        liveRefreshJob?.cancel()
         bibSearchJob?.cancel()
         bibRequestJob?.cancel()
-        liveChannelHasOpened = false
+        gallerySnapshotAt = null
         _newPhotoCount.value = 0
     }
 
@@ -397,6 +361,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     bib = query
                 )
                 if (response.success && response.data != null) {
+                    gallerySnapshotAt = response.data.snapshotAt
                     _searchState.value = PhotosSearchState.Success(
                         photos = response.data.items,
                         total = response.data.total,
@@ -441,10 +406,11 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     slug = event.slug,
                     bib = activeBibQuery.ifEmpty { null },
                     offset = current.photos.size,
+                    snapshotAt = if (activeBibQuery.isEmpty()) gallerySnapshotAt else null,
                 )
                 if (response.success && response.data != null) {
-                    // Dedupe by id: a photo published between the two pages
-                    // shifts offsets and could deliver a duplicate row.
+                    // Browse offsets are frozen by gallerySnapshotAt. Bib
+                    // searches stay live-ranked, so retain their id guard.
                     val seen = current.photos.mapTo(HashSet()) { it.id }
                     _searchState.value = PhotosSearchState.Success(
                         photos = current.photos + response.data.items.filter { it.id !in seen },
@@ -716,10 +682,6 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     }
 
     private companion object {
-        // Long enough to collapse a burst upload into one refetch, short enough
-        // that a single shot still feels immediate.
-        const val LIVE_REFRESH_DEBOUNCE_MS = 1_500L
-
         // Keystroke debounce for the bib field — collapses "1234" into one
         // request without making a submitted search feel laggy.
         const val BIB_SEARCH_DEBOUNCE_MS = 350L

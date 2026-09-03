@@ -4,7 +4,8 @@ data class PaginatedResponse<T>(
     val items: List<T>,
     val total: Long,
     val offset: Int,
-    val limit: Int
+    val limit: Int,
+    val snapshotAt: String? = null,
 )
 
 data class PhotographerEventSummaryDto(

@@ -873,7 +873,7 @@ fun RunnerGalleryScreen(
                         newPhotoCount = newPhotoCount,
                         liveState = liveState,
                         onJumpToTop = {
-                            viewModel.resetNewPhotoCount()
+                            viewModel.refreshLivePhotos()
                             scope.launch { gridState.animateScrollToItem(0) }
                         },
                         onRetry = { viewModel.retryLivePhotos() },
@@ -1343,8 +1343,8 @@ fun RunnerGalleryScreen(
  * (`event-cockpit.tsx`): a count of photos that landed while the runner was
  * looking, or a manual refresh once the socket has stopped healing itself.
  *
- * The grid refreshes on its own — this is purely "something changed below the
- * fold", so it stays a quiet mono line rather than a filled CTA.
+ * Tapping starts a fresh diversity-ranked snapshot and returns to the top, so
+ * live uploads never jump ahead of an unrepresented photographer by themselves.
  */
 @Composable
 private fun LivePhotosBanner(

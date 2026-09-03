@@ -328,7 +328,8 @@ interface QuickPitikApi {
         @Path("slug") slug: String,
         @Query("bib") bib: String? = null,
         @Query("offset") offset: Int = 0,
-        @Query("limit") limit: Int = 100
+        @Query("limit") limit: Int = 100,
+        @Query("snapshotAt") snapshotAt: String? = null,
     ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
 
     @Multipart
