@@ -59,6 +59,26 @@ class PhotoPhashQueryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1, (offByOne[2] as Number).toInt())
     }
 
+    // V43: a copy cropped to the runner hashes like the registered centre
+    // crop, not like the marked frame — the query must take the best of the
+    // three columns, and rows without the V43 columns must still rank by phash.
+    @Test
+    fun `a centre-crop hash wins over a far marked hash`() {
+        val eventId = eventRepository.save(newEvent()).id
+        val marked = userRepository.save(newPhotographer()).id
+        val cropped = userRepository.save(newPhotographer()).id
+        val base = Random.nextLong() or Long.MIN_VALUE
+
+        photoRepository.saveAndFlush(newPhoto(eventId, marked, base xor 0b11L, PhotoStatus.LIVE))
+        photoRepository.saveAndFlush(
+            newPhoto(eventId, cropped, base.inv(), PhotoStatus.LIVE).also { it.phashCentre = base },
+        )
+
+        val row = photoRepository.findNearestByPhash(base).single()
+        assertEquals(cropped, row[0])
+        assertEquals(0, (row[2] as Number).toInt())
+    }
+
     // ─── fixtures ─────────────────────────────────────────────────────────
 
     private fun newPhoto(eventId: UUID, photographerId: UUID, phash: Long, status: PhotoStatus) = Photo(

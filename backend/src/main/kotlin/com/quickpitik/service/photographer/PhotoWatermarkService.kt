@@ -129,7 +129,13 @@ class PhotoWatermarkService(
             storageService.presignedGetUrl(watermarkKey, storageProperties.presignedTtl.thumbnail)
 
         transactionTemplate.execute {
-            val flipped = photoRepository.publishWatermarked(photo.id, watermarkKey, marked.phash)
+            val flipped = photoRepository.publishWatermarked(
+                photo.id,
+                watermarkKey,
+                marked.phash,
+                marked.phashClean,
+                marked.phashCentre,
+            )
             if (flipped == 1) {
                 // Same frame shape the upload transaction used to publish —
                 // PhotoPublishedBroadcaster (AFTER_COMMIT) is untouched. Fired

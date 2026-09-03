@@ -25,7 +25,7 @@ import kotlin.test.assertTrue
 // verifies.
 class WatermarkServiceTest {
 
-    private val service = WatermarkService()
+    private val service = WatermarkService("test-seed-secret")
     private val photoId = UUID.fromString("7b3a9c1e-2d4f-4a6b-8c0d-1e2f3a4b5c6d")
     private val credit = WatermarkCredit(name = "Ana Reyes Studio", handle = "anareyes", photoId = photoId)
 
@@ -87,6 +87,11 @@ class WatermarkServiceTest {
         assertEquals("Ana Reyes Studio", props["dc:creator[1]"], "dc:creator missing in $props")
         assertEquals(photoId.toString(), props["quickpitik:photoId"], "photoId missing in $props")
         assertEquals("QuickPitik", props["photoshop:Credit"])
+        // Machine-readable rights: the IPTC/PLUS AI opt-out, usage terms, and
+        // the "special instructions" field — what compliant tools read.
+        assertEquals("http://ns.useplus.org/ldf/vocab/DMI-PROHIBITED-AIGENAI", props["plus:DataMining"], "DataMining missing in $props")
+        assertTrue(props["xmpRights:UsageTerms[1]"]?.contains("Do not remove") == true, "UsageTerms missing in $props")
+        assertTrue(props["photoshop:Instructions"]?.contains("watermark") == true, "Instructions missing in $props")
     }
 
     @Test
@@ -96,6 +101,83 @@ class WatermarkServiceTest {
 
         assertContentEquals(a.jpeg, b.jpeg)
         assertEquals(a.phash, b.phash)
+        assertEquals(a.phashClean, b.phashClean)
+        assertEquals(a.phashCentre, b.phashCentre)
+    }
+
+    // The seed is HMAC(secret, photoId), not the public photo id: nobody who
+    // only knows the id can regenerate the exact layer and subtract it.
+    @Test
+    fun `a different seed secret moves the tile pattern`() {
+        val a = ImageIO.read(ByteArrayInputStream(service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit).jpeg))
+        val b = ImageIO.read(ByteArrayInputStream(WatermarkService("another-secret").processThumbnail(photoJpeg(1200, 800), logoPng(), credit).jpeg))
+
+        val samePixels = (0 until a.width step 7).sumOf { x -> (0 until a.height step 7).count { y -> a.getRGB(x, y) == b.getRGB(x, y) } }
+        val total = (a.width / 7 + 1) * (a.height / 7 + 1)
+        assertFalse(samePixels > total * 0.9, "tile pattern did not move with the seed secret")
+    }
+
+    // The stripe layer is not a rigid lattice: a straight line drawn on the
+    // layer comes out wavy — displaced by a smooth per-photo field — and
+    // unbroken, so template matching fails while coverage holds.
+    @Test
+    fun `warp displaces a straight line smoothly without breaking it`() {
+        val w = 800
+        val h = 600
+        val pad = 24
+        val layer = BufferedImage(w + 2 * pad, h + 2 * pad, BufferedImage.TYPE_INT_ARGB_PRE)
+        val g = layer.createGraphics()
+        try {
+            g.color = Color.WHITE
+            g.fillRect(pad + 200, 0, 3, layer.height)
+        } finally {
+            g.dispose()
+        }
+
+        val warped = service.warp(layer, pad, kotlin.random.Random(7))
+
+        assertEquals(w, warped.width)
+        assertEquals(h, warped.height)
+        val lefts = (0 until h).map { y ->
+            (0 until w).firstOrNull { x -> (warped.getRGB(x, y) ushr 24) > 128 }
+                ?: error("row $y lost the line entirely")
+        }
+        assertTrue(lefts.max() - lefts.min() >= 4, "line was not displaced: ${lefts.min()}..${lefts.max()}")
+        for (y in 1 until h) assertTrue(abs(lefts[y] - lefts[y - 1]) <= 2, "row $y jumped ${lefts[y - 1]} → ${lefts[y]}")
+    }
+
+    // Fingerprints taken BEFORE the mark is drawn: a copy someone has cleaned
+    // still hashes to what we registered.
+    @Test
+    fun `clean and centre hashes are taken before the mark is drawn`() {
+        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit)
+        val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
+
+        assertEquals(PerceptualHash.of(plain), marked.phashClean)
+        assertEquals(PerceptualHash.ofCentre(plain), marked.phashCentre)
+    }
+
+    @Test
+    fun `a cleaned, downscaled, recompressed full-frame copy matches the clean hash`() {
+        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit)
+        val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
+
+        val copy = recompress(scaleToLongEdge(plain, 896), 0.6f)
+        val distance = PerceptualHash.distance(PerceptualHash.of(copy), marked.phashClean)
+        assertTrue(distance <= 6, "cleaned full-frame copy drifted $distance bits from the clean hash")
+    }
+
+    @Test
+    fun `a centre crop of a cleaned copy matches the centre hash`() {
+        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit)
+        val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
+
+        // The theft shape after screenshot: crop to the runner (middle 60%),
+        // save at 70%, JPEG q60.
+        val crop = plain.getSubimage(plain.width / 5, plain.height / 5, plain.width * 3 / 5, plain.height * 3 / 5)
+        val copy = recompress(scaleToLongEdge(crop, (crop.width * 0.7).toInt()), 0.6f)
+        val distance = PerceptualHash.distance(PerceptualHash.of(copy), marked.phashCentre)
+        assertTrue(distance <= 12, "centre-cropped copy drifted $distance bits from the centre hash")
     }
 
     @Test
@@ -170,6 +252,21 @@ class WatermarkServiceTest {
             g.dispose()
         }
         return out
+    }
+
+    private fun recompress(img: BufferedImage, quality: Float): BufferedImage {
+        val writer = ImageIO.getImageWritersByFormatName("jpg").next()
+        val params = writer.defaultWriteParam.apply {
+            compressionMode = javax.imageio.ImageWriteParam.MODE_EXPLICIT
+            compressionQuality = quality
+        }
+        val out = ByteArrayOutputStream()
+        ImageIO.createImageOutputStream(out).use { ios ->
+            writer.output = ios
+            writer.write(null, javax.imageio.IIOImage(img, null, null), params)
+        }
+        writer.dispose()
+        return ImageIO.read(ByteArrayInputStream(out.toByteArray()))
     }
 
     private fun channelDelta(a: Int, b: Int): Int = maxOf(

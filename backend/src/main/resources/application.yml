@@ -191,6 +191,10 @@ app:
     # POST /public/photos/verify: max Hamming distance (of 64 pHash bits) that
     # still counts as the same photo. <= half of it reports "strong".
     verify-max-distance: ${WATERMARK_VERIFY_MAX_DISTANCE:12}
+    # Seeds each preview's stripe geometry via HMAC(secret, photoId) so the
+    # public photo id alone can't regenerate the layer. Keep it stable: a
+    # change re-seeds every future render (existing previews are unaffected).
+    seed-secret: ${WATERMARK_SEED_SECRET:dev-only-watermark-seed-DO-NOT-USE-IN-PRODUCTION}
   rate-limit:
     # ON by default (decided 2026-08-27; closes the NFR-S-11 posture question).
     # Set RATE_LIMIT_ENABLED=false for load tests. The per-IP keys use

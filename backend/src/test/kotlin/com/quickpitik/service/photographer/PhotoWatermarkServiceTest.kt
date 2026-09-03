@@ -115,7 +115,7 @@ class PhotoWatermarkServiceTest {
             // Kotlin's non-null parameter rejects ArgumentCaptor/eq (both return
             // null), so record the credit here instead.
             lastCredit = inv.getArgument(2)
-            MarkedPreview(jpeg = byteArrayOf(3), phash = 42L)
+            MarkedPreview(jpeg = byteArrayOf(3), phash = 42L, phashClean = 43L, phashCentre = 44L)
         }
         Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
     }
@@ -123,13 +123,13 @@ class PhotoWatermarkServiceTest {
     @Test
     fun `success stores the watermark, flips LIVE with its phash, and publishes photo-published`() {
         stubHappyPath()
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
 
         service().process(photoId)
 
         val watermarkKey = "events/$eventId/photos/$photoId/watermark.jpg"
         Mockito.verify(storageService).put(watermarkKey, byteArrayOf(3), "image/jpeg")
-        Mockito.verify(photoRepository).publishWatermarked(photoId, watermarkKey, 42L)
+        Mockito.verify(photoRepository).publishWatermarked(photoId, watermarkKey, 42L, 43L, 44L)
         Mockito.verify(eventPublisher).publishEvent(anyArg<PhotoPublishedEvent>())
         Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
     }
@@ -139,7 +139,7 @@ class PhotoWatermarkServiceTest {
     @Test
     fun `credit prefers the brand name and falls back to the account name`() {
         stubHappyPath(brandName = "Reyes Race Photos")
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
         service().process(photoId)
         assertEquals(WatermarkCredit("Reyes Race Photos", "anareyes", photoId), lastCredit)
 
@@ -152,7 +152,7 @@ class PhotoWatermarkServiceTest {
     fun `a lost flip race publishes no websocket frame`() {
         stubHappyPath()
         // Another worker (sweep vs hot path) flipped it first — 0 rows updated.
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong())).thenReturn(0)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(0)
 
         service().process(photoId)
 
@@ -195,7 +195,7 @@ class PhotoWatermarkServiceTest {
         Mockito.verify(photoRepository).incrementProcessingAttempts(photoId)
         Mockito.verify(storageService, Mockito.never())
             .put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
-        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong())
+        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
         Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg())
     }
 
@@ -210,7 +210,7 @@ class PhotoWatermarkServiceTest {
         service().process(photoId)
 
         Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
-        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong())
+        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
         Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg())
     }
 

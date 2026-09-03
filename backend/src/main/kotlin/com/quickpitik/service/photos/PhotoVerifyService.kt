@@ -30,6 +30,8 @@ class PhotoVerifyService(
     private val eventRepository: EventRepository,
     @Value("\${app.watermark.verify-max-distance:12}") private val maxDistance: Int,
 ) {
+    private val log = org.slf4j.LoggerFactory.getLogger(javaClass)
+
     // Not @Transactional: decode + hash is CPU work that must not pin a
     // connection; the three PK reads afterwards are independent.
     fun verify(bytes: ByteArray): PhotoVerifyResultDto {
@@ -51,6 +53,9 @@ class PhotoVerifyService(
 
         val row = photoRepository.findNearestByPhash(hash).firstOrNull() ?: return PhotoVerifyResultDto.NONE
         val distance = (row[2] as Number).toInt()
+        // The exact distance stays server-side: on the wire it would be an
+        // oracle for editing a copy until it stops matching.
+        log.debug("photo-verify nearest distance {} (threshold {})", distance, maxDistance)
         if (distance > maxDistance) return PhotoVerifyResultDto.NONE
 
         // photographer_id is nullable (legacy/seed rows) — a match with no
@@ -66,7 +71,6 @@ class PhotoVerifyService(
             photographerHandle = settings?.handle,
             eventName = event?.name,
             eventDate = event?.date,
-            distance = distance,
         )
     }
 }

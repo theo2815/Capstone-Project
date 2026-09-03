@@ -13,11 +13,18 @@ object JpegXmp {
         val creator = esc(name)
         val rights = esc("© $year $name · QuickPitik")
         val handleAttr = handle?.let { """ quickpitik:photographerHandle="${esc(it)}"""" } ?: ""
+        // Machine-readable rights: plus:DataMining is the IPTC/PLUS AI opt-out
+        // that crawlers and compliant tools read; UsageTerms and the IPTC
+        // "special instructions" field carry the notice the pixels also show.
+        val terms = esc(
+            "Watermarked preview \u00A9 $year $name \u00B7 QuickPitik. All rights reserved. $INSTRUCTIONS Licence: https://quickpitik.com/verify",
+        )
         return "<?xpacket begin=\"\uFEFF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n" +
             """<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmpRights="http://ns.adobe.com/xap/1.0/rights/" xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/" xmlns:quickpitik="https://quickpitik.com/ns/1.0/" photoshop:Credit="QuickPitik" xmpRights:Marked="True" xmpRights:WebStatement="https://quickpitik.com/verify" quickpitik:photoId="$photoId"$handleAttr>
+<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmpRights="http://ns.adobe.com/xap/1.0/rights/" xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/" xmlns:plus="http://ns.useplus.org/ldf/xmp/1.0/" xmlns:quickpitik="https://quickpitik.com/ns/1.0/" photoshop:Credit="QuickPitik" photoshop:Instructions="$INSTRUCTIONS" xmpRights:Marked="True" xmpRights:WebStatement="https://quickpitik.com/verify" plus:DataMining="http://ns.useplus.org/ldf/vocab/DMI-PROHIBITED-AIGENAI" quickpitik:photoId="$photoId"$handleAttr>
 <dc:creator><rdf:Seq><rdf:li>$creator</rdf:li></rdf:Seq></dc:creator>
 <dc:rights><rdf:Alt><rdf:li xml:lang="x-default">$rights</rdf:li></rdf:Alt></dc:rights>
+<xmpRights:UsageTerms><rdf:Alt><rdf:li xml:lang="x-default">$terms</rdf:li></rdf:Alt></xmpRights:UsageTerms>
 </rdf:Description></rdf:RDF></x:xmpmeta>
 <?xpacket end="w"?>"""
     }
@@ -42,6 +49,7 @@ object JpegXmp {
     private fun esc(s: String): String =
         s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 
+    private const val INSTRUCTIONS = "Do not remove, alter or obscure the watermark or attribution."
     private const val MARKER = 0xFF.toByte()
     private const val XMP_PREAMBLE = "http://ns.adobe.com/xap/1.0/\u0000"
 }

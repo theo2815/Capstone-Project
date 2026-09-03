@@ -6,6 +6,8 @@ import java.time.LocalDate
 // photo id, a URL, or anything about a runner: the caller already holds the
 // image, and this tells them whose it is, nothing more. `confidence` is
 // "strong" (≤ half the threshold) or "weak" (within it); null when unmatched.
+// No distance on the wire — it would be an oracle for editing a copy until
+// it stops matching.
 data class PhotoVerifyResultDto(
     val matched: Boolean,
     val confidence: String? = null,
@@ -13,7 +15,6 @@ data class PhotoVerifyResultDto(
     val photographerHandle: String? = null,
     val eventName: String? = null,
     val eventDate: LocalDate? = null,
-    val distance: Int? = null,
 ) {
     companion object {
         val NONE = PhotoVerifyResultDto(matched = false)

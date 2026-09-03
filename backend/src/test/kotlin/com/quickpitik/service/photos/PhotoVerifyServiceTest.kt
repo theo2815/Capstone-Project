@@ -52,7 +52,6 @@ class PhotoVerifyServiceTest {
         assertEquals("anareyes", result.photographerHandle)
         assertEquals("Cebu Marathon 2026", result.eventName)
         assertEquals(LocalDate.of(2026, 1, 11), result.eventDate)
-        assertEquals(2, result.distance)
     }
 
     @Test
@@ -78,7 +77,6 @@ class PhotoVerifyServiceTest {
         assertNull(result.confidence)
         assertNull(result.photographerName)
         assertNull(result.eventName)
-        assertNull(result.distance)
     }
 
     @Test

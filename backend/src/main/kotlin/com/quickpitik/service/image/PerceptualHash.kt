@@ -25,6 +25,17 @@ object PerceptualHash {
         return bits
     }
 
+    // Hash of the middle 60% × 60% — what a copy cropped to the runner hashes
+    // to. Registered alongside the full-frame hashes (V43).
+    fun ofCentre(img: BufferedImage): Long = of(
+        img.getSubimage(
+            img.width / 5,
+            img.height / 5,
+            (img.width * 3 / 5).coerceAtLeast(1),
+            (img.height * 3 / 5).coerceAtLeast(1),
+        ),
+    )
+
     fun distance(a: Long, b: Long): Int = java.lang.Long.bitCount(a xor b)
 
     // Two-step shrink: bilinear to 256² (cheap, bounded work for any input

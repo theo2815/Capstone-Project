@@ -75,6 +75,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Modifying
     @Query(
         "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, p.phash = :phash, " +
+            "p.phashClean = :phashClean, p.phashCentre = :phashCentre, " +
             "p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
             "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING",
     )
@@ -82,6 +83,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("id") id: UUID,
         @Param("key") key: String,
         @Param("phash") phash: Long,
+        @Param("phashClean") phashClean: Long,
+        @Param("phashCentre") phashCentre: Long,
     ): Int
 
     @Modifying
@@ -106,12 +109,21 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     fun setPhash(@Param("id") id: UUID, @Param("phash") phash: Long): Int
 
     // Nearest stored fingerprint by Hamming distance, for POST
-    // /public/photos/verify. Returns [photographer_id, event_id, distance] —
-    // deliberately no photo id, so the answer can never become a photo URL.
+    // /public/photos/verify. The upload is compared against all three
+    // registered hashes — marked frame, clean frame, clean centre crop (V43;
+    // pre-V43 rows have only the first, and a NULL loses at 64) — so a
+    // screenshot, a cleaned copy and a crop to the runner all attribute.
+    // Returns [photographer_id, event_id, distance] — deliberately no photo
+    // id, so the answer can never become a photo URL.
     // ponytail: full scan of LIVE rows; a BK-tree or pg extension when photos > ~1M.
     @Query(
         value = """
-        SELECT p.photographer_id, p.event_id, bit_count(CAST((p.phash # :h) AS bit(64))) AS d
+        SELECT p.photographer_id, p.event_id,
+               LEAST(
+                 bit_count(CAST((p.phash # :h) AS bit(64))),
+                 COALESCE(bit_count(CAST((p.phash_clean # :h) AS bit(64))), 64),
+                 COALESCE(bit_count(CAST((p.phash_centre # :h) AS bit(64))), 64)
+               ) AS d
         FROM photos p
         WHERE p.status = 'LIVE' AND p.phash IS NOT NULL
         ORDER BY d ASC

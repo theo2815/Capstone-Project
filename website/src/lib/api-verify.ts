@@ -10,7 +10,6 @@ export interface PhotoVerifyResult {
   eventName: string | null;
   /** ISO date (yyyy-mm-dd). */
   eventDate: string | null;
-  distance: number | null;
 }
 
 // POST /public/photos/verify — public, IP rate-limited (10 / 15 min). A 429

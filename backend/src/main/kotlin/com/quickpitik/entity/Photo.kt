@@ -98,6 +98,16 @@ class Photo(
     @Column(name = "phash")
     var phash: Long? = null,
 
+    // Fingerprints of the frame BEFORE the mark was drawn — full frame and the
+    // middle 60% crop (V43) — so a cleaned or runner-cropped copy still
+    // attributes. Null on pre-V43 rows; never backfilled (the clean render is
+    // gone once the preview exists).
+    @Column(name = "phash_clean")
+    var phashClean: Long? = null,
+
+    @Column(name = "phash_centre")
+    var phashCentre: Long? = null,
+
     @Column(name = "indexing_error", columnDefinition = "TEXT")
     var indexingError: String? = null,
 
