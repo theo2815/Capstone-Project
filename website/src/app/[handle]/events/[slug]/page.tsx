@@ -552,6 +552,7 @@ function PhotoPreviewMount({
     <PhotoPreviewCard
       photo={photo}
       eventName={event.name}
+      eventDate={event.date}
       index={index + 1}
       total={total}
       // Every photo on this page is this photographer's, and their name is in

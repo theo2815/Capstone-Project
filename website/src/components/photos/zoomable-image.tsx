@@ -1,7 +1,7 @@
 "use client";
 
 import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image";
-import { useEffect, useRef, useState, type PointerEvent, type WheelEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent, type SyntheticEvent, type WheelEvent } from "react";
 import { cn } from "@/lib/utils";
 
 // Pinch / ctrl-wheel / double-click zoom over the lightbox image, drag to pan
@@ -18,7 +18,8 @@ const DOUBLE_CLICK_SCALE = 2.5;
 interface ZoomableImageProps {
   src: string;
   alt: string;
-  onLoad: () => void;
+  // Receives the img's load event so the caller can read naturalWidth/Height.
+  onLoad: (e: SyntheticEvent<HTMLImageElement>) => void;
   onError: () => void;
   loaded: boolean;
 }
@@ -155,14 +156,6 @@ export function ZoomableImage({ src, alt, onLoad, onError, loaded }: ZoomableIma
         )}
         {...PROTECTED_IMG_PROPS}
       />
-      {!zoomed && loaded && (
-        <p
-          aria-hidden="true"
-          className="absolute bottom-3 left-3 font-mono uppercase tracking-[0.18em] text-[12px] text-bone/60 pointer-events-none"
-        >
-          Pinch or double-click to zoom
-        </p>
-      )}
     </div>
   );
 }

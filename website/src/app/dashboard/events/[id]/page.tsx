@@ -531,6 +531,7 @@ function PhotoGrid({
           mode="owned"
           photo={previewItem}
           eventName={event.name}
+          eventDate={event.date}
           index={openIndex + 1}
           total={photos.length}
           onClose={handleClose}

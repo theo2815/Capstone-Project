@@ -920,6 +920,7 @@ function PhotoPreviewMount({
     <PhotoPreviewCard
       photo={photo}
       eventName={event.name}
+      eventDate={event.date}
       index={index + 1}
       total={total}
       inCart={inCart}

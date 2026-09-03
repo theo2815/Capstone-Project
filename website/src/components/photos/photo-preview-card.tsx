@@ -1,19 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
+import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { ZoomableImage } from "@/components/photos/zoomable-image";
 import { useScrollLock } from "@/lib/scroll-lock";
+import { formatRaceDate } from "@/lib/format";
 import { cn, formatPrice } from "@/lib/utils";
 
-const TONE_COLORS = [
-  "var(--ink)",
-  "var(--ink-soft)",
-  "var(--slate)",
-  "var(--slate-soft)",
-];
+// The lightbox is a photograph on a dark stage with one caption rail beside
+// it. Every fact and every action lives in that rail, top to bottom: event ·
+// credit · price · CTAs · hints. From `lg` up the rail is a fixed column to
+// the right of the photo. Below `lg` it collapses into a bottom strip and the
+// chrome floats over the photo: counter top-left, close top-right, prev/next
+// at the vertical centre where a thumb can reach. A portrait photo sizes the
+// stage to its own aspect so it fills edge to edge; a landscape photo keeps
+// the full-height stage and its letterbox.
 
 export interface PhotoPreviewItem {
   id: string;
@@ -38,6 +42,9 @@ export interface PhotoPreviewItem {
 interface BasePhotoPreviewProps {
   photo: PhotoPreviewItem;
   eventName: string;
+  /** Event date as YYYY-MM-DD. Shown under the name on the `lg` rail only;
+   *  surfaces without it (cart, orders) simply render no date. */
+  eventDate?: string;
   index: number;
   total: number;
   onClose: () => void;
@@ -78,10 +85,41 @@ type PhotoPreviewCardProps =
   | OwnedPhotoPreviewProps
   | ReviewPhotoPreviewProps;
 
+const NAV_PILL =
+  "inline-flex items-center justify-center rounded-full bg-surface/90 hover:bg-surface text-ink shadow-[0_4px_16px_-4px_rgba(0,0,0,0.4)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh disabled:opacity-50 disabled:cursor-not-allowed";
+
+function Chevron({ dir }: { dir: "left" | "right" }) {
+  return (
+    <svg viewBox="0 0 24 24" className="size-5" fill="none" aria-hidden="true">
+      <path
+        d={dir === "left" ? "M15 18 L9 12 L15 6" : "M9 6 L15 12 L9 18"}
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CloseGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" className="size-3.5" fill="none" aria-hidden="true">
+      <path
+        d="M3 3 L13 13 M13 3 L3 13"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
   const {
     photo,
     eventName,
+    eventDate,
     index,
     total,
     onClose,
@@ -112,21 +150,43 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     };
   }, [onClose, onPrev, onNext]);
 
-  const colorIdx = photo.tone % TONE_COLORS.length;
-  const wide = photo.span === "wide";
   // Owned-mode photos get the clean original from BE; everyone else sees the
   // watermarked thumbnail. Closes G-2.
   const renderedSrc = photo.cleanUrl ?? photo.imageUrl ?? null;
   const hasImage = Boolean(renderedSrc);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  // Natural width / height of the served image, known once it loads.
+  const [aspect, setAspect] = useState<number | null>(null);
 
   useEffect(() => {
     setImageLoaded(false);
     setImageFailed(false);
+    setAspect(null);
   }, [photo.id, renderedSrc]);
 
   if (!mounted) return null;
+
+  const inCart =
+    props.mode !== "owned" && props.mode !== "review" && props.inCart;
+  const hasNav = Boolean(onPrev || onNext) || total > 1;
+  const dateLabel = eventDate ? formatRaceDate(eventDate) : null;
+  // Below lg only: a portrait photo sizes the stage to itself (no letterbox);
+  // landscape and not-yet-loaded keep the full-height stage.
+  const fitPortrait = aspect !== null && aspect < 1;
+
+  const counter = hasNav && (
+    <Kicker as="span" tone="soft" tnum className="whitespace-nowrap">
+      <span className="text-ink">{index}</span> / {total}
+    </Kicker>
+  );
+
+  const credit = showPhotographerCredit && (
+    <PhotographerCredit
+      handle={photo.photographerHandle}
+      name={photo.photographerName}
+    />
+  );
 
   const content = (
     <div
@@ -135,7 +195,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
       aria-label={
         photo.bib ? `Preview photo ${photo.bib}` : "Preview untagged photo"
       }
-      className="fixed inset-0 z-50 flex items-center justify-center px-3 py-3 sm:px-6 sm:py-6 md:p-10"
+      className="fixed inset-0 z-50 flex items-center justify-center md:p-8 lg:p-10"
     >
       <button
         type="button"
@@ -145,27 +205,15 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
         style={{ animation: "fade-in 0.25s ease-out both" }}
       />
 
+      {/* lg prev / next — outside the card, centred on the stage. */}
       {onPrev && (
         <button
           type="button"
           onClick={onPrev}
           aria-label="Previous photo"
-          className="hidden md:flex absolute left-4 lg:left-8 top-1/2 -translate-y-1/2 z-10 size-12 rounded-full bg-surface/90 hover:bg-surface text-ink shadow-[0_4px_16px_-4px_rgba(0,0,0,0.4)] items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
+          className={cn(NAV_PILL, "hidden lg:flex absolute left-8 top-1/2 -translate-y-1/2 z-10 size-12")}
         >
-          <svg
-            viewBox="0 0 24 24"
-            className="size-5"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="M15 18 L9 12 L15 6"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <Chevron dir="left" />
         </button>
       )}
       {onNext && (
@@ -173,72 +221,30 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           type="button"
           onClick={onNext}
           aria-label="Next photo"
-          className="hidden md:flex absolute right-4 lg:right-8 top-1/2 -translate-y-1/2 z-10 size-12 rounded-full bg-surface/90 hover:bg-surface text-ink shadow-[0_4px_16px_-4px_rgba(0,0,0,0.4)] items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
+          className={cn(NAV_PILL, "hidden lg:flex absolute right-8 top-1/2 -translate-y-1/2 z-10 size-12")}
         >
-          <svg
-            viewBox="0 0 24 24"
-            className="size-5"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="M9 6 L15 12 L9 18"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <Chevron dir="right" />
         </button>
       )}
 
       <div
         className={cn(
-          "relative w-full h-[92dvh] max-h-[92vh] flex flex-col overflow-hidden rounded-2xl bg-bone shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)]",
-          // Modal width is stable per-photo — image fits inside via object-contain
-          // instead of the modal dancing to each photo's aspect. Widening at md/lg
-          // so portrait shots aren't squeezed into max-w-xl on desktop where the
-          // backdrop swallowed ~half the screen.
-          wide
-            ? "max-w-5xl"
-            : "max-w-lg sm:max-w-xl md:max-w-2xl lg:max-w-3xl",
+          "relative flex w-full md:max-w-3xl lg:h-[90dvh] lg:max-w-6xl flex-col lg:flex-row overflow-hidden md:rounded-2xl bg-bone shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)]",
+          fitPortrait
+            ? "max-h-[100dvh] md:max-h-[90dvh]"
+            : "h-[100dvh] md:h-[90dvh]",
         )}
         style={{ animation: "fade-up 0.4s ease-out both" }}
       >
-        <div className="flex items-center justify-between gap-3 px-5 md:px-7 py-4 border-b border-line">
-          <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate truncate">
-            <span className="text-ink">{eventName}</span>
-          </p>
-          <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum hidden sm:block whitespace-nowrap">
-            <span className="text-ink">{index}</span> / {total}
-          </p>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close preview"
-            className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
-          >
-            <svg
-              viewBox="0 0 16 16"
-              className="size-3.5"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M3 3 L13 13 M13 3 L3 13"
-                stroke="currentColor"
-                strokeWidth="1.75"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
-        </div>
-
+        {/* ── Stage ─────────────────────────────────────────────────── */}
         <div
           key={photo.id}
-          className="relative flex-1 min-h-0 overflow-hidden"
+          className={cn(
+            "relative min-h-0 min-w-0 overflow-hidden bg-ink lg:aspect-auto lg:flex-1",
+            fitPortrait ? "shrink aspect-(--photo-aspect)" : "flex-1",
+          )}
           style={{
-            backgroundColor: TONE_COLORS[colorIdx],
+            ["--photo-aspect" as string]: String(aspect ?? 1),
             animation: "fade-in 0.4s ease-out both",
           }}
         >
@@ -269,133 +275,197 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                   : "Untagged race photo")
               }
               loaded={imageLoaded}
-              onLoad={() => setImageLoaded(true)}
+              onLoad={(e: SyntheticEvent<HTMLImageElement>) => {
+                const img = e.currentTarget;
+                if (img.naturalWidth && img.naturalHeight) {
+                  setAspect(img.naturalWidth / img.naturalHeight);
+                }
+                setImageLoaded(true);
+              }}
               onError={() => setImageFailed(true)}
             />
           )}
 
-          {props.mode !== "owned" && props.mode !== "review" && props.inCart && (
-            <div className="absolute top-4 right-4 inline-flex items-center gap-2 bg-fresh text-surface rounded-full px-3 py-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] z-10">
-              <span
-                className="size-1.5 rounded-full bg-surface"
-                aria-hidden="true"
-              />
-              In cart
-            </div>
-          )}
-
-        </div>
-
-        <div className="px-5 md:px-7 py-4 sm:py-5 md:py-6 bg-bone-deep border-t border-line">
-          {showPhotographerCredit && (
-            <PhotographerCredit
-              handle={photo.photographerHandle}
-              name={photo.photographerName}
-            />
-          )}
-          {props.mode === "owned" ? (
-            <>
-              <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mb-3 sm:mb-4 text-center">
-                Yours to keep
-              </p>
-              <button
-                type="button"
-                onClick={props.onDownload}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap bg-fresh hover:bg-fresh-deep text-surface"
-              >
-                Download photo
-                <span aria-hidden="true">↓</span>
-              </button>
-            </>
-          ) : props.mode === "review" ? (
-            <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft text-center">
-              {props.footerLabel ?? "Admin · Review only"}
-            </p>
-          ) : (
-            <>
-              {!props.inCart && (
-                <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mb-3 sm:mb-4 text-center">
-                  Pay once, download forever
-                </p>
-              )}
-              <div className="flex flex-row gap-2 sm:gap-3">
-                <button
-                  type="button"
-                  onClick={props.onToggleCart}
-                  aria-pressed={props.inCart}
-                  className={cn(
-                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
-                    "border border-ink bg-bone text-ink hover:bg-ink hover:text-surface",
-                  )}
-                >
-                  {props.inCart ? "− Remove" : "+ Add to cart"}
-                </button>
-                <button
-                  type="button"
-                  onClick={props.onBuyNow}
-                  className={cn(
-                    "inline-flex flex-1 items-center justify-center px-3 sm:px-6 py-2.5 sm:py-3 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep whitespace-nowrap",
-                    "bg-fresh hover:bg-fresh-deep text-surface",
-                  )}
-                >
-                  {props.inCart ? "Checkout now" : "Buy now"} ·
-                  <span className="tnum ml-1 sm:ml-1.5">
-                    {formatPrice(photo.price)}
-                  </span>
-                  <span aria-hidden="true" className="ml-1 sm:ml-1.5">→</span>
-                </button>
-              </div>
-              {props.inCart && (
-                <p className="mt-3 sm:mt-4 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh text-center">
-                  <span aria-hidden="true">✓</span> In cart
-                  {props.onViewCart && (
-                    <>
-                      <span
-                        className="mx-2 text-slate-soft"
-                        aria-hidden="true"
-                      >
-                        ·
-                      </span>
-                      <button
-                        type="button"
-                        onClick={props.onViewCart}
-                        className="underline underline-offset-4 decoration-line hover:text-fresh-deep hover:decoration-fresh-deep transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh rounded-sm"
-                      >
-                        view cart →
-                      </button>
-                    </>
-                  )}
-                </p>
-              )}
-            </>
-          )}
-        </div>
-
-        {(onPrev || onNext) && (
-          <div className="md:hidden flex items-center justify-between gap-3 px-5 py-2 border-t border-line bg-bone">
+          {/* Below-lg chrome floats over the photo: counter top-left, close
+              top-right, prev/next at the vertical centre for the thumb. */}
+          <div className="lg:hidden absolute inset-x-3 top-3 flex items-center justify-between z-10 pointer-events-none">
+            {hasNav ? (
+              <span className="pointer-events-auto inline-flex items-center h-11 px-4 rounded-full bg-surface/90 shadow-[0_4px_16px_-4px_rgba(0,0,0,0.4)]">
+                {counter}
+              </span>
+            ) : (
+              <span />
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close preview"
+              className={cn(NAV_PILL, "pointer-events-auto size-11")}
+            >
+              <CloseGlyph />
+            </button>
+          </div>
+          {onPrev && (
             <button
               type="button"
               onClick={onPrev}
-              disabled={!onPrev}
               aria-label="Previous photo"
-              className="flex-1 inline-flex items-center justify-center gap-2 rounded-full border border-line font-sans text-sm font-medium text-ink hover:bg-bone-deep min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
+              className={cn(NAV_PILL, "lg:hidden absolute left-3 top-1/2 -translate-y-1/2 z-10 size-11")}
             >
-              <span aria-hidden="true">←</span> Prev
+              <Chevron dir="left" />
             </button>
-            <span className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum whitespace-nowrap">
-              <span className="text-ink">{index}</span> / {total}
-            </span>
+          )}
+          {onNext && (
             <button
               type="button"
               onClick={onNext}
-              disabled={!onNext}
               aria-label="Next photo"
-              className="flex-1 inline-flex items-center justify-center gap-2 rounded-full border border-line font-sans text-sm font-medium text-ink hover:bg-bone-deep min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
+              className={cn(NAV_PILL, "lg:hidden absolute right-3 top-1/2 -translate-y-1/2 z-10 size-11")}
             >
-              Next <span aria-hidden="true">→</span>
+              <Chevron dir="right" />
+            </button>
+          )}
+
+          {inCart && (
+            <div className="hidden lg:inline-flex absolute top-4 left-4 items-center gap-2 bg-fresh text-surface rounded-full px-3 py-1 font-mono uppercase tracking-[0.14em] text-[13px] z-10">
+              <span className="size-1.5 rounded-full bg-surface" aria-hidden="true" />
+              In cart
+            </div>
+          )}
+        </div>
+
+        {/* ── Rail ──────────────────────────────────────────────────── */}
+        <aside className="flex flex-col shrink-0 lg:w-[340px] bg-bone border-t lg:border-t-0 lg:border-l border-line">
+          {/* lg header: counter · close. */}
+          <div className="hidden lg:flex items-center justify-end gap-4 px-6 py-4 border-b border-line">
+            {counter}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close preview"
+              className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
+            >
+              <CloseGlyph />
             </button>
           </div>
-        )}
+
+          <div className="px-5 pt-4 pb-3 md:px-6 lg:pt-6 lg:pb-0 lg:flex-1 lg:min-h-0">
+            {/* Below lg: event name with the price beside it, then the credit. */}
+            <div className="lg:hidden">
+              <div className="flex items-start justify-between gap-4">
+                <Kicker as="p" className="min-w-0 flex-1 text-ink line-clamp-2">
+                  {eventName}
+                </Kicker>
+                {mode === "browse" && (
+                  <p className="shrink-0 font-mono font-semibold tnum text-[22px] leading-none text-ink">
+                    {formatPrice(photo.price)}
+                  </p>
+                )}
+                {mode === "owned" && (
+                  <Kicker as="p" tone="soft" className="shrink-0">
+                    Yours to keep
+                  </Kicker>
+                )}
+              </div>
+              {credit && <div className="mt-1.5">{credit}</div>}
+            </div>
+
+            {/* lg rail: date kicker, event name, credit. */}
+            <div className="hidden lg:block">
+              {dateLabel && (
+                <Kicker as="p" tone="soft" tnum>
+                  {dateLabel}
+                </Kicker>
+              )}
+              <p className="mt-1 font-display font-extrabold text-[26px] leading-tight tracking-tight text-ink">
+                {eventName}
+              </p>
+              {credit && <div className="mt-5">{credit}</div>}
+            </div>
+          </div>
+
+          {/* Actions — anchored to the rail bottom on lg. */}
+          <div className="px-5 pb-4 md:px-6 md:pb-5 lg:pb-6 lg:pt-5 lg:border-t lg:border-line">
+            {mode === "browse" && (
+              <div className="hidden lg:block mb-4">
+                <p className="font-mono font-semibold tnum text-[26px] leading-none text-ink">
+                  {formatPrice(photo.price)}
+                </p>
+                <Kicker as="p" tone="soft" className="mt-1.5">
+                  Per photo · download forever
+                </Kicker>
+              </div>
+            )}
+
+            {props.mode === "owned" ? (
+              <>
+                <Kicker as="p" tone="soft" className="hidden lg:block mb-3">
+                  Yours to keep
+                </Kicker>
+                <button
+                  type="button"
+                  onClick={props.onDownload}
+                  className={cn(BTN_PRIMARY, BTN_SIZE.sm, "w-full")}
+                >
+                  Download photo
+                  <span aria-hidden="true">↓</span>
+                </button>
+              </>
+            ) : props.mode === "review" ? (
+              <Kicker as="p" tone="soft" className="text-center lg:text-left">
+                {props.footerLabel ?? "Admin · Review only"}
+              </Kicker>
+            ) : (
+              <>
+                <div className="flex flex-row lg:flex-col-reverse gap-2 lg:gap-2.5">
+                  <button
+                    type="button"
+                    onClick={props.onToggleCart}
+                    aria-pressed={props.inCart}
+                    className={cn(BTN_SECONDARY, BTN_SIZE.sm, "flex-1 lg:w-full")}
+                  >
+                    {props.inCart ? "− Remove" : "+ Add to cart"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={props.onBuyNow}
+                    className={cn(BTN_PRIMARY, BTN_SIZE.sm, "flex-1 lg:w-full")}
+                  >
+                    {props.inCart ? "Checkout" : "Buy now"}
+                    <span aria-hidden="true">→</span>
+                  </button>
+                </div>
+                {props.inCart && (
+                  <Kicker as="p" tone="active" className="mt-3 text-center lg:text-left">
+                    <span aria-hidden="true">✓</span> In cart
+                    {props.onViewCart && (
+                      <>
+                        <span className="mx-2 text-slate-soft" aria-hidden="true">·</span>
+                        <button
+                          type="button"
+                          onClick={props.onViewCart}
+                          className="underline underline-offset-4 decoration-line hover:text-fresh-deep hover:decoration-fresh-deep transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh rounded-sm"
+                        >
+                          view cart →
+                        </button>
+                      </>
+                    )}
+                  </Kicker>
+                )}
+              </>
+            )}
+
+            {/* Gesture hints — invisible gestures don't ship. */}
+            {hasImage && (
+              <p className="mt-3 lg:mt-4 font-mono uppercase tracking-[0.14em] text-[12px] text-slate-soft text-center lg:text-left">
+                <span className="lg:hidden">Pinch or double-tap to zoom</span>
+                <span className="hidden lg:inline">
+                  {hasNav && "← → navigate · "}Esc close · double-click to zoom
+                </span>
+              </p>
+            )}
+          </div>
+        </aside>
       </div>
     </div>
   );
@@ -403,7 +473,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
   return createPortal(content, document.body);
 }
 
-// Photo credit line above the footer's CTA block.
+// Photo credit line in the rail.
 //
 // Both branches are real BE states, not a loading fallback: a photographer's
 // handle is only minted at verification, so an approved-but-unverified
@@ -411,8 +481,8 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
 // would send the runner to /{null}. Legacy rows carry neither field and get
 // no credit at all.
 //
-// Stays off `fresh` deliberately — the Buy-now CTA a few pixels below owns the
-// one accent this viewport is allowed.
+// Stays off `fresh` deliberately — the Buy-now CTA below owns the one accent
+// this viewport is allowed.
 function PhotographerCredit({
   handle,
   name,
@@ -425,14 +495,14 @@ function PhotographerCredit({
   return (
     // `truncate` is load-bearing, not defensive: mono uppercase at kicker
     // tracking measures roughly double its intuitive width, so a long handle
-    // overflows the 375px modal without it. See vault notes/ui-pitfalls
+    // overflows the 375px strip without it. See vault notes/ui-pitfalls
     // 2026-05-06 "mono-uppercase chip wrapped mid-word at 375px".
-    <Kicker as="p" tone="soft" className="mb-3 sm:mb-4 text-center truncate">
+    <Kicker as="p" tone="soft" className="min-w-0 truncate">
       Photo by{" "}
       {handle ? (
         <Link
           href={`/${handle}`}
-          className="text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep rounded-sm"
+          className="text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone rounded-sm"
         >
           @{handle}
           <span aria-hidden="true" className="ml-1.5 no-underline">
