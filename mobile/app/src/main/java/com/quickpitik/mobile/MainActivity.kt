@@ -5,8 +5,17 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -123,6 +132,44 @@ private val RUNNER_ROUTES = setOf(
 private val RUNNER_NAV_ROUTES = setOf(
     "events", "gallery", "profile", "settings", "orders?orderId={orderId}",
 )
+
+// Tab route sequences in left-to-right display order for directional slide transitions
+private val RUNNER_TAB_ORDER = listOf(
+    "events",
+    "profile",
+    "orders?orderId={orderId}",
+    "settings",
+)
+
+private val STUDIO_TAB_ORDER = listOf(
+    "studio/home",
+    "studio/capture",
+    "studio/events",
+    "studio/earnings",
+    "studio/settings",
+)
+
+private fun tabIndexForRoute(route: String?): Int {
+    if (route == null) return -1
+    val clean = route.substringBefore("?")
+    val rIdx = RUNNER_TAB_ORDER.indexOfFirst { it.substringBefore("?") == clean }
+    if (rIdx != -1) return rIdx
+    val sIdx = STUDIO_TAB_ORDER.indexOfFirst { it.substringBefore("?") == clean }
+    if (sIdx != -1) return sIdx
+    return -1
+}
+
+private fun arePeerTabs(fromRoute: String?, toRoute: String?): Boolean {
+    if (fromRoute == null || toRoute == null) return false
+    val f = fromRoute.substringBefore("?")
+    val t = toRoute.substringBefore("?")
+    val bothRunner = RUNNER_TAB_ORDER.any { it.substringBefore("?") == f } &&
+        RUNNER_TAB_ORDER.any { it.substringBefore("?") == t }
+    if (bothRunner) return true
+    val bothStudio = STUDIO_TAB_ORDER.any { it.substringBefore("?") == f } &&
+        STUDIO_TAB_ORDER.any { it.substringBefore("?") == t }
+    return bothStudio
+}
 
 class MainActivity : ComponentActivity() {
     // Latest deep-link URI from a quickpitik:// intent. Compose observes this
@@ -321,6 +368,15 @@ class MainActivity : ComponentActivity() {
                             showRunnerBottomBar -> RunnerFloatingBottomNav(
                                 currentRoute = currentRoute,
                                 onNavigate = { route ->
+                                    if (route == "events" && currentRoute == "gallery") {
+                                        if (!navController.popBackStack("events", inclusive = false)) {
+                                            navController.navigate("events") {
+                                                popUpTo("events") { inclusive = true }
+                                                launchSingleTop = true
+                                            }
+                                        }
+                                        return@RunnerFloatingBottomNav
+                                    }
                                     val isAlreadyOnOrders = route == "orders" && currentRoute?.startsWith("orders") == true
                                     if (currentRoute != route && !isAlreadyOnOrders) {
                                         navController.navigate(route) {
@@ -341,7 +397,113 @@ class MainActivity : ComponentActivity() {
                     ) {
                         NavHost(
                             navController = navController,
-                            startDestination = startDestination
+                            startDestination = startDestination,
+                            enterTransition = {
+                                val fromRoute = initialState.destination.route
+                                val toRoute = targetState.destination.route
+                                if (arePeerTabs(fromRoute, toRoute)) {
+                                    val fromIdx = tabIndexForRoute(fromRoute)
+                                    val toIdx = tabIndexForRoute(toRoute)
+                                    if (toIdx > fromIdx) {
+                                        slideIntoContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                                            initialOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                    } else {
+                                        slideIntoContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                                            initialOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                    }
+                                } else {
+                                    slideIntoContainer(
+                                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                        animationSpec = tween(300, easing = FastOutSlowInEasing)
+                                    ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                }
+                            },
+                            exitTransition = {
+                                val fromRoute = initialState.destination.route
+                                val toRoute = targetState.destination.route
+                                if (arePeerTabs(fromRoute, toRoute)) {
+                                    val fromIdx = tabIndexForRoute(fromRoute)
+                                    val toIdx = tabIndexForRoute(toRoute)
+                                    if (toIdx > fromIdx) {
+                                        slideOutOfContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                            animationSpec = tween(240, easing = FastOutLinearInEasing),
+                                            targetOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                    } else {
+                                        slideOutOfContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                            animationSpec = tween(240, easing = FastOutLinearInEasing),
+                                            targetOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                    }
+                                } else {
+                                    slideOutOfContainer(
+                                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                                        targetOffset = { (it * 0.25f).toInt() }
+                                    ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                }
+                            },
+                            popEnterTransition = {
+                                val fromRoute = initialState.destination.route
+                                val toRoute = targetState.destination.route
+                                if (arePeerTabs(fromRoute, toRoute)) {
+                                    val fromIdx = tabIndexForRoute(fromRoute)
+                                    val toIdx = tabIndexForRoute(toRoute)
+                                    if (toIdx > fromIdx) {
+                                        slideIntoContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                                            initialOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                    } else {
+                                        slideIntoContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                                            initialOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                    }
+                                } else {
+                                    slideIntoContainer(
+                                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                                        initialOffset = { (it * 0.25f).toInt() }
+                                    ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                }
+                            },
+                            popExitTransition = {
+                                val fromRoute = initialState.destination.route
+                                val toRoute = targetState.destination.route
+                                if (arePeerTabs(fromRoute, toRoute)) {
+                                    val fromIdx = tabIndexForRoute(fromRoute)
+                                    val toIdx = tabIndexForRoute(toRoute)
+                                    if (toIdx > fromIdx) {
+                                        slideOutOfContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                            animationSpec = tween(240, easing = FastOutLinearInEasing),
+                                            targetOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                    } else {
+                                        slideOutOfContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                            animationSpec = tween(240, easing = FastOutLinearInEasing),
+                                            targetOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                    }
+                                } else {
+                                    slideOutOfContainer(
+                                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                        animationSpec = tween(300, easing = FastOutSlowInEasing)
+                                    ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                }
+                            }
                         ) {
                             composable("login") {
                                 LoginScreen(
@@ -677,6 +839,7 @@ class MainActivity : ComponentActivity() {
                                     viewModel = profileViewModel,
                                     cartViewModel = cartViewModel,
                                     savedEventsViewModel = savedEventsViewModel,
+                                    runnerViewModel = runnerViewModel,
                                     onOpenEvent = { slug ->
                                         val event = runnerViewModel.eventBySlug(slug)
                                         if (event != null) {
@@ -687,7 +850,10 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     onBrowseEvents = {
-                                        navController.navigate("events")
+                                        navController.navigate("events") {
+                                            popUpTo("events") { inclusive = false }
+                                            launchSingleTop = true
+                                        }
                                     },
                                     onLogout = runnerLogout,
                                 )
@@ -988,12 +1154,24 @@ private fun RunnerFloatingNavItem(
         animationSpec = tween(180),
         label = "runnerNavItemTint",
     )
+    val scale by animateFloatAsState(
+        targetValue = if (selected) 1.0f else 0.94f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "runnerNavItemScale",
+    )
     Column(
         modifier = modifier
             .heightIn(min = 56.dp)
             .clip(PillShape)
             .background(bg)
             .clickable(onClick = onClick)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .padding(vertical = 8.dp, horizontal = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,

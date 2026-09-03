@@ -37,14 +37,23 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
@@ -52,6 +61,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.foundation.selection.toggleable
@@ -150,6 +160,7 @@ fun RunnerGalleryScreen(
     val inboxUnread by inboxViewModel.unreadCount.collectAsState()
     var showInbox by remember { mutableStateOf(false) }
     var showRefundPolicy by remember { mutableStateOf(false) }
+    var showEventInfoSheet by rememberSaveable { mutableStateOf(false) }
 
     val activeEvent by viewModel.activeEvent.collectAsState()
     val searchState by viewModel.searchState.collectAsState()
@@ -362,194 +373,178 @@ fun RunnerGalleryScreen(
                 }
             } else {
                 // SELECTED EVENT GALLERY VIEW
+                // Compact Race Identity Strip — keeps photos front and center on load!
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    Card(
-                        shape = QpCardShape,
-                        colors = CardDefaults.cardColors(containerColor = BoneDeep),
-                        border = BorderStroke(1.dp, Line),
-                        modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(BoneDeep, QpCardShape)
+                            .border(1.dp, Line, QpCardShape)
+                            .clickable { showEventInfoSheet = true }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            if (!activeEvent?.bannerUrl.isNullOrEmpty()) {
-                                AsyncImage(
-                                    model = RetrofitClient.resolveImageUrl(activeEvent?.bannerUrl),
-                                    contentDescription = "Event Banner",
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(160.dp)
-                                        .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
-                                    contentScale = ContentScale.Crop
-                                )
-                            }
-
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                IconButton(
-                                    onClick = {
+                                    .clip(PillShape)
+                                    .clickable {
                                         viewModel.clearSelectedEvent()
                                         onNavigateBack()
-                                    },
-                                    modifier = Modifier.padding(end = 8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.ArrowBack,
-                                        contentDescription = "Back to Events",
-                                        tint = Ink
-                                    )
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
+                                    }
+                                    .padding(vertical = 2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ArrowBack,
+                                    contentDescription = "Back to Events",
+                                    tint = Slate,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "ALL RACES",
+                                    style = Typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
+                                    color = Slate
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = activeEvent?.name.orEmpty(),
+                                style = Typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Ink,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                activeEvent?.date?.let { dateStr ->
                                     Text(
-                                        text = "SELECTED MARATHON",
-                                        style = Typography.labelSmall,
+                                        text = eventDateLabel(dateStr),
+                                        style = Typography.bodySmall,
                                         color = Slate
                                     )
-                                    Spacer(modifier = Modifier.height(4.dp))
+                                }
+                                if (!activeEvent?.location.isNullOrBlank()) {
+                                    Text(text = "·", color = SlateSoft, style = Typography.bodySmall)
                                     Text(
-                                        text = activeEvent?.name ?: "",
-                                        style = Typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
+                                        text = extractCity(activeEvent?.location.orEmpty()),
+                                        style = Typography.bodySmall,
+                                        color = Slate,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+
+                        // Right: Status Chip + Info pill
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            activeEvent?.let { ev ->
+                                StatusChip(state = deriveEventState(ev.date))
+                            }
+                            Surface(
+                                shape = PillShape,
+                                color = Bone,
+                                border = BorderStroke(1.dp, Line),
+                                modifier = Modifier
+                                    .clip(PillShape)
+                                    .clickable { showEventInfoSheet = true }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = "Race Info",
+                                        tint = Slate,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = "Race info",
+                                        style = Typography.labelSmall.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.2.sp),
                                         color = Ink
                                     )
-                                    Text(
-                                        text = activeEvent?.location ?: "",
-                                        style = Typography.bodySmall,
-                                        color = SlateSoft
-                                    )
                                 }
                             }
                         }
                     }
                 }
-                // Pre-event opt-in — mirrors the website cockpit's PhotoAlertToggle.
-                // RUNNER-gated — hidden in photographer runner-view.
-                if (isTrueRunner) item(span = { GridItemSpan(maxLineSpan) }) {
-                    PhotoAlertCard(
-                        state = photoAlert,
-                        onToggle = { register ->
-                            activeEvent?.slug?.let { viewModel.togglePhotoAlert(it, register) }
-                        },
-                        onAddSelfie = onNavigateToProfile,
-                    )
-                }
-                // Pre-purchase refund disclosure — port of the web cockpit's
-                // "Refund Policy →" kicker (event-cockpit.tsx). Read-only.
+
+                // AI Search Mode Selector (Segmented Pill: Face vs Bib)
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clickable { showRefundPolicy = true }
-                            .padding(vertical = 8.dp),
+                            .fillMaxWidth()
+                            .background(BoneDeep, PillShape)
+                            .border(1.dp, Line, PillShape)
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Kicker(text = "Refund Policy", color = Slate)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = "→", color = Slate, style = Typography.labelMedium)
-                    }
-                }
-
-                // About strip — web AboutStrip parity: organizer, description,
-                // categories, and the pricing block. Renders once the detail
-                // endpoint answers; the cockpit works without it.
-                eventDetail?.let { detail ->
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        QpCard(modifier = Modifier.fillMaxWidth()) {
-                            Kicker("About this race", color = Slate)
-                            if (!detail.organizerName.isNullOrBlank()) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "Organized by ${detail.organizerName}",
-                                    style = Typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Ink,
-                                )
-                            }
-                            if (!detail.description.isNullOrBlank()) {
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = detail.description,
-                                    style = Typography.bodyMedium,
-                                    color = Slate,
-                                )
-                            }
-                            if (detail.categories.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    detail.categories.take(4).forEach { category ->
-                                        StatusChip(text = category, tone = StatusTone.Neutral)
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Divider(color = Line)
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = buildString {
-                                    append("₱${"%,.0f".format(detail.pricePerPhoto)} per photo")
-                                    if (detail.bundlePrice != null && detail.bundleSize != null) {
-                                        append(" · or ₱${"%,.0f".format(detail.bundlePrice)} for ${detail.bundleSize}")
-                                    }
-                                },
-                                style = NumeralStyle.copy(fontSize = 14.sp),
-                                color = Ink,
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Watermarked previews are free. Pay once, download forever.",
-                                style = Typography.bodySmall,
-                                color = SlateSoft,
-                            )
-                        }
-                    }
-                }
-
-                // AI Search Selector Cards (Selfie vs Bib)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // Selfie Match Card
-                        Card(
-                            onClick = { activeSearchTab = 0 },
-                            border = BorderStroke(
-                                width = 1.5.dp,
-                                color = if (activeSearchTab == 0) Ink else Line
-                            ),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (activeSearchTab == 0) BoneDeep else Bone
-                            ),
-                            shape = QpCardShape,
-                            modifier = Modifier.weight(1f)
+                        // AI Face Search Tab
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(PillShape)
+                                .background(if (activeSearchTab == 0) Ink else Color.Transparent)
+                                .clickable { activeSearchTab = 0 }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Icon(Icons.Default.Face, contentDescription = "Selfie", tint = Fresh)
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text("Selfie Match", style = Typography.titleMedium, color = Ink)
-                                Text("AI Face Search", style = Typography.bodyMedium, color = SlateSoft)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Face,
+                                    contentDescription = null,
+                                    tint = if (activeSearchTab == 0) Fresh else Slate,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "AI Face Search",
+                                    style = Typography.labelMedium,
+                                    fontWeight = if (activeSearchTab == 0) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (activeSearchTab == 0) Bone else Slate
+                                )
                             }
                         }
 
-                        // Bib Number Search Card
-                        Card(
-                            onClick = { activeSearchTab = 1 },
-                            border = BorderStroke(
-                                width = 1.5.dp,
-                                color = if (activeSearchTab == 1) Ink else Line
-                            ),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (activeSearchTab == 1) BoneDeep else Bone
-                            ),
-                            shape = QpCardShape,
-                            modifier = Modifier.weight(1f)
+                        // Bib Lookup Tab
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(PillShape)
+                                .background(if (activeSearchTab == 1) Ink else Color.Transparent)
+                                .clickable { activeSearchTab = 1 }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Icon(Icons.Default.Search, contentDescription = "Bib", tint = Fresh)
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text("Bib Lookup", style = Typography.titleMedium, color = Ink)
-                                Text("Search by Number", style = Typography.bodyMedium, color = SlateSoft)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = if (activeSearchTab == 1) Fresh else Slate,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Bib Number",
+                                    style = Typography.labelMedium,
+                                    fontWeight = if (activeSearchTab == 1) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (activeSearchTab == 1) Bone else Slate
+                                )
                             }
                         }
                     }
@@ -727,6 +722,32 @@ fun RunnerGalleryScreen(
                                 viewModel.searchByBib(it)
                             },
                             placeholder = { Text("Enter bib number (e.g. 2948)", color = SlateSoft) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = if (bibSearchQuery.isNotEmpty()) Fresh else SlateSoft,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            trailingIcon = if (bibSearchQuery.isNotEmpty()) {
+                                {
+                                    IconButton(
+                                        onClick = {
+                                            bibSearchQuery = ""
+                                            viewModel.searchByBib("")
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Clear search",
+                                            tint = Slate,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            } else null,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = BoneDeep,
@@ -737,55 +758,107 @@ fun RunnerGalleryScreen(
                                 unfocusedTextColor = InkSoft
                             ),
                             shape = FieldShape,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, Line, FieldShape)
                         )
                     }
                 }
 
                 // Watermarked Photo Stream Title with Reset Button
                 item(span = { GridItemSpan(maxLineSpan) }) {
+                    val photoCount = (searchState as? PhotosSearchState.Success)?.photos?.size
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Kicker("Matched photos")
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Kicker(if (isFiltered) "MATCHED PHOTOS" else "PHOTO STREAM")
+                                if (photoCount != null && photoCount > 0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(PillShape)
+                                            .background(if (isFiltered) Fresh.copy(alpha = 0.15f) else Line)
+                                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "$photoCount",
+                                            style = NumeralStyle.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+                                            color = if (isFiltered) Fresh else Ink
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Watermarked previews — buy to unlock the full-resolution shot.",
+                                text = if (isFiltered) "Photos matched to your search" else "Watermarked previews · buy to unlock full-res",
                                 style = Typography.bodySmall,
                                 color = SlateSoft,
                             )
                         }
                         if (isFiltered || searchState is PhotosSearchState.Error) {
-                            Text(
-                                text = "Reset",
-                                style = Typography.labelMedium,
-                                color = Fresh,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .padding(start = 12.dp, top = 2.dp)
-                                    .clickable {
-                                        bibSearchQuery = ""
-                                        viewModel.clearFilter()
-                                    }
-                            )
-                        } else {
-                            // Back to My Photos — one tap re-runs the stored-selfie
-                            // face match (mirrors the website's "My photos" control).
-                            Text(
-                                text = "My photos",
-                                style = Typography.labelMedium,
-                                color = Fresh,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .padding(start = 12.dp, top = 2.dp)
-                                    .clickable {
-                                        bibSearchQuery = ""
-                                        viewModel.searchByStoredSelfie()
-                                    }
-                            )
+                            Surface(
+                                shape = PillShape,
+                                color = BoneDeep,
+                                border = BorderStroke(1.dp, Line),
+                                modifier = Modifier.clickable {
+                                    bibSearchQuery = ""
+                                    viewModel.clearFilter()
+                                }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        tint = Slate,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "Reset",
+                                        style = Typography.labelSmall,
+                                        color = Ink,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        } else if (isTrueRunner) {
+                            Surface(
+                                shape = PillShape,
+                                color = BoneDeep,
+                                border = BorderStroke(1.dp, Line),
+                                modifier = Modifier.clickable {
+                                    bibSearchQuery = ""
+                                    viewModel.searchByStoredSelfie()
+                                }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Face,
+                                        contentDescription = null,
+                                        tint = Fresh,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "My photos",
+                                        style = Typography.labelSmall,
+                                        color = Ink,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1094,6 +1167,153 @@ fun RunnerGalleryScreen(
 
     if (showRefundPolicy) {
         RefundPolicyDialog(onDismiss = { showRefundPolicy = false })
+    }
+
+    if (showEventInfoSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showEventInfoSheet = false },
+            containerColor = Bone,
+            dragHandle = { BottomSheetDefaults.DragHandle(color = Line) },
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 40.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // High-res event banner
+                if (!activeEvent?.bannerUrl.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = RetrofitClient.resolveImageUrl(activeEvent?.bannerUrl),
+                        contentDescription = "Event Banner",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp)
+                            .clip(QpCardShape),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+
+                // Race Identity: Date, Name, Location & Status
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        activeEvent?.date?.let { dateStr ->
+                            Kicker(eventDateLabel(dateStr))
+                        }
+                        activeEvent?.let { ev ->
+                            StatusChip(state = deriveEventState(ev.date))
+                        }
+                    }
+                    Text(
+                        text = activeEvent?.name.orEmpty(),
+                        style = Typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Ink
+                    )
+                    if (!activeEvent?.location.isNullOrBlank()) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Place,
+                                contentDescription = null,
+                                tint = Fresh,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = activeEvent?.location.orEmpty(),
+                                style = Typography.bodyMedium,
+                                color = Slate
+                            )
+                        }
+                    }
+                }
+
+                // About Details: Organizer, Description, Tags & Pricing
+                eventDetail?.let { detail ->
+                    QpCard(modifier = Modifier.fillMaxWidth()) {
+                        Kicker("About this race", color = Slate)
+                        if (!detail.organizerName.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Organized by ${detail.organizerName}",
+                                style = Typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Ink,
+                            )
+                        }
+                        if (!detail.description.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = detail.description,
+                                style = Typography.bodyMedium,
+                                color = Slate,
+                            )
+                        }
+                        if (detail.categories.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                detail.categories.take(4).forEach { category ->
+                                    StatusChip(text = category, tone = StatusTone.Neutral)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Divider(color = Line)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = buildString {
+                                append("₱${"%,.0f".format(detail.pricePerPhoto)} per photo")
+                                if (detail.bundlePrice != null && detail.bundleSize != null) {
+                                    append(" · or ₱${"%,.0f".format(detail.bundlePrice)} for ${detail.bundleSize}")
+                                }
+                            },
+                            style = NumeralStyle.copy(fontSize = 14.sp),
+                            color = Ink,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Watermarked previews are free. Pay once, download forever.",
+                            style = Typography.bodySmall,
+                            color = SlateSoft,
+                        )
+                    }
+                }
+
+                // Pre-event photo alert opt-in
+                if (isTrueRunner) {
+                    PhotoAlertCard(
+                        state = photoAlert,
+                        onToggle = { register ->
+                            activeEvent?.slug?.let { viewModel.togglePhotoAlert(it, register) }
+                        },
+                        onAddSelfie = onNavigateToProfile,
+                    )
+                }
+
+                // Refund Policy Link
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clickable {
+                            showEventInfoSheet = false
+                            showRefundPolicy = true
+                        }
+                        .padding(vertical = 8.dp),
+                ) {
+                    Kicker(text = "Refund Policy", color = Slate)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "→", color = Slate, style = Typography.labelMedium)
+                }
+            }
+        }
     }
 
     if (showInbox) {
@@ -1427,6 +1647,34 @@ private fun PhotoGridSkeleton() {
                 }
             }
             if (rowIndex < 1) Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun StatusChip(state: EventState, modifier: Modifier = Modifier) {
+    val (label, accent) = when (state) {
+        EventState.LIVE -> "UPLOADING" to Fresh
+        EventState.UPCOMING -> "UPCOMING" to Bone
+        EventState.OPEN -> "READY" to Bone
+        EventState.PAST -> "ARCHIVE" to Bone.copy(alpha = 0.7f)
+    }
+    Surface(
+        shape = RoundedCornerShape(percent = 100),
+        color = Ink.copy(alpha = 0.75f),
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(accent))
+            Text(
+                text = label,
+                style = Typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
+                color = Bone
+            )
         }
     }
 }

@@ -16,8 +16,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -51,6 +54,7 @@ fun ProfileScreen(
     viewModel: ProfileViewModel,
     cartViewModel: CartViewModel,
     savedEventsViewModel: SavedEventsViewModel,
+    runnerViewModel: RunnerGalleryViewModel? = null,
     onOpenEvent: (String) -> Unit = {},
     onBrowseEvents: () -> Unit = {},
     onLogout: () -> Unit = {}
@@ -66,6 +70,8 @@ fun ProfileScreen(
     // from CartViewModel; saved events from the shared SavedEventsViewModel store.
     val ordersState by cartViewModel.ordersState.collectAsState()
     val savedEvents by savedEventsViewModel.savedEvents.collectAsState()
+    val allEvents = (runnerViewModel?.eventsState?.collectAsState()?.value as? RunnerEventsState.Success)?.events.orEmpty()
+    val eventCatalogMap = remember(allEvents) { allEvents.associateBy { it.id } }
 
     // Trigger fetches if not loaded. Saved events are RUNNER-role-gated —
     // skipped for a photographer browsing in runner view (their race log then
@@ -78,7 +84,7 @@ fun ProfileScreen(
     }
 
     val orders = (ordersState as? OrdersState.Success)?.orders ?: emptyList()
-    val raceLog = remember(orders, savedEvents) { buildRaceLog(savedEvents, orders) }
+    val raceLog = remember(orders, savedEvents, eventCatalogMap) { buildRaceLog(savedEvents, orders, eventCatalogMap) }
     val ordersLoading = ordersState is OrdersState.Loading
 
     val context = LocalContext.current
@@ -704,6 +710,8 @@ private data class RaceLogEntry(
     val eventName: String,
     val eventSlug: String?,
     val eventDate: String?,
+    val bannerUrl: String? = null,
+    val location: String? = null,
     val photosBought: Int,
     val totalSpent: Double,
     val saved: Boolean,
@@ -715,16 +723,20 @@ private data class RaceLogEntry(
 // by event date (nulls last). Mirrors the website's race-log derivation.
 private fun buildRaceLog(
     saved: List<SavedEventSummaryDto>,
-    orders: List<OrderListItemDto>
+    orders: List<OrderListItemDto>,
+    eventCatalog: Map<String, EventDto> = emptyMap()
 ): List<RaceLogEntry> {
     val byEvent = LinkedHashMap<String, RaceLogEntry>()
     orders.forEach { order ->
         val existing = byEvent[order.eventId]
+        val catEv = eventCatalog[order.eventId]
         byEvent[order.eventId] = RaceLogEntry(
             eventId = order.eventId,
-            eventName = order.eventName ?: existing?.eventName ?: "Marathon Event",
-            eventSlug = order.eventSlug ?: existing?.eventSlug,
-            eventDate = order.eventDate ?: existing?.eventDate,
+            eventName = order.eventName ?: catEv?.name ?: existing?.eventName ?: "Marathon Event",
+            eventSlug = order.eventSlug ?: catEv?.slug ?: existing?.eventSlug,
+            eventDate = order.eventDate ?: catEv?.date ?: existing?.eventDate,
+            bannerUrl = catEv?.bannerUrl ?: existing?.bannerUrl,
+            location = catEv?.location ?: existing?.location,
             photosBought = (existing?.photosBought ?: 0) + order.photoIds.size,
             totalSpent = (existing?.totalSpent ?: 0.0) + order.total,
             saved = existing?.saved ?: false,
@@ -733,11 +745,14 @@ private fun buildRaceLog(
     }
     saved.forEach { ev ->
         val existing = byEvent[ev.id]
+        val catEv = eventCatalog[ev.id]
         byEvent[ev.id] = RaceLogEntry(
             eventId = ev.id,
             eventName = existing?.eventName ?: ev.name,
             eventSlug = existing?.eventSlug ?: ev.slug,
             eventDate = existing?.eventDate ?: ev.date,
+            bannerUrl = ev.bannerUrl ?: catEv?.bannerUrl ?: existing?.bannerUrl,
+            location = ev.location ?: catEv?.location ?: existing?.location,
             photosBought = existing?.photosBought ?: 0,
             totalSpent = existing?.totalSpent ?: 0.0,
             saved = true,
@@ -755,82 +770,132 @@ private fun RaceLogRow(
 ) {
     val upcoming = entry.eventDate?.let { deriveEventState(it) == EventState.UPCOMING } ?: false
     val openable = !upcoming && entry.eventSlug != null
-    Row(
+    Card(
+        shape = QpCardShape,
+        colors = CardDefaults.cardColors(containerColor = BoneDeep),
+        border = BorderStroke(1.dp, Line),
         modifier = Modifier
             .fillMaxWidth()
-            .background(BoneDeep, QpCardShape)
-            .border(1.dp, Line, QpCardShape)
             .then(if (openable) Modifier.clickable { onOpen() } else Modifier)
-            .padding(horizontal = 16.dp, vertical = 18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            // Date first — kicker style, mono tnum (website parity)
-            Kicker(entry.eventDate?.let { eventDateLabel(it) } ?: "Date TBA")
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = entry.eventName,
-                style = Typography.titleMedium,
-                color = Ink,
-                maxLines = 2,
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = when {
-                        entry.purchased -> "Photos kept"
-                        upcoming && entry.saved -> "Saved · photos on race day"
-                        entry.saved -> "Saved"
-                        else -> "Archived"
-                    },
-                    style = Typography.bodySmall,
-                    color = Slate,
-                )
-                if (entry.purchased && entry.photosBought > 0) {
-                    Text(
-                        text = "  ·  ",
-                        style = Typography.bodySmall,
-                        color = SlateSoft,
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Mobile-first Event Banner / Picture Thumbnail (76.dp x 76.dp)
+            Box(
+                modifier = Modifier
+                    .size(76.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Bone),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!entry.bannerUrl.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = RetrofitClient.resolveImageUrl(entry.bannerUrl),
+                        contentDescription = entry.eventName,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
                     )
-                    Text(
-                        text = "${entry.photosBought}",
-                        style = NumeralStyle.copy(fontSize = 14.sp),
-                        color = Fresh,
-                    )
-                    Text(
-                        text = " kept",
-                        style = Typography.bodySmall,
-                        color = Fresh,
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Place,
+                        contentDescription = null,
+                        tint = SlateSoft,
+                        modifier = Modifier.size(28.dp)
                     )
                 }
             }
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(horizontalAlignment = Alignment.End) {
-            if (entry.purchased) {
+
+            // Event Details Column
+            Column(modifier = Modifier.weight(1f)) {
+                // Date & Action Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Kicker(
+                        text = entry.eventDate?.let { eventDateLabel(it) } ?: "DATE TBA",
+                        color = SlateSoft
+                    )
+                    if (upcoming && entry.saved && !entry.purchased) {
+                        Text(
+                            text = "Unsave",
+                            style = Typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = ErrorRed,
+                            modifier = Modifier.clickable { onUnsave() }
+                        )
+                    } else if (openable) {
+                        ArrowLabel(
+                            text = "Open →",
+                            color = Ink,
+                            style = Typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "₱%,.2f".format(entry.totalSpent),
-                    style = NumeralStyle.copy(fontSize = 16.sp),
+                    text = entry.eventName,
+                    style = Typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
                     color = Ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-            }
-            if (upcoming && entry.saved && !entry.purchased) {
-                Text(
-                    text = "Unsave",
-                    style = Typography.labelMedium,
-                    color = ErrorRed,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.clickable { onUnsave() }
-                )
-            } else if (openable) {
-                ArrowLabel(
-                    text = "Open →",
-                    color = Ink,
-                    style = Typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+
+                if (!entry.location.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = extractCity(entry.location),
+                        style = Typography.bodySmall,
+                        color = Slate,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = when {
+                            entry.purchased -> "Photos kept"
+                            upcoming && entry.saved -> "Photos on race day"
+                            entry.saved -> "Saved race"
+                            else -> "Archived"
+                        },
+                        style = Typography.bodySmall,
+                        color = Slate,
+                    )
+                    if (entry.purchased) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (entry.photosBought > 0) {
+                                Text(
+                                    text = "${entry.photosBought} kept",
+                                    style = Typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = Fresh,
+                                )
+                            }
+                            Text(
+                                text = "₱%,.2f".format(entry.totalSpent),
+                                style = NumeralStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
+                                color = Ink,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
