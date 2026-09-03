@@ -902,10 +902,21 @@ internal fun PhotoAlertCard(
                     style = Typography.bodyMedium,
                     color = SlateSoft,
                 )
+                if (state.message != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = state.message,
+                        style = Typography.bodySmall,
+                        color = ErrorRed,
+                    )
+                }
                 Spacer(Modifier.height(16.dp))
+                // Adds in place (sheet on this screen) — the web's
+                // mutation.isPending pattern while the upload runs.
                 GhostCta(
-                    text = "Add a selfie →",
+                    text = if (state.uploading) "Uploading…" else "Add a selfie →",
                     onClick = onAddSelfie,
+                    enabled = !state.uploading,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -1021,6 +1032,20 @@ private fun CockpitCardSelfiePreview() {
                     callbacks = previewCallbacks,
                 )
             }
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PhotoAlertCardNeedsSelfieErrorPreview() {
+    QuickPitikMobileTheme {
+        Box(Modifier.background(Bone).padding(24.dp)) {
+            PhotoAlertCard(
+                state = PhotoAlertUiState.NeedsSelfie(message = "No face found — try a clearer, frontal shot."),
+                onToggle = {},
+                onAddSelfie = {},
+            )
         }
     }
 }

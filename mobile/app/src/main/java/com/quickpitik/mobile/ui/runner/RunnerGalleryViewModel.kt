@@ -54,7 +54,12 @@ sealed class PhotosSearchState {
 // no-selfie (prompt to add one).
 sealed class PhotoAlertUiState {
     object Loading : PhotoAlertUiState()
-    object NeedsSelfie : PhotoAlertUiState()
+    // [uploading]: the card's own "Add a selfie" upload is in flight; [message]:
+    // why the last one failed. Mirrors Ready.updating / Ready.message.
+    data class NeedsSelfie(
+        val uploading: Boolean = false,
+        val message: String? = null,
+    ) : PhotoAlertUiState()
     data class Ready(
         val registered: Boolean,
         val updating: Boolean = false,
@@ -109,12 +114,19 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     private val profileRepository: com.quickpitik.mobile.data.repository.ProfileRepository =
         com.quickpitik.mobile.data.repository.ProfileRepositoryImpl()
 
+    // The slug the screen last asked the alert card for (null = photographer in
+    // runner view: refresh selfies only). Library mutations below re-derive the
+    // card through loadGalleryMetadata(photoAlertSlug) without the VM having to
+    // learn isTrueRunner.
+    private var photoAlertSlug: String? = null
+
     fun loadGalleryMetadata(photoAlertSlug: String?) {
+        this.photoAlertSlug = photoAlertSlug
         viewModelScope.launch {
             if (photoAlertSlug != null) _photoAlert.value = PhotoAlertUiState.Loading
             val token = SessionManager.getInstance(getApplication()).getAccessToken()
             if (token == null) {
-                if (photoAlertSlug != null) _photoAlert.value = PhotoAlertUiState.NeedsSelfie
+                if (photoAlertSlug != null) _photoAlert.value = PhotoAlertUiState.NeedsSelfie()
                 return@launch
             }
             try {
@@ -126,7 +138,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 val selfies = _selfies.value
                 if (photoAlertSlug == null) return@launch
                 if (selfies.isEmpty()) {
-                    _photoAlert.value = PhotoAlertUiState.NeedsSelfie
+                    _photoAlert.value = PhotoAlertUiState.NeedsSelfie()
                     return@launch
                 }
                 val status = RetrofitClient.apiService.getPhotoAlertStatus("Bearer $token", photoAlertSlug)
@@ -532,8 +544,10 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                         contentType = "image/jpeg",
                     )
                     saved.onSuccess {
-                        runCatching { RetrofitClient.apiService.getSelfies("Bearer $token") }
-                            .getOrNull()?.data?.let { _selfies.value = it }
+                        // Refreshes the library AND re-derives the photo-alert
+                        // card — a runner who just saved their first selfie must
+                        // not still see "Add a selfie" on it.
+                        loadGalleryMetadata(photoAlertSlug)
                         _selfieSaveNotice.value = "Saved to your selfie library."
                         searchWithAllSelfies()
                         return@launch
@@ -549,6 +563,39 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
             } finally {
                 cacheFile?.delete()
             }
+        }
+    }
+
+    /**
+     * "Add a selfie →" on the Photo Alerts card: save to the library right here
+     * on the Event page (no Profile detour), then re-derive the card from the
+     * refreshed library. Never registers the alert by itself — website parity:
+     * the runner still taps "Notify me when ready".
+     */
+    fun addSelfieToLibrary(uri: Uri) {
+        val token = SessionManager.getInstance(getApplication()).getAccessToken() ?: return
+        viewModelScope.launch {
+            _photoAlert.value = PhotoAlertUiState.NeedsSelfie(uploading = true)
+            val resolver = getApplication<Application>().contentResolver
+            val result = runCatching {
+                val bytes = withContext(Dispatchers.IO) {
+                    resolver.openInputStream(uri)?.use { it.readAtMost(MAX_UPLOAD_BYTES + 1) }
+                } ?: error("Couldn't read that photo.")
+                if (bytes.size > MAX_UPLOAD_BYTES) error("Selfies must be 8 MB or smaller.")
+                profileRepository.uploadSelfie(
+                    token = token,
+                    fileBytes = bytes,
+                    filename = "selfie_${System.currentTimeMillis()}.jpg",
+                    contentType = resolver.getType(uri) ?: "image/jpeg",
+                ).getOrThrow()
+            }
+            result.onSuccess { loadGalleryMetadata(photoAlertSlug) }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    _photoAlert.value = PhotoAlertUiState.NeedsSelfie(
+                        message = e.message ?: "Upload failed. Try again.",
+                    )
+                }
         }
     }
 
@@ -661,7 +708,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 // WITH the server's reason shown, never silently.
                 val err = RetrofitClient.parseHttpError(e)
                 _photoAlert.value = when (err?.code) {
-                    "SELFIE_REQUIRED" -> PhotoAlertUiState.NeedsSelfie
+                    "SELFIE_REQUIRED" -> PhotoAlertUiState.NeedsSelfie()
                     else -> current.copy(
                         updating = false,
                         message = err?.message ?: RetrofitClient.parseError(e),

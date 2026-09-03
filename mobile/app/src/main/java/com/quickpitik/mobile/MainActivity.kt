@@ -807,9 +807,6 @@ class MainActivity : ComponentActivity() {
                                     onOpenPhotographer = { handle ->
                                         navController.navigate("photographer/$handle")
                                     },
-                                    onNavigateToProfile = {
-                                        navController.navigate("profile")
-                                    },
                                     onNavigateBack = {
                                         navController.popBackStack()
                                     },

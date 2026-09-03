@@ -133,7 +133,6 @@ fun RunnerGalleryScreen(
     cartViewModel: CartViewModel,
     inboxViewModel: RunnerInboxViewModel,
     savedEventsViewModel: SavedEventsViewModel,
-    onNavigateToProfile: () -> Unit,
     onNavigateBack: () -> Unit,
     onOpenOrder: (String) -> Unit,
     onOpenPhotographer: (String) -> Unit,
@@ -150,6 +149,11 @@ fun RunnerGalleryScreen(
     // The bib the last search ran with — drives the browse header + empty copy.
     var submittedBib by rememberSaveable { mutableStateOf("") }
     var showFindSheet by rememberSaveable { mutableStateOf(false) }
+    // Photo Alerts "Add a selfie →": the chooser sheet, and whether the next
+    // picked image is library-only (no search). Saveable so the camera
+    // activity round trip can't forget which intent launched it.
+    var showAddSelfieSheet by rememberSaveable { mutableStateOf(false) }
+    var selfieAddOnly by rememberSaveable { mutableStateOf(false) }
     // A selfie search is in flight from the panel; the screen enters Browse
     // only once it succeeds, so an error never strands the runner on an empty
     // wall (the panel shows the message instead).
@@ -221,15 +225,37 @@ fun RunnerGalleryScreen(
         faceSearchPending = true
         run()
     }
+    // One landing for both launchers: the alert card's sheet saves to the
+    // library and stops; the search panel saves-and-searches.
+    fun onSelfiePicked(uri: Uri) {
+        if (selfieAddOnly) viewModel.addSelfieToLibrary(uri)
+        else startFaceSearch { viewModel.searchBySelfieUri(uri) }
+    }
     val selfieCameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
-        if (success) pendingSelfieUri?.let { uri -> startFaceSearch { viewModel.searchBySelfieUri(uri) } }
+        if (success) pendingSelfieUri?.let { onSelfiePicked(it) }
     }
     val selfieGalleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
-        uri?.let { picked -> startFaceSearch { viewModel.searchBySelfieUri(picked) } }
+        uri?.let { onSelfiePicked(it) }
+    }
+    val launchCamera = {
+        try {
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.TITLE, "selfie_search_${System.currentTimeMillis()}")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            }
+            val uri = context.contentResolver.insert(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                values
+            )
+            pendingSelfieUri = uri
+            if (uri != null) selfieCameraLauncher.launch(uri)
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(context, "Unable to open camera.", android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     // One selfie-library request feeds both the picker and the runner-only
@@ -297,23 +323,8 @@ fun RunnerGalleryScreen(
         onSubmitBib = submitBib,
         onSwitchToSelfie = { panelMode = SearchPanelMode.Selfie },
         onSwitchToBib = { faceSearchError = null; panelMode = SearchPanelMode.Bib },
-        onTakeSelfie = {
-            try {
-                val values = ContentValues().apply {
-                    put(MediaStore.Images.Media.TITLE, "selfie_search_${System.currentTimeMillis()}")
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                }
-                val uri = context.contentResolver.insert(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    values
-                )
-                pendingSelfieUri = uri
-                if (uri != null) selfieCameraLauncher.launch(uri)
-            } catch (e: Exception) {
-                android.widget.Toast.makeText(context, "Unable to open camera.", android.widget.Toast.LENGTH_SHORT).show()
-            }
-        },
-        onUploadSelfie = { selfieGalleryLauncher.launch("image/*") },
+        onTakeSelfie = { selfieAddOnly = false; launchCamera() },
+        onUploadSelfie = { selfieAddOnly = false; selfieGalleryLauncher.launch("image/*") },
         onMatchAllSelfies = { startFaceSearch { viewModel.searchWithAllSelfies() } },
         onPickSelfie = { s -> startFaceSearch { viewModel.searchBySelfieId(s.id) } },
         onSaveToLibraryChange = { viewModel.setSaveSelfieToLibrary(it) },
@@ -324,7 +335,9 @@ fun RunnerGalleryScreen(
             onToggle = { register ->
                 activeEvent?.slug?.let { viewModel.togglePhotoAlert(it, register) }
             },
-            onAddSelfie = onNavigateToProfile,
+            // In place — never a Profile detour (2026-09-02 ADR: that detour
+            // was the hassle). Covers all three card placements.
+            onAddSelfie = { showAddSelfieSheet = true },
         )
     }
 
@@ -446,7 +459,7 @@ fun RunnerGalleryScreen(
                                 scope.launch { listState.animateScrollToItem(0) }
                             },
                             onRetryLive = { viewModel.retryLivePhotos() },
-                            onRetry = { viewModel.searchByBib(submittedBib) },
+                            onRetry = { faceSearchError = null; viewModel.searchByBib(submittedBib) },
                             onLoadMore = { viewModel.loadMorePhotos() },
                             onOpenPhoto = { selectedPhotoForDetail = it },
                             onToggleCart = { photo, inCart ->
@@ -566,6 +579,48 @@ fun RunnerGalleryScreen(
                     photoCount = activeEvent?.photoCount ?: 0,
                     selfie = selfiePanelState,
                     callbacks = panelCallbacks,
+                )
+            }
+        }
+    }
+
+    // Photo Alerts "Add a selfie →" chooser — library-only, no search, so it
+    // works from the upcoming notice and the empty wall too.
+    // ponytail: mirrors ProfileScreen's add sheet; extract when a third caller appears.
+    if (showAddSelfieSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showAddSelfieSheet = false },
+            containerColor = Bone,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 28.dp),
+            ) {
+                Kicker("Add a selfie")
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Face the camera, good light, no sunglasses or cap. " +
+                        "${librarySelfies.size} of $SELFIE_MAX used.",
+                    style = Typography.bodyMedium,
+                    color = Slate,
+                )
+                Spacer(Modifier.height(16.dp))
+                PrimaryCta(
+                    text = "Take a selfie",
+                    onClick = { showAddSelfieSheet = false; selfieAddOnly = true; launchCamera() },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                GhostCta(
+                    text = "Upload a photo",
+                    onClick = {
+                        showAddSelfieSheet = false
+                        selfieAddOnly = true
+                        selfieGalleryLauncher.launch("image/*")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
