@@ -33,3 +33,4 @@ val SuccessGreen = Fresh              // website: --success: var(--fresh)
 // Alpha overlays — use these instead of inline Color.Black.copy(alpha = …).
 val Scrim = Color(0x66000000)          // 40% ink — fullscreen loading / success scrims
 val WatermarkInk = Color(0x59000000)   // ~35% ink — photo-preview watermark backdrop
+val NavChrome = Color(0xE6FFFFFF)      // 90% white — pills floating over a photo (website bg-surface/90)

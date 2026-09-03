@@ -2,7 +2,6 @@ package com.quickpitik.mobile.ui.runner
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -13,17 +12,17 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -31,12 +30,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -49,6 +48,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
@@ -56,7 +56,6 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -64,6 +63,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
 import coil.size.Size
 import kotlinx.coroutines.launch
@@ -79,7 +79,7 @@ import com.quickpitik.mobile.ui.theme.GhostCta
 import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.InkSoft
 import com.quickpitik.mobile.ui.theme.Kicker
-import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.NavChrome
 import com.quickpitik.mobile.ui.theme.NumeralStyle
 import com.quickpitik.mobile.ui.theme.PillShape
 import com.quickpitik.mobile.ui.theme.PrimaryCta
@@ -90,12 +90,15 @@ import com.quickpitik.mobile.ui.theme.Typography
 
 // Unified photo lightbox — the one preview surface used by both the cart sheet
 // and the gallery photo-details flow. Mirrors website PhotoPreviewCard's
-// "browse" mode where `isInCart(photo)` flips the button labels between
-// Add+Buy and Remove+Checkout per-photo.
+// below-`lg` layout: a photograph on an ink stage with the chrome floating
+// over it (counter top-left, close top-right, prev/next at the vertical centre
+// where a thumb can reach) and one bone strip underneath carrying event ·
+// price · credit · CTAs · hint. A portrait photo sizes the stage to its own
+// aspect so it fills edge to edge; a landscape photo keeps the full-height
+// stage and its letterbox.
 //
 // The image area is a HorizontalPager so the runner can swipe between photos;
-// header/stats/price/buttons all reflect `photos[currentIndex]`. Prev/Next nav
-// row + the index counter are hidden when there is only one photo.
+// strip and chevrons all reflect `photos[currentIndex]`.
 
 data class PhotoPreviewData(
     val id: String,
@@ -142,7 +145,7 @@ fun CartItemDto.toPreviewData(): PhotoPreviewData = PhotoPreviewData(
 )
 
 /**
- * "Photo by {name}" credit in the lightbox. Tappable only when the
+ * "Photo by @handle →" credit line in the strip. Tappable only when the
  * photographer has a handle — an unverified photographer has a name and no
  * handle, and linking one would route to /{null}. Carries no Fresh: the
  * Browse viewport already spends its one accent on the Buy CTA.
@@ -153,37 +156,53 @@ private fun PhotographerByline(
     handle: String?,
     onOpen: (String) -> Unit,
 ) {
-    Column(
+    Row(
         modifier = Modifier
             .clip(BadgeShape)
             .then(
                 if (handle != null) Modifier.clickable { onOpen(handle) } else Modifier,
             )
-            // Padding inside the clickable so the tap target clears 48dp:
-            // kicker (~16dp) + name (~20dp) + 16dp padding.
-            .padding(horizontal = 8.dp, vertical = 8.dp)
-            .widthIn(max = 180.dp),
-        horizontalAlignment = Alignment.End,
+            // One kicker line is ~16dp; the min height keeps the tap target at 48dp.
+            .heightIn(min = 48.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Kicker("Photo by", color = SlateSoft)
-        Spacer(modifier = Modifier.height(2.dp))
+        Spacer(modifier = Modifier.width(6.dp))
         if (handle != null) {
             ArrowLabel(
-                text = "$name →",
+                text = "@${handle.uppercase()} →",
                 color = Ink,
-                style = Typography.bodyMedium,
+                style = Typography.labelMedium,
                 iconSize = 12.dp,
             )
         } else {
-            Text(
-                text = name,
-                style = Typography.bodyMedium,
-                color = Ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.End,
-            )
+            Kicker(name, color = Ink)
         }
+    }
+}
+
+/** 48dp white pill button floating over the photo (close, prev, next). */
+@Composable
+private fun ChromeButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(NavChrome)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = Ink,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -218,6 +237,8 @@ fun PhotoPreview(
     val activePhoto = photos[safeIndex]
     val photoInCart = isInCart(activePhoto)
     val hasMultiple = photos.size > 1
+    val canPrev = safeIndex > 0
+    val canNext = safeIndex < photos.size - 1
 
     val pagerState = rememberPagerState(
         initialPage = safeIndex,
@@ -234,8 +255,8 @@ fun PhotoPreview(
             if (page != latestCurrentIndex) latestOnIndexChange(page)
         }
     }
-    // Parent → pager: prev/next button taps push currentIndex; animate the
-    // pager to catch up. Guarded so swipe-driven changes don't re-animate.
+    // Parent → pager: chevron taps push currentIndex; animate the pager to
+    // catch up. Guarded so swipe-driven changes don't re-animate.
     LaunchedEffect(currentIndex) {
         if (currentIndex in photos.indices &&
             pagerState.currentPage != currentIndex
@@ -243,6 +264,12 @@ fun PhotoPreview(
             pagerState.animateScrollToPage(currentIndex)
         }
     }
+
+    // Width / height of each served image, reported by the page once Coil has
+    // it. The active page's ratio decides whether the stage fits the photo.
+    val aspects = remember { mutableStateMapOf<Int, Float>() }
+    val aspect = aspects[safeIndex]
+    val fitPortrait = aspect != null && aspect < 1f
 
     val scrimInteraction = remember { MutableInteractionSource() }
     val cardInteraction = remember { MutableInteractionSource() }
@@ -258,7 +285,7 @@ fun PhotoPreview(
         // The Dialog is its own Window: Browse = unpurchased preview, so block
         // screenshots of it here (the host screen's flag doesn't reach it).
         if (mode == PhotoPreviewMode.Browse) SecureScreen()
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Ink.copy(alpha = 0.92f))
@@ -267,12 +294,20 @@ fun PhotoPreview(
                     indication = null,
                     interactionSource = scrimInteraction,
                 ),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
+            val cardWidth = maxWidth * CARD_WIDTH_FRACTION
+            val cardMaxHeight = maxHeight * CARD_HEIGHT_FRACTION
+            Column(
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .fillMaxWidth(0.94f)
-                    .fillMaxHeight(0.92f)
+                    .width(cardWidth)
+                    // Portrait: the card wraps the fitted stage + strip and only
+                    // caps at the max. Landscape / not yet loaded: full height,
+                    // the stage takes what the strip leaves.
+                    .then(
+                        if (fitPortrait) Modifier.heightIn(max = cardMaxHeight)
+                        else Modifier.height(cardMaxHeight),
+                    )
                     .clip(QpCardShape)
                     .background(Bone)
                     .clickable(
@@ -281,295 +316,226 @@ fun PhotoPreview(
                         interactionSource = cardInteraction,
                     ),
             ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    // ── Header ──────────────────────────────────────
-                    Row(
+                // ── Stage ───────────────────────────────────────────
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = !fitPortrait)
+                        .then(
+                            if (fitPortrait) Modifier.height(cardWidth / aspect!!) else Modifier,
+                        )
+                        .background(Ink),
+                ) {
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize(),
+                    ) { page ->
+                        val pagePhoto = photos[page]
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            if (pagePhoto.imageUrl != null) {
+                                ZoomableImage(
+                                    url = RetrofitClient.resolveImageUrl(pagePhoto.imageUrl)!!,
+                                    onAspect = { aspects[page] = it },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(InkSoft),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = "QUICKPITIK PREVIEW",
+                                        style = Typography.labelMedium,
+                                        color = Color.White.copy(alpha = 0.35f),
+                                    )
+                                }
+                            }
+                            // No client-side platform mark: the backend
+                            // bakes the QuickPitik credit + photographer
+                            // logo into imageUrl; cleanUrl (owned) is
+                            // deliberately unmarked.
+                        }
+                    }
+
+                    // Chrome floats outside the pager so it doesn't scroll
+                    // with the photo.
+                    if (hasMultiple) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(12.dp)
+                                .height(48.dp)
+                                .clip(PillShape)
+                                .background(NavChrome)
+                                .padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "${safeIndex + 1} / ${photos.size}",
+                                style = NumeralStyle.copy(fontSize = 13.sp),
+                                color = Ink,
+                            )
+                        }
+                    }
+                    ChromeButton(
+                        icon = Icons.Default.Close,
+                        contentDescription = "Close preview",
+                        onClick = onClose,
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp),
+                    )
+                    if (canPrev) {
+                        ChromeButton(
+                            icon = Icons.Default.KeyboardArrowLeft,
+                            contentDescription = "Previous",
+                            onClick = { onIndexChange(safeIndex - 1) },
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .padding(12.dp),
+                        )
+                    }
+                    if (canNext) {
+                        ChromeButton(
+                            icon = Icons.Default.KeyboardArrowRight,
+                            contentDescription = "Next",
+                            onClick = { onIndexChange(safeIndex + 1) },
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .padding(12.dp),
+                        )
+                    }
+                }
+
+                // ── Strip ───────────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top,
                     ) {
                         Kicker(
                             text = activePhoto.eventName ?: "QuickPitik",
                             modifier = Modifier.weight(1f),
                             color = Ink,
                         )
-                        if (hasMultiple) {
-                            Text(
-                                text = "${safeIndex + 1} / ${photos.size}",
-                                style = NumeralStyle.copy(fontSize = 12.sp),
-                                color = SlateSoft,
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .border(1.dp, Line, CircleShape)
-                                .clickable(onClick = onClose),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Close preview",
-                                tint = Ink,
-                                modifier = Modifier.size(14.dp),
-                            )
-                        }
-                    }
-                    Divider(color = Line)
-
-                    // ── Pager image area ────────────────────────────
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .background(Ink),
-                    ) {
-                        HorizontalPager(
-                            state = pagerState,
-                            modifier = Modifier.fillMaxSize(),
-                        ) { page ->
-                            val pagePhoto = photos[page]
-                            Box(modifier = Modifier.fillMaxSize()) {
-                                if (pagePhoto.imageUrl != null) {
-                                    ZoomableImage(
-                                        url = RetrofitClient.resolveImageUrl(pagePhoto.imageUrl)!!,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .background(InkSoft),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Text(
-                                            text = "QUICKPITIK PREVIEW",
-                                            style = Typography.labelMedium,
-                                            color = Color.White.copy(alpha = 0.35f),
-                                        )
-                                    }
-                                }
-                                // No client-side platform mark: the backend
-                                // bakes the QuickPitik credit + photographer
-                                // logo into imageUrl; cleanUrl (owned) is
-                                // deliberately unmarked.
-                            }
-                        }
-                        // "In cart" pill — overlay outside the pager so it doesn't
-                        // scroll with the photo. Reflects the active page's status.
-                        // Browse-mode only; the OwnerReview flow has no cart.
-                        if (photoInCart && mode == PhotoPreviewMode.Browse) {
-                            Row(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(12.dp)
-                                    .clip(PillShape)
-                                    .background(Fresh)
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.White),
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "IN CART",
-                                    style = Typography.labelSmall,
-                                    color = Color.White,
-                                )
-                            }
-                        }
-                    }
-
-                    // ── Bottom row ──────────────────────────────────
-                    // Browse: price + Add/Buy actions (runner buy-flow).
-                    // OwnerReview: "X sold" stat + single Close (photographer
-                    // reviewing their own uploads — no purchase UI).
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 16.dp),
-                    ) {
+                        Spacer(modifier = Modifier.width(16.dp))
                         when (mode) {
-                            PhotoPreviewMode.Browse -> {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.Bottom,
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Kicker("Price", color = SlateSoft)
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = "₱${"%,.2f".format(activePhoto.price)}",
-                                            style = NumeralStyle.copy(fontSize = 22.sp),
-                                            color = Ink,
-                                        )
-                                    }
-                                    // Credit sits in the dead half of the price
-                                    // row, so it costs the image no height.
-                                    if (activePhoto.photographerName != null) {
-                                        PhotographerByline(
-                                            name = activePhoto.photographerName,
-                                            handle = activePhoto.photographerHandle,
-                                            onOpen = onOpenPhotographer,
-                                        )
-                                    }
-                                }
-                                if (commerceEnabled) {
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    ) {
-                                        GhostCta(
-                                            text = if (photoInCart) "Remove" else "Add to cart",
-                                            onClick = { onToggleCart(activePhoto) },
-                                            modifier = Modifier.weight(1f),
-                                        )
-                                        PrimaryCta(
-                                            text = if (photoInCart) "Checkout →" else "Buy now →",
-                                            onClick = { onBuyNow(activePhoto) },
-                                            modifier = Modifier.weight(1f),
-                                        )
-                                    }
-                                }
+                            PhotoPreviewMode.Browse -> Text(
+                                text = "₱${"%,.2f".format(activePhoto.price)}",
+                                style = NumeralStyle.copy(fontSize = 22.sp),
+                                color = Ink,
+                            )
+                            PhotoPreviewMode.Owned -> Kicker("Yours to keep", color = SlateSoft)
+                            PhotoPreviewMode.OwnerReview -> Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = (activePhoto.salesCount ?: 0).toString(),
+                                    style = NumeralStyle.copy(fontSize = 22.sp),
+                                    color = Ink,
+                                )
+                                Kicker("Sold", color = SlateSoft)
                             }
-                            PhotoPreviewMode.Owned -> {
+                            PhotoPreviewMode.LocalReview -> Unit
+                        }
+                    }
+                    if (mode == PhotoPreviewMode.Browse && activePhoto.photographerName != null) {
+                        PhotographerByline(
+                            name = activePhoto.photographerName,
+                            handle = activePhoto.photographerHandle,
+                            onOpen = onOpenPhotographer,
+                        )
+                    }
+
+                    when (mode) {
+                        PhotoPreviewMode.Browse -> if (commerceEnabled) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                GhostCta(
+                                    text = if (photoInCart) "Remove" else "Add to cart",
+                                    onClick = { onToggleCart(activePhoto) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                PrimaryCta(
+                                    text = if (photoInCart) "Checkout →" else "Buy now →",
+                                    onClick = { onBuyNow(activePhoto) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            if (photoInCart) {
+                                Spacer(modifier = Modifier.height(12.dp))
                                 Kicker(
-                                    text = "Yours to keep",
-                                    color = SlateSoft,
+                                    text = "✓ In cart",
+                                    color = Fresh,
                                     modifier = Modifier.align(Alignment.CenterHorizontally),
                                 )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                PrimaryCta(
-                                    text = "Download photo ↓",
-                                    onClick = { onDownload(activePhoto) },
-                                    modifier = Modifier.fillMaxWidth(),
+                            }
+                        }
+                        PhotoPreviewMode.Owned -> {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            PrimaryCta(
+                                text = "Download photo ↓",
+                                onClick = { onDownload(activePhoto) },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        PhotoPreviewMode.LocalReview -> {
+                            activePhoto.caption?.let { caption ->
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = caption,
+                                    style = Typography.bodyMedium,
+                                    color = Slate,
                                 )
                             }
-                            PhotoPreviewMode.LocalReview -> {
-                                activePhoto.caption?.let { caption ->
-                                    Text(
-                                        text = caption,
-                                        style = Typography.bodyMedium,
-                                        color = Slate,
-                                    )
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            GhostCta(
+                                text = "Close",
+                                onClick = onClose,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        PhotoPreviewMode.OwnerReview -> {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            // The download resolves a presigned URL for the
+                            // photographer's own un-watermarked original —
+                            // website parity with /dashboard/events/[id].
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
                                 GhostCta(
                                     text = "Close",
                                     onClick = onClose,
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier.weight(1f),
                                 )
-                            }
-                            PhotoPreviewMode.OwnerReview -> {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.Bottom,
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Kicker("Sold", color = SlateSoft)
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = (activePhoto.salesCount ?: 0).toString(),
-                                            style = NumeralStyle.copy(fontSize = 22.sp),
-                                            color = Ink,
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(12.dp))
-                                // Same two-CTA row as Browse mode. The download
-                                // resolves a presigned URL for the photographer's
-                                // own un-watermarked original — website parity with
-                                // /dashboard/events/[id]'s per-photo download.
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    GhostCta(
-                                        text = "Close",
-                                        onClick = onClose,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    PrimaryCta(
-                                        text = "Download ↓",
-                                        onClick = { onDownload(activePhoto) },
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                }
+                                PrimaryCta(
+                                    text = "Download ↓",
+                                    onClick = { onDownload(activePhoto) },
+                                    modifier = Modifier.weight(1f),
+                                )
                             }
                         }
                     }
 
-                    // ── Prev / index / Next nav (multi-photo only) ──
-                    if (hasMultiple) {
-                        Divider(color = Line)
-                        val canPrev = safeIndex > 0
-                        val canNext = safeIndex < photos.size - 1
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable(enabled = canPrev) {
-                                        onIndexChange(safeIndex - 1)
-                                    }
-                                    .padding(vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowLeft,
-                                    contentDescription = "Previous",
-                                    tint = if (canPrev) Ink else SlateSoft,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                                Text(
-                                    text = "Prev",
-                                    style = Typography.labelMedium,
-                                    color = if (canPrev) Ink else SlateSoft,
-                                )
-                            }
-                            Text(
-                                text = "${safeIndex + 1} / ${photos.size}",
-                                style = NumeralStyle.copy(fontSize = 12.sp),
-                                color = SlateSoft,
-                                textAlign = TextAlign.Center,
-                            )
-                            Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable(enabled = canNext) {
-                                        onIndexChange(safeIndex + 1)
-                                    }
-                                    .padding(vertical = 8.dp),
-                                horizontalArrangement = Arrangement.End,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = "Next",
-                                    style = Typography.labelMedium,
-                                    color = if (canNext) Ink else SlateSoft,
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowRight,
-                                    contentDescription = "Next",
-                                    tint = if (canNext) Ink else SlateSoft,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-                        }
+                    // Gesture hint — invisible gestures don't ship.
+                    if (activePhoto.imageUrl != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "PINCH OR DOUBLE-TAP TO ZOOM",
+                            style = Typography.labelMedium,
+                            color = SlateSoft,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }
@@ -586,12 +552,15 @@ fun PhotoPreview(
 // browser, the clean original only for an owner (cleanUrl). Zoom never
 // requests a different asset.
 @Composable
-private fun ZoomableImage(url: String, modifier: Modifier = Modifier) {
+private fun ZoomableImage(
+    url: String,
+    onAspect: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val scope = rememberCoroutineScope()
     val scale = remember { Animatable(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var size by remember { mutableStateOf(IntSize.Zero) }
-    var zoomed by remember { mutableStateOf(false) }
 
     fun clamp(o: Offset, s: Float): Offset {
         val maxX = (size.width * (s - 1)) / 2
@@ -609,7 +578,6 @@ private fun ZoomableImage(url: String, modifier: Modifier = Modifier) {
                         val centre = Offset(size.width / 2f, size.height / 2f)
                         // Zoom into the tapped point; the offset moves so that point stays put.
                         val next = if (target == 1f) Offset.Zero else clamp((centre - tap) * (target - 1), target)
-                        zoomed = target > 1f
                         scope.launch {
                             offset = next
                             scale.animateTo(target, tween(ZOOM_ANIM_MS))
@@ -633,12 +601,10 @@ private fun ZoomableImage(url: String, modifier: Modifier = Modifier) {
                             val scaled = (offset - (centroid - centre)) * (s / scale.value) + (centroid - centre)
                             offset = clamp(scaled + pan, s)
                             scope.launch { scale.snapTo(s) }
-                            zoomed = s > 1f
                             event.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
                     } while (event.changes.any { it.pressed })
                     if (scale.value <= 1.02f) {
-                        zoomed = false
                         scope.launch { offset = Offset.Zero; scale.snapTo(1f) }
                     }
                 }
@@ -648,6 +614,12 @@ private fun ZoomableImage(url: String, modifier: Modifier = Modifier) {
             model = ImageRequest.Builder(LocalContext.current).data(url).size(Size.ORIGINAL).build(),
             contentDescription = "Race photo",
             contentScale = ContentScale.Fit,
+            onSuccess = { state: AsyncImagePainter.State.Success ->
+                val d = state.result.drawable
+                if (d.intrinsicWidth > 0 && d.intrinsicHeight > 0) {
+                    onAspect(d.intrinsicWidth.toFloat() / d.intrinsicHeight)
+                }
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
@@ -657,20 +629,11 @@ private fun ZoomableImage(url: String, modifier: Modifier = Modifier) {
                     translationY = offset.y
                 },
         )
-        // Gesture hint — invisible gestures don't ship. Gone once the runner has zoomed.
-        if (!zoomed) {
-            Text(
-                text = "PINCH OR DOUBLE-TAP TO ZOOM",
-                style = Typography.labelSmall,
-                color = Color.White.copy(alpha = 0.6f),
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(12.dp),
-            )
-        }
     }
 }
 
+private const val CARD_WIDTH_FRACTION = 0.94f
+private const val CARD_HEIGHT_FRACTION = 0.92f
 private const val DOUBLE_TAP_SCALE = 2.5f
 private const val MAX_SCALE = 4f
 private const val ZOOM_ANIM_MS = 220
