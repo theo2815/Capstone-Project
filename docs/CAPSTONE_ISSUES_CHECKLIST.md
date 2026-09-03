@@ -6,9 +6,9 @@
 
 ## 📋 Quick Status Overview
 
-- **Total Tasks:** 20
+- **Total Tasks:** 27
 - **✅ Already Solved:** 12 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
-- **⏳ Pending / To Be Worked On:** 8 (Items 16, 17, 18, 19, 20, 21, 22, 23)
+- **⏳ Pending / To Be Worked On:** 15 (Items 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
 
 ---
 
@@ -117,6 +117,55 @@
 - [x] **13. Photographer — Google OAuth backend & onboarding flow**
   - **Status:** **ALREADY SOLVED IN CODE**
   - **Verification:** `GoogleAuthService.kt` (backend V38) implements `POST /auth/google` with auto-account linking, ID-token validation, and role onboarding selection (`ROLE_REQUIRED` 422). `google-button.tsx` uses Google Identity Services (GIS) and routes new users to `/onboarding`. Only requires configuring `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in production environment.
+
+- [ ] **24. Website — Runner-Side Photo Flagging / Report Flow (`AdminFlags` Parity Gap)**
+  - **Issue:** The admin portal contains a complete flag moderation queue (`/admin/flags`), and the backend provides full moderation transition endpoints (`AdminFlagsController.kt`). However, there is no runner-facing UI (in `PhotoPreviewCard.tsx` or gallery mosaic tiles) to report/flag a photo, nor is there a runner-side API client or endpoint (`POST /api/v1/photos/{id}/flag`). The moderation queue therefore remains an unpopulated feature in production.
+  - **Affected Files:**
+    - `website/src/components/photos/photo-preview-card.tsx`
+    - `website/src/lib/api-photos.ts`
+    - `backend/src/main/kotlin/com/quickpitik/controller/AdminFlagsController.kt`
+  - **Action Plan:** Add a "Report / Flag Photo" button and modal to `PhotoPreviewCard.tsx` allowing runners to submit reason categories (inappropriate content, privacy, incorrect bib tag), and connect to a backend flag submission endpoint.
+
+- [ ] **25. Website — Google OAuth Users Locked Out of Password Setting & Email Changes**
+  - **Issue:** Users who register via Google OAuth are assigned a random 64-character unguessable password hash (`GoogleAuthService.kt`). On `/account` (`account/page.tsx`), both the "Sign-in email" slab (`requestEmailChange`) and the "Password" slab (`changePassword`) mandate entering the "Current password". Because OAuth users do not possess a password, any entry fails with `INVALID_CREDENTIALS`, permanently locking them out of updating their email or creating an initial password.
+  - **Affected Files:**
+    - `website/src/app/account/page.tsx`
+    - `backend/src/main/kotlin/com/quickpitik/service/GoogleAuthService.kt`
+    - `backend/src/main/kotlin/com/quickpitik/service/profile/ProfileService.kt`
+  - **Action Plan:** Detect OAuth accounts (via user profile response), display a Google badge on credentials, and provide a dedicated "Set password" flow for OAuth users that does not require a prior password.
+
+- [ ] **26. Website — Incomplete Base64URL Sanitization in `isTokenExpired()`**
+  - **Issue:** `src/lib/auth.ts:26` parses the JWT payload via `JSON.parse(atob(token.split(".")[1]))`. JWTs use Base64URL encoding (`-` and `_`), which causes standard browser `atob()` to throw a `DOMException`. The catch block catches this and returns `true`, erroneously treating active tokens with URL-safe characters as prematurely expired (in contrast to `use-auth.ts`, which correctly replaced `-` with `+` and `_` with `/`).
+  - **Affected Files:**
+    - `website/src/lib/auth.ts`
+  - **Action Plan:** Sanitize the payload substring with `.replace(/-/g, "+").replace(/_/g, "/")` and add proper padding before calling `atob()`.
+
+- [ ] **27. Website — Missing App Routes in Photographer `RESERVED_HANDLES` Collision Guard**
+  - **Issue:** Photographer handles use a flat root URL namespace (`quickpitik.com/{handle}`). The `RESERVED_HANDLES` set protects system routes from being registered by photographers. However, existing active routes such as `"verify"`, `"verify-email"`, and `"confirm-email-change"` are omitted from `RESERVED_HANDLES`. If a photographer claims `verify`, accessing `/verify` causes route conflicts.
+  - **Affected Files:**
+    - `website/src/lib/reserved-handles.ts`
+  - **Action Plan:** Add `"verify"`, `"verify-email"`, and `"confirm-email-change"` to the `RESERVED_HANDLES` set.
+
+- [ ] **28. Website — Floating-Point Precision Accumulation in Cart Pricing Summation**
+  - **Issue:** `cart-store.ts` calculates the cart total as `items.reduce((sum, item) => sum + item.price, 0)`. Floating-point arithmetic on decimals (e.g., `150.50 + 99.99 = 250.49000000000004`) causes micro-penny precision inaccuracies, risking mismatches with backend cent-based order calculations during checkout.
+  - **Affected Files:**
+    - `website/src/store/cart-store.ts`
+  - **Action Plan:** Calculate the total in integer cents (`Math.round(item.price * 100)`) and divide by 100, or format using fixed two-decimal precision.
+
+- [ ] **29. Website — Overly Restrictive `Permissions-Policy` Blocking Camera in Production**
+  - **Issue:** In `next.config.ts:50`, the production security header sets `Permissions-Policy: camera=(), microphone=(), geolocation=()`. In `SelfieSearchPanel.tsx`, runners can match photos via `<input type="file" capture="user">`. Certain mobile browser webviews and future direct camera previews (`getUserMedia`) are blocked by `camera=()`.
+  - **Affected Files:**
+    - `website/next.config.ts`
+  - **Action Plan:** Adjust the policy header to `camera=(self)` to permit first-party camera capture while continuing to deny untrusted third-party iframe access.
+
+- [ ] **30. Website — Sub-12px Quiet Studio Comfort Floor ESLint Warnings (121 instances)**
+  - **Issue:** ESLint flags 121 warnings for text sizes below the 12px design token floor (`text-[9px]`, `text-[10px]`, `text-[11px]`) across components like `user-menu.tsx`, `onboarding-form.tsx`, `refund-timeline.tsx`, and `selfie-library.tsx`.
+  - **Affected Files:**
+    - `website/src/components/layout/user-menu.tsx`
+    - `website/src/components/onboarding/onboarding-form.tsx`
+    - `website/src/components/profile/selfie-library.tsx`
+    - `website/src/components/orders/refund-timeline.tsx`
+  - **Action Plan:** Replace raw sub-12px font utility classes with the design token `<Kicker>` component or normalize to `text-[12px]`.
 
 ---
 
