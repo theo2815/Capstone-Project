@@ -16,7 +16,7 @@ export function Footer() {
         <div className="grid grid-cols-2 gap-10 md:grid-cols-4">
           <div className="col-span-2 md:col-span-1">
             <Link
-              href={ROUTES.HOME}
+              href={ROUTES.RUNNERS}
               className="inline-flex items-center text-ink transition-opacity hover:opacity-75"
               aria-label="QuickPitik home"
             >

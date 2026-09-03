@@ -419,6 +419,12 @@ function FinalCta() {
             I&apos;m a photographer instead
           </Link>
         </div>
+        <Link
+          href="/?intro=1"
+          className="mt-6 font-mono uppercase tracking-[0.14em] text-[13px] text-slate-soft hover:text-slate transition-colors"
+        >
+          Back to the intro
+        </Link>
       </div>
     </section>
   );

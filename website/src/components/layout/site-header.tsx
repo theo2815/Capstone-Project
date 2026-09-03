@@ -47,7 +47,7 @@ export function SiteHeader({
     <header className="sticky top-0 z-30 h-[var(--site-header-h)] bg-bone/85 backdrop-blur-md border-b border-line">
       <div className="px-6 md:px-10 h-full flex items-center justify-between max-w-7xl mx-auto">
         <Link
-          href={ROUTES.HOME}
+          href={ROUTES.RUNNERS}
           className="flex items-center text-ink transition-opacity hover:opacity-75"
           aria-label="Back to QuickPitik home"
         >

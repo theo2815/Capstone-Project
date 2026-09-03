@@ -1,14 +1,47 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { ROUTES } from "@/lib/constants";
 
+const INTRO_SEEN_KEY = "quickpitik-intro-seen";
+
 export default function SplashPage() {
+  const router = useRouter();
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    // ?intro=1 replays the intro on demand — always show, never redirect or re-gate.
+    if (new URLSearchParams(window.location.search).get("intro") === "1") {
+      setShow(true);
+      return;
+    }
+    let seen = false;
+    try {
+      seen = !!localStorage.getItem(INTRO_SEEN_KEY);
+      if (!seen) localStorage.setItem(INTRO_SEEN_KEY, "1");
+    } catch {
+      // localStorage blocked (private mode) — fail open to the intro.
+    }
+    if (seen) {
+      router.replace(ROUTES.RUNNERS);
+      return;
+    }
+    setShow(true);
+  }, [router]);
+
+  // Placeholder holds the page background so returning users redirect with no
+  // marketplace flash; first-timers still get the fade-up entrance below.
+  if (!show) return <main className="min-h-screen bg-paper" />;
+
   return (
     <main className="min-h-screen bg-paper flex flex-col">
       {/* ── Top bar ── */}
       <header className="border-b border-line">
         <div className="max-w-6xl mx-auto w-full px-5 md:px-10 h-16 flex items-center justify-between">
-          <Link href={ROUTES.HOME} aria-label="QuickPitik home">
+          <Link href={ROUTES.RUNNERS} aria-label="QuickPitik home">
             <BrandLogo className="h-11 w-44" priority />
           </Link>
           <p className="hidden sm:block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
