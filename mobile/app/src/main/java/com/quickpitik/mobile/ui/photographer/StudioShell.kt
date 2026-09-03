@@ -2,11 +2,15 @@ package com.quickpitik.mobile.ui.photographer
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -57,6 +61,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.lightColorScheme
@@ -164,6 +169,10 @@ fun StudioTabScaffold(
     // detailed view; this is the persistent ambient status.
     val queueStats by viewModel.queueStats.collectAsState()
     val watchState by viewModel.shutterWatchState.collectAsState()
+    val verificationState by viewModel.verificationState.collectAsState()
+    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
+    val isApproved = currentStatus == "approved"
+    val isPending = currentStatus == "pending"
     val unreadCount = remember(messages) { messages.count { it.readAt == null } }
     var showNotifDialog by remember { mutableStateOf(false) }
     // Switching to runner view pops the studio graph, which clears this VM —
@@ -248,6 +257,8 @@ fun StudioTabScaffold(
                 PhotographerTopBar(
                     avatarUrl = resolvedAvatarUrl,
                     unreadCount = unreadCount,
+                    isApproved = isApproved,
+                    isPending = isPending,
                     onOpenNotifications = { showNotifDialog = true },
                     onPreviewProfile = onPreviewProfile,
                     onSwitchToRunner = {
@@ -392,12 +403,24 @@ private fun StudioNavItem(
         animationSpec = tween(180),
         label = "navItemTint",
     )
+    val scale by animateFloatAsState(
+        targetValue = if (selected) 1.0f else 0.94f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "navItemScale",
+    )
     Column(
         modifier = modifier
             .heightIn(min = 56.dp)
             .clip(PillShape)
             .background(bg)
             .clickable(onClick = onClick)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .padding(vertical = 8.dp, horizontal = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -432,21 +455,33 @@ private fun StudioNavItem(
 private fun PhotographerTopBar(
     avatarUrl: String?,
     unreadCount: Int,
+    isApproved: Boolean = true,
+    isPending: Boolean = false,
     onOpenNotifications: () -> Unit,
     onPreviewProfile: () -> Unit,
     onSwitchToRunner: () -> Unit,
     onLogout: () -> Unit,
 ) {
     var showAvatarMenu by remember { mutableStateOf(false) }
+    var showLogoutConfirm by remember { mutableStateOf(false) }
+    var showSetupAlert by remember { mutableStateOf(false) }
+
+    if (showSetupAlert) {
+        StudioSetupRequiredDialog(
+            isPending = isPending,
+            onDismiss = { showSetupAlert = false },
+        )
+    }
     TopAppBar(
         title = {
             Column {
+                BrandLogo(compact = true)
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "STUDIO",
                     style = Typography.labelMedium,
                     color = Slate,
                 )
-                BrandLogo(compact = true)
             }
         },
         actions = {
@@ -478,30 +513,29 @@ private fun PhotographerTopBar(
                 }
             }
             Box {
-                IconButton(onClick = { showAvatarMenu = true }) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(BoneDeep)
-                            .border(1.dp, Line, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (!avatarUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = avatarUrl,
-                                contentDescription = "Profile menu",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize().clip(CircleShape),
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = "Profile menu",
-                                tint = SlateSoft,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(BoneDeep)
+                        .border(1.dp, Line, CircleShape)
+                        .clickable { showAvatarMenu = true },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (!avatarUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = avatarUrl,
+                            contentDescription = "Profile menu",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        )
+                    } else {
+                        Text(
+                            text = "P",
+                            color = Ink,
+                            style = Typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
                 DropdownMenu(
@@ -521,7 +555,11 @@ private fun PhotographerTopBar(
                         },
                         onClick = {
                             showAvatarMenu = false
-                            onPreviewProfile()
+                            if (!isApproved) {
+                                showSetupAlert = true
+                            } else {
+                                onPreviewProfile()
+                            }
                         },
                     )
                     DropdownMenuItem(
@@ -552,7 +590,7 @@ private fun PhotographerTopBar(
                         },
                         onClick = {
                             showAvatarMenu = false
-                            onLogout()
+                            showLogoutConfirm = true
                         },
                     )
                 }
@@ -567,6 +605,43 @@ private fun PhotographerTopBar(
             actionIconContentColor = Ink,
         ),
     )
+
+    if (showLogoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirm = false },
+            containerColor = Bone,
+            title = {
+                Text(
+                    text = "Sign out of QuickPitik?",
+                    style = Typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                )
+            },
+            text = {
+                Text(
+                    text = "You will need to sign in again to access your studio, upload queues, and earnings.",
+                    style = Typography.bodyMedium,
+                    color = Slate,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutConfirm = false
+                        onLogout()
+                    }
+                ) {
+                    Text("SIGN OUT", color = ErrorRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirm = false }) {
+                    Text("CANCEL", color = Slate, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
 }
 
 /**
@@ -917,3 +992,40 @@ private fun formatInboxDate(iso: String): String {
         "${months[parts[1].toInt() - 1]} ${parts[2].toInt()}, ${parts[0]}"
     } catch (e: Exception) { iso }
 }
+
+@Composable
+fun StudioSetupRequiredDialog(
+    isPending: Boolean = false,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = Fresh),
+            ) {
+                Text("OK", color = Color.White)
+            }
+        },
+        title = {
+            Text(
+                text = if (isPending) "Verification Review Pending" else "Onboarding Setup Required",
+                fontWeight = FontWeight.Bold,
+                color = Ink,
+            )
+        },
+        text = {
+            Text(
+                text = if (isPending) {
+                    "Your professional studio setup is currently being reviewed by an administrator. Please wait for approval before covering events."
+                } else {
+                    "Your studio setup is not approved. Please complete the setup on the Settings tab and wait for administrator approval."
+                },
+                color = Ink,
+            )
+        },
+        containerColor = BoneDeep,
+    )
+}
+

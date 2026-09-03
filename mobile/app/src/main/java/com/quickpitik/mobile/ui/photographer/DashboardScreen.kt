@@ -13,7 +13,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +41,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -106,6 +109,7 @@ import com.quickpitik.mobile.ui.theme.SuccessGreen
 import com.quickpitik.mobile.ui.theme.TileShape
 import com.quickpitik.mobile.ui.theme.Typography
 import java.io.File
+import java.time.LocalDate
 
 /**
  * The Capture tab's content: event picker until an event is selected, then the
@@ -120,7 +124,11 @@ import java.io.File
 @Composable
 fun PhotographerCaptureScreen(viewModel: PhotographerDashboardViewModel) {
     val activeEvent by viewModel.activeEvent.collectAsState()
-    if (activeEvent == null) {
+    val verificationState by viewModel.verificationState.collectAsState()
+    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
+    val isApproved = currentStatus == "approved"
+
+    if (activeEvent == null || !isApproved) {
         PublicEventPickerList(
             viewModel = viewModel,
             onSelectEvent = { event -> viewModel.selectEvent(event) }
@@ -995,24 +1003,72 @@ private fun PublicEventPickerList(
                 }
             }
             is EventsState.Success -> {
-                val allPickerEvents = (state.events + assignedEvents)
-                    .distinctBy { it.id }
-                    .sortedBy { it.date }
+                val today = remember { LocalDate.now() }
+                val allPickerEvents = remember(state.events, assignedEvents, today) {
+                    (state.events + assignedEvents)
+                        .distinctBy { it.id }
+                        .sortedWith(
+                            compareByDescending<PhotographerEventSummaryDto> { canUploadToEvent(it.date, today) }
+                                .thenByDescending { it.date }
+                        )
+                }
 
                 if (allPickerEvents.isEmpty()) {
                     Box(
-                        modifier = Modifier.fillMaxWidth().weight(1f).padding(24.dp),
-                        contentAlignment = Alignment.Center
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Kicker(text = "No events on the calendar", color = Slate)
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Events created in the system will appear here for capture and upload.",
-                                color = Slate,
-                                style = Typography.bodyMedium,
-                                textAlign = TextAlign.Center
-                            )
+                        Surface(
+                            shape = QpCardShape,
+                            color = BoneDeep,
+                            border = BorderStroke(1.dp, Line),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp, vertical = 28.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .clip(CircleShape)
+                                        .background(Bone)
+                                        .border(1.dp, Line, CircleShape),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.List,
+                                        contentDescription = null,
+                                        tint = Fresh,
+                                        modifier = Modifier.size(26.dp),
+                                    )
+                                }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        text = "No events on the calendar",
+                                        style = Typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Ink,
+                                        textAlign = TextAlign.Center,
+                                    )
+                                    Text(
+                                        text = "Events created in the system will appear here for capture and upload.",
+                                        color = Slate,
+                                        style = Typography.bodyMedium,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(horizontal = 8.dp),
+                                    )
+                                }
+                            }
                         }
                     }
                 } else {
@@ -1044,44 +1100,16 @@ private fun PublicEventPickerList(
     }
 
     if (showPendingAlert) {
-        AlertDialog(
-            onDismissRequest = { showPendingAlert = false },
-            confirmButton = {
-                Button(
-                    onClick = { showPendingAlert = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = Fresh)
-                ) {
-                    Text("OK", color = Color.White)
-                }
-            },
-            title = {
-                Text("Verification Review Pending", fontWeight = FontWeight.Bold, color = Ink)
-            },
-            text = {
-                Text("Your professional studio setup is currently being reviewed by an administrator. Please wait for approval before covering events.", color = Ink)
-            },
-            containerColor = BoneDeep
+        StudioSetupRequiredDialog(
+            isPending = true,
+            onDismiss = { showPendingAlert = false },
         )
     }
 
     if (showIncompleteAlert) {
-        AlertDialog(
-            onDismissRequest = { showIncompleteAlert = false },
-            confirmButton = {
-                Button(
-                    onClick = { showIncompleteAlert = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = Fresh)
-                ) {
-                    Text("OK", color = Color.White)
-                }
-            },
-            title = {
-                Text("Onboarding Setup Required", fontWeight = FontWeight.Bold, color = Ink)
-            },
-            text = {
-                Text("Your studio setup is not approved. Please complete the setup on the Settings tab and wait for administrator approval.", color = Ink)
-            },
-            containerColor = BoneDeep
+        StudioSetupRequiredDialog(
+            isPending = false,
+            onDismiss = { showIncompleteAlert = false },
         )
     }
 }

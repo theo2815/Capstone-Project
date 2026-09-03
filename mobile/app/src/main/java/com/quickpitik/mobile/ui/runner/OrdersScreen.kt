@@ -2,15 +2,18 @@ package com.quickpitik.mobile.ui.runner
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -20,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -42,7 +46,8 @@ private const val RECEIPT_PAGE = 10
 fun OrdersScreen(
     viewModel: CartViewModel,
     initialOrderId: String? = null,
-    onLogout: () -> Unit = {}
+    onLogout: () -> Unit = {},
+    onBrowseEvents: () -> Unit = {},
 ) {
     val ordersState by viewModel.ordersState.collectAsState()
     val orderDetailState by viewModel.orderDetailState.collectAsState()
@@ -196,32 +201,10 @@ fun OrdersScreen(
                                     .fillMaxSize()
                                     .padding(horizontal = 24.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
-                                contentPadding = PaddingValues(bottom = 24.dp)
+                                contentPadding = PaddingValues(bottom = 32.dp)
                             ) {
-                                item {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                                    ) {
-                                        Kicker("01  SPEND")
-                                        Text(
-                                            text = "Your purchase totals will land here once you keep your first photo.",
-                                            style = Typography.bodyMedium,
-                                            color = Slate
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Divider(color = Line, thickness = 1.dp)
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Kicker("02  RECEIPTS")
-                                        Text(
-                                            text = "No receipts yet. Complete your first checkout to view receipts here.",
-                                            style = Typography.bodyMedium,
-                                            color = Slate
-                                        )
-                                    }
-                                }
+                                item { SpendEmptySection() }
+                                item { ReceiptsEmptySection(onBrowseEvents = onBrowseEvents) }
                             }
                             }
                         } else {
@@ -601,6 +584,121 @@ private fun SpendSection(stats: SpendStats) {
 
         Spacer(modifier = Modifier.height(8.dp))
         Divider(color = Line, thickness = 1.dp)
+    }
+}
+
+@Composable
+private fun SpendEmptySection() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Kicker("01  SPEND")
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "₱0.00",
+                style = NumeralStyle.copy(fontSize = 36.sp, fontWeight = FontWeight.ExtraBold),
+                color = SlateSoft
+            )
+            Kicker(text = "TOTAL SPENT", color = SlateSoft)
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(32.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "0",
+                    style = NumeralStyle.copy(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                    color = Ink
+                )
+                Kicker(text = "ORDERS", color = SlateSoft)
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "0",
+                    style = NumeralStyle.copy(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                    color = Ink
+                )
+                Kicker(text = "PHOTOS KEPT", color = SlateSoft)
+            }
+        }
+
+        Text(
+            text = "Your purchase totals will land here once you keep your first photo.",
+            style = Typography.bodyMedium,
+            color = Slate
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Divider(color = Line, thickness = 1.dp)
+    }
+}
+
+@Composable
+private fun ReceiptsEmptySection(onBrowseEvents: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Kicker("02  RECEIPTS")
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(BoneDeep, QpCardShape)
+                .border(1.dp, Line, QpCardShape)
+                .padding(horizontal = 24.dp, vertical = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(Bone)
+                    .border(1.dp, Line, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ShoppingCart,
+                    contentDescription = null,
+                    tint = Fresh,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = "No receipts yet",
+                    style = Typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = "Complete your first checkout to view receipts, transaction histories, and download high-resolution photos.",
+                    style = Typography.bodyMedium,
+                    color = Slate,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
+            }
+
+            PrimaryCta(
+                text = "Browse race photos →",
+                onClick = onBrowseEvents,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }
 

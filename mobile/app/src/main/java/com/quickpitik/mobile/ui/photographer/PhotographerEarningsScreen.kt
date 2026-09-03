@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,9 +22,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -79,6 +83,18 @@ fun PhotographerEarningsScreen(
 ) {
     val earningsState by viewModel.earningsUiState.collectAsState()
     val payoutActionState by viewModel.payoutActionState.collectAsState()
+    val verificationState by viewModel.verificationState.collectAsState()
+    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
+    val isApproved = currentStatus == "approved"
+    val isPending = currentStatus == "pending"
+    var showSetupAlert by remember { mutableStateOf(false) }
+
+    if (showSetupAlert) {
+        StudioSetupRequiredDialog(
+            isPending = isPending,
+            onDismiss = { showSetupAlert = false },
+        )
+    }
 
     Column(
         modifier = modifier
@@ -102,7 +118,13 @@ fun PhotographerEarningsScreen(
                 transactions = state.transactions,
                 monthTotals = state.monthTotals,
                 payoutActionState = payoutActionState,
-                onRequestPayout = { viewModel.submitPayoutRequest() },
+                onRequestPayout = {
+                    if (!isApproved) {
+                        showSetupAlert = true
+                    } else {
+                        viewModel.submitPayoutRequest()
+                    }
+                },
                 onWithdrawPayout = { viewModel.withdrawPayoutRequest(it) },
                 onClearActionState = { viewModel.clearPayoutActionState() },
             )
@@ -634,15 +656,51 @@ private fun TransactionsSheet(
         Kicker(text = "Recent sales history", color = Slate)
         Spacer(modifier = Modifier.height(16.dp))
         if (transactions.isEmpty()) {
-            Text(
-                text = "No sales recorded yet. Keep uploading.",
-                color = SlateSoft,
-                style = Typography.bodyMedium,
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 32.dp),
-                textAlign = TextAlign.Center,
-            )
+                    .background(BoneDeep, QpCardShape)
+                    .border(1.dp, Line, QpCardShape)
+                    .padding(horizontal = 24.dp, vertical = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(Bone)
+                        .border(1.dp, Line, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ShoppingCart,
+                        contentDescription = null,
+                        tint = Fresh,
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "No sales recorded yet",
+                        style = Typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Ink,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        text = "Cover races and upload photos to start earning. Your sales transactions and payout cycles will appear here.",
+                        style = Typography.bodyMedium,
+                        color = Slate,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
+                }
+            }
         } else {
             // Month-grouped ledger (web billing parity). The subtotal is the
             // SERVER's per-month figure over all transactions, so it stays

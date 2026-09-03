@@ -6,9 +6,9 @@
 
 ## 📋 Quick Status Overview
 
-- **Total Tasks:** 15
+- **Total Tasks:** 27
 - **✅ Already Solved:** 12 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
-- **⏳ Pending / To Be Worked On:** 3
+- **⏳ Pending / To Be Worked On:** 15 (Items 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
 
 ---
 
@@ -44,6 +44,60 @@
   - **Status:** **ALREADY SOLVED**
   - **Verification:** All accesses to `activeEvent` in `GalleryScreen.kt` use null-safe calls (`activeEvent?.name`) and null checks (`val event = activeEvent; if (event != null)`). No `!!` unwraps exist.
 
+- [ ] **16. Mobile — Android 14 (API 34) USB Permission Broadcast Deadlock**
+  - **Issue:** In `CameraConnectionManager.kt`, the broadcast receiver for `ACTION_USB_PERMISSION` (`com.quickpitik.mobile.USB_PERMISSION`) is registered using `ContextCompat.RECEIVER_NOT_EXPORTED`. When `UsbManager.requestPermission(device, pending)` is invoked, the permission dialog result is dispatched by Android's `system_server` (UID 1000). On Android 14+ (targetSdk 34), non-exported receivers reject broadcasts originating from outside the app UID for non-protected custom actions, which can cause camera permission callbacks to freeze or hang indefinitely.
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/data/usb/CameraConnectionManager.kt`
+  - **Action Plan:** Register the receiver with `ContextCompat.RECEIVER_EXPORTED` on API 34+ or use an explicit Intent/PendingIntent receiver targeted directly to the app package.
+
+- [ ] **17. Mobile — In-Memory Buffering & Out-Of-Memory (OOM) Risk in Wi-Fi FTP**
+  - **Issue:** `FtpReceiverServer.kt` reads incoming photo transfers completely into an in-memory `ByteArray`: `suspend (filename: String, bytes: ByteArray) -> Unit`. High-resolution DSLR/mirrorless RAW and JPEG images (25MB–50MB each) uploaded in rapid bursts over Wi-Fi can rapidly exhaust JVM heap memory and trigger an `OutOfMemoryError`.
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/data/ftp/FtpReceiverServer.kt`
+  - **Action Plan:** Stream incoming socket bytes directly to a temporary `File` via `OutputStream` (matching `UsbEventCaptureController.kt`) instead of buffering the entire image into RAM.
+
+- [ ] **18. Mobile — Orphaned MediaStore Rows & 0-Byte Placeholders on Camera Dismissal**
+  - **Issue:** A MediaStore entry is inserted into `MediaStore.Images.Media.EXTERNAL_CONTENT_URI` prior to launching the system camera contract `ActivityResultContracts.TakePicture()`. When the user opens the camera and cancels (or presses back without capturing a photo), `success == false`. Because no cleanup runs on cancellation, an empty 0-byte corrupt image placeholder is permanently orphaned in the user's public device gallery.
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileScreen.kt`
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/GalleryScreen.kt`
+  - **Action Plan:** In the `TakePicture()` result callback, delete the inserted URI via `contentResolver.delete(uri, null, null)` whenever `success == false`.
+
+- [ ] **19. Mobile — Cross-User Upload Queue Leakage on Device Logout**
+  - **Issue:** User sign-out (`AuthViewModel.logout()`) clears credentials via `sessionManager.clearSession()`, but the local SQLite `upload_queue` table is left unpurged. If a photographer logs out while frames are queued/failed and another photographer logs in on the same phone, `PhotoUploadWorker` will attempt to drain and upload Photographer A's photos under Photographer B's authentication token.
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/auth/AuthViewModel.kt`
+    - `mobile/app/src/main/java/com/quickpitik/mobile/worker/PhotoUploadWorker.kt`
+  - **Action Plan:** Clear or cancel pending upload queue items on logout, or enforce scoping by `photographerId` in `PhotoUploadWorker`.
+
+- [ ] **20. Mobile — Download Photo Filename Collisions on Multi-Photo Downloads**
+  - **Issue:** `PhotoDownloader.buildFilename(photoId, bib)` returns `quickpitik-bib-${bib.lowercase()}.jpg`. When a runner clicks "Download all" on an order containing multiple photos of the same bib number, every photo is assigned the identical filename `quickpitik-bib-101.jpg`. While MediaStore disambiguates with numerical suffixes, individual photo traceability is lost and filenames collide across events.
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/data/download/PhotoDownloader.kt`
+  - **Action Plan:** Include the photo ID snippet in the filename: `quickpitik-bib-$bib-${photoId.take(8)}.jpg`.
+
+- [ ] **21. Mobile — Deprecated Framework `android.media.ExifInterface` in Sync Worker**
+  - **Issue:** `PhotoUploadWorker.kt` imports the legacy platform `android.media.ExifInterface` rather than AndroidX `androidx.exifinterface.media.ExifInterface`. The framework implementation has known orientation extraction bugs on older Android versions and can fail on vendor-specific camera EXIF metadata.
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/worker/PhotoUploadWorker.kt`
+  - **Action Plan:** Migrate import to `androidx.exifinterface.media.ExifInterface`.
+
+- [ ] **22. Mobile — Compose Animation Performance & Non-Lambda Offset Overload**
+  - **Issue:** `FloatingCart.kt` uses `.offset(x = pillOffsetX)` instead of the lambda overload `.offset { IntOffset(pillOffsetX.roundToPx(), 0) }` (flagged by Android Lint `UseOfNonLambdaOffsetOverload`). Non-lambda offset triggers recomposition of the entire composable during animation frames rather than executing purely in the layout phase, introducing UI jank during cart drags.
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/FloatingCart.kt`
+  - **Action Plan:** Switch to `Modifier.offset { IntOffset(...) }` lambda syntax.
+
+- [ ] **23. Mobile — Material3 `Divider`, `LocalLifecycleOwner`, and State Autoboxing Modernization**
+  - **Issue:**
+    - Deprecated Material3 `Divider` used across `StudioShell.kt`, `GalleryScreen.kt`, `OrderReturnScreen.kt`, `PhotoPreview.kt`, `OrdersScreen.kt`, and `PhotographerEarningsScreen.kt` (should be `HorizontalDivider`).
+    - Deprecated `androidx.compose.ui.platform.LocalLifecycleOwner` in `GalleryScreen.kt:166` and `EventsDiscoveryScreen.kt:110` (moved to `androidx.lifecycle.compose.LocalLifecycleOwner`).
+    - Primitive autoboxing via `mutableStateOf(Int)` in `EventsDiscoveryScreen.kt`, `FloatingCart.kt`, `GalleryScreen.kt`, `OrdersScreen.kt`, and `PhotographerEarningsScreen.kt` (should be `mutableIntStateOf(Int)`).
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/*`
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/photographer/*`
+  - **Action Plan:** Update deprecated Material3 and Compose calls to current recommendations.
+
 ---
 
 ### 🌐 Website & Admin Panel
@@ -64,32 +118,60 @@
   - **Status:** **ALREADY SOLVED IN CODE**
   - **Verification:** `GoogleAuthService.kt` (backend V38) implements `POST /auth/google` with auto-account linking, ID-token validation, and role onboarding selection (`ROLE_REQUIRED` 422). `google-button.tsx` uses Google Identity Services (GIS) and routes new users to `/onboarding`. Only requires configuring `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in production environment.
 
+- [ ] **24. Website — Runner-Side Photo Flagging / Report Flow (`AdminFlags` Parity Gap)**
+  - **Issue:** The admin portal contains a complete flag moderation queue (`/admin/flags`), and the backend provides full moderation transition endpoints (`AdminFlagsController.kt`). However, there is no runner-facing UI (in `PhotoPreviewCard.tsx` or gallery mosaic tiles) to report/flag a photo, nor is there a runner-side API client or endpoint (`POST /api/v1/photos/{id}/flag`). The moderation queue therefore remains an unpopulated feature in production.
+  - **Affected Files:**
+    - `website/src/components/photos/photo-preview-card.tsx`
+    - `website/src/lib/api-photos.ts`
+    - `backend/src/main/kotlin/com/quickpitik/controller/AdminFlagsController.kt`
+  - **Action Plan:** Add a "Report / Flag Photo" button and modal to `PhotoPreviewCard.tsx` allowing runners to submit reason categories (inappropriate content, privacy, incorrect bib tag), and connect to a backend flag submission endpoint.
+
+- [ ] **25. Website — Google OAuth Users Locked Out of Password Setting & Email Changes**
+  - **Issue:** Users who register via Google OAuth are assigned a random 64-character unguessable password hash (`GoogleAuthService.kt`). On `/account` (`account/page.tsx`), both the "Sign-in email" slab (`requestEmailChange`) and the "Password" slab (`changePassword`) mandate entering the "Current password". Because OAuth users do not possess a password, any entry fails with `INVALID_CREDENTIALS`, permanently locking them out of updating their email or creating an initial password.
+  - **Affected Files:**
+    - `website/src/app/account/page.tsx`
+    - `backend/src/main/kotlin/com/quickpitik/service/GoogleAuthService.kt`
+    - `backend/src/main/kotlin/com/quickpitik/service/profile/ProfileService.kt`
+  - **Action Plan:** Detect OAuth accounts (via user profile response), display a Google badge on credentials, and provide a dedicated "Set password" flow for OAuth users that does not require a prior password.
+
+- [ ] **26. Website — Incomplete Base64URL Sanitization in `isTokenExpired()`**
+  - **Issue:** `src/lib/auth.ts:26` parses the JWT payload via `JSON.parse(atob(token.split(".")[1]))`. JWTs use Base64URL encoding (`-` and `_`), which causes standard browser `atob()` to throw a `DOMException`. The catch block catches this and returns `true`, erroneously treating active tokens with URL-safe characters as prematurely expired (in contrast to `use-auth.ts`, which correctly replaced `-` with `+` and `_` with `/`).
+  - **Affected Files:**
+    - `website/src/lib/auth.ts`
+  - **Action Plan:** Sanitize the payload substring with `.replace(/-/g, "+").replace(/_/g, "/")` and add proper padding before calling `atob()`.
+
+- [ ] **27. Website — Missing App Routes in Photographer `RESERVED_HANDLES` Collision Guard**
+  - **Issue:** Photographer handles use a flat root URL namespace (`quickpitik.com/{handle}`). The `RESERVED_HANDLES` set protects system routes from being registered by photographers. However, existing active routes such as `"verify"`, `"verify-email"`, and `"confirm-email-change"` are omitted from `RESERVED_HANDLES`. If a photographer claims `verify`, accessing `/verify` causes route conflicts.
+  - **Affected Files:**
+    - `website/src/lib/reserved-handles.ts`
+  - **Action Plan:** Add `"verify"`, `"verify-email"`, and `"confirm-email-change"` to the `RESERVED_HANDLES` set.
+
+- [ ] **28. Website — Floating-Point Precision Accumulation in Cart Pricing Summation**
+  - **Issue:** `cart-store.ts` calculates the cart total as `items.reduce((sum, item) => sum + item.price, 0)`. Floating-point arithmetic on decimals (e.g., `150.50 + 99.99 = 250.49000000000004`) causes micro-penny precision inaccuracies, risking mismatches with backend cent-based order calculations during checkout.
+  - **Affected Files:**
+    - `website/src/store/cart-store.ts`
+  - **Action Plan:** Calculate the total in integer cents (`Math.round(item.price * 100)`) and divide by 100, or format using fixed two-decimal precision.
+
+- [ ] **29. Website — Overly Restrictive `Permissions-Policy` Blocking Camera in Production**
+  - **Issue:** In `next.config.ts:50`, the production security header sets `Permissions-Policy: camera=(), microphone=(), geolocation=()`. In `SelfieSearchPanel.tsx`, runners can match photos via `<input type="file" capture="user">`. Certain mobile browser webviews and future direct camera previews (`getUserMedia`) are blocked by `camera=()`.
+  - **Affected Files:**
+    - `website/next.config.ts`
+  - **Action Plan:** Adjust the policy header to `camera=(self)` to permit first-party camera capture while continuing to deny untrusted third-party iframe access.
+
+- [ ] **30. Website — Sub-12px Quiet Studio Comfort Floor ESLint Warnings (121 instances)**
+  - **Issue:** ESLint flags 121 warnings for text sizes below the 12px design token floor (`text-[9px]`, `text-[10px]`, `text-[11px]`) across components like `user-menu.tsx`, `onboarding-form.tsx`, `refund-timeline.tsx`, and `selfie-library.tsx`.
+  - **Affected Files:**
+    - `website/src/components/layout/user-menu.tsx`
+    - `website/src/components/onboarding/onboarding-form.tsx`
+    - `website/src/components/profile/selfie-library.tsx`
+    - `website/src/components/orders/refund-timeline.tsx`
+  - **Action Plan:** Replace raw sub-12px font utility classes with the design token `<Kicker>` component or normalize to `text-[12px]`.
+
 ---
+
 ### 📄 Documentation & Wireframes (SRS)
 
 - [x] **15. SRS / Wireframe — Add updated Module 3 1.1 mobile wireframe**
   - **Status:** **ALREADY SOLVED**
   - **Verification:** Added `website/src/app/wireframes/srs/m3-1/page.tsx` rendering `UC-M3-1.1` Mobile Authentication & Verification wireframe. Registered route `UC-M3-1.1` in `website/src/app/wireframes/srs/page.tsx`.
-
----
-
-### 💻 Desktop Application (BatchMyPhotos)
-
-- [ ] **3. Desktop — Settings Page Missing**
-  - **Issue:** The Electron desktop application lacks a dedicated Settings page for photographer profile/preferences.
-  - **Target Location:** `BatchMyPhotos` (External desktop repo)
-  - **Action Plan:** Build Settings view in the Electron app allowing photographers to view/manage their account credentials and app configs.
-
-- [ ] **4. Desktop — Invalid Role on Registration**
-  - **Issue:** Backend `RegisterRequest.kt` expects strict enum `Role` (`ADMIN`, `PHOTOGRAPHER`, `RUNNER`). Desktop client registration fails if sending lowercase or mismatched role values.
-  - **Affected Files:**
-    - `BatchMyPhotos` (Desktop auth registration service)
-    - `backend/src/main/kotlin/com/quickpitik/dto/auth/RegisterRequest.kt`
-  - **Action Plan:** Ensure Desktop app sends `PHOTOGRAPHER` as uppercase string matching backend enum.
-
-- [ ] **5. Desktop — Invalid Reset Password Token**
-  - **Issue:** Backend V37 uses a 2-step OTP flow (`/verify-reset-otp` → 15-min continuation token → `/reset-password`). Desktop sends tokens directly to `reset-password` without obtaining the continuation token.
-  - **Affected Files:**
-    - `BatchMyPhotos` (Desktop password reset flow)
-  - **Action Plan:** Update Desktop app to implement the 2-step OTP verification flow matching web/mobile.
 

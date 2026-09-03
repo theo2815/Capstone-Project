@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,6 +27,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -34,7 +37,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -64,11 +69,13 @@ import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.ErrorView
 import com.quickpitik.mobile.ui.theme.FieldShape
+import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.GhostCta
 import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.Kicker
 import com.quickpitik.mobile.ui.theme.Line
 import com.quickpitik.mobile.ui.theme.LoadingSkeleton
+import com.quickpitik.mobile.ui.theme.PillShape
 import com.quickpitik.mobile.ui.theme.PrimaryCta
 import com.quickpitik.mobile.ui.theme.QpCard
 import com.quickpitik.mobile.ui.theme.QpCardShape
@@ -291,6 +298,115 @@ fun PhotographerSettingsScreen(
     ) {
         item("header") {
             Kicker(text = "Settings · brand + payouts", color = Slate)
+        }
+        item("heroIdentity") {
+            val resolvedAvatar = avatarUri ?: resolveImageUrl(brandSettings?.avatarUrl)
+            Card(
+                shape = QpCardShape,
+                colors = CardDefaults.cardColors(containerColor = BoneDeep),
+                border = BorderStroke(1.dp, Line),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        // Interactive 76dp Avatar with tap-to-change
+                        Box(
+                            modifier = Modifier
+                                .size(76.dp)
+                                .clip(CircleShape)
+                                .background(Fresh)
+                                .border(2.dp, Line, CircleShape)
+                                .clickable {
+                                    avatarPickerLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                    )
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (!resolvedAvatar.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = resolvedAvatar,
+                                    contentDescription = "Studio avatar",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop,
+                                )
+                            } else {
+                                Text(
+                                    text = brandName.ifBlank { "Photographer" }.take(1).uppercase(),
+                                    color = Bone,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 30.sp,
+                                )
+                            }
+                        }
+
+                        // Studio info & role badge
+                        Column(modifier = Modifier.weight(1f)) {
+                            Surface(
+                                shape = PillShape,
+                                color = Ink,
+                                modifier = Modifier.padding(bottom = 6.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                ) {
+                                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Fresh))
+                                    Text(
+                                        text = "PHOTOGRAPHER STUDIO",
+                                        style = Typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
+                                        color = Bone,
+                                    )
+                                }
+                            }
+                            Text(
+                                text = brandName.ifBlank { "Studio Settings" },
+                                style = Typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = Ink,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = if (handle.isNotBlank()) "@$handle" else "Setup public handle below",
+                                style = Typography.bodySmall,
+                                color = Slate,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+
+                    // Avatar Actions
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        PrimaryCta(
+                            text = "Change photo",
+                            onClick = {
+                                avatarPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                        )
+                        if (avatarUri != null) {
+                            GhostCta(
+                                text = "Revert staged",
+                                onClick = { avatarUri = null },
+                            )
+                        }
+                    }
+                }
+            }
         }
         item("verification") {
             VerificationSlab(
@@ -1228,6 +1344,7 @@ private fun BottomActions(
     onSave: () -> Unit,
     onSignOut: () -> Unit,
 ) {
+    var showLogoutConfirm by remember { mutableStateOf(false) }
     Column {
         PrimaryCta(
             text = if (isSaving) "Saving…" else "Save changes",
@@ -1238,8 +1355,45 @@ private fun BottomActions(
         Spacer(modifier = Modifier.height(10.dp))
         GhostCta(
             text = "Sign out",
-            onClick = onSignOut,
+            onClick = { showLogoutConfirm = true },
             modifier = Modifier.fillMaxWidth(),
+        )
+    }
+
+    if (showLogoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirm = false },
+            containerColor = Bone,
+            title = {
+                Text(
+                    text = "Sign out of QuickPitik?",
+                    style = Typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                )
+            },
+            text = {
+                Text(
+                    text = "You will need to sign in again to access your studio, upload queues, and earnings.",
+                    style = Typography.bodyMedium,
+                    color = Slate,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutConfirm = false
+                        onSignOut()
+                    }
+                ) {
+                    Text("SIGN OUT", color = ErrorRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirm = false }) {
+                    Text("CANCEL", color = Slate, fontWeight = FontWeight.Bold)
+                }
+            }
         )
     }
 }

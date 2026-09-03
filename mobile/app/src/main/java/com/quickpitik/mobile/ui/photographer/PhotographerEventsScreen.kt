@@ -2,6 +2,7 @@ package com.quickpitik.mobile.ui.photographer
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -9,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
@@ -67,7 +69,29 @@ fun PhotographerEventsScreen(
     val eventsState by viewModel.eventsState.collectAsState()
     val publicEventsState by viewModel.publicEventsState.collectAsState()
     val activeEvent by viewModel.activeEvent.collectAsState()
+    val verificationState by viewModel.verificationState.collectAsState()
+    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
+    val isApproved = currentStatus == "approved"
+    val isPending = currentStatus == "pending"
+    var showSetupAlert by remember { mutableStateOf(false) }
+    var alertIsPending by remember { mutableStateOf(false) }
     val today = remember { LocalDate.now() }
+
+    val guardAction: (() -> Unit) -> Unit = { action ->
+        if (!isApproved) {
+            alertIsPending = isPending
+            showSetupAlert = true
+        } else {
+            action()
+        }
+    }
+
+    if (showSetupAlert) {
+        StudioSetupRequiredDialog(
+            isPending = alertIsPending,
+            onDismiss = { showSetupAlert = false },
+        )
+    }
 
     // No mount-time fetch: with the tabs as NavHost routes this composable
     // recomposes on every tab visit AND on state restoration, so a
@@ -231,8 +255,8 @@ fun PhotographerEventsScreen(
                                 EventState.LIVE -> LiveEventCard(
                                     event = event,
                                     isActive = activeEvent?.id == event.id,
-                                    onSync = { onSyncEvent(event) },
-                                    onOpenShare = { onOpenShare(event) },
+                                    onSync = { guardAction { onSyncEvent(event) } },
+                                    onOpenShare = { guardAction { onOpenShare(event) } },
                                 )
                                 EventState.UPCOMING -> UpcomingEventCard(
                                     event = event,
@@ -240,7 +264,7 @@ fun PhotographerEventsScreen(
                                 )
                                 EventState.OPEN, EventState.PAST -> CompletedEventCard(
                                     event = event,
-                                    onOpenShare = { onOpenShare(event) },
+                                    onOpenShare = { guardAction { onOpenShare(event) } },
                                 )
                             }
                         }
@@ -530,22 +554,52 @@ private fun EventCoverThumbnail(url: String?, size: Int = 72) {
 private fun EmptyEventsCard(message: String) {
     Surface(
         shape = QpCardShape,
-        color = Color.Transparent,
+        color = BoneDeep,
         border = BorderStroke(1.dp, Line),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 32.dp),
+                .padding(horizontal = 24.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text(
-                text = message,
-                color = SlateSoft,
-                style = Typography.bodyMedium,
-                textAlign = TextAlign.Center,
-            )
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(Bone)
+                    .border(1.dp, Line, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.List,
+                    contentDescription = null,
+                    tint = Fresh,
+                    modifier = Modifier.size(26.dp),
+                )
+            }
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = "No events in this view",
+                    style = Typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    text = message,
+                    color = Slate,
+                    style = Typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+            }
         }
     }
 }
