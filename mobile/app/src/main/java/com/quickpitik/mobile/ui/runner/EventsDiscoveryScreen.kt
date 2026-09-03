@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
@@ -561,18 +562,25 @@ private fun EventTile(
                         modifier = Modifier.align(Alignment.Center)
                     )
                 }
-                StatusChip(
-                    state = state,
-                    modifier = Modifier.align(Alignment.TopStart).padding(10.dp)
-                )
-                // Saved events are RUNNER-gated server-side — hidden for a
-                // photographer browsing in runner view (see rememberIsTrueRunner).
-                if (rememberIsTrueRunner()) {
-                    SaveButton(
-                        saved = saved,
-                        onToggle = { onToggleSave(event) },
-                        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    StatusChip(
+                        state = state,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
+                    // Saved events are RUNNER-gated server-side — hidden for a
+                    // photographer browsing in runner view (see rememberIsTrueRunner).
+                    if (rememberIsTrueRunner()) {
+                        SaveButton(
+                            saved = saved,
+                            onToggle = { onToggleSave(event) },
+                        )
+                    }
                 }
             }
             Column(modifier = Modifier.padding(14.dp)) {
@@ -626,27 +634,27 @@ private fun SaveButton(saved: Boolean, onToggle: () -> Unit, modifier: Modifier 
 @Composable
 private fun StatusChip(state: EventState, modifier: Modifier = Modifier) {
     val (label, accent) = when (state) {
-        EventState.LIVE -> "PHOTOS UPLOADING" to Fresh
-        EventState.UPCOMING -> "SAVE THE DATE" to Bone
-        EventState.OPEN -> "PHOTOS READY" to Bone
+        EventState.LIVE -> "UPLOADING" to Fresh
+        EventState.UPCOMING -> "UPCOMING" to Bone
+        EventState.OPEN -> "READY" to Bone
         EventState.PAST -> "ARCHIVE" to Bone.copy(alpha = 0.7f)
     }
     Surface(
-        shape = RoundedCornerShape(percent = 100),
-        color = Ink.copy(alpha = 0.55f),
+        shape = PillShape,
+        color = Ink.copy(alpha = 0.75f),
         modifier = modifier
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(accent))
             Text(
-                label,
-                style = Typography.labelSmall,
-                fontWeight = FontWeight.Bold,
+                text = label,
+                style = Typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
                 color = accent,
+                maxLines = 1,
             )
         }
     }

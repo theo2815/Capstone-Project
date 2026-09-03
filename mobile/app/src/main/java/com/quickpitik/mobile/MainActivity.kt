@@ -321,6 +321,15 @@ class MainActivity : ComponentActivity() {
                             showRunnerBottomBar -> RunnerFloatingBottomNav(
                                 currentRoute = currentRoute,
                                 onNavigate = { route ->
+                                    if (route == "events" && currentRoute == "gallery") {
+                                        if (!navController.popBackStack("events", inclusive = false)) {
+                                            navController.navigate("events") {
+                                                popUpTo("events") { inclusive = true }
+                                                launchSingleTop = true
+                                            }
+                                        }
+                                        return@RunnerFloatingBottomNav
+                                    }
                                     val isAlreadyOnOrders = route == "orders" && currentRoute?.startsWith("orders") == true
                                     if (currentRoute != route && !isAlreadyOnOrders) {
                                         navController.navigate(route) {
@@ -677,6 +686,7 @@ class MainActivity : ComponentActivity() {
                                     viewModel = profileViewModel,
                                     cartViewModel = cartViewModel,
                                     savedEventsViewModel = savedEventsViewModel,
+                                    runnerViewModel = runnerViewModel,
                                     onOpenEvent = { slug ->
                                         val event = runnerViewModel.eventBySlug(slug)
                                         if (event != null) {
@@ -687,7 +697,10 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     onBrowseEvents = {
-                                        navController.navigate("events")
+                                        navController.navigate("events") {
+                                            popUpTo("events") { inclusive = false }
+                                            launchSingleTop = true
+                                        }
                                     },
                                     onLogout = runnerLogout,
                                 )
