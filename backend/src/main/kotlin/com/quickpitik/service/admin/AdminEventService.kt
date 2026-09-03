@@ -82,8 +82,8 @@ class AdminEventService(
                 photoCount = 0,
                 participantCount = 0,
                 status = EventStatus.ACTIVE,
-                description = "",
-                organizerName = "",
+                description = req.description?.trim().orEmpty(),
+                organizerName = req.organizerName?.trim().orEmpty(),
                 pricePerPhoto = price,
                 createdAt = OffsetDateTime.now(),
                 updatedAt = OffsetDateTime.now(),
@@ -148,6 +148,26 @@ class AdminEventService(
                 before["location"] = event.location
                 after["location"] = newLocation
                 event.location = newLocation
+            }
+        }
+        // Organizer + race-day notes feed the runner-facing "About this race"
+        // strip. Same null/blank-means-no-change contract as title/location.
+        req.organizerName?.takeIf { it.isNotBlank() }?.let {
+            val newOrganizer = it.trim()
+            if (event.organizerName != newOrganizer) {
+                changes["organizerName"] = mapOf("from" to event.organizerName, "to" to newOrganizer)
+                before["organizerName"] = event.organizerName
+                after["organizerName"] = newOrganizer
+                event.organizerName = newOrganizer
+            }
+        }
+        req.description?.takeIf { it.isNotBlank() }?.let {
+            val newDescription = it.trim()
+            if (event.description != newDescription) {
+                changes["description"] = mapOf("from" to event.description, "to" to newDescription)
+                before["description"] = event.description
+                after["description"] = newDescription
+                event.description = newDescription
             }
         }
         // Price-per-photo override propagates to every photo already uploaded

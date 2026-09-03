@@ -49,19 +49,30 @@ data class CreateAdminEventRequest(
     @field:Size(max = 200)
     val location: String,
     val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
+    // Organizer name + race-day notes shown in the runner-facing "About this
+    // race" strip. Optional at create — blank leaves the entity defaults ("").
+    @field:Size(max = 120)
+    val organizerName: String? = null,
+    @field:Size(max = 600)
+    val description: String? = null,
 )
 
-// PATCH /admin/events/{id} — body { title?, date?, location?, pricePerPhoto? }.
-// Per Q-A3 these are the only admin-editable fields; status and slug stay
+// PATCH /admin/events/{id} — body { title?, date?, location?, pricePerPhoto?,
+// organizerName?, description? }. Admin-editable fields; status and slug stay
 // fixed (slug to keep public URLs stable, status to keep state machines
 // out of the admin surface). When `pricePerPhoto` changes, AdminEventService
 // also re-prices existing `photos.price_php` rows under the same event so the
 // new price takes effect across runner-facing galleries and carts.
+// organizerName + description feed the runner-facing "About this race" strip.
 data class UpdateAdminEventRequest(
     val title: String? = null,
     val date: String? = null,
     val location: String? = null,
     val pricePerPhoto: BigDecimal? = null,
+    @field:Size(max = 120)
+    val organizerName: String? = null,
+    @field:Size(max = 600)
+    val description: String? = null,
 )
 
 data class AdminEventDeleteResponseDto(

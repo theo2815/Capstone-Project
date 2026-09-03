@@ -65,6 +65,8 @@ class AdminEventsController(
         @RequestParam("date") date: String,
         @RequestParam("location") location: String,
         @RequestParam("pricePerPhoto", required = false) pricePerPhoto: String?,
+        @RequestParam("organizerName", required = false) organizerName: String?,
+        @RequestParam("description", required = false) description: String?,
         @RequestPart("cover", required = false) cover: MultipartFile?,
     ): AdminListEventDto {
         val req = CreateAdminEventRequest(
@@ -72,6 +74,8 @@ class AdminEventsController(
             date = date.trim(),
             location = location.trim(),
             pricePerPhoto = parsePrice(pricePerPhoto) ?: BigDecimal.ZERO,
+            organizerName = organizerName?.trim(),
+            description = description?.trim(),
         )
         if (req.title.isBlank()) {
             throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "title is required", field = "title")
@@ -100,6 +104,8 @@ class AdminEventsController(
         @RequestParam(required = false) date: String?,
         @RequestParam(required = false) location: String?,
         @RequestParam(required = false) pricePerPhoto: String?,
+        @RequestParam(required = false) organizerName: String?,
+        @RequestParam(required = false) description: String?,
         @RequestParam(required = false) removeCover: Boolean?,
         @RequestPart("cover", required = false) cover: MultipartFile?,
     ): AdminListEventDto {
@@ -108,6 +114,8 @@ class AdminEventsController(
             date = date?.trim()?.takeIf { it.isNotEmpty() },
             location = location?.trim()?.takeIf { it.isNotEmpty() },
             pricePerPhoto = parsePrice(pricePerPhoto),
+            organizerName = organizerName?.trim()?.takeIf { it.isNotEmpty() },
+            description = description?.trim()?.takeIf { it.isNotEmpty() },
         )
         val coverUpload = cover?.takeUnless { it.isEmpty }?.let {
             AdminEventService.CoverUpload(bytes = it.bytes, contentType = it.contentType)
