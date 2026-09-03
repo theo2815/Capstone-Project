@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { SiteHeader } from "@/components/layout/site-header";
 import { AvatarDisc } from "@/components/account/avatar-disc";
@@ -22,6 +22,7 @@ import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useAuth } from "@/hooks/use-auth";
 import { useEffectiveRole } from "@/hooks/use-effective-role";
+import { useNextTarget } from "@/hooks/use-redirect-target";
 import {
   usePhotographerEvents,
   COVERED_EVENTS_MAX,
@@ -125,7 +126,10 @@ function RunnerProfileBody({
             currentPath={ROUTES.PROFILE}
           />
           <div className="stagger-children min-w-0 pb-8 md:pb-20 md:border-l md:border-line md:-ml-6 lg:-ml-10 md:pl-6 lg:pl-10">
-            <SelfieLibrarySection />
+            {/* Suspense: the section reads `?next=` via useSearchParams(). */}
+            <Suspense fallback={null}>
+              <SelfieLibrarySection />
+            </Suspense>
             <RaceLogSection />
           </div>
         </div>
@@ -141,6 +145,10 @@ function roleLabel(role: Role): string {
 }
 
 function SelfieLibrarySection() {
+  // The event page sends selfie-less runners here with `?next=/events/<slug>`
+  // (photo-alert opt-in, selfie-search tip). Give them the way back — the
+  // param used to be written and never read, stranding them on the profile.
+  const returnTo = useNextTarget();
   return (
     <Slab
       id="selfies"
@@ -148,7 +156,16 @@ function SelfieLibrarySection() {
       title="Selfie library"
       caption="Used by face search across every event"
     >
-      <SelfieLibrary />
+      {returnTo && (
+        <Link
+          href={returnTo}
+          className="inline-flex items-center gap-1.5 font-sans text-sm text-ink hover:text-fresh transition-colors mb-5"
+        >
+          <span aria-hidden="true">←</span>
+          Back to the race
+        </Link>
+      )}
+      <SelfieLibrary returnTo={returnTo} />
     </Slab>
   );
 }

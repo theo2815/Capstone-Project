@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ChangeEvent } from "react";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   SELFIE_MAX,
@@ -20,9 +21,13 @@ import {
   validateImageFile,
 } from "@/lib/image-utils";
 
-export function SelfieLibrary() {
+// `returnTo`: where the runner came from (the event page's `?next=`). A
+// successful add offers the way back on the toast — never navigates by
+// itself, so a runner adding three angles isn't bounced after the first.
+export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null }) {
   const { selfies } = useSelfiesList();
   const queryClient = useQueryClient();
+  const router = useRouter();
   const { showToast } = useToast();
 
   const [busy, setBusy] = useState(false);
@@ -100,6 +105,9 @@ export function SelfieLibrary() {
             : addedCount === 1
               ? "Selfie added to your library."
               : `Added ${addedCount} selfies to your library.`,
+          action: returnTo
+            ? { label: "Back to the race", onClick: () => router.push(returnTo) }
+            : undefined,
         });
       } else if (capBlocked) {
         setError(
