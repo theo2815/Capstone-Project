@@ -1,5 +1,7 @@
 package com.quickpitik.mobile.ui.photographer
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -10,18 +12,22 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Place
@@ -31,7 +37,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -56,6 +62,7 @@ import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerTransactionDto
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.ErrorView
 import com.quickpitik.mobile.ui.theme.FieldShape
@@ -66,14 +73,18 @@ import com.quickpitik.mobile.ui.theme.Kicker
 import com.quickpitik.mobile.ui.theme.Line
 import com.quickpitik.mobile.ui.theme.LoadingSkeleton
 import com.quickpitik.mobile.ui.theme.NumeralStyle
+import com.quickpitik.mobile.ui.theme.PillShape
 import com.quickpitik.mobile.ui.theme.PrimaryCta
 import com.quickpitik.mobile.ui.theme.QpCard
+import com.quickpitik.mobile.ui.theme.QpCardShape
 import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.StatusChip
 import com.quickpitik.mobile.ui.theme.StatusTone
 import com.quickpitik.mobile.ui.theme.SuccessGreen
 import com.quickpitik.mobile.ui.theme.TileShape
+import com.quickpitik.mobile.ui.theme.Typography
+import com.quickpitik.mobile.ui.theme.WarningOrange
 
 private data class SetupStep(
     val title: String,
@@ -145,9 +156,39 @@ fun PhotographerOverviewScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
-        StatusChip(text = chipText, tone = chipTone)
+        if (isApproved) {
+            StatusChip(text = chipText, tone = chipTone)
+        } else {
+            Surface(
+                shape = PillShape,
+                color = Ink,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    val dotColor = when {
+                        isRejected || currentStatus == "rejected" -> ErrorRed
+                        completedCount == setupItems.size -> Fresh
+                        else -> WarningOrange
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(dotColor),
+                    )
+                    Text(
+                        text = if (completedCount == setupItems.size) "READY FOR REVIEW" else "SETUP PENDING · $completedCount OF ${setupItems.size}",
+                        style = Typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
+                        color = Bone,
+                    )
+                }
+            }
+        }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         Text(
             text = if (isApproved) "Welcome back, $firstName." else "Welcome, $firstName.",
@@ -158,7 +199,7 @@ fun PhotographerOverviewScreen(
         )
 
         if (!isApproved) {
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = when {
                     currentStatus == "pending" ->
@@ -166,12 +207,58 @@ fun PhotographerOverviewScreen(
                     isRejected || currentStatus == "rejected" ->
                         rejectionReason ?: "Some details need updates before runners can find you."
                     else ->
-                        "Finish your studio setup to start covering events."
+                        "Finish your 8 studio requirements below to start covering events and uploading photos."
                 },
                 color = Slate,
                 fontSize = 14.sp,
                 lineHeight = 20.sp,
             )
+        }
+
+        if (isRejected || currentStatus == "rejected") {
+            Spacer(modifier = Modifier.height(14.dp))
+            Surface(
+                shape = QpCardShape,
+                color = ErrorRed.copy(alpha = 0.08f),
+                border = BorderStroke(1.dp, ErrorRed.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(ErrorRed.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = null,
+                            tint = ErrorRed,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Changes needed on studio setup",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = Ink,
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = rejectionReason ?: "Some details need updates before runners can find you. Open settings below to make corrections.",
+                            style = Typography.bodySmall,
+                            color = Slate,
+                            lineHeight = 16.sp,
+                        )
+                    }
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -571,40 +658,84 @@ private fun SetupHomeBody(
         }
         is VerificationUiState.Success -> {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                QpCard(padding = 18.dp) {
+                QpCard(padding = 20.dp) {
+                    // Header Row: Kicker & Percent Pill
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 10.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = "$completedCount of ${items.size} done",
-                            color = Ink,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = "${completedCount * 100 / items.size}%",
-                            color = Slate,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
+                        Column {
+                            Kicker(text = "Studio Launch Checklist", color = SlateSoft)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "$completedCount of ${items.size} completed",
+                                color = Ink,
+                                style = Typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Surface(
+                            shape = PillShape,
+                            color = if (completedCount == items.size) Fresh.copy(alpha = 0.12f) else Line.copy(alpha = 0.6f),
+                        ) {
+                            Text(
+                                text = "${completedCount * 100 / items.size}%",
+                                color = if (completedCount == items.size) Fresh else Ink,
+                                style = Typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
+                        }
                     }
-                    LinearProgressIndicator(
-                        progress = completedCount.toFloat() / items.size.toFloat(),
-                        color = if (isRejected) ErrorRed else Fresh,
-                        trackColor = Line,
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Custom animated progress bar — no M3 stop dot artifact!
+                    val animatedProgress by animateFloatAsState(
+                        targetValue = completedCount.toFloat() / items.size.toFloat(),
+                        animationSpec = tween(400),
+                        label = "setupProgress",
+                    )
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(TileShape),
+                            .height(8.dp)
+                            .clip(PillShape)
+                            .background(Line.copy(alpha = 0.5f)),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(fraction = animatedProgress.coerceIn(0f, 1f))
+                                .fillMaxHeight()
+                                .clip(PillShape)
+                                .background(if (isRejected) ErrorRed else Fresh),
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Explanatory helper caption
+                    val helperText = when {
+                        completedCount == items.size -> "All requirements completed! Submit for admin verification in settings."
+                        completedCount == 0 -> "Complete these requirements to start covering races and selling photos."
+                        else -> "${items.size - completedCount} requirements left before your studio can be approved."
+                    }
+                    Text(
+                        text = helperText,
+                        color = Slate,
+                        style = Typography.bodySmall,
+                        lineHeight = 16.sp,
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    // 2-column grid of SetupTile
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         for (i in items.indices step 2) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
                                 SetupTile(
                                     step = items[i],
                                     onClick = onNavigateToSettings,
@@ -625,7 +756,7 @@ private fun SetupHomeBody(
                 }
 
                 PrimaryCta(
-                    text = "Open settings",
+                    text = "Open settings →",
                     onClick = onNavigateToSettings,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -645,53 +776,75 @@ private fun SetupTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val borderColor = if (step.isCompleted) SuccessGreen.copy(alpha = 0.4f) else Line
-    val backgroundColor = if (step.isCompleted) SuccessGreen.copy(alpha = 0.06f) else Bone
-    val tint = if (step.isCompleted) SuccessGreen else SlateSoft
+    val isDone = step.isCompleted
+    val borderColor = if (isDone) SuccessGreen.copy(alpha = 0.35f) else Line
+    val backgroundColor = if (isDone) SuccessGreen.copy(alpha = 0.05f) else Bone
+    val iconBg = if (isDone) SuccessGreen.copy(alpha = 0.15f) else BoneDeep
+    val iconTint = if (isDone) SuccessGreen else Slate
     Row(
         modifier = modifier
-            .height(60.dp)
-            .background(backgroundColor, FieldShape)
-            .border(BorderStroke(1.dp, borderColor), FieldShape)
-            .clickable { onClick() }
-            .padding(10.dp),
+            .heightIn(min = 64.dp)
+            .clip(QpCardShape)
+            .background(backgroundColor)
+            .border(BorderStroke(1.dp, borderColor), QpCardShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(28.dp)
-                .clip(TileShape)
-                .background(if (step.isCompleted) SuccessGreen.copy(alpha = 0.15f) else Line),
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(iconBg)
+                .border(BorderStroke(1.dp, if (isDone) SuccessGreen.copy(alpha = 0.25f) else Line), CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = step.icon,
                 contentDescription = step.title,
-                tint = tint,
+                tint = iconTint,
                 modifier = Modifier.size(16.dp),
             )
         }
-        Spacer(modifier = Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.Center,
+        ) {
             Text(
                 text = step.title,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = Ink,
+                maxLines = 1,
             )
-            Text(
-                text = if (step.isCompleted) "Complete" else "Required",
-                fontSize = 10.sp,
-                color = tint,
-            )
-        }
-        if (step.isCompleted) {
-            Icon(
-                imageVector = Icons.Default.Check,
-                contentDescription = "Done",
-                tint = SuccessGreen,
-                modifier = Modifier.size(14.dp),
-            )
+            Spacer(modifier = Modifier.height(2.dp))
+            if (isDone) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Done",
+                        tint = SuccessGreen,
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Text(
+                        text = "Complete",
+                        fontSize = 11.sp,
+                        color = SuccessGreen,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            } else {
+                Text(
+                    text = "Required",
+                    fontSize = 11.sp,
+                    color = SlateSoft,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
         }
     }
 }
