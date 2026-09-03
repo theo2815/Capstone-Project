@@ -42,7 +42,7 @@ export interface PhotoPreviewItem {
 interface BasePhotoPreviewProps {
   photo: PhotoPreviewItem;
   eventName: string;
-  /** Event date as YYYY-MM-DD. Shown under the name on the `lg` rail only;
+  /** Event date as YYYY-MM-DD. Shown in the `lg` header row beside the counter;
    *  surfaces without it (cart, orders) simply render no date. */
   eventDate?: string;
   index: number;
@@ -336,17 +336,26 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
 
         {/* ── Rail ──────────────────────────────────────────────────── */}
         <aside className="flex flex-col shrink-0 lg:w-[340px] bg-bone border-t lg:border-t-0 lg:border-l border-line">
-          {/* lg header: counter · close. */}
-          <div className="hidden lg:flex items-center justify-end gap-4 px-6 py-4 border-b border-line">
-            {counter}
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close preview"
-              className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
-            >
-              <CloseGlyph />
-            </button>
+          {/* lg header: date on the left, counter + close on the right. */}
+          <div className="hidden lg:flex items-center justify-between gap-4 px-6 py-4 border-b border-line">
+            {dateLabel ? (
+              <Kicker as="span" tone="soft" tnum className="whitespace-nowrap">
+                {dateLabel}
+              </Kicker>
+            ) : (
+              <span />
+            )}
+            <div className="flex items-center gap-4">
+              {counter}
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close preview"
+                className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
+              >
+                <CloseGlyph />
+              </button>
+            </div>
           </div>
 
           <div className="px-5 pt-4 pb-3 md:px-6 lg:pt-6 lg:pb-0 lg:flex-1 lg:min-h-0">
@@ -370,14 +379,9 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               {credit && <div className="mt-1.5">{credit}</div>}
             </div>
 
-            {/* lg rail: date kicker, event name, credit. */}
+            {/* lg rail: event name, credit. (Date lives in the header row.) */}
             <div className="hidden lg:block">
-              {dateLabel && (
-                <Kicker as="p" tone="soft" tnum>
-                  {dateLabel}
-                </Kicker>
-              )}
-              <p className="mt-1 font-display font-extrabold text-[26px] leading-tight tracking-tight text-ink">
+              <p className="font-display font-extrabold text-[26px] leading-tight tracking-tight text-ink">
                 {eventName}
               </p>
               {credit && <div className="mt-5">{credit}</div>}
