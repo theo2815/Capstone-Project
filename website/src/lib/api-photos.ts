@@ -8,6 +8,7 @@ export interface EventPhotosQuery {
   bib?: string;
   offset?: number;
   limit?: number;
+  snapshotAt?: string;
 }
 
 export interface EventPhotosResult {
@@ -15,6 +16,7 @@ export interface EventPhotosResult {
   total: number;
   offset: number;
   limit: number;
+  snapshotAt?: string;
 }
 
 export async function fetchEventPhotos(
@@ -28,6 +30,7 @@ export async function fetchEventPhotos(
   if (query.bib) params.set("bib", query.bib);
   params.set("offset", String(offset));
   params.set("limit", String(limit));
+  if (query.snapshotAt) params.set("snapshotAt", query.snapshotAt);
   const res = await api.get<PaginatedResponse<Photo>>(
     `/events/${encodeURIComponent(slug)}/photos?${params.toString()}`,
   );

@@ -16,6 +16,8 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.UUID
 
 @Service
@@ -33,15 +35,22 @@ class PhotoService(
         bib: String?,
         pagination: PaginationParams,
         requesterUserId: UUID? = null,
+        snapshotAt: OffsetDateTime? = null,
     ): PaginatedResponse<PhotoDto> {
         val cleanedBib = normalizeBib(bib)
         // Plain browsing (no bib) takes the join-free fast path — the grid is
         // the hottest read in the system and needs neither the bibs join nor
         // the DISTINCT it forces.
-        val page = if (cleanedBib.isEmpty()) {
+        val gallerySnapshot = if (cleanedBib.isEmpty()) {
+            snapshotAt ?: OffsetDateTime.now(ZoneOffset.UTC).withNano(0)
+        } else {
+            null
+        }
+        val page = if (gallerySnapshot != null) {
             photoRepository.findForEventNoBib(
                 eventId = eventId,
-                status = PhotoStatus.LIVE,
+                snapshotAt = gallerySnapshot,
+                seed = gallerySnapshot.toEpochSecond(),
                 pageable = OffsetLimitPageable(pagination),
             )
         } else {
@@ -53,6 +62,7 @@ class PhotoService(
             )
         }
         return toPaginatedDto(page.content, page.totalElements, pagination, requesterUserId)
+            .copy(snapshotAt = gallerySnapshot)
     }
 
     fun findByEventAndPersonIds(

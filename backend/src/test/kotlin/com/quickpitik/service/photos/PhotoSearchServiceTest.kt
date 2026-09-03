@@ -109,7 +109,7 @@ class PhotoSearchServiceTest {
         // ("bad selfie") rather than a 503 ("service down, retry").
         assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.status)
         assertEquals("NO_FACES", ex.aiCode)
-        Mockito.verify(photoService, Mockito.never()).listForEvent(anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(photoService, Mockito.never()).listForEvent(anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
     }
 
     @Test
@@ -129,13 +129,13 @@ class PhotoSearchServiceTest {
     fun `with the fallback on an ai-api failure returns the full event grid`() {
         val service = service(fallback = true)
         whenFacesSearch().thenThrow(AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "offline"))
-        Mockito.`when`(photoService.listForEvent(anyArg(), anyArg(), anyArg(), anyArg()))
+        Mockito.`when`(photoService.listForEvent(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(PaginatedResponse(emptyList<PhotoDto>(), 7L, 0, 20))
 
         val result = service.searchByFace(eventId, selfie, "image/jpeg", "s.jpg", pagination)
 
         assertEquals(7L, result.total)
-        Mockito.verify(photoService).listForEvent(eqArg(eventId), Mockito.isNull(), anyArg(), anyArg())
+        Mockito.verify(photoService).listForEvent(eqArg(eventId), Mockito.isNull(), anyArg(), anyArg(), anyArg())
     }
 
     @Test
@@ -150,7 +150,7 @@ class PhotoSearchServiceTest {
             )
         }
 
-        Mockito.verify(photoService, Mockito.never()).listForEvent(anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(photoService, Mockito.never()).listForEvent(anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
     }
 
     @Test

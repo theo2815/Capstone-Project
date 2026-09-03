@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { buildWsUrl } from "@/lib/ws-url";
 import { getAccessToken } from "@/lib/auth";
-import type { EventPhotosResult, Photo } from "@/lib/api-photos";
+import type { Photo } from "@/lib/api-photos";
 
 interface PhotoPublishedMessage {
   type: "photo.published";
@@ -22,7 +22,6 @@ interface UseEventLivePhotosArgs {
 interface UseEventLivePhotosResult {
   isConnected: boolean;
   newCount: number;
-  resetNewCount: () => void;
   reconnectFailed: boolean;
   refresh: () => void;
 }
@@ -43,6 +42,7 @@ export function useEventLivePhotos(
   const wsRef = useRef<WebSocket | null>(null);
   const failedAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seenPhotoIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     if (!args.enabled) return;
@@ -88,28 +88,11 @@ export function useEventLivePhotos(
         try {
           const data = JSON.parse(event.data) as PhotoPublishedMessage;
           if (data.type !== "photo.published") return;
-          // Idempotent prepend to every cache slot for this event/bib.
-          // Server may push duplicates — guard by id. The cache is the
-          // InfiniteData shape useInfiniteList stores — prepend into page 0
-          // and bump every page's total (the flatten reads the last page's).
-          qc.setQueriesData<InfiniteData<EventPhotosResult>>(
-            { queryKey: ["events", args.slug, "photos"] },
-            (prev) => {
-              if (!prev || prev.pages.length === 0) return prev;
-              const seen = prev.pages.some((pg) =>
-                pg.items.some((p) => p.id === data.photo.id),
-              );
-              if (seen) return prev;
-              return {
-                ...prev,
-                pages: prev.pages.map((pg, i) => ({
-                  ...pg,
-                  items: i === 0 ? [data.photo, ...pg.items] : pg.items,
-                  total: pg.total + 1,
-                })),
-              };
-            },
-          );
+          // Keep the current snapshot stable. The badge lets the visitor pull
+          // a fresh, diversity-ranked first page without live arrivals jumping
+          // ahead of photographers who have not been represented yet.
+          if (seenPhotoIdsRef.current.has(data.photo.id)) return;
+          seenPhotoIdsRef.current.add(data.photo.id);
           setNewCount((c) => c + 1);
         } catch {
           // Silently drop malformed pushes.
@@ -150,9 +133,9 @@ export function useEventLivePhotos(
   return {
     isConnected,
     newCount,
-    resetNewCount: () => setNewCount(0),
     reconnectFailed,
     refresh: () => {
+      seenPhotoIdsRef.current.clear();
       qc.invalidateQueries({ queryKey: ["events", args.slug, "photos"] });
       setReconnectFailed(false);
       failedAttemptsRef.current = 0;

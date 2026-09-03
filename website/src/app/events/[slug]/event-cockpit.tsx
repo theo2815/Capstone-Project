@@ -832,7 +832,7 @@ function BrowseMode({
               <button
                 type="button"
                 onClick={() => {
-                  live.resetNewCount();
+                  live.refresh();
                   if (typeof window !== "undefined") {
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }

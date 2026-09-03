@@ -65,6 +65,12 @@ class Photo(
     @Column(name = "status", nullable = false, length = 20)
     var status: PhotoStatus = PhotoStatus.LIVE,
 
+    // When the photo became visible to runners. Upload time is not enough:
+    // watermarking is asynchronous, so a PROCESSING row can predate the
+    // gallery snapshot while becoming LIVE after it.
+    @Column(name = "published_at")
+    var publishedAt: OffsetDateTime? = if (status == PhotoStatus.LIVE) uploadedAt else null,
+
     @Column(name = "price_php", nullable = false, precision = 12, scale = 2)
     var pricePhp: BigDecimal,
 

@@ -75,7 +75,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Modifying
     @Query(
         "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, p.phash = :phash, " +
-            "p.phashClean = :phashClean, p.phashCentre = :phashCentre, " +
+            "p.phashClean = :phashClean, p.phashCentre = :phashCentre, p.publishedAt = CURRENT_TIMESTAMP, " +
             "p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
             "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING",
     )
@@ -133,25 +133,51 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     )
     fun findNearestByPhash(@Param("h") h: Long): List<Array<Any>>
 
-    // No-bib fast path for the event grid: skips the bibs join + DISTINCT that
-    // searchForEvent pays even when there is nothing to filter — the LEFT JOIN
-    // fans every photo out by its bib count before DISTINCT collapses it again.
-    // Same predicate, sort, and pagination as searchForEvent with bib = ''.
+    // No-bib event grid: merge each photographer's first-ranked photo, then
+    // each second-ranked photo, and so on. The snapshot freezes the LIVE set
+    // while the visitor pages; the seeded hash only varies near-equal rows.
+    // ponytail: this window ranks the event's LIVE rows; materialize only if
+    // EXPLAIN shows it hurting at real event scale.
     @Query(
-        """
-        SELECT p FROM Photo p
-        WHERE p.eventId = :eventId
-          AND p.status = :status
-        ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
+        value = """
+        WITH ranked AS (
+            SELECT p.id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY p.photographer_id
+                       ORDER BY p.captured_at DESC NULLS LAST, p.uploaded_at DESC, p.id ASC
+                   ) AS photographer_round,
+                   DATE_TRUNC('hour', COALESCE(p.captured_at, p.uploaded_at)) AS relevance_bucket,
+                   p.photographer_id,
+                   p.captured_at,
+                   p.uploaded_at
+            FROM photos p
+            WHERE p.event_id = :eventId
+              AND p.status = 'LIVE'
+              AND p.published_at <= :snapshotAt
+        )
+        SELECT p.*
+        FROM ranked r
+        JOIN photos p ON p.id = r.id
+        ORDER BY r.photographer_round ASC,
+                 (r.photographer_id IS NULL) ASC,
+                 r.relevance_bucket DESC,
+                 hashtextextended(COALESCE(r.photographer_id::text, 'unknown'), :seed) ASC,
+                 r.captured_at DESC NULLS LAST,
+                 r.uploaded_at DESC,
+                 r.id ASC
         """,
         countQuery = """
-        SELECT COUNT(p) FROM Photo p
-        WHERE p.eventId = :eventId AND p.status = :status
+        SELECT COUNT(*) FROM photos p
+        WHERE p.event_id = :eventId
+          AND p.status = 'LIVE'
+          AND p.published_at <= :snapshotAt
         """,
+        nativeQuery = true,
     )
     fun findForEventNoBib(
         @Param("eventId") eventId: UUID,
-        @Param("status") status: PhotoStatus,
+        @Param("snapshotAt") snapshotAt: OffsetDateTime,
+        @Param("seed") seed: Long,
         pageable: Pageable,
     ): Page<Photo>
 

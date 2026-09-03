@@ -106,7 +106,7 @@ class PhotoServiceAttributionTest {
         stubPage(emptyList())
 
         service().listForEvent(eventId, bib = null, pagination = pagination)
-        Mockito.verify(photoRepository).findForEventNoBib(anyArg(), anyArg(), anyArg())
+        Mockito.verify(photoRepository).findForEventNoBib(anyArg(), anyArg(), Mockito.anyLong(), anyArg())
         Mockito.verify(photoRepository, Mockito.never())
             .searchForEvent(anyArg(), anyArg(), anyArg(), anyArg())
 
@@ -141,7 +141,7 @@ class PhotoServiceAttributionTest {
     private fun stubPage(photos: List<Photo>) {
         // listForEvent with no bib takes the join-free fast path; the bib
         // variant keeps searchForEvent. Stub both so either route serves.
-        Mockito.`when`(photoRepository.findForEventNoBib(anyArg(), anyArg(), anyArg()))
+        Mockito.`when`(photoRepository.findForEventNoBib(anyArg(), anyArg(), Mockito.anyLong(), anyArg()))
             .thenReturn(PageImpl(photos))
         Mockito.`when`(photoRepository.searchForEvent(anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(PageImpl(photos))

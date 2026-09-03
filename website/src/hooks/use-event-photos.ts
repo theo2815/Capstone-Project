@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { useInfiniteList } from "@/hooks/use-infinite-list";
 import {
   fetchEventPhotos,
@@ -34,11 +35,26 @@ interface UseEventPhotosResult {
 // so cockpit (no bib) and browse (with bib) cache — and page — independently.
 export function useEventPhotos(args: UseEventPhotosArgs): UseEventPhotosResult {
   const bib = args.bib?.trim() || undefined;
+  const snapshotRef = useRef(args.initialPage?.snapshotAt);
 
   const list = useInfiniteList<Photo>({
-    queryKey: ["events", args.slug, "photos", { bib: bib ?? null }],
-    fetchPage: (offset, limit) =>
-      fetchEventPhotos(args.slug, { bib, offset, limit }),
+    queryKey: [
+      "events",
+      args.slug,
+      "photos",
+      { bib: bib ?? null, snapshotAt: args.initialPage?.snapshotAt ?? null },
+    ],
+    fetchPage: async (offset, limit) => {
+      const page = await fetchEventPhotos(args.slug, {
+        bib,
+        offset,
+        limit,
+        // Page zero starts a new gallery snapshot; later pages reuse it.
+        snapshotAt: !bib && offset > 0 ? snapshotRef.current : undefined,
+      });
+      if (!bib && page.snapshotAt) snapshotRef.current = page.snapshotAt;
+      return page;
+    },
     limit: PAGE_SIZE.PHOTO_INCREMENT,
     initialPage: !bib ? args.initialPage : undefined,
     enabled: args.enabled ?? true,
