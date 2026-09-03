@@ -169,6 +169,10 @@ fun StudioTabScaffold(
     // detailed view; this is the persistent ambient status.
     val queueStats by viewModel.queueStats.collectAsState()
     val watchState by viewModel.shutterWatchState.collectAsState()
+    val verificationState by viewModel.verificationState.collectAsState()
+    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
+    val isApproved = currentStatus == "approved"
+    val isPending = currentStatus == "pending"
     val unreadCount = remember(messages) { messages.count { it.readAt == null } }
     var showNotifDialog by remember { mutableStateOf(false) }
     // Switching to runner view pops the studio graph, which clears this VM —
@@ -253,6 +257,8 @@ fun StudioTabScaffold(
                 PhotographerTopBar(
                     avatarUrl = resolvedAvatarUrl,
                     unreadCount = unreadCount,
+                    isApproved = isApproved,
+                    isPending = isPending,
                     onOpenNotifications = { showNotifDialog = true },
                     onPreviewProfile = onPreviewProfile,
                     onSwitchToRunner = {
@@ -449,6 +455,8 @@ private fun StudioNavItem(
 private fun PhotographerTopBar(
     avatarUrl: String?,
     unreadCount: Int,
+    isApproved: Boolean = true,
+    isPending: Boolean = false,
     onOpenNotifications: () -> Unit,
     onPreviewProfile: () -> Unit,
     onSwitchToRunner: () -> Unit,
@@ -456,6 +464,14 @@ private fun PhotographerTopBar(
 ) {
     var showAvatarMenu by remember { mutableStateOf(false) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    var showSetupAlert by remember { mutableStateOf(false) }
+
+    if (showSetupAlert) {
+        StudioSetupRequiredDialog(
+            isPending = isPending,
+            onDismiss = { showSetupAlert = false },
+        )
+    }
     TopAppBar(
         title = {
             Column {
@@ -539,7 +555,11 @@ private fun PhotographerTopBar(
                         },
                         onClick = {
                             showAvatarMenu = false
-                            onPreviewProfile()
+                            if (!isApproved) {
+                                showSetupAlert = true
+                            } else {
+                                onPreviewProfile()
+                            }
                         },
                     )
                     DropdownMenuItem(
@@ -972,3 +992,40 @@ private fun formatInboxDate(iso: String): String {
         "${months[parts[1].toInt() - 1]} ${parts[2].toInt()}, ${parts[0]}"
     } catch (e: Exception) { iso }
 }
+
+@Composable
+fun StudioSetupRequiredDialog(
+    isPending: Boolean = false,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = Fresh),
+            ) {
+                Text("OK", color = Color.White)
+            }
+        },
+        title = {
+            Text(
+                text = if (isPending) "Verification Review Pending" else "Onboarding Setup Required",
+                fontWeight = FontWeight.Bold,
+                color = Ink,
+            )
+        },
+        text = {
+            Text(
+                text = if (isPending) {
+                    "Your professional studio setup is currently being reviewed by an administrator. Please wait for approval before covering events."
+                } else {
+                    "Your studio setup is not approved. Please complete the setup on the Settings tab and wait for administrator approval."
+                },
+                color = Ink,
+            )
+        },
+        containerColor = BoneDeep,
+    )
+}
+

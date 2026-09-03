@@ -83,6 +83,18 @@ fun PhotographerEarningsScreen(
 ) {
     val earningsState by viewModel.earningsUiState.collectAsState()
     val payoutActionState by viewModel.payoutActionState.collectAsState()
+    val verificationState by viewModel.verificationState.collectAsState()
+    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
+    val isApproved = currentStatus == "approved"
+    val isPending = currentStatus == "pending"
+    var showSetupAlert by remember { mutableStateOf(false) }
+
+    if (showSetupAlert) {
+        StudioSetupRequiredDialog(
+            isPending = isPending,
+            onDismiss = { showSetupAlert = false },
+        )
+    }
 
     Column(
         modifier = modifier
@@ -106,7 +118,13 @@ fun PhotographerEarningsScreen(
                 transactions = state.transactions,
                 monthTotals = state.monthTotals,
                 payoutActionState = payoutActionState,
-                onRequestPayout = { viewModel.submitPayoutRequest() },
+                onRequestPayout = {
+                    if (!isApproved) {
+                        showSetupAlert = true
+                    } else {
+                        viewModel.submitPayoutRequest()
+                    }
+                },
                 onWithdrawPayout = { viewModel.withdrawPayoutRequest(it) },
                 onClearActionState = { viewModel.clearPayoutActionState() },
             )

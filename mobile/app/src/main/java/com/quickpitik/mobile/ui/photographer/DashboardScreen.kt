@@ -124,7 +124,11 @@ import java.time.LocalDate
 @Composable
 fun PhotographerCaptureScreen(viewModel: PhotographerDashboardViewModel) {
     val activeEvent by viewModel.activeEvent.collectAsState()
-    if (activeEvent == null) {
+    val verificationState by viewModel.verificationState.collectAsState()
+    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
+    val isApproved = currentStatus == "approved"
+
+    if (activeEvent == null || !isApproved) {
         PublicEventPickerList(
             viewModel = viewModel,
             onSelectEvent = { event -> viewModel.selectEvent(event) }
@@ -1096,44 +1100,16 @@ private fun PublicEventPickerList(
     }
 
     if (showPendingAlert) {
-        AlertDialog(
-            onDismissRequest = { showPendingAlert = false },
-            confirmButton = {
-                Button(
-                    onClick = { showPendingAlert = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = Fresh)
-                ) {
-                    Text("OK", color = Color.White)
-                }
-            },
-            title = {
-                Text("Verification Review Pending", fontWeight = FontWeight.Bold, color = Ink)
-            },
-            text = {
-                Text("Your professional studio setup is currently being reviewed by an administrator. Please wait for approval before covering events.", color = Ink)
-            },
-            containerColor = BoneDeep
+        StudioSetupRequiredDialog(
+            isPending = true,
+            onDismiss = { showPendingAlert = false },
         )
     }
 
     if (showIncompleteAlert) {
-        AlertDialog(
-            onDismissRequest = { showIncompleteAlert = false },
-            confirmButton = {
-                Button(
-                    onClick = { showIncompleteAlert = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = Fresh)
-                ) {
-                    Text("OK", color = Color.White)
-                }
-            },
-            title = {
-                Text("Onboarding Setup Required", fontWeight = FontWeight.Bold, color = Ink)
-            },
-            text = {
-                Text("Your studio setup is not approved. Please complete the setup on the Settings tab and wait for administrator approval.", color = Ink)
-            },
-            containerColor = BoneDeep
+        StudioSetupRequiredDialog(
+            isPending = false,
+            onDismiss = { showIncompleteAlert = false },
         )
     }
 }

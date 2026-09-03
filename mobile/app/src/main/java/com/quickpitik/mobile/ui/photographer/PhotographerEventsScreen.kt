@@ -69,7 +69,29 @@ fun PhotographerEventsScreen(
     val eventsState by viewModel.eventsState.collectAsState()
     val publicEventsState by viewModel.publicEventsState.collectAsState()
     val activeEvent by viewModel.activeEvent.collectAsState()
+    val verificationState by viewModel.verificationState.collectAsState()
+    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase() ?: "incomplete"
+    val isApproved = currentStatus == "approved"
+    val isPending = currentStatus == "pending"
+    var showSetupAlert by remember { mutableStateOf(false) }
+    var alertIsPending by remember { mutableStateOf(false) }
     val today = remember { LocalDate.now() }
+
+    val guardAction: (() -> Unit) -> Unit = { action ->
+        if (!isApproved) {
+            alertIsPending = isPending
+            showSetupAlert = true
+        } else {
+            action()
+        }
+    }
+
+    if (showSetupAlert) {
+        StudioSetupRequiredDialog(
+            isPending = alertIsPending,
+            onDismiss = { showSetupAlert = false },
+        )
+    }
 
     // No mount-time fetch: with the tabs as NavHost routes this composable
     // recomposes on every tab visit AND on state restoration, so a
@@ -233,8 +255,8 @@ fun PhotographerEventsScreen(
                                 EventState.LIVE -> LiveEventCard(
                                     event = event,
                                     isActive = activeEvent?.id == event.id,
-                                    onSync = { onSyncEvent(event) },
-                                    onOpenShare = { onOpenShare(event) },
+                                    onSync = { guardAction { onSyncEvent(event) } },
+                                    onOpenShare = { guardAction { onOpenShare(event) } },
                                 )
                                 EventState.UPCOMING -> UpcomingEventCard(
                                     event = event,
@@ -242,7 +264,7 @@ fun PhotographerEventsScreen(
                                 )
                                 EventState.OPEN, EventState.PAST -> CompletedEventCard(
                                     event = event,
-                                    onOpenShare = { onOpenShare(event) },
+                                    onOpenShare = { guardAction { onOpenShare(event) } },
                                 )
                             }
                         }
