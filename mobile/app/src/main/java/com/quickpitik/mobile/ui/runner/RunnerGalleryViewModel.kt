@@ -21,7 +21,6 @@ import com.quickpitik.mobile.data.remote.WsState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -289,7 +288,6 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         }
         // Only derived channel state is reset here; the socket itself is owned
         // by the cockpit lifecycle effect keyed on the active event id.
-        bibSearchJob?.cancel()
         bibRequestJob?.cancel()
         gallerySnapshotAt = null
         _newPhotoCount.value = 0
@@ -313,26 +311,19 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         _eventDetail.value = null
         // As in selectEvent: the lifecycle effect closes the socket when the
         // active event id changes. Here we only drop the derived state.
-        bibSearchJob?.cancel()
         bibRequestJob?.cancel()
         gallerySnapshotAt = null
         _newPhotoCount.value = 0
     }
 
-    // Debounced: the cockpit's bib field calls this on every keystroke, and
-    // "1234" must not fire four network searches. Mirrors the live-photo
-    // refresh debounce below; a submitted query still lands within ~a third of
-    // a second of the last key.
-    private var bibSearchJob: Job? = null
+    // Submit-driven (website parity: the bib form submits, it does not search
+    // per keystroke), so there is no debounce — the skeleton must appear the
+    // moment the runner taps Search.
     private var bibRequestJob: Job? = null
 
     fun searchByBib(bib: String) {
-        bibSearchJob?.cancel()
         bibRequestJob?.cancel()
-        bibSearchJob = viewModelScope.launch {
-            delay(BIB_SEARCH_DEBOUNCE_MS)
-            runBibSearch(bib, showLoading = true)
-        }
+        runBibSearch(bib, showLoading = true)
     }
 
     /**
@@ -383,7 +374,6 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     fun clearFilter() {
         _isFiltered.value = false
         // Explicit tap — no reason to sit out the keystroke debounce.
-        bibSearchJob?.cancel()
         bibRequestJob?.cancel()
         runBibSearch("", showLoading = true)
     }
@@ -679,11 +669,5 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
         }
-    }
-
-    private companion object {
-        // Keystroke debounce for the bib field — collapses "1234" into one
-        // request without making a submitted search feel laggy.
-        const val BIB_SEARCH_DEBOUNCE_MS = 350L
     }
 }

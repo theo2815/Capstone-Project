@@ -16,5 +16,11 @@ val TileShape = RoundedCornerShape(8.dp)
 /** Input field / filter chip radius (website `rounded-xl` ≈ 12px). */
 val FieldShape = RoundedCornerShape(12.dp)
 
+/** Browse-wall photo tile radius (website photo-mosaic-tile `rounded-xl`). */
+val MosaicTileShape = RoundedCornerShape(12.dp)
+
+/** Lifted card elevation (website `--shadow-lift`), kept under the 4dp ceiling. */
+val CardLiftElevation = 3.dp
+
 /** Sparkline bar cap — rounded top only, square base. */
 val SparklineBarShape = RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)

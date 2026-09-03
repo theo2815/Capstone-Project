@@ -37,7 +37,9 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.toUpperCase
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -95,6 +97,25 @@ fun HeroText(
 ) {
     Text(
         text = text.uppercase(),
+        style = Typography.displayLarge,
+        color = color,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Annotated variant for a hero line that colours one span (the website's
+ * `We found <span class="text-fresh">12</span> photos.`). Uppercased with
+ * the spans preserved.
+ */
+@Composable
+fun HeroText(
+    text: AnnotatedString,
+    modifier: Modifier = Modifier,
+    color: Color = Ink,
+) {
+    Text(
+        text = text.toUpperCase(),
         style = Typography.displayLarge,
         color = color,
         modifier = modifier,
