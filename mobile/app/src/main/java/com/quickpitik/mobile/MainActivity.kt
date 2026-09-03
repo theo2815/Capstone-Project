@@ -321,12 +321,12 @@ class MainActivity : ComponentActivity() {
                             showRunnerBottomBar -> RunnerFloatingBottomNav(
                                 currentRoute = currentRoute,
                                 onNavigate = { route ->
-                                    if (currentRoute != route) {
+                                    val isAlreadyOnOrders = route == "orders" && currentRoute?.startsWith("orders") == true
+                                    if (currentRoute != route && !isAlreadyOnOrders) {
                                         navController.navigate(route) {
-                                            if (route == "events") {
-                                                popUpTo("events") { inclusive = false }
-                                            }
+                                            popUpTo("events") { saveState = true }
                                             launchSingleTop = true
+                                            restoreState = true
                                         }
                                     }
                                 }
@@ -714,6 +714,12 @@ class MainActivity : ComponentActivity() {
                                     viewModel = cartViewModel,
                                     initialOrderId = entry.arguments?.getString("orderId"),
                                     onLogout = runnerLogout,
+                                    onBrowseEvents = {
+                                        navController.navigate("events") {
+                                            popUpTo("events") { inclusive = false }
+                                            launchSingleTop = true
+                                        }
+                                    },
                                 )
                             }
                             composable(

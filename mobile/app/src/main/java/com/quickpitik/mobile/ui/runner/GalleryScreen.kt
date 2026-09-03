@@ -243,12 +243,13 @@ fun RunnerGalleryScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
+                        BrandLogo(compact = true)
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "GALLERY HUB",
                             style = Typography.labelMedium,
                             color = Slate
                         )
-                        BrandLogo(compact = true)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         // Save-event affordance ON the event page (web parity:
