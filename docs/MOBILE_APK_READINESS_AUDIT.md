@@ -39,10 +39,10 @@ Before distributing the APK to teammates, ensure everyone understands the follow
   2. **Cleartext Blocked:** Release builds set `manifestPlaceholders["usesCleartextTraffic"] = "false"`, which instructs Android OS to reject all unencrypted HTTP traffic (such as `http://192.168.1.X:8080`).
   3. **Locked Server Config:** In release builds, `BuildConfig.DEBUG` is `false`. This hides the `DevServerRow` UI on the Login screen and disables `RetrofitClient.setBaseUrl()`, locking the app to the emulator-only fallback (`http://10.0.2.2:8080/`), rendering the app completely dead on physical devices.
 
-### Rule 2: Physical devices cannot use default `10.0.2.2:8080`
+### Rule 2: Default Backend is Production (`https://api.quickpitik.com/`)
 * **File:** [`mobile/app/src/main/java/com/quickpitik/mobile/data/remote/RetrofitClient.kt`](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/remote/RetrofitClient.kt)
-* **Reason:** `10.0.2.2` is a special loopback alias recognized only by the Android Studio Emulator. A physical phone has its own network interface and cannot reach `10.0.2.2`.
-* **Action:** Testers must either use the **in-app server switcher** to enter their PC's local Wi-Fi IP (e.g. `192.168.1.50:8080`) or establish an **ADB reverse proxy** (`adb reverse tcp:8080 tcp:8080`).
+* **Out of the Box:** The mobile APK now directly points to the live cloud backend (`https://api.quickpitik.com/`). Physical devices only need an active internet connection (Wi-Fi or cellular data) to connect, discover events, log in, and browse galleries.
+* **Local Development Override:** If a developer wishes to test against their local laptop rather than production, they can tap the **in-app server switcher** (`DevServerRow`) on the login screen to enter their laptop's Wi-Fi IP (e.g. `http://192.168.1.50:8080`) or establish an **ADB reverse proxy** (`adb reverse tcp:8080 tcp:8080`). Note that `10.0.2.2:8080` is only valid inside the Android Studio Emulator.
 
 ---
 
@@ -54,9 +54,9 @@ Before distributing the APK to teammates, ensure everyone understands the follow
    * [`gradle.properties`](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/mobile/gradle.properties) includes the Google OAuth Web Client ID (`QP_GOOGLE_SERVER_CLIENT_ID`).
    * For the Google button to work on an Android device, the SHA-1 fingerprint of the machine's `debug.keystore` must be registered in the Google Cloud Console under an Android OAuth Client for `com.quickpitik.mobile`.
    * *Graceful Fallback:* If not registered, the app **does not crash**; it gracefully catches `GetCredentialException` and displays *"Google sign-in unavailable. Use your email instead."* Standard email/password login and registration work 100% reliably.
-3. **Hardcoded ngrok Domain in AndroidManifest:**
-   * In [`AndroidManifest.xml`](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/AndroidManifest.xml), line 90 specifies `snippet-sheath-cloak.ngrok-free.dev` for email verification deep-link interception.
-   * If ngrok restarts and generates a new URL, clicking a verification link in an email client will open in Chrome instead of deep-linking directly into the app. (Verification still succeeds through the website).
+3. **Production Domain Configured for Deep Links:**
+   * In [`AndroidManifest.xml`](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/AndroidManifest.xml), the intent filter is configured to intercept `quickpitik.com` and `www.quickpitik.com` for `/verify-email` and `/confirm-email-change`.
+   * [`RetrofitClient.kt`](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/mobile/app/src/main/java/com/quickpitik/mobile/data/remote/RetrofitClient.kt) default base URL is configured to `https://api.quickpitik.com/`.
 4. **Google Fonts Runtime Resolution:**
    * The app uses Google Play Services Downloadable Fonts (`Anton`, `Archivo`, `Geist Mono`). On devices without Google Play Services or on first launch without an active internet connection, Jetpack Compose falls back cleanly to the system font (Roboto) without crashing.
 
