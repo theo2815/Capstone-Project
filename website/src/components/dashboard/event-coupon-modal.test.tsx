@@ -21,7 +21,7 @@ describe("EventCouponModal", () => {
     couponApi.putEventCoupon.mockResolvedValue(undefined);
   });
 
-  it("preselects the current owned paid event and creates without photo ids", async () => {
+  it("preselects the current paid event and creates without photo ids", async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
     render(
@@ -31,10 +31,10 @@ describe("EventCouponModal", () => {
         initialEventId="event-2"
         lockEvent
         events={[
-          { id: "foreign", name: "Foreign", ownedByMe: false, pricingMode: "paid" },
-          { id: "free", name: "Free", ownedByMe: true, pricingMode: "free" },
-          { id: "event-1", name: "First", ownedByMe: true, pricingMode: "paid" },
-          { id: "event-2", name: "Current", ownedByMe: true, pricingMode: "paid" },
+          { id: "admin", name: "Admin race", pricingMode: "paid" },
+          { id: "free", name: "Free", pricingMode: "free" },
+          { id: "event-1", name: "First", pricingMode: "paid" },
+          { id: "event-2", name: "Current", pricingMode: "paid" },
         ]}
       />,
     );
@@ -42,7 +42,8 @@ describe("EventCouponModal", () => {
     const eventSelect = await screen.findByLabelText("Event");
     expect(eventSelect).toHaveValue("event-2");
     expect(eventSelect).toBeDisabled();
-    expect(screen.queryByRole("option", { name: "Foreign" })).not.toBeInTheDocument();
+    // Covered admin events qualify; free ones never do.
+    expect(screen.getByRole("option", { name: "Admin race" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Free" })).not.toBeInTheDocument();
     await waitFor(() =>
       expect(couponApi.fetchEventCoupon).toHaveBeenCalledWith("event-2"),
@@ -61,5 +62,38 @@ describe("EventCouponModal", () => {
       }),
     );
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("offers an admin-created event the photographer covered", async () => {
+    render(
+      <EventCouponModal
+        isOpen
+        onClose={vi.fn()}
+        events={[
+          { id: "admin", name: "Admin race", pricingMode: "paid" },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByLabelText("Event")).toHaveValue("admin");
+    expect(screen.queryByText(/nothing to discount/i)).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(couponApi.fetchEventCoupon).toHaveBeenCalledWith("admin"),
+    );
+  });
+
+  it("explains the empty state without asking for a new event", () => {
+    render(
+      <EventCouponModal
+        isOpen
+        onClose={vi.fn()}
+        events={[{ id: "free", name: "Free", pricingMode: "free" }]}
+      />,
+    );
+
+    expect(screen.getByText(/nothing to discount/i)).toBeInTheDocument();
+    expect(screen.queryByText(/create a paid event/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Event")).not.toBeInTheDocument();
+    expect(couponApi.fetchEventCoupon).not.toHaveBeenCalled();
   });
 });

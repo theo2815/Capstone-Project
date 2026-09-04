@@ -12,6 +12,7 @@ import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.repository.DownloadGrantRepository
+import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PhotoRepository
@@ -251,6 +252,7 @@ class PhotoServiceAttributionTest {
             userRepository,
             PlatformProperties(),
             eventRepository,
+            Mockito.mock(EventPhotographerRepository::class.java),
             Mockito.mock(OrderRepository::class.java),
         ),
         eventRepository,

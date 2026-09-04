@@ -129,16 +129,29 @@ export default function FocusedSharePage() {
   // layouts below. Uploads (and the share band) only make sense once live.
   const owned = liveDetail.ownedByMe === true;
   const uploadsOpen = !owned || isOwnedEventLive(liveDetail);
+  // Coupons ride on coverage, not ownership (V49): any paid event this
+  // photographer covers — admin-created included — can carry their code. Free
+  // events have nothing to discount. Owned events get the button inside
+  // OwnedBand; covered admin events get a slim band of their own.
+  const paid = liveDetail.pricingMode !== "free";
+  const couponUi = paid ? (
+    <>
+      {!owned && <CoverageBand onCoupon={() => setCouponOpen(true)} />}
+      <EventCouponModal
+        isOpen={couponOpen}
+        onClose={() => setCouponOpen(false)}
+        events={[liveDetail]}
+        initialEventId={liveDetail.id}
+        lockEvent
+      />
+    </>
+  ) : null;
   const ownedUi = owned ? (
     <>
       <OwnedBand
         detail={liveDetail}
         onEdit={() => setEditOpen(true)}
-        onCoupon={
-          liveDetail.pricingMode === "free"
-            ? undefined
-            : () => setCouponOpen(true)
-        }
+        onCoupon={paid ? () => setCouponOpen(true) : undefined}
         onWithdraw={handleWithdraw}
       />
       <Modal
@@ -164,13 +177,6 @@ export default function FocusedSharePage() {
           onCancel={() => setEditOpen(false)}
         />
       </Modal>
-      <EventCouponModal
-        isOpen={couponOpen}
-        onClose={() => setCouponOpen(false)}
-        events={[liveDetail]}
-        initialEventId={liveDetail.id}
-        lockEvent
-      />
     </>
   ) : null;
 
@@ -187,6 +193,7 @@ export default function FocusedSharePage() {
           <BackChip />
           <Hero event={event} />
           {ownedUi}
+          {couponUi}
           {uploadsOpen && <NoPhotosYet eventId={event.id} />}
         </div>
       </main>
@@ -200,6 +207,7 @@ export default function FocusedSharePage() {
         <BackChip />
         <Hero event={event} />
         {ownedUi}
+        {couponUi}
         {uploadsOpen && <ShareHeroBand event={event} />}
         <Stats photographer={photographer} />
         <PhotoGrid
@@ -299,6 +307,37 @@ function OwnedBand({
             Withdraw request
           </button>
         )}
+      </div>
+    </section>
+  );
+}
+
+// Coverage band for an event someone else runs (admin or another
+// photographer). Same slab recipe as OwnedBand so the two read as siblings;
+// its only action is the coupon, since editing belongs to the event's owner.
+function CoverageBand({ onCoupon }: { onCoupon: () => void }) {
+  return (
+    <section className="mb-10 md:mb-12 border border-line rounded-2xl bg-bone-deep/30 p-6 md:p-8 flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
+      <div className="flex-1 min-w-0">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+          Your coverage
+        </p>
+        <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
+          Offer runners a code on your photos.
+        </p>
+        <p className="font-sans text-sm text-ink-soft mt-2">
+          The discount comes out of your share and covers every paid photo you
+          upload to this race.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={onCoupon}
+          className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+        >
+          Event coupon
+        </button>
       </div>
     </section>
   );

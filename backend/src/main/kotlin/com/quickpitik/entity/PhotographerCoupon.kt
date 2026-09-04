@@ -7,7 +7,8 @@ import jakarta.persistence.Table
 import java.time.OffsetDateTime
 import java.util.UUID
 
-// One coupon per photographer-owned event. `code` stays globally unique
+// One coupon per (event, photographer) the photographer covers — created or
+// uploaded to (V49; V47 required ownership). `code` stays globally unique
 // because a runner types only the code at checkout; event and owner are
 // derived from the persisted row, never accepted from the checkout client.
 @Entity

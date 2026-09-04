@@ -9,6 +9,8 @@ import com.quickpitik.dto.orders.CouponPreviewRequest
 import com.quickpitik.dto.orders.UpsertCouponRequest
 import com.quickpitik.dto.orders.toDto
 import com.quickpitik.dto.photos.CouponQuote
+import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventPhotographerId
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerCoupon
@@ -18,6 +20,7 @@ import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PhotoRepository
@@ -51,17 +54,18 @@ class CouponService(
     private val userRepository: UserRepository,
     private val platformProperties: PlatformProperties,
     private val eventRepository: EventRepository,
+    private val eventPhotographerRepository: EventPhotographerRepository,
     private val orderRepository: OrderRepository,
 ) {
     @Transactional(readOnly = true)
     fun get(photographerId: UUID, eventId: UUID): CouponDto? {
-        requireOwnedEvent(photographerId, eventId)
+        requireCoveredEvent(photographerId, eventId)
         return couponRepository.findByEventIdAndPhotographerId(eventId, photographerId)
             ?.let { it.toDto(usageCountOf(it)) }
     }
 
     fun upsert(photographerId: UUID, eventId: UUID, req: UpsertCouponRequest): CouponDto {
-        requireEligibleOwner(photographerId, eventId)
+        requireEligibleCoverage(photographerId, eventId)
         val code = normalise(req.code)
         if (!CODE_PATTERN.matches(code)) {
             throw ValidationException(
@@ -127,7 +131,7 @@ class CouponService(
 
     // Silent-idempotent, like SocialLinkService.delete.
     fun delete(photographerId: UUID, eventId: UUID) {
-        requireOwnedEvent(photographerId, eventId)
+        requireCoveredEvent(photographerId, eventId)
         val existing = couponRepository.findByEventIdAndPhotographerId(eventId, photographerId) ?: return
         couponRepository.delete(existing)
     }
@@ -227,12 +231,22 @@ class CouponService(
     private fun usageCountOf(coupon: PhotographerCoupon): Long =
         orderRepository.countByCouponIdAndStatusNot(coupon.id, OrderStatus.EXPIRED)
 
-    private fun requireOwnedEvent(photographerId: UUID, eventId: UUID) =
-        eventRepository.findByIdAndCreatedByAndDeletedAtIsNull(eventId, photographerId)
+    // "Covered" is the same predicate PhotographerEventService.getEventDetail
+    // uses: the photographer created the event (V46) or has an
+    // event_photographer row (first upload). Admin events have no creator, so
+    // ownership alone would lock out everyone who actually shot them. Uncovered
+    // and unknown events answer the same 404 — never leak existence.
+    private fun requireCoveredEvent(photographerId: UUID, eventId: UUID): Event {
+        val event = eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+        val covered = event.createdBy == photographerId ||
+            eventPhotographerRepository.existsById(EventPhotographerId(eventId, photographerId))
+        if (!covered) throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+        return event
+    }
 
-    private fun requireEligibleOwner(photographerId: UUID, eventId: UUID) {
-        val event = requireOwnedEvent(photographerId, eventId)
+    private fun requireEligibleCoverage(photographerId: UUID, eventId: UUID) {
+        val event = requireCoveredEvent(photographerId, eventId)
         val user = userRepository.findById(photographerId).orElse(null)
             ?: throw NotFoundException(code = ErrorCodes.USER_NOT_FOUND, message = "User not found")
         if (user.suspendedAt != null) {

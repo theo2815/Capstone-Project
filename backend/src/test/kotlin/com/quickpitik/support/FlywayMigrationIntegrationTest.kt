@@ -68,7 +68,8 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1, count)
     }
 
-    // V45/V47: one coupon per owned event, with usage reservation on orders.
+    // V45/V47/V49: one coupon per covered (event, photographer), with usage
+    // reservation on orders.
     @Test
     fun `photographer coupon schema is present`() {
         val couponColumns = jdbcTemplate.queryForList(
@@ -89,11 +90,22 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         assertTrue("discount_php" in columns("order_items"))
         assertTrue("discount_php" in columns("transactions"))
 
-        val ownerConstraint = jdbcTemplate.queryForObject(
-            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'fk_photographer_coupons_owned_event'",
+        // V49 replaced the events(id, created_by) FK with one on coverage.
+        val coverageConstraint = jdbcTemplate.queryForObject(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'fk_photographer_coupons_coverage'",
             String::class.java,
         ).orEmpty()
-        assertTrue(ownerConstraint.contains("event_id, photographer_id"), ownerConstraint)
+        assertTrue(coverageConstraint.contains("REFERENCES event_photographer(event_id, photographer_id)"), coverageConstraint)
+        val ownerConstraints = jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM pg_constraint WHERE conname = 'fk_photographer_coupons_owned_event'",
+            Int::class.java,
+        )
+        assertEquals(0, ownerConstraints)
+        val perPhotographerIndex = jdbcTemplate.queryForObject(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_photographer_coupons_event_photographer'",
+            String::class.java,
+        ).orEmpty()
+        assertTrue(perPhotographerIndex.contains("(event_id, photographer_id)"), perPhotographerIndex)
     }
 
     // V46: photographer-owned events + the four event review message kinds.
