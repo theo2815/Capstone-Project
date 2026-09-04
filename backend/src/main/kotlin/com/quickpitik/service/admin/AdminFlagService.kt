@@ -59,7 +59,10 @@ class AdminFlagService(
         ensureEnabled()
         val statusWire = statusFilter?.takeIf { it.isNotBlank() }?.let { parseStatus(it).wire }
         // ponytail: LIKE wildcards in q are left as-is (admin-only search); only the length is capped.
-        val q = query?.takeIf { it.isNotBlank() }?.take(100)
+        // '' not null: PG 18 types a null bind inside LOWER(CONCAT(...)) as
+        // bytea and the query 500s (seen in prod 2026-09-04). Same shape as
+        // EventRepository/PayoutCycleRepository.
+        val q = query?.takeIf { it.isNotBlank() }?.take(100) ?: ""
         val page = flagRepository.pageForAdmin(statusWire, q, OffsetLimitPageable(params))
         if (page.isEmpty) return PaginatedResponse.empty(params)
         val items = hydrateMany(page.content)
