@@ -4,10 +4,7 @@ import { notFound } from "next/navigation";
 import { SiteHeader } from "@/components/layout/site-header";
 import { fetchEventDetail } from "@/lib/api-events";
 import { fetchEventPhotos } from "@/lib/api-photos";
-import { deriveEventState } from "@/lib/event-catalog";
 import { EventCockpit } from "./event-cockpit";
-import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
-import type { EventDetail } from "@/types/event";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 
 interface EventPageProps {
@@ -46,19 +43,11 @@ export default async function EventPage({ params }: EventPageProps) {
   const event = await getEventDetail(slug);
   if (!event) notFound();
 
-  // Pre-race-day events stay viewable as a public page but the gallery is
-  // gated behind race day. Show a notice with the cover + metadata and a
-  // clear "Opens on [date]" call-out so runners (and admin previewing
-  // their creation) see something instead of a 404.
-  if (deriveEventState(event.date) === "upcoming") {
-    return (
-      <main className="bg-bone text-ink min-h-screen">
-        <SiteHeader />
-        <UpcomingEventNotice event={event} />
-      </main>
-    );
-  }
-
+  // Every existing event (any state, including pre-race-day upcoming) renders
+  // the full cockpit. With zero photos the cockpit shows its "Photos aren't
+  // ready yet" empty state + the get-notified opt-in, so an upcoming event is
+  // just a no-photos cockpit — no separate pre-race-day page.
+  //
   // Initial photo seed for first paint = page 0 (one Load-more page). The whole
   // envelope is threaded through so the grid header knows the true server total,
   // not the seed length. Browse mode pages via React Query from here; a bib
@@ -75,64 +64,6 @@ export default async function EventPage({ params }: EventPageProps) {
         <EventCockpit event={event} initialPhotos={initialPhotos} />
       </Suspense>
     </main>
-  );
-}
-
-function UpcomingEventNotice({ event }: { event: EventDetail }) {
-  const raceDay = new Date(`${event.date}T00:00:00`);
-  const dateLabel = raceDay.toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-  const cityUpper = (event.location.split(",").pop() ?? event.location)
-    .trim()
-    .toUpperCase();
-  return (
-    <section className="px-6 md:px-10 py-16 md:py-24">
-      <div className="mx-auto max-w-3xl">
-        <div className="relative aspect-[16/9] rounded-2xl overflow-hidden bg-ink">
-          {event.bannerUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={event.bannerUrl}
-              alt=""
-              aria-hidden="true"
-              className="absolute inset-0 w-full h-full object-cover"
-            />
-          ) : (
-            <div className="absolute inset-0 flex items-center justify-center px-6">
-              <span className="font-display text-bone/25 text-3xl md:text-5xl font-medium tracking-tight text-center leading-tight">
-                {event.name}
-              </span>
-            </div>
-          )}
-        </div>
-        <div className="mt-10">
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh">
-            Opens · <span className="tnum">{dateLabel}</span>
-          </p>
-          <h1 className="mt-4 font-display font-extrabold text-3xl md:text-5xl tracking-tight leading-[1.05] text-ink">
-            {event.name}
-          </h1>
-          <p className="mt-4 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
-            {cityUpper}
-          </p>
-          <p className="mt-2 font-sans text-base text-ink-soft max-w-prose">
-            {event.location}
-          </p>
-          <p className="mt-10 font-sans text-base md:text-lg text-ink-soft max-w-prose">
-            The gallery and runner search open on race day. Photographers have
-            a four-day window from race day to upload — check back then to
-            find your photos.
-          </p>
-          <div className="mt-2 max-w-md">
-            <PhotoAlertToggle eventSlug={event.slug} />
-          </div>
-        </div>
-      </div>
-    </section>
   );
 }
 
