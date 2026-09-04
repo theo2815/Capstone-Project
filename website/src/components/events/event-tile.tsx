@@ -136,17 +136,6 @@ export function EventTile(props: EventTileProps) {
   );
 
   if (isBrowse) {
-    if (isUpcoming) {
-      return (
-        <div
-          aria-label={`${event.name} — opens on race day`}
-          className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden"
-          style={animationStyle}
-        >
-          {body}
-        </div>
-      );
-    }
     const hrefOverride = (props as EventTileBrowseProps).hrefOverride;
     return (
       <Link
@@ -198,19 +187,13 @@ export function EventTile(props: EventTileProps) {
 
 function BrowseFooter({ isUpcoming }: { isUpcoming: boolean }) {
   // Card body already carries date · city + title + location, so the footer
-  // is just the action affordance. Upcoming events are non-interactive — show
-  // the wait copy instead of an arrow so runners aren't tempted to click.
+  // is just the action affordance. Upcoming events are clickable too — the
+  // detail page lets runners turn on the photos-ready alert before race day.
   return (
     <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
-      {isUpcoming ? (
-        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
-          Opens on race day
-        </span>
-      ) : (
-        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors">
-          Open →
-        </span>
-      )}
+      <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors">
+        {isUpcoming ? "Get notified →" : "Open →"}
+      </span>
     </div>
   );
 }

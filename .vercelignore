@@ -1,0 +1,17 @@
+# Vercel CLI deploys from the repo root (Root Directory = website).
+# Everything else is other modules and must never be uploaded.
+ai-api
+backend
+mobile
+desktop
+docs
+Papers-For-Capstone
+Logo Example
+.claude
+.github
+.vscode
+website/node_modules
+website/.next
+website/.env*
+!website/.env.local.example
+!website/.env.prod.example
