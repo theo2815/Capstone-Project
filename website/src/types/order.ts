@@ -1,4 +1,9 @@
-export type OrderStatus = "PENDING" | "PAID" | "FULFILLED" | "REFUNDED";
+export type OrderStatus =
+  | "PENDING"
+  | "PAID"
+  | "FULFILLED"
+  | "REFUNDED"
+  | "EXPIRED";
 
 export interface CartItem {
   photoId: string;
@@ -25,6 +30,11 @@ export interface Order {
   redirectUrl?: string | null;
   // Photographer coupon entered at checkout (V45), if any.
   couponCode?: string | null;
+  qrPh?: {
+    imageUrl: string;
+    expiresAt: string;
+    returnToken?: string | null;
+  } | null;
 }
 
 // `price` is the list price; `discount` the coupon's share of it (0 or absent

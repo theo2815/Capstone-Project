@@ -2,14 +2,24 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
-import { cn, formatPrice, safeHttpUrl, safeUUID } from "@/lib/utils";
-import { postOrder } from "@/lib/api-orders";
+import { cn, formatPrice, safeUUID } from "@/lib/utils";
+import {
+  fetchOrderStatus,
+  fetchOrderStatusForUser,
+  postOrder,
+} from "@/lib/api-orders";
 import { postCouponPreview, type CouponPreview } from "@/lib/api-coupons";
 import { ApiError } from "@/lib/api";
 import { Kicker } from "@/components/ui/kicker";
@@ -27,18 +37,14 @@ function buildResumeUrl(pathname: string, sp: URLSearchParams | null): string {
   return queryStr ? `${pathname}?${queryStr}` : pathname;
 }
 
-type Step = "identify" | "payment" | "processing" | "success";
-type PaymentMethod = "gcash" | "maya" | "card";
+type Step = "identify" | "payment" | "processing" | "qr" | "success";
 
-const PAYMENT_OPTIONS: {
-  id: PaymentMethod;
-  label: string;
-  hint: string;
-}[] = [
-  { id: "gcash", label: "GCash", hint: "Open the GCash app to confirm." },
-  { id: "maya", label: "Maya", hint: "Open the Maya app to confirm." },
-  { id: "card", label: "Credit / Debit card", hint: "Visa, Mastercard, or JCB." },
-];
+interface QrPayment {
+  orderId: string;
+  imageUrl: string;
+  expiresAt: string;
+  returnToken?: string | null;
+}
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -74,13 +80,13 @@ export function CheckoutModal({
     {},
   );
 
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(
-    null,
-  );
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
-  // Q-008 RESOLVED: client-generated UUID per payment-method selection.
-  // Re-generates on method change or modal re-entry; backend dedupes for 24 h.
+  const [qrPayment, setQrPayment] = useState<QrPayment | null>(null);
+  const [qrCheckError, setQrCheckError] = useState<string | null>(null);
+  const [checkingPayment, setCheckingPayment] = useState(false);
+  const paymentCheckInFlight = useRef(false);
+  // Q-008 RESOLVED: one client-generated UUID per checkout attempt.
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   // Photographer coupon (V45). `coupon` is the server's priced preview for
   // the current cart — the only source of the discount the modal shows.
@@ -95,10 +101,11 @@ export function CheckoutModal({
     setEmail(authUser?.email ?? "");
     setConfirmEmail("");
     setErrors({});
-    setPaymentMethod(null);
     setPaymentError(null);
     setOrderId(null);
-    setIdempotencyKey(null);
+    setQrPayment(null);
+    setQrCheckError(null);
+    setIdempotencyKey(safeUUID());
     // A coupon was previewed against a specific cart; re-entry may follow a
     // cart edit, so it has to be re-applied.
     setCoupon(null);
@@ -179,8 +186,8 @@ export function CheckoutModal({
   };
 
   const handlePay = async () => {
-    if (!paymentMethod || !idempotencyKey) {
-      setPaymentError("Pick a payment method.");
+    if (!idempotencyKey) {
+      setPaymentError("Checkout is still loading. Try again.");
       return;
     }
     setPaymentError(null);
@@ -189,33 +196,26 @@ export function CheckoutModal({
     try {
       const order = await postOrder({
         items: items.map((i) => ({ photoId: i.photoId, eventId: i.eventId })),
-        paymentMethod,
+        paymentMethod: "qrph",
         recipientEmail: isAuthenticated ? undefined : email,
         couponCode: coupon?.code,
         idempotencyKey,
       });
 
-      if (order.redirectUrl) {
-        // PayMongo hosted-checkout flow: leave this page entirely. After the
-        // user pays, PayMongo bounces them to /orders/return?orderId=…&token=…
-        // (the success_url stamped on the Checkout Session). The polling
-        // page there flips us into the SuccessStep equivalent once the
-        // server-side webhook flips PAID.
-        const redirect = safeHttpUrl(order.redirectUrl);
-        if (!redirect) {
-          setPaymentError("Payment page unavailable. Try again.");
-          setStep("payment");
-          return;
-        }
-        window.location.href = redirect;
+      setOrderId(order.id);
+      if (order.status === "PAID" || order.status === "FULFILLED") {
+        clearCart();
+        queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
+        setStep("success");
         return;
       }
-
-      // No redirectUrl ⇒ idempotent replay of an already-PAID order, or the
-      // legacy stub path. Fall back to the in-modal success step.
-      queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
-      setOrderId(order.id);
-      setStep("success");
+      if (!order.qrPh) {
+        setPaymentError("QR code unavailable. Try again.");
+        setStep("payment");
+        return;
+      }
+      setQrPayment({ orderId: order.id, ...order.qrPh });
+      setStep("qr");
     } catch (err) {
       const message =
         err instanceof ApiError
@@ -225,6 +225,43 @@ export function CheckoutModal({
       setStep("payment");
     }
   };
+
+  const checkPaymentStatus = useCallback(async () => {
+    if (!qrPayment || paymentCheckInFlight.current) return;
+    paymentCheckInFlight.current = true;
+    setCheckingPayment(true);
+    try {
+      const status = isAuthenticated
+        ? await fetchOrderStatusForUser(qrPayment.orderId)
+        : qrPayment.returnToken
+          ? await fetchOrderStatus(qrPayment.orderId, qrPayment.returnToken)
+          : null;
+      if (!status) throw new Error("Missing payment status token");
+      setQrCheckError(null);
+      if (status.status === "PAID" || status.status === "FULFILLED") {
+        clearCart();
+        queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
+        setStep("success");
+      } else if (status.status === "EXPIRED") {
+        setQrPayment(null);
+        setIdempotencyKey(safeUUID());
+        setPaymentError("That QR code expired. Generate a new one to continue.");
+        setStep("payment");
+      }
+    } catch {
+      setQrCheckError("We couldn't check yet. Your QR is still safe to use.");
+    } finally {
+      paymentCheckInFlight.current = false;
+      setCheckingPayment(false);
+    }
+  }, [clearCart, isAuthenticated, qrPayment, queryClient]);
+
+  useEffect(() => {
+    if (step !== "qr" || !qrPayment) return;
+    void checkPaymentStatus();
+    const timer = window.setInterval(() => void checkPaymentStatus(), 2500);
+    return () => window.clearInterval(timer);
+  }, [checkPaymentStatus, qrPayment, step]);
 
   const handleSuccessClose = () => {
     clearCart();
@@ -262,9 +299,11 @@ export function CheckoutModal({
               {step === "identify"
                 ? "Where should we send them?"
                 : step === "payment"
-                  ? "Pick how to pay."
+                  ? "Pay with QR Ph."
                   : step === "processing"
-                    ? "Confirming…"
+                    ? "Generating your QR…"
+                    : step === "qr"
+                      ? "Scan. Pay. Done."
                     : "All yours."}
             </p>
             <StepIndicator step={step} isAuthenticated={isAuthenticated} />
@@ -309,14 +348,6 @@ export function CheckoutModal({
             <PaymentStep
               email={recipientEmail ?? ""}
               isAuthenticated={isAuthenticated}
-              paymentMethod={paymentMethod}
-              onPaymentChange={(m) => {
-                setPaymentMethod(m);
-                setPaymentError(null);
-                // Q-008: regenerate idempotencyKey on method change. Different
-                // method = different intent, must not dedupe against prior.
-                setIdempotencyKey(safeUUID());
-              }}
               paymentError={paymentError}
               total={payable}
               itemCount={itemCount}
@@ -339,6 +370,15 @@ export function CheckoutModal({
             />
           )}
           {step === "processing" && <ProcessingStep />}
+          {step === "qr" && qrPayment && (
+            <QrPaymentStep
+              payment={qrPayment}
+              total={payable}
+              checking={checkingPayment}
+              checkError={qrCheckError}
+              onCheck={() => void checkPaymentStatus()}
+            />
+          )}
           {step === "success" && (
             <SuccessStep
               email={recipientEmail ?? ""}
@@ -362,8 +402,8 @@ function StepIndicator({
   isAuthenticated: boolean;
 }) {
   const steps = isAuthenticated
-    ? (["payment", "success"] as const)
-    : (["identify", "payment", "success"] as const);
+    ? (["payment", "qr", "success"] as const)
+    : (["identify", "payment", "qr", "success"] as const);
   const currentIdx = steps.findIndex((s) =>
     step === "processing" ? s === "payment" : s === step,
   );
@@ -436,7 +476,7 @@ function IdentifyStep({
 
       <button
         type="submit"
-        className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className="inline-flex w-full items-center justify-center gap-1.5 bg-fresh hover:bg-fresh-deep text-surface px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
       >
         Continue →
       </button>
@@ -483,8 +523,6 @@ function IdentifyStep({
 function PaymentStep({
   email,
   isAuthenticated,
-  paymentMethod,
-  onPaymentChange,
   paymentError,
   total,
   itemCount,
@@ -502,8 +540,6 @@ function PaymentStep({
 }: {
   email: string;
   isAuthenticated: boolean;
-  paymentMethod: PaymentMethod | null;
-  onPaymentChange: (m: PaymentMethod) => void;
   paymentError: string | null;
   /** What will be charged — already net of any applied coupon. */
   total: number;
@@ -682,44 +718,20 @@ function PaymentStep({
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-3">
           Payment method
         </p>
-        <ul className="space-y-2.5">
-          {PAYMENT_OPTIONS.map((opt) => {
-            const active = paymentMethod === opt.id;
-            return (
-              <li key={opt.id}>
-                <button
-                  type="button"
-                  onClick={() => onPaymentChange(opt.id)}
-                  aria-pressed={active}
-                  className={cn(
-                    "w-full text-left rounded-xl border px-5 py-4 transition-colors flex items-start gap-4",
-                    active
-                      ? "border-fresh bg-bone-deep"
-                      : "border-line bg-bone hover:bg-bone-deep",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "mt-0.5 size-4 rounded-full border-2 shrink-0 transition-colors",
-                      active
-                        ? "border-fresh bg-fresh"
-                        : "border-line bg-bone",
-                    )}
-                    aria-hidden="true"
-                  />
-                  <span className="flex-1 min-w-0">
-                    <span className="block font-display text-base font-medium text-ink leading-snug">
-                      {opt.label}
-                    </span>
-                    <span className="block mt-0.5 font-sans text-sm text-ink-soft">
-                      {opt.hint}
-                    </span>
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="rounded-xl border border-fresh bg-bone-deep px-5 py-4 flex items-start gap-4">
+          <span
+            className="mt-0.5 size-9 rounded-full bg-fresh text-surface shrink-0 inline-flex items-center justify-center font-mono text-sm font-bold"
+            aria-hidden="true"
+          >
+            QR
+          </span>
+          <div>
+            <p className="font-display text-base font-medium text-ink">QR Ph</p>
+            <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
+              Pay from any participating bank or e-wallet app that can scan QR Ph codes.
+            </p>
+          </div>
+        </div>
         {paymentError && (
           <p
             role="alert"
@@ -733,9 +745,9 @@ function PaymentStep({
       <button
         type="button"
         onClick={onPay}
-        className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className="inline-flex w-full items-center justify-center gap-1.5 bg-fresh hover:bg-fresh-deep text-surface px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
       >
-        Pay <span className="tnum">{formatPrice(total)}</span> →
+        Generate QR to pay <span className="tnum">{formatPrice(total)}</span> →
       </button>
 
       <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft text-center -mt-3">
@@ -755,6 +767,109 @@ function PaymentStep({
   );
 }
 
+function QrPaymentStep({
+  payment,
+  total,
+  checking,
+  checkError,
+  onCheck,
+}: {
+  payment: QrPayment;
+  total: number;
+  checking: boolean;
+  checkError: string | null;
+  onCheck: () => void;
+}) {
+  const expiresAt = new Intl.DateTimeFormat("en-PH", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(payment.expiresAt));
+
+  return (
+    <div className="px-6 md:px-7 py-6 flex flex-col gap-6">
+      <div className="text-center">
+        <Kicker as="p" tone="soft" tnum>
+          Amount due · {formatPrice(total)}
+        </Kicker>
+        <div className="mx-auto mt-3 w-fit rounded-2xl border border-line bg-white p-3 shadow-sm">
+          {/* PayMongo returns the QR as a trusted image data URI. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={payment.imageUrl}
+            alt={`QR Ph payment code for ${formatPrice(total)}`}
+            className="size-[248px] max-w-full object-contain"
+          />
+        </div>
+        <p className="mt-3 font-mono uppercase tracking-[0.14em] text-[13px] text-slate-soft tnum">
+          Valid until {expiresAt}
+        </p>
+      </div>
+
+      <a
+        href={payment.imageUrl}
+        download={`quickpitik-qrph-${payment.orderId}.png`}
+        className={cn(BTN_SECONDARY, BTN_SIZE.md, "w-full justify-center")}
+      >
+        Save QR code
+      </a>
+
+      <div
+        aria-live="polite"
+        className="rounded-xl border border-fresh/40 bg-fresh/10 px-5 py-4 flex items-start gap-3"
+      >
+        <span className="mt-1.5 size-2 rounded-full bg-fresh animate-pulse shrink-0" aria-hidden="true" />
+        <div>
+          <p className="font-display text-base font-medium text-ink">
+            {checking ? "Checking payment…" : "Waiting for payment"}
+          </p>
+          <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
+            Keep this checkout open after paying. Confirmation can take a few seconds.
+          </p>
+        </div>
+      </div>
+
+      <section className="rounded-xl border border-line bg-bone-deep px-5 py-4">
+        <p className="font-mono uppercase tracking-[0.14em] text-[13px] text-slate mb-3">
+          How to pay
+        </p>
+        <ol className="space-y-3 font-sans text-sm leading-relaxed text-ink-soft">
+          <li className="flex gap-3">
+            <span className="font-mono tnum text-fresh">01</span>
+            Open a participating bank or e-wallet app and choose Scan QR.
+          </li>
+          <li className="flex gap-3">
+            <span className="font-mono tnum text-fresh">02</span>
+            Scan this code, or save it and open the image on another device.
+          </li>
+          <li className="flex gap-3">
+            <span className="font-mono tnum text-fresh">03</span>
+            Confirm the exact amount in your app, then return here. We&apos;ll detect the payment automatically.
+          </li>
+        </ol>
+      </section>
+
+      {checkError && (
+        <p role="alert" className="font-sans text-sm text-error">
+          {checkError}
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={onCheck}
+        disabled={checking}
+        className="inline-flex w-full items-center justify-center bg-ink hover:bg-ink-soft text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[13px] transition-colors disabled:opacity-60"
+      >
+        {checking ? "Checking…" : "I've paid · Check status"}
+      </button>
+
+      <Kicker as="p" tone="soft" tnum className="text-center break-all">
+        Reference · {payment.orderId}
+      </Kicker>
+    </div>
+  );
+}
+
 function ProcessingStep() {
   return (
     <div className="flex-1 min-h-[60vh] flex flex-col items-center justify-center px-8 py-12 text-center">
@@ -763,7 +878,7 @@ function ProcessingStep() {
         aria-hidden="true"
       />
       <p className="font-display text-xl font-medium text-ink mb-2">
-        Confirming your purchase…
+        Creating your QR Ph code…
       </p>
       <p className="font-sans text-sm text-ink-soft max-w-xs">
         Hold tight — this usually takes a few seconds.

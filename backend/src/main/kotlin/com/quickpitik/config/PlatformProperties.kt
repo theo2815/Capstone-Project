@@ -13,6 +13,8 @@ data class PlatformProperties(
     val couponMaxPercent: Int = 50,
     // Upper bound for emailed bundle capabilities and migrated legacy tokens.
     val shareTokenTtl: Duration = Duration.ofDays(90),
+    // Long enough for a 30-minute QRPH payment plus webhook/polling delay.
+    val orderReturnTtl: Duration = Duration.ofMinutes(35),
     // Separate HMAC key for purpose-bound order return/download links.
     val orderCapabilitySecret: String =
         "dev-only-order-capability-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random",

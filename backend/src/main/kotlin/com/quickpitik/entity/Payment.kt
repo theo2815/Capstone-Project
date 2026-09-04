@@ -43,6 +43,10 @@ class Payment(
     @Column(name = "paid_at")
     var paidAt: OffsetDateTime? = null,
 
+    // Dynamic QRPH codes expire independently of the order/download token.
+    @Column(name = "expires_at")
+    var expiresAt: OffsetDateTime? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 )

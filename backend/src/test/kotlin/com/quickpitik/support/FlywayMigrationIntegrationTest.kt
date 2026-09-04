@@ -129,6 +129,13 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
             String::class.java,
         )
         assertTrue("provider_payment_id" in paymentColumns)
+        assertTrue("expires_at" in paymentColumns)
+
+        val paymentMethodCheck = jdbcTemplate.queryForObject(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'orders_payment_method_check'",
+            String::class.java,
+        ).orEmpty()
+        assertTrue(paymentMethodCheck.contains("qrph"), paymentMethodCheck)
 
         val indexes = jdbcTemplate.queryForList(
             "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'orders'",

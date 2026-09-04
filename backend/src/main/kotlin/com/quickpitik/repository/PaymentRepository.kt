@@ -37,4 +37,11 @@ interface PaymentRepository : JpaRepository<Payment, UUID> {
         cutoff: OffsetDateTime,
         pageable: Pageable,
     ): List<Payment>
+
+    fun findByProviderAndStatusAndProviderRefStartingWithOrderByCreatedAtAsc(
+        provider: String,
+        status: PaymentStatus,
+        providerRef: String,
+        pageable: Pageable,
+    ): List<Payment>
 }

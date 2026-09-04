@@ -2,8 +2,6 @@ package com.quickpitik.service.orders
 
 import com.quickpitik.dto.orders.PaymongoEventAttributes
 import com.quickpitik.dto.orders.PaymongoEventData
-import com.quickpitik.dto.orders.PaymongoPaymentAttributes
-import com.quickpitik.dto.orders.PaymongoPaymentResource
 import com.quickpitik.dto.orders.PaymongoResource
 import com.quickpitik.dto.orders.PaymongoResourceAttributes
 import com.quickpitik.dto.orders.PaymongoWebhookEvent
@@ -32,14 +30,14 @@ class PaymongoWebhookServiceTest {
         val order = Order(
             eventId = UUID.randomUUID(),
             recipientEmail = "runner@example.com",
-            paymentMethodWire = PaymentMethod.GCASH.wire,
+            paymentMethodWire = PaymentMethod.QRPH.wire,
             totalPhp = BigDecimal("125.00"),
         )
         val photoId = UUID.randomUUID()
         val payment = Payment(
             orderId = order.id,
             provider = "paymongo",
-            providerRef = "cs_test",
+            providerRef = "pi_test",
             amountPhp = order.totalPhp,
         )
         val orders = Mockito.mock(OrderRepository::class.java)
@@ -49,7 +47,7 @@ class PaymongoWebhookServiceTest {
         val minting = Mockito.mock(TransactionMintingService::class.java)
         val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
         val refunds = Mockito.mock(PaymongoRefundService::class.java)
-        Mockito.`when`(payments.findAllByProviderAndProviderRefForUpdate("paymongo", "cs_test"))
+        Mockito.`when`(payments.findAllByProviderAndProviderRefForUpdate("paymongo", "pi_test"))
             .thenReturn(listOf(payment))
         Mockito.`when`(orders.findByIdForUpdate(order.id)).thenReturn(order)
         Mockito.`when`(items.findByIdOrderId(order.id)).thenReturn(
@@ -69,26 +67,17 @@ class PaymongoWebhookServiceTest {
         Mockito.verify(grants, Mockito.times(1)).save(anyArg())
         Mockito.verify(minting, Mockito.times(1)).mintForPaidOrder(order.id)
         Mockito.verify(payments, Mockito.times(2))
-            .findAllByProviderAndProviderRefForUpdate("paymongo", "cs_test")
+            .findAllByProviderAndProviderRefForUpdate("paymongo", "pi_test")
     }
 
     private fun paidEvent() = PaymongoWebhookEvent(
         PaymongoEventData(
             attributes = PaymongoEventAttributes(
-                type = "checkout_session.payment.paid",
+                type = "payment.paid",
                 data = PaymongoResource(
-                    id = "cs_test",
+                    id = "pay_test",
                     attributes = PaymongoResourceAttributes(
-                        payments = listOf(
-                            PaymongoPaymentResource(
-                                id = "pay_failed",
-                                attributes = PaymongoPaymentAttributes(status = "failed"),
-                            ),
-                            PaymongoPaymentResource(
-                                id = "pay_test",
-                                attributes = PaymongoPaymentAttributes(status = "paid"),
-                            ),
-                        ),
+                        paymentIntentId = "pi_test",
                     ),
                 ),
             ),

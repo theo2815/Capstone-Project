@@ -10,6 +10,15 @@ import com.quickpitik.dto.orders.PaymongoCheckoutSessionRequest
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionResponse
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionResponseAttributes
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionResponseEnvelope
+import com.quickpitik.dto.orders.PaymongoNextAction
+import com.quickpitik.dto.orders.PaymongoPaymentIntentRequest
+import com.quickpitik.dto.orders.PaymongoPaymentIntentResponse
+import com.quickpitik.dto.orders.PaymongoPaymentIntentResponseAttributes
+import com.quickpitik.dto.orders.PaymongoPaymentIntentResponseEnvelope
+import com.quickpitik.dto.orders.PaymongoPaymentMethodResponse
+import com.quickpitik.dto.orders.PaymongoPaymentMethodResponseEnvelope
+import com.quickpitik.dto.orders.PaymongoPaymentMethodRequest
+import com.quickpitik.dto.orders.PaymongoQrCode
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Order
@@ -151,6 +160,7 @@ class OrderServiceCheckoutTest {
                 eventRepository,
                 orderRepository,
             ),
+            Mockito.mock(PaymongoWebhookService::class.java),
         )
     }
 
@@ -180,6 +190,53 @@ class OrderServiceCheckoutTest {
         assertEquals("https://pay.test/cs_test", response.redirectUrl)
         Mockito.verify(orderRepository)
             .findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(email, key)
+    }
+
+    @Test
+    fun `qrph checkout returns the generated QR and links its Payment Intent`() {
+        var intentRequest: PaymongoPaymentIntentRequest? = null
+        var methodRequest: PaymongoPaymentMethodRequest? = null
+        Mockito.`when`(paymentRepository.findByOrderId(anyArg())).thenAnswer { call ->
+            savedPayments.filter { it.orderId == call.getArgument<UUID>(0) }
+        }
+        Mockito.`when`(paymongoClient.createPaymentIntent(anyArg(), anyArg())).thenAnswer { call ->
+            intentRequest = call.getArgument(0)
+            PaymongoPaymentIntentResponse(
+                PaymongoPaymentIntentResponseEnvelope(
+                    id = "pi_test",
+                    attributes = PaymongoPaymentIntentResponseAttributes(
+                        clientKey = "pi_test_client",
+                        status = "awaiting_payment_method",
+                    ),
+                ),
+            )
+        }
+        Mockito.`when`(paymongoClient.createPaymentMethod(anyArg())).thenAnswer { call ->
+            methodRequest = call.getArgument(0)
+            PaymongoPaymentMethodResponse(PaymongoPaymentMethodResponseEnvelope("pm_test"))
+        }
+        Mockito.`when`(paymongoClient.attachPaymentMethod(anyArg(), anyArg())).thenReturn(
+            PaymongoPaymentIntentResponse(
+                PaymongoPaymentIntentResponseEnvelope(
+                    id = "pi_test",
+                    attributes = PaymongoPaymentIntentResponseAttributes(
+                        status = "awaiting_next_action",
+                        nextAction = PaymongoNextAction(PaymongoQrCode("data:image/png;base64,qr")),
+                        updatedAt = OffsetDateTime.now().toEpochSecond(),
+                    ),
+                ),
+            ),
+        )
+
+        val response = service.create(null, request(paymentMethod = "qrph"), key)
+
+        assertEquals(listOf("qrph"), intentRequest!!.data.attributes.paymentMethodAllowed)
+        assertEquals(12500L, intentRequest!!.data.attributes.amount)
+        assertEquals("runner", methodRequest!!.data.attributes.billing?.name)
+        assertEquals("data:image/png;base64,qr", response.qrPh?.imageUrl)
+        assertEquals("pi_test", savedPayments.single().providerRef)
+        assertEquals(null, response.redirectUrl)
+        Mockito.verify(paymongoClient, Mockito.never()).createCheckoutSession(anyArg(), anyArg())
     }
 
     @Test
@@ -413,9 +470,10 @@ class OrderServiceCheckoutTest {
     private fun request(
         items: List<CreateOrderItem> = listOf(CreateOrderItem(photo.id, eventId)),
         couponCode: String? = null,
+        paymentMethod: String = "gcash",
     ) = CreateOrderRequest(
         items = items,
-        paymentMethod = "gcash",
+        paymentMethod = paymentMethod,
         recipientEmail = email,
         couponCode = couponCode,
     )

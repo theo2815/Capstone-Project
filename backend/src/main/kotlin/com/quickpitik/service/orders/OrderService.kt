@@ -20,6 +20,17 @@ import com.quickpitik.dto.orders.PaymongoCheckoutSessionAttributes
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionRequest
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionRequestEnvelope
 import com.quickpitik.dto.orders.PaymongoLineItem
+import com.quickpitik.dto.orders.PaymongoPaymentIntentAttachAttributes
+import com.quickpitik.dto.orders.PaymongoPaymentIntentAttachEnvelope
+import com.quickpitik.dto.orders.PaymongoPaymentIntentAttachRequest
+import com.quickpitik.dto.orders.PaymongoPaymentIntentRequest
+import com.quickpitik.dto.orders.PaymongoPaymentIntentRequestAttributes
+import com.quickpitik.dto.orders.PaymongoPaymentIntentRequestEnvelope
+import com.quickpitik.dto.orders.PaymongoPaymentIntentResponse
+import com.quickpitik.dto.orders.PaymongoPaymentMethodRequest
+import com.quickpitik.dto.orders.PaymongoPaymentMethodRequestAttributes
+import com.quickpitik.dto.orders.PaymongoPaymentMethodRequestEnvelope
+import com.quickpitik.dto.orders.QrPhPaymentResponse
 import com.quickpitik.dto.orders.RunnerDisputeDto
 import com.quickpitik.entity.DownloadGrant
 import com.quickpitik.entity.Event
@@ -55,8 +66,10 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
@@ -80,6 +93,7 @@ class OrderService(
     private val orderAccessTokenService: OrderAccessTokenService,
     private val transactionTemplate: TransactionTemplate,
     private val couponService: CouponService,
+    private val paymongoWebhookService: PaymongoWebhookService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -105,6 +119,10 @@ class OrderService(
         }
         if (primary.status == OrderStatus.EXPIRED) {
             throw checkoutConflict("This checkout expired. Start again with a new Idempotency-Key.")
+        }
+
+        if (paymentMethod == PaymentMethod.QRPH) {
+            return createQrPhPayment(reservation, primary, recipientEmail, userId, request.items)
         }
 
         resumeCheckoutUrl(primary)?.let { return toOrderResponse(primary, redirectUrl = it) }
@@ -349,6 +367,7 @@ class OrderService(
     private fun finalizeCheckout(
         orderIds: List<UUID>,
         checkoutSessionId: String,
+        expiresAt: OffsetDateTime? = null,
     ) {
         val payments = paymentRepository.findAllByOrderIdInForUpdate(orderIds)
         if (payments.size != orderIds.size) error("Checkout payment placeholders are incomplete")
@@ -358,9 +377,145 @@ class OrderService(
                 throw checkoutConflict("Checkout is already linked to another payment session.")
             }
             payment.providerRef = checkoutSessionId
+            payment.expiresAt = expiresAt
             paymentRepository.save(payment)
         }
     }
+
+    private fun createQrPhPayment(
+        reservation: CheckoutReservation,
+        primary: Order,
+        recipientEmail: String,
+        userId: UUID?,
+        items: List<CreateOrderItem>,
+    ): OrderResponse {
+        val existingIntentId = paymentRepository.findByOrderId(primary.id)
+            .firstOrNull { it.provider == PAYMONGO && it.providerRef?.startsWith("pi_") == true }
+            ?.providerRef
+        val initial = try {
+            existingIntentId?.let(paymongoClient::retrievePaymentIntent)
+                ?: paymongoClient.createPaymentIntent(
+                    PaymongoPaymentIntentRequest(
+                        PaymongoPaymentIntentRequestEnvelope(
+                            PaymongoPaymentIntentRequestAttributes(
+                                amount = reservation.orders.fold(BigDecimal.ZERO) { sum, order ->
+                                    sum + order.totalPhp
+                                }.multiply(BigDecimal(100)).longValueExact(),
+                                description = buildSessionDescription(
+                                    reservation.items.size,
+                                    reservation.events.values.map { it.name },
+                                ),
+                                metadata = mapOf(
+                                    "primaryOrderId" to primary.id.toString(),
+                                    "orderCount" to reservation.orders.size.toString(),
+                                ),
+                            ),
+                        ),
+                    ),
+                    primary.id.toString(),
+                )
+        } catch (ex: Exception) {
+            log.error("PayMongo QRPH Payment Intent creation failed for order {}: {}", primary.id, ex.message, ex)
+            throw ConflictException(
+                code = ErrorCodes.PAYMENT_FAILED,
+                message = "Payment gateway unavailable - try again in a moment.",
+            )
+        }
+
+        val intent = try {
+            if (initial.data.attributes.status == "awaiting_payment_method") {
+                val method = paymongoClient.createPaymentMethod(
+                    PaymongoPaymentMethodRequest(
+                        PaymongoPaymentMethodRequestEnvelope(
+                            PaymongoPaymentMethodRequestAttributes(
+                                expirySeconds = qrPhExpirySeconds(),
+                                billing = PaymongoBilling(
+                                    email = recipientEmail,
+                                    name = recipientEmail.substringBefore('@'),
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+                paymongoClient.attachPaymentMethod(
+                    initial.data.id,
+                    PaymongoPaymentIntentAttachRequest(
+                        PaymongoPaymentIntentAttachEnvelope(
+                            PaymongoPaymentIntentAttachAttributes(method.data.id, initial.data.attributes.clientKey),
+                        ),
+                    ),
+                )
+            } else {
+                initial
+            }
+        } catch (ex: Exception) {
+            log.error("PayMongo QRPH Payment Method attachment failed for order {}: {}", primary.id, ex.message, ex)
+            throw ConflictException(
+                code = ErrorCodes.PAYMENT_FAILED,
+                message = "QR code could not be generated - try again in a moment.",
+            )
+        }
+
+        if (intent.data.attributes.status == "succeeded") {
+            linkQrPhIntent(reservation, intent)
+            paymongoWebhookService.settlePaymentIntent(
+                intent.data.id,
+                intent.data.attributes.payments.firstOrNull()?.id,
+                intent.data.attributes.metadata,
+            )
+            clearCartBestEffort(userId, items)
+            return toOrderResponse(orderRepository.findById(primary.id).orElse(primary))
+        }
+
+        val imageUrl = intent.data.attributes.nextAction?.code?.imageUrl.orEmpty()
+        if (intent.data.id.isBlank() || !imageUrl.startsWith("data:image/png;base64,")) {
+            log.error(
+                "PayMongo returned an invalid QRPH response for order {} status={}",
+                primary.id,
+                intent.data.attributes.status,
+            )
+            throw ConflictException(
+                code = ErrorCodes.PAYMENT_FAILED,
+                message = "Payment gateway returned an invalid QR code.",
+            )
+        }
+        val updatedAt = intent.data.attributes.updatedAt.takeIf { it > 0 }
+            ?.let { OffsetDateTime.ofInstant(Instant.ofEpochSecond(it), ZoneOffset.UTC) }
+            ?: OffsetDateTime.now()
+        val expiresAt = updatedAt.plusSeconds(qrPhExpirySeconds().toLong())
+        linkQrPhIntent(reservation, intent, expiresAt)
+        clearCartBestEffort(userId, items)
+        return toOrderResponse(
+            primary,
+            qrPh = QrPhPaymentResponse(
+                imageUrl = imageUrl,
+                expiresAt = expiresAt,
+                returnToken = primary.takeIf { it.userId == null }
+                    ?.let { orderAccessTokenService.issue(it, OrderCapability.RETURN) },
+            ),
+        )
+    }
+
+    private fun linkQrPhIntent(
+        reservation: CheckoutReservation,
+        intent: PaymongoPaymentIntentResponse,
+        expiresAt: OffsetDateTime? = null,
+    ) {
+        try {
+            transactionTemplate.executeWithoutResult {
+                finalizeCheckout(reservation.orders.map { it.id }, intent.data.id, expiresAt)
+            }
+        } catch (ex: Exception) {
+            log.error("PayMongo Payment Intent {} could not be linked locally", intent.data.id, ex)
+            throw ConflictException(
+                code = ErrorCodes.PAYMENT_FAILED,
+                message = "Payment session could not be saved - retry in a moment.",
+            )
+        }
+    }
+
+    private fun qrPhExpirySeconds(): Int =
+        paymongoProperties.checkoutTtl.seconds.coerceIn(60, 9000).toInt()
 
     private fun clearCartBestEffort(userId: UUID?, items: List<CreateOrderItem>) {
         if (userId == null) return
@@ -506,7 +661,11 @@ class OrderService(
 
     private fun pickPrimary(orders: List<Order>): Order = orders.minBy { it.createdAt }
 
-    private fun toOrderResponse(order: Order, redirectUrl: String? = null): OrderResponse {
+    private fun toOrderResponse(
+        order: Order,
+        redirectUrl: String? = null,
+        qrPh: QrPhPaymentResponse? = null,
+    ): OrderResponse {
         val items = orderItemRepository.findByIdOrderId(order.id)
         val photos = photoRepository.findAllById(items.map { it.id.photoId }).associateBy { it.id }
         val grants = downloadGrantRepository.findByIdOrderId(order.id).associateBy { it.id.photoId }
@@ -526,6 +685,7 @@ class OrderService(
             createdAt = order.createdAt,
             redirectUrl = redirectUrl,
             couponCode = order.couponCode,
+            qrPh = qrPh,
         )
     }
 
@@ -572,6 +732,7 @@ class OrderService(
         PaymentMethod.GCASH -> listOf("gcash")
         PaymentMethod.MAYA -> listOf("paymaya")
         PaymentMethod.CARD -> listOf("card")
+        PaymentMethod.QRPH -> listOf("qrph")
     }
 
     private fun resumeCheckoutUrl(order: Order): String? {

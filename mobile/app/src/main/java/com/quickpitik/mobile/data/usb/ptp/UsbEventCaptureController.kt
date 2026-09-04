@@ -101,8 +101,8 @@ class UsbEventCaptureController(
                     // Never got going at all: a setup problem, not a blip.
                     if (!baselined) {
                         onLog(
-                            "The camera isn't answering over USB. Unplug and replug the cable " +
-                                "(or switch the camera off and on), wait a few seconds, then tap " +
+                            "The camera isn't answering over USB. Switch the camera off and on " +
+                                "(a replug alone doesn't clear this), wait a few seconds, then tap " +
                                 "Start auto-upload again. Photos already pulled keep uploading."
                         )
                         return
@@ -482,6 +482,14 @@ class UsbEventCaptureController(
                 delay(RETRY_MS)
                 continue
             }
+            // EOS R10, five sessions on 2026-09-04: in the FIRST session since
+            // attach the body answers GetDeviceInfo and OpenSession, then never
+            // answers the first EOS vendor op (SetRemoteMode) and NAKs every
+            // later send until a power-cycle. A plain session first — storage
+            // + handles, then a clean CloseSession, which is exactly what the
+            // card-import path does — made the next session's SetRemoteMode
+            // answer every time. So do that warm-up before the real open.
+            if (attempt == 1) warmUp(device, onLog)
             onLog(if (attempt == 1) "Opening PTP session…" else "Retry $attempt — opening PTP session…")
             val s = try {
                 PtpSession(manager, device)
@@ -491,15 +499,16 @@ class UsbEventCaptureController(
                 continue
             }
             try {
-                // A previous attempt got no reply: the body's PTP stack is stalled
-                // and a fresh OpenSession alone never clears it (see
-                // PtpSession.resetDevice). Reset first, then give it a moment.
-                if (attempt > 1) {
-                    onLog("  resetting camera USB link…")
-                    s.resetDevice()
-                    delay(RESET_SETTLE_MS)
-                }
+                // No reset and no halt-clear between attempts (2026-09-04, four
+                // sessions): after either, every later send failed, while a
+                // plain fresh open a few seconds later — what the card-import
+                // path does — succeeded every time. So a retry is exactly that:
+                // close, wait, open fresh. A GetDeviceInfo first (session-less,
+                // what libgphoto2 does) proves the link is alive before
+                // OpenSession and names the body in the log.
                 delay(SETTLE_MS)
+                val info = s.getDeviceInfo()
+                onLog("  ${info.manufacturer} ${info.model}".trimEnd())
                 // OpenSession must be the FIRST transaction (TransactionID 0) — the
                 // R6 treats a reused id 0 as a retransmit and never really opens.
                 val rc = s.openSession()
@@ -517,17 +526,34 @@ class UsbEventCaptureController(
                 return s
             } catch (e: Exception) {
                 onLog("  init attempt $attempt failed: ${e.message}")
-                // Don't send CloseSession down a pipe that just stopped answering —
-                // it only burns another 5 s timeout. Reset, then release.
-                runCatching { s.resetDevice() }
+                // Release the interface and connection only; no reset, no
+                // halt-clear (see above). Then give the body a real pause.
                 runCatching { s.close() }
-                delay(RETRY_MS)
+                delay(REOPEN_WAIT_MS)
             }
         }
         return null
     }
 
+    private suspend fun warmUp(device: UsbDevice, onLog: (String) -> Unit) {
+        onLog("Warming up the camera link…")
+        val ok = runCatching {
+            PtpSession(manager, device).use { w ->
+                val rc = w.openSession()
+                if (rc != Ptp.RC_OK && rc != Ptp.RC_SESSION_ALREADY_OPEN) {
+                    throw PtpException("warm-up OpenSession 0x%04X".format(rc))
+                }
+                val stores = w.getStorageIds()
+                val handles = w.getObjectHandles(0xFFFFFFFFL)
+                onLog("  ${stores.size} store(s), ${handles.size} object(s)")
+            } // use{} → close(): CloseSession + release, the part that matters
+        }
+        onLog(if (ok.isSuccess) "  warm-up done" else "  warm-up failed: ${ok.exceptionOrNull()?.message}")
+        delay(WARMUP_SETTLE_MS)
+    }
+
     private companion object {
+        const val WARMUP_SETTLE_MS = 1000L
         // Known latency characteristic (tuning hooks for the on-device session):
         // on an EMPTY event queue PtpSession.eosGetEvent() blocks up to ~3 s
         // (two 1.5 s readContainerOrNull legs around a clearHalt), so the
@@ -555,7 +581,7 @@ class UsbEventCaptureController(
         const val INIT_ATTEMPTS = 4
         const val RETRY_MS = 1000L
         const val SETTLE_MS = 200L
-        const val RESET_SETTLE_MS = 1500L
+        const val REOPEN_WAIT_MS = 3000L
         const val ERRORS_BEFORE_STOP = 12
         const val BASELINE_ATTEMPTS = 3
         const val MAX_PULL_ATTEMPTS = 3

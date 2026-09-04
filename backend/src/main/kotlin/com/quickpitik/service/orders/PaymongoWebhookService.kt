@@ -44,6 +44,15 @@ class PaymongoWebhookService(
                     ?: resource.attributes.payments.firstOrNull()?.id,
                 metadata = resource.attributes.metadata,
             )
+            "payment.paid" -> settlePaymentIntent(
+                paymentIntentId = resource.attributes.paymentIntentId.orEmpty(),
+                providerPaymentId = resource.id,
+                metadata = resource.attributes.metadata,
+            )
+            "payment.failed", "qrph.expired" -> failPaymentIntent(
+                paymentIntentId = resource.attributes.paymentIntentId.orEmpty(),
+                type = type,
+            )
             "payment.refunded", "payment.refund.updated", "refund.succeeded" -> {
                 val applied = if (resource.id.startsWith("ref_")) {
                     refundService.handleWebhook(resource.id, resource.attributes.status ?: "succeeded")
@@ -116,6 +125,33 @@ class PaymongoWebhookService(
             "ordersFulfilled" to ordersFulfilled,
             "grantsMinted" to grantsMinted,
         )
+    }
+
+    @Transactional
+    fun settlePaymentIntent(
+        paymentIntentId: String,
+        providerPaymentId: String?,
+        metadata: Map<String, String>? = null,
+    ): Map<String, Any?> = settleCheckoutSession(paymentIntentId, providerPaymentId, metadata)
+
+    @Transactional
+    fun failPaymentIntent(paymentIntentId: String, type: String): Map<String, Any?> {
+        if (paymentIntentId.isBlank()) {
+            return mapOf("acknowledged" to true, "applied" to false, "reason" to "missing pi id")
+        }
+        val payments = paymentRepository.findAllByProviderAndProviderRefForUpdate(PAYMONGO, paymentIntentId)
+        payments.forEach { payment ->
+            if (payment.status == PaymentStatus.PENDING) {
+                payment.status = PaymentStatus.FAILED
+                paymentRepository.save(payment)
+            }
+            val order = orderRepository.findByIdForUpdate(payment.orderId)
+            if (order?.status == OrderStatus.PENDING) {
+                order.status = OrderStatus.EXPIRED
+                orderRepository.save(order)
+            }
+        }
+        return mapOf("acknowledged" to true, "applied" to payments.isNotEmpty(), "type" to type)
     }
 
     private fun lockedPayments(

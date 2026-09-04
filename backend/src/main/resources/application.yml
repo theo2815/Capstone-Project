@@ -272,6 +272,7 @@ app:
     coupon-max-percent: ${COUPON_MAX_PERCENT:50}
     # Upper bound for emailed bundle capabilities and migrated legacy tokens.
     share-token-ttl: ${SHARE_TOKEN_TTL:P90D}
+    order-return-ttl: ${ORDER_RETURN_TOKEN_TTL:PT35M}
     order-capability-secret: ${ORDER_CAPABILITY_SECRET:dev-only-order-capability-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random}
   webhooks:
     payment:

@@ -28,7 +28,7 @@ class OrderAccessTokenService(
 
     fun issue(order: Order, capability: OrderCapability): String {
         val expiresAt = when (capability) {
-            OrderCapability.RETURN -> minOf(order.tokenExpiresAt, OffsetDateTime.now().plusMinutes(15))
+            OrderCapability.RETURN -> minOf(order.tokenExpiresAt, OffsetDateTime.now().plus(properties.orderReturnTtl))
             OrderCapability.BUNDLE -> order.tokenExpiresAt
         }
         val payload = "v1.${capability.wire}.${order.id}.${expiresAt.toEpochSecond()}"

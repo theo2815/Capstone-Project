@@ -1537,8 +1537,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                         // so reaching here in Starting/Watching means the controller
                         // ended on its own — surface that instead of a silent reset.
                         is ShutterWatchState.Starting -> ShutterWatchState.Error(
-                            "The camera isn't answering over USB. Unplug and replug the cable " +
-                                "(or switch it off and on), wait a few seconds, then try again.",
+                            "The camera isn't answering over USB. Switch the camera off and on " +
+                                "(a replug alone doesn't clear this), wait a few seconds, then try again.",
                             watchLogTail,
                         )
                         is ShutterWatchState.Watching -> ShutterWatchState.Error(
