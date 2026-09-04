@@ -3,6 +3,7 @@
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useCartStore } from "@/store/cart-store";
+import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { useUiStore } from "@/store/ui-store";
 import { ROUTES } from "@/lib/constants";
 import { cn, formatPrice } from "@/lib/utils";
@@ -20,6 +21,9 @@ export function FloatingCart() {
   const searchParams = useSearchParams();
   const itemCount = useCartStore((s) => s.items.length);
   const total = useCartStore((s) => s.total());
+  // A live QR Ph payment keeps the pill (and the checkout drawer) mounted even
+  // when the cart is empty, and turns the pill into the way back to that QR.
+  const pending = usePendingPaymentStore((s) => s.pending);
 
   const open = useUiStore((s) => s.cartOpen);
   const checkoutOpen = useUiStore((s) => s.checkoutOpen);
@@ -79,12 +83,17 @@ export function FloatingCart() {
     if (open || checkoutOpen) setMinimized(false);
   }, [open, checkoutOpen]);
 
-  if (!mounted || itemCount === 0) return null;
+  if (!mounted) return null;
+  // The drawer lives here, so the host must stay mounted while checkout is
+  // open — success clears both the cart and the pending record, and the
+  // "All yours." step would unmount with them otherwise.
+  if (itemCount === 0 && !pending && !checkoutOpen) return null;
 
   const isHiddenRoute = HIDDEN_ROUTES.some(
     (r) => pathname === r || pathname.startsWith(r + "/"),
   );
-  if (isHiddenRoute) return null;
+  if (isHiddenRoute && !checkoutOpen) return null;
+  const showPill = !isHiddenRoute && (itemCount > 0 || pending !== null);
 
   // Two surfaces render BuyAllBar on filtered browse:
   //   1. /events/{slug}              → runner-wide gallery + bib filter
@@ -105,6 +114,12 @@ export function FloatingCart() {
   const isFilteredBrowse = isEventDetail && hasBibFilter;
 
   const display = itemCount > 99 ? "99+" : String(itemCount);
+  const showBadge = itemCount > 0;
+  const pillAmount = formatPrice(pending ? pending.total : total);
+  const pillLabel = pending
+    ? `Payment pending · ${pillAmount}`
+    : `${itemCount} ${itemCount === 1 ? "photo" : "photos"} · ${pillAmount}`;
+  const openPill = () => (pending ? openCheckout() : openCart());
 
   const hasMobileStickyCta =
     pathname === ROUTES.RUNNERS || pathname === ROUTES.PHOTOGRAPHERS;
@@ -131,6 +146,7 @@ export function FloatingCart() {
 
   return (
     <>
+    {showPill && (<>
     {/* Full pill — slides off when minimized */}
     <div
       className={cn(
@@ -148,12 +164,10 @@ export function FloatingCart() {
       <div className="relative">
         <button
           type="button"
-          onClick={() => openCart()}
+          onClick={openPill}
           aria-haspopup="dialog"
-          aria-expanded={open}
-          aria-label={`Open cart · ${itemCount} ${
-            itemCount === 1 ? "photo" : "photos"
-          } · ${formatPrice(total)}`}
+          aria-expanded={open || checkoutOpen}
+          aria-label={`Open ${pending ? "checkout" : "cart"} · ${pillLabel}`}
           className={cn(
             "group relative inline-flex items-center gap-3 pl-4 pr-5 h-14 md:h-16 rounded-full",
             "bg-fresh hover:bg-fresh-deep text-surface",
@@ -179,25 +193,27 @@ export function FloatingCart() {
               <circle cx="9.5" cy="20" r="1.4" fill="currentColor" />
               <circle cx="17" cy="20" r="1.4" fill="currentColor" />
             </svg>
-            <span
-              key={pulseKey}
-              className="absolute -top-1.5 -right-1.5 min-w-[1.25rem] h-5 px-1.5 inline-flex items-center justify-center rounded-full bg-ink text-bone font-mono text-[10px] tnum tracking-tight border-2 border-fresh group-hover:border-fresh-deep transition-colors"
-              style={{ animation: "count-up 0.5s ease-out both" }}
-              aria-hidden="true"
-            >
-              {display}
-            </span>
+            {showBadge && (
+              <span
+                key={pulseKey}
+                className="absolute -top-1.5 -right-1.5 min-w-[1.25rem] h-5 px-1.5 inline-flex items-center justify-center rounded-full bg-ink text-bone font-mono text-[10px] tnum tracking-tight border-2 border-fresh group-hover:border-fresh-deep transition-colors"
+                style={{ animation: "count-up 0.5s ease-out both" }}
+                aria-hidden="true"
+              >
+                {display}
+              </span>
+            )}
           </span>
           <span className="hidden md:flex flex-col items-start leading-tight">
             <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/70">
-              Cart
+              {pending ? "Payment pending" : "Cart"}
             </span>
             <span className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tnum">
-              {formatPrice(total)}
+              {pillAmount}
             </span>
           </span>
           <span className="md:hidden font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] tnum">
-            {formatPrice(total)}
+            {pending ? "Pending" : pillAmount}
           </span>
         </button>
         {/* Minimize close-chip — detached so it doesn't crowd the count badge */}
@@ -238,9 +254,7 @@ export function FloatingCart() {
     <button
       type="button"
       onClick={() => setMinimized(false)}
-      aria-label={`Show cart · ${itemCount} ${
-        itemCount === 1 ? "photo" : "photos"
-      } · ${formatPrice(total)}`}
+      aria-label={`Show ${pending ? "pending payment" : "cart"} · ${pillLabel}`}
       tabIndex={minimized ? 0 : -1}
       aria-hidden={!minimized || undefined}
       className={cn(
@@ -276,13 +290,16 @@ export function FloatingCart() {
         <circle cx="17" cy="20" r="1.4" fill="currentColor" />
       </svg>
       {/* Count badge — anchored over the upper-left curve of the visible half */}
-      <span
-        className="absolute top-1 -left-1.5 min-w-[1.25rem] h-5 px-1.5 inline-flex items-center justify-center rounded-full bg-ink text-bone font-mono text-[10px] tnum tracking-tight border-2 border-fresh group-hover:border-fresh-deep transition-colors"
-        aria-hidden="true"
-      >
-        {display}
-      </span>
+      {showBadge && (
+        <span
+          className="absolute top-1 -left-1.5 min-w-[1.25rem] h-5 px-1.5 inline-flex items-center justify-center rounded-full bg-ink text-bone font-mono text-[10px] tnum tracking-tight border-2 border-fresh group-hover:border-fresh-deep transition-colors"
+          aria-hidden="true"
+        >
+          {display}
+        </span>
+      )}
     </button>
+    </>)}
 
     <CartModal
       isOpen={open}

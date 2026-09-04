@@ -28,6 +28,10 @@ data class RateLimitProperties(
     // Return pages poll every two seconds for one minute; leave room for the
     // final detail request and a second tab without leaving reads unlimited.
     val orderRead: Policy = Policy(capacity = 90, refillPeriod = Duration.ofMinutes(1)),
+    // `?verify=true` status checks retrieve the Payment Intent from PayMongo
+    // per hit. The checkout sends at most ~3/min per order; leave headroom for
+    // a second tab.
+    val orderVerify: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(1)),
     // Public coupon preview: one lookup + a page of photos per call. Its own
     // bucket so typo'd "Apply" clicks can't drain the checkout bucket.
     val couponPreview: Policy = Policy(capacity = 30, refillPeriod = Duration.ofMinutes(1)),

@@ -24,6 +24,7 @@ export const ROUTES = {
   EVENTS: "/events",
   VERIFY: "/verify",
   ORDERS: "/orders",
+  ORDERS_RETURN: "/orders/return",
   PROFILE: "/profile",
   ACCOUNT: "/account",
   DASHBOARD: "/dashboard",

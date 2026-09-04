@@ -94,6 +94,7 @@ class OrderService(
     private val transactionTemplate: TransactionTemplate,
     private val couponService: CouponService,
     private val paymongoWebhookService: PaymongoWebhookService,
+    private val checkoutReconciler: PaymongoCheckoutReconciler,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -526,17 +527,38 @@ class OrderService(
     }
 
     @Transactional(readOnly = true)
-    fun statusByIdAndToken(orderId: UUID, token: String?): OrderStatusDto {
-        val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
-        requireValidReturnToken(order, token)
-        return statusDto(order)
-    }
+    fun statusByIdAndToken(orderId: UUID, token: String?): OrderStatusDto =
+        statusDto(loadForToken(orderId, token))
 
     @Transactional(readOnly = true)
-    fun statusForUser(userId: UUID, orderId: UUID): OrderStatusDto {
+    fun statusForUser(userId: UUID, orderId: UUID): OrderStatusDto =
+        statusDto(loadForUser(userId, orderId))
+
+    // `?verify=true` on the status endpoints: ask PayMongo about a still-pending
+    // intent right now and settle/expire it, instead of waiting for the webhook
+    // or the minute sweep. Deliberately not @Transactional — the provider call
+    // must run outside any DB transaction (same rule as create()); the reload
+    // afterwards is a fresh query because open-in-view is off.
+    fun verifyByIdAndToken(orderId: UUID, token: String?): OrderStatusDto {
+        if (loadForToken(orderId, token).status == OrderStatus.PENDING) checkoutReconciler.reconcileOrder(orderId)
+        return statusDto(loadForToken(orderId, token))
+    }
+
+    fun verifyForUser(userId: UUID, orderId: UUID): OrderStatusDto {
+        if (loadForUser(userId, orderId).status == OrderStatus.PENDING) checkoutReconciler.reconcileOrder(orderId)
+        return statusDto(loadForUser(userId, orderId))
+    }
+
+    private fun loadForToken(orderId: UUID, token: String?): Order {
+        val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
+        requireValidReturnToken(order, token)
+        return order
+    }
+
+    private fun loadForUser(userId: UUID, orderId: UUID): Order {
         val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
         if (order.userId != userId) throw orderNotFound()
-        return statusDto(order)
+        return order
     }
 
     private fun statusDto(order: Order): OrderStatusDto =

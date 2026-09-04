@@ -53,6 +53,12 @@ export function slugify(text: string): string {
     .trim();
 }
 
+// Short order reference — the same 8-char form the receipt email prints, so
+// a runner can match what they see on screen against their inbox.
+export function formatOrderRef(orderId: string): string {
+  return orderId.slice(0, 8).toUpperCase();
+}
+
 export function safeUUID(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();

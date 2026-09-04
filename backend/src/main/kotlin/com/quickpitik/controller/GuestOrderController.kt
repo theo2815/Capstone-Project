@@ -41,9 +41,15 @@ class GuestOrderController(
     fun status(
         @PathVariable id: UUID,
         @RequestParam(required = false) token: String?,
+        @RequestParam(required = false) verify: Boolean?,
         request: HttpServletRequest,
     ): OrderStatusDto {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_ORDER_READ, clientIp(request))
+        if (verify == true) {
+            // One PayMongo retrieve per hit — its own tighter bucket.
+            rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_ORDER_VERIFY, clientIp(request))
+            return orderService.verifyByIdAndToken(orderId = id, token = token)
+        }
         return orderService.statusByIdAndToken(orderId = id, token = token)
     }
 

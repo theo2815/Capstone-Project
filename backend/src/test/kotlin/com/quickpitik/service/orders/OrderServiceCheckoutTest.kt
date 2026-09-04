@@ -84,6 +84,7 @@ class OrderServiceCheckoutTest {
     private lateinit var couponRepository: PhotographerCouponRepository
     private lateinit var eventRepository: EventRepository
     private lateinit var service: OrderService
+    private lateinit var checkoutReconciler: PaymongoCheckoutReconciler
     private var lastProviderRequest: PaymongoCheckoutSessionRequest? = null
     private val savedOrders = mutableListOf<Order>()
     private val savedItems = mutableListOf<OrderItem>()
@@ -99,6 +100,7 @@ class OrderServiceCheckoutTest {
         couponRepository = Mockito.mock(PhotographerCouponRepository::class.java)
         val downloadGrants = Mockito.mock(DownloadGrantRepository::class.java)
         eventRepository = Mockito.mock(EventRepository::class.java)
+        checkoutReconciler = Mockito.mock(PaymongoCheckoutReconciler::class.java)
 
         Mockito.`when`(photoRepository.findAllByIdForUpdate(anyArg())).thenReturn(listOf(photo))
         Mockito.`when`(eventRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(event))
@@ -163,7 +165,51 @@ class OrderServiceCheckoutTest {
                 orderRepository,
             ),
             Mockito.mock(PaymongoWebhookService::class.java),
+            checkoutReconciler,
         )
+    }
+
+    @Test
+    fun `verify skips the provider when the order is already settled`() {
+        val order = Order(
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = "qrph",
+            status = com.quickpitik.entity.OrderStatus.FULFILLED,
+            totalPhp = BigDecimal("125.00"),
+            tokenExpiresAt = OffsetDateTime.now().plusDays(1),
+        )
+        Mockito.`when`(orderRepository.findById(order.id)).thenReturn(java.util.Optional.of(order))
+        val token = OrderAccessTokenService(PlatformProperties(orderCapabilitySecret = "x".repeat(32)))
+            .issue(order, OrderCapability.RETURN)
+
+        val status = service.verifyByIdAndToken(order.id, token)
+
+        assertEquals(com.quickpitik.entity.OrderStatus.FULFILLED, status.status)
+        Mockito.verifyNoInteractions(checkoutReconciler)
+    }
+
+    @Test
+    fun `verify asks the reconciler about a pending order and returns the fresh status`() {
+        val order = Order(
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = "qrph",
+            totalPhp = BigDecimal("125.00"),
+            tokenExpiresAt = OffsetDateTime.now().plusDays(1),
+        )
+        Mockito.`when`(orderRepository.findById(order.id)).thenReturn(java.util.Optional.of(order))
+        Mockito.`when`(checkoutReconciler.reconcileOrder(order.id)).thenAnswer {
+            order.status = com.quickpitik.entity.OrderStatus.FULFILLED
+            Unit
+        }
+        val token = OrderAccessTokenService(PlatformProperties(orderCapabilitySecret = "x".repeat(32)))
+            .issue(order, OrderCapability.RETURN)
+
+        val status = service.verifyByIdAndToken(order.id, token)
+
+        assertEquals(com.quickpitik.entity.OrderStatus.FULFILLED, status.status)
+        Mockito.verify(checkoutReconciler).reconcileOrder(order.id)
     }
 
     @Test

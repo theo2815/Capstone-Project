@@ -7,6 +7,7 @@ import { ToastContainer } from "@/components/ui/toast";
 import { ConfirmationOverlay } from "@/components/ui/confirmation-overlay";
 import { FloatingCart } from "@/components/cart/floating-cart";
 import { CheckoutResumeWatcher } from "@/components/cart/checkout-resume-watcher";
+import { PendingPaymentWatcher } from "@/components/cart/pending-payment-watcher";
 import { AuthHydrator } from "@/components/layout/auth-hydrator";
 import { OnboardingGate } from "@/components/onboarding/onboarding-gate";
 
@@ -51,6 +52,7 @@ export function Providers({ children }: { children: ReactNode }) {
       <Suspense fallback={null}>
         <CheckoutResumeWatcher />
       </Suspense>
+      <PendingPaymentWatcher />
     </QueryClientProvider>
   );
 }

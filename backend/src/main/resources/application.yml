@@ -246,6 +246,10 @@ app:
     order-read:
       capacity: 90
       refill-period: PT1M
+    # `?verify=true` status checks retrieve the Payment Intent from PayMongo per hit.
+    order-verify:
+      capacity: 10
+      refill-period: PT1M
     # Public coupon preview: one lookup + a page of photos per call; its own
     # bucket so typo'd "Apply" clicks can't drain the checkout bucket.
     coupon-preview:

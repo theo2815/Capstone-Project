@@ -86,7 +86,16 @@ class OrderController(
     fun status(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable id: UUID,
-    ): OrderStatusDto = orderService.statusForUser(userId = principal.userId, orderId = id)
+        @RequestParam(required = false) verify: Boolean?,
+        request: HttpServletRequest,
+    ): OrderStatusDto {
+        if (verify == true) {
+            // One PayMongo retrieve per hit — its own tighter bucket.
+            rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_ORDER_VERIFY, clientIp(request))
+            return orderService.verifyForUser(userId = principal.userId, orderId = id)
+        }
+        return orderService.statusForUser(userId = principal.userId, orderId = id)
+    }
 
     @PostMapping("/me/orders/{id}/refund")
     fun refund(
