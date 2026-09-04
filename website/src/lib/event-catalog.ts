@@ -17,14 +17,18 @@ type SeedEvent = Omit<ListEvent, "state">;
 
 const SEED: ReadonlyArray<SeedEvent> = [];
 
+// Every race is in the Philippines, so "today" is the Manila calendar date
+// wherever this runs — Vercel lambdas are UTC and reserve the TZ env var, and
+// a browser can be anywhere. Without this, the server labelled a race
+// "upcoming" until 08:00 PHT while the runner's browser said "live".
+const EVENT_TZ = "Asia/Manila";
+const manilaDate = new Intl.DateTimeFormat("en-CA", { timeZone: EVENT_TZ }); // YYYY-MM-DD
+
 // Whole-day delta from event date to today. Negative = future, 0 = race day,
-// positive = past. Both sides anchored to local midnight so the boundaries
-// flip cleanly at 00:00 instead of mid-day.
+// positive = past. Both dates parse as UTC midnight, so the diff is exact.
 function daysSinceEvent(eventDate: string, now: Date = new Date()): number {
-  const event = new Date(`${eventDate}T00:00:00`);
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const ms = today.getTime() - event.getTime();
-  return Math.floor(ms / (1000 * 60 * 60 * 24));
+  const today = manilaDate.format(now);
+  return Math.round((Date.parse(today) - Date.parse(eventDate)) / 86_400_000);
 }
 
 export function deriveEventState(
