@@ -38,7 +38,7 @@ export interface RunnerDispute {
 // Orders backend contract (Q-008 idempotency, Q-005 photo URLs RESOLVED 2026-05-09).
 //   GET  /api/v1/me/orders?offset=&limit=    → PaginatedResponse<MockOrder>
 //   GET  /api/v1/me/orders/{id}              → OrderDetail (MockOrder + photos[] + downloadBundleUrl)
-//   POST /api/v1/orders                      { items, paymentMethod, recipientEmail? } + Idempotency-Key header → Order
+//   POST /api/v1/orders                      { items, paymentMethod, recipientEmail?, couponCode? } + Idempotency-Key header → Order
 //   POST /api/v1/me/orders/{id}/refund       { photoIds, reason, note } → unknown
 //
 // Idempotency-Key arrives as an HTTP header per RFC 9110 §9.2.2.
@@ -59,6 +59,9 @@ export interface CreateOrderArgs {
   items: { photoId: string; eventId: string }[];
   paymentMethod: "gcash" | "maya" | "card";
   recipientEmail?: string;
+  // Photographer coupon (V45). Validated and priced server-side; the client
+  // only forwards what the runner typed.
+  couponCode?: string;
   idempotencyKey: string;
 }
 

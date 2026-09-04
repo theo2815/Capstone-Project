@@ -489,9 +489,16 @@ function ReceiptRow({
           />
         </div>
         <div className="flex items-baseline justify-between md:flex-col md:items-end gap-3 md:gap-2 shrink-0">
-          <p className="font-mono tnum font-medium text-ink text-xl md:text-2xl">
-            ₱{total.toLocaleString()}
-          </p>
+          <div className="md:text-right">
+            <p className="font-mono tnum font-medium text-ink text-xl md:text-2xl">
+              ₱{total.toLocaleString()}
+            </p>
+            {order.couponCode && (order.discountTotal ?? 0) > 0 && (
+              <Kicker as="p" tone="soft" tnum className="mt-1 whitespace-nowrap">
+                {order.couponCode} · −₱{(order.discountTotal ?? 0).toLocaleString()}
+              </Kicker>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}

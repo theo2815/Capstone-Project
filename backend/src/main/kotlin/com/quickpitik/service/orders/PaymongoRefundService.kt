@@ -113,9 +113,12 @@ class PaymongoRefundService(
         val item = orderItemRepository.findByIdOrderId(dispute.orderId)
             .firstOrNull { it.id.photoId == dispute.photoId }
             ?: throw NotFoundException("Order item not found", ErrorCodes.ORDER_NOT_FOUND)
+        // Refund against what the runner paid, not the list price — a coupon
+        // item was charged pricePhpAtPurchase − discountPhp (V45).
+        val charged = item.pricePhpAtPurchase.subtract(item.discountPhp)
         val amount = when (resolution) {
-            DisputeResolution.REFUND_FULL -> item.pricePhpAtPurchase
-            DisputeResolution.REFUND_PARTIAL -> validatePartialAmount(requestedAmount, item.pricePhpAtPurchase)
+            DisputeResolution.REFUND_FULL -> charged
+            DisputeResolution.REFUND_PARTIAL -> validatePartialAmount(requestedAmount, charged)
             DisputeResolution.DENY -> error("DENY is not a provider refund")
         }
         val payment = paymentRepository.findByOrderId(dispute.orderId)
@@ -330,6 +333,7 @@ class PaymongoRefundService(
             false,
         )
         val order = orderRepository.findById(dispute.orderId).orElse(null) ?: return
+        val (keptReversal, discountReversal) = refundLedgerSplit(dispute, original, amount)
         try {
             transactionRepository.save(
                 Transaction(
@@ -340,9 +344,8 @@ class PaymongoRefundService(
                     orderId = order.id,
                     buyerId = order.userId,
                     buyerDisplayName = original?.buyerDisplayName ?: "",
-                    amountKeptPhp = amount.multiply(platformProperties.photographerKeepRate)
-                        .setScale(2, RoundingMode.HALF_UP)
-                        .negate(),
+                    amountKeptPhp = keptReversal,
+                    discountPhp = discountReversal,
                     isRefund = true,
                     refundOf = original?.id,
                 ),
@@ -350,6 +353,33 @@ class PaymongoRefundService(
         } catch (_: DataIntegrityViolationException) {
             // Concurrent reconciliation already minted the unique refund row.
         }
+    }
+
+    // What comes back off the ledger, as (kept, discount) negatives. With the
+    // original sale row in hand the reversal is exact: a full refund negates
+    // it outright, a partial refund scales both figures by the fraction of the
+    // charged price returned. Rows without a sale row (pre-V9 legacy) keep the
+    // old keepRate estimate.
+    private fun refundLedgerSplit(
+        dispute: Dispute,
+        original: Transaction?,
+        amount: BigDecimal,
+    ): Pair<BigDecimal, BigDecimal> {
+        val legacy = amount.multiply(platformProperties.photographerKeepRate)
+            .setScale(2, RoundingMode.HALF_UP)
+            .negate() to BigDecimal.ZERO
+        if (original == null) return legacy
+        if (dispute.resolution == DisputeResolution.REFUND_FULL) {
+            return original.amountKeptPhp.negate() to original.discountPhp.negate()
+        }
+        val charged = orderItemRepository.findByIdOrderId(dispute.orderId)
+            .firstOrNull { it.id.photoId == dispute.photoId }
+            ?.let { it.pricePhpAtPurchase.subtract(it.discountPhp) }
+            ?.takeIf { it.signum() > 0 }
+            ?: return legacy
+        val fraction = amount.divide(charged, 10, RoundingMode.HALF_UP)
+        return original.amountKeptPhp.multiply(fraction).setScale(2, RoundingMode.HALF_UP).negate() to
+            original.discountPhp.multiply(fraction).setScale(2, RoundingMode.HALF_UP).negate()
     }
 
     private fun validatePartialAmount(requested: BigDecimal?, fullPrice: BigDecimal): BigDecimal {

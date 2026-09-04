@@ -38,6 +38,13 @@ data class PhotoDto(
     val alt: String?,
     val photographerHandle: String? = null,
     val photographerName: String? = null,
+    // Photographer coupon (V45) — set only when the photographer has a live
+    // coupon and the photo has a price. couponPrice is what the runner pays
+    // with the code (list price − the photographer's discount), computed
+    // server-side so no client does money math.
+    val couponCode: String? = null,
+    val couponPercentOff: Int? = null,
+    val couponPrice: BigDecimal? = null,
 )
 
 // Resolved attribution for one photo's photographer. Callers batch-load these
@@ -48,6 +55,13 @@ data class PhotographerRef(
     val name: String?,
 )
 
+// One photo's coupon offer, already priced. See CouponService.discountFor.
+data class CouponQuote(
+    val code: String,
+    val percentOff: Int,
+    val price: BigDecimal,
+)
+
 private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 private val displayZone: ZoneId = ZoneId.of("Asia/Manila")
 
@@ -55,8 +69,10 @@ fun Photo.toDto(
     thumbnailUrlResolver: (Photo) -> String?,
     cleanUrlResolver: (Photo) -> String? = { null },
     photographerResolver: (Photo) -> PhotographerRef? = { null },
+    couponResolver: (Photo) -> CouponQuote? = { null },
 ): PhotoDto {
     val photographer = photographerResolver(this)
+    val coupon = couponResolver(this)
     return PhotoDto(
         id = id,
         bib = bibs.minByOrNull { it.bibNumber }?.bibNumber,
@@ -70,5 +86,8 @@ fun Photo.toDto(
         alt = altText,
         photographerHandle = photographer?.handle,
         photographerName = photographer?.name,
+        couponCode = coupon?.code,
+        couponPercentOff = coupon?.percentOff,
+        couponPrice = coupon?.price,
     )
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   fetchBrand,
+  fetchCoupon,
   fetchPayoutAccounts,
   fetchSocials,
 } from "@/lib/api-photographer-settings";
@@ -122,14 +123,21 @@ async function hydrateAll(): Promise<boolean> {
     usePhotographerSettingsStore.setState({ payouts });
   });
 
+  // Coupon (V45): null is a real answer — "no coupon yet" — so it is written
+  // through rather than skipped like the other blocks.
+  const couponBlock = fetchCoupon().then((coupon) => {
+    usePhotographerSettingsStore.setState({ coupon: coupon ?? null });
+  });
+
   // allSettled keeps the blocks independent — one rejection can't abort the
   // others, which is the property the 2026-05-27 P0-1 hoist introduced.
   const results = await Promise.allSettled([
     brandBlock,
     socialsBlock,
     payoutsBlock,
+    couponBlock,
   ]);
-  const labels = ["brand", "socials", "payouts"];
+  const labels = ["brand", "socials", "payouts", "coupon"];
   results.forEach((r, i) => {
     if (r.status === "rejected") {
       console.warn(

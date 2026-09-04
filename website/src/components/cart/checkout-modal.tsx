@@ -10,7 +10,11 @@ import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn, formatPrice, safeUUID } from "@/lib/utils";
 import { postOrder } from "@/lib/api-orders";
+import { postCouponPreview, type CouponPreview } from "@/lib/api-coupons";
 import { ApiError } from "@/lib/api";
+import { Kicker } from "@/components/ui/kicker";
+import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import type { CartItem } from "@/types/order";
 
 // Build the post-login resume URL: original page + `?checkout=1` flag.
 // `<CheckoutResumeWatcher>` reads the flag on mount and re-opens the modal,
@@ -78,6 +82,12 @@ export function CheckoutModal({
   // Q-008 RESOLVED: client-generated UUID per payment-method selection.
   // Re-generates on method change or modal re-entry; backend dedupes for 24 h.
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
+  // Photographer coupon (V45). `coupon` is the server's priced preview for
+  // the current cart — the only source of the discount the modal shows.
+  const [coupon, setCoupon] = useState<CouponPreview | null>(null);
+  const [couponInput, setCouponInput] = useState("");
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [couponBusy, setCouponBusy] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -89,6 +99,11 @@ export function CheckoutModal({
     setPaymentError(null);
     setOrderId(null);
     setIdempotencyKey(null);
+    // A coupon was previewed against a specific cart; re-entry may follow a
+    // cart edit, so it has to be re-applied.
+    setCoupon(null);
+    setCouponInput("");
+    setCouponError(null);
   }, [isOpen, isAuthenticated, authUser?.email]);
 
   useScrollLock(isOpen);
@@ -110,6 +125,41 @@ export function CheckoutModal({
 
   const itemCount = items.length;
   const recipientEmail = isAuthenticated ? authUser?.email ?? email : email;
+  const discountTotal = coupon?.discountTotal ?? 0;
+  const payable = Math.max(0, total - discountTotal);
+
+  const handleApplyCoupon = async () => {
+    const code = couponInput.trim().toUpperCase();
+    if (!code) {
+      setCouponError("Enter a code.");
+      return;
+    }
+    setCouponBusy(true);
+    try {
+      const preview = await postCouponPreview({
+        code,
+        photoIds: items.map((i) => i.photoId),
+      });
+      setCoupon(preview);
+      setCouponError(null);
+      // Same reasoning as a payment-method change: a different discount is
+      // a different intent and must not dedupe against a prior attempt.
+      if (idempotencyKey) setIdempotencyKey(safeUUID());
+    } catch (err) {
+      setCouponError(
+        err instanceof ApiError ? err.message : "Couldn't check that code. Try again.",
+      );
+    } finally {
+      setCouponBusy(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setCoupon(null);
+    setCouponInput("");
+    setCouponError(null);
+    if (idempotencyKey) setIdempotencyKey(safeUUID());
+  };
 
   const handleIdentifySubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -141,6 +191,7 @@ export function CheckoutModal({
         items: items.map((i) => ({ photoId: i.photoId, eventId: i.eventId })),
         paymentMethod,
         recipientEmail: isAuthenticated ? undefined : email,
+        couponCode: coupon?.code,
         idempotencyKey,
       });
 
@@ -261,8 +312,19 @@ export function CheckoutModal({
                 setIdempotencyKey(safeUUID());
               }}
               paymentError={paymentError}
-              total={total}
+              total={payable}
               itemCount={itemCount}
+              items={items}
+              coupon={coupon}
+              couponInput={couponInput}
+              onCouponInputChange={(v) => {
+                setCouponInput(v.toUpperCase());
+                setCouponError(null);
+              }}
+              couponError={couponError}
+              couponBusy={couponBusy}
+              onApplyCoupon={() => void handleApplyCoupon()}
+              onRemoveCoupon={handleRemoveCoupon}
               onPay={handlePay}
               onEditEmail={
                 isAuthenticated ? undefined : () => setStep("identify")
@@ -276,7 +338,7 @@ export function CheckoutModal({
               email={recipientEmail ?? ""}
               orderId={orderId}
               itemCount={itemCount}
-              total={total}
+              total={payable}
               onDone={handleSuccessClose}
             />
           )}
@@ -420,6 +482,14 @@ function PaymentStep({
   paymentError,
   total,
   itemCount,
+  items,
+  coupon,
+  couponInput,
+  onCouponInputChange,
+  couponError,
+  couponBusy,
+  onApplyCoupon,
+  onRemoveCoupon,
   onPay,
   onEditEmail,
   onBackToCart,
@@ -429,27 +499,152 @@ function PaymentStep({
   paymentMethod: PaymentMethod | null;
   onPaymentChange: (m: PaymentMethod) => void;
   paymentError: string | null;
+  /** What will be charged — already net of any applied coupon. */
   total: number;
   itemCount: number;
+  items: CartItem[];
+  coupon: CouponPreview | null;
+  couponInput: string;
+  onCouponInputChange: (v: string) => void;
+  couponError: string | null;
+  couponBusy: boolean;
+  onApplyCoupon: () => void;
+  onRemoveCoupon: () => void;
   onPay: () => void;
   onEditEmail?: () => void;
   onBackToCart?: () => void;
 }) {
+  const discountFor = (photoId: string) =>
+    coupon?.items.find((c) => c.photoId === photoId)?.discount ?? null;
+
   return (
     <div className="px-6 md:px-7 py-6 flex flex-col gap-7">
       <section>
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-2">
           Order summary
         </p>
-        <div className="rounded-xl border border-line bg-bone-deep px-5 py-4 flex items-baseline justify-between gap-3">
-          <span className="font-sans text-sm text-ink-soft">
-            <span className="tnum text-ink">{itemCount}</span>{" "}
-            {itemCount === 1 ? "photo" : "photos"} · full resolution
-          </span>
-          <span className="font-display text-2xl md:text-3xl font-medium text-ink tnum">
-            {formatPrice(total)}
-          </span>
-        </div>
+        {coupon ? (
+          // With a code applied the summary opens up per photo, so the runner
+          // never has to guess which pictures the discount reached.
+          <ul className="rounded-xl border border-line bg-bone-deep divide-y divide-line">
+            {items.map((item) => {
+              const discount = discountFor(item.photoId);
+              return (
+                <li key={item.photoId} className="flex items-center gap-3 px-4 py-3">
+                  {item.thumbnailUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={item.thumbnailUrl}
+                      alt=""
+                      className="size-10 rounded-md object-cover shrink-0 bg-line"
+                    />
+                  ) : (
+                    <span aria-hidden="true" className="size-10 rounded-md bg-line shrink-0" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-sans text-sm text-ink truncate">
+                      {item.bib ? `Bib ${item.bib}` : "Untagged photo"}
+                      {item.eventName ? (
+                        <span className="text-slate-soft"> · {item.eventName}</span>
+                      ) : null}
+                    </p>
+                    <Kicker as="p" tone="soft" tnum className="truncate">
+                      {discount != null
+                        ? `${coupon.code} · −${formatPrice(discount)}`
+                        : "Not covered by this code"}
+                    </Kicker>
+                  </div>
+                  <div className="text-right shrink-0">
+                    {discount != null ? (
+                      <>
+                        <p className="font-mono tnum text-sm text-slate-soft line-through">
+                          {formatPrice(item.price)}
+                        </p>
+                        <p className="font-mono tnum font-semibold text-ink">
+                          {formatPrice(item.price - discount)}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="font-mono tnum font-semibold text-ink">
+                        {formatPrice(item.price)}
+                      </p>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+            <li className="flex items-baseline justify-between gap-3 px-4 py-3">
+              <span className="font-sans text-sm text-ink-soft">
+                Total · <span className="tnum text-ink">{itemCount}</span>{" "}
+                {itemCount === 1 ? "photo" : "photos"}
+              </span>
+              <span className="font-display text-2xl md:text-3xl font-medium text-ink tnum">
+                {formatPrice(total)}
+              </span>
+            </li>
+          </ul>
+        ) : (
+          <div className="rounded-xl border border-line bg-bone-deep px-5 py-4 flex items-baseline justify-between gap-3">
+            <span className="font-sans text-sm text-ink-soft">
+              <span className="tnum text-ink">{itemCount}</span>{" "}
+              {itemCount === 1 ? "photo" : "photos"} · full resolution
+            </span>
+            <span className="font-display text-2xl md:text-3xl font-medium text-ink tnum">
+              {formatPrice(total)}
+            </span>
+          </div>
+        )}
+      </section>
+
+      <section>
+        {coupon ? (
+          <div className="rounded-xl border border-line bg-bone px-5 py-4 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="font-mono font-semibold tnum text-ink truncate">{coupon.code}</p>
+              <p className="font-sans text-sm text-ink-soft mt-0.5">
+                <span className="tnum">{coupon.percentOff}%</span> off{" "}
+                <span className="tnum">{coupon.eligibleCount}</span> of{" "}
+                <span className="tnum">{itemCount}</span>{" "}
+                {itemCount === 1 ? "photo" : "photos"}
+                {coupon.photographerName ? ` · photos by ${coupon.photographerName}` : ""}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onRemoveCoupon}
+              className={cn(BTN_GHOST, BTN_SIZE.sm, "shrink-0")}
+            >
+              Remove
+            </button>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              onApplyCoupon();
+            }}
+            className="flex items-end gap-3"
+          >
+            <div className="flex-1 min-w-0">
+              <Field
+                id="coupon-code"
+                label="Coupon code · optional"
+                value={couponInput}
+                onChange={onCouponInputChange}
+                error={couponError ?? undefined}
+                placeholder="From a photographer's photo card"
+                autoComplete="off"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={couponBusy || couponInput.trim().length === 0}
+              className={cn(BTN_SECONDARY, BTN_SIZE.sm, "shrink-0")}
+            >
+              {couponBusy ? "Checking…" : "Apply"}
+            </button>
+          </form>
+        )}
       </section>
 
       <section>

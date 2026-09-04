@@ -253,6 +253,14 @@ function PaidState({
             <div className="border-t border-line py-5 space-y-3">
               <ReceiptRow label="Ref" value={reference} mono tnum />
               <ReceiptRow label="Paid" value={paidAt} mono />
+              {detail.couponCode && (detail.discountTotal ?? 0) > 0 && (
+                <ReceiptRow
+                  label="Coupon"
+                  value={`${detail.couponCode} · −₱${(detail.discountTotal ?? 0).toLocaleString()}`}
+                  mono
+                  tnum
+                />
+              )}
               {recipientEmail && (
                 <ReceiptRow label="To" value={recipientEmail} />
               )}

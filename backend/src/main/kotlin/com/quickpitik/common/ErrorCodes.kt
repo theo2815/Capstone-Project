@@ -52,6 +52,12 @@ object ErrorCodes {
     const val PAYMENT_FAILED = "PAYMENT_FAILED"
     const val INVALID_IDEMPOTENCY_KEY = "INVALID_IDEMPOTENCY_KEY"
     const val IDEMPOTENT_REPLAY_IN_PROGRESS = "IDEMPOTENT_REPLAY_IN_PROGRESS"
+    // Photographer coupons (V45). INVALID covers unknown + inactive so a guess
+    // can't tell a switched-off code from a nonexistent one.
+    const val COUPON_INVALID = "COUPON_INVALID"
+    const val COUPON_EXPIRED = "COUPON_EXPIRED"
+    const val COUPON_NOT_APPLICABLE = "COUPON_NOT_APPLICABLE"
+    const val COUPON_CODE_TAKEN = "COUPON_CODE_TAKEN"
 
     const val PHOTOGRAPHER_NOT_VERIFIED = "PHOTOGRAPHER_NOT_VERIFIED"
     const val ACCOUNT_SUSPENDED = "ACCOUNT_SUSPENDED"

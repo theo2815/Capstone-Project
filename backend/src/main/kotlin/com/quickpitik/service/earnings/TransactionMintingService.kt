@@ -78,9 +78,13 @@ class TransactionMintingService(
             )
             if (existing != null) continue
 
+            // A photographer coupon comes out of the photographer's share only:
+            // the platform's cut (list price × cutRate) is identical with or
+            // without a code. See couponDiscount() in CouponService.
             val amountKept = item.pricePhpAtPurchase
                 .multiply(keepRate)
                 .setScale(2, RoundingMode.HALF_UP)
+                .subtract(item.discountPhp)
 
             try {
                 transactionRepository.save(
@@ -93,6 +97,7 @@ class TransactionMintingService(
                         buyerId = order.userId,
                         buyerDisplayName = buyerDisplay,
                         amountKeptPhp = amountKept,
+                        discountPhp = item.discountPhp,
                         isRefund = false,
                     ),
                 )

@@ -79,6 +79,7 @@ class OrderService(
     private val platformProperties: PlatformProperties,
     private val orderAccessTokenService: OrderAccessTokenService,
     private val transactionTemplate: TransactionTemplate,
+    private val couponService: CouponService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -123,7 +124,7 @@ class OrderService(
         val isAndroid = request.clientPlatform.equals("android", ignoreCase = true)
         val checkout = try {
             paymongoClient.createCheckoutSession(
-                request = buildCheckoutRequest(reservation, request, paymentMethod, recipientEmail, isAndroid),
+                request = buildCheckoutRequest(reservation, paymentMethod, recipientEmail, isAndroid),
                 idempotencyKey = primary.id.toString(),
             )
         } catch (ex: Exception) {
@@ -174,8 +175,8 @@ class OrderService(
         val events = loadAndValidateEvents(request.items)
 
         findScopedOrders(userId, recipientEmail, idempotencyKey).takeIf { it.isNotEmpty() }?.let { existing ->
-            validateReplay(existing, request, paymentMethod)
-            return CheckoutReservation(existing, photos, events)
+            val items = validateReplay(existing, request, paymentMethod)
+            return CheckoutReservation(existing, photos, events, items)
         }
 
         val photoIds = request.items.map { it.photoId }.toSet()
@@ -193,13 +194,35 @@ class OrderService(
                 throw checkoutConflict("One or more photos already belong to another active checkout.")
             }
             val existing = findScopedOrders(userId, recipientEmail, keys.single())
-            validateReplay(existing, request, paymentMethod)
-            return CheckoutReservation(existing, photos, events)
+            val items = validateReplay(existing, request, paymentMethod)
+            return CheckoutReservation(existing, photos, events, items)
+        }
+
+        // Fresh checkout only — the replay branches above never re-resolve the
+        // coupon, so a code that expired between attempts cannot strand a
+        // retry whose discount is already persisted on the order rows.
+        val coupon = request.couponCode?.let(couponService::resolveForCheckout)
+        val discounts: Map<UUID, BigDecimal> = if (coupon == null) {
+            emptyMap()
+        } else {
+            photos.values
+                .filter { couponService.eligible(it, coupon) }
+                .associate { it.id to couponService.discountFor(it, coupon) }
+        }
+        if (coupon != null && discounts.isEmpty()) {
+            throw ValidationException(
+                message = "${coupon.code} doesn't apply to any photo in this checkout",
+                code = ErrorCodes.COUPON_NOT_APPLICABLE,
+                field = "couponCode",
+            )
         }
 
         val expiresAt = OffsetDateTime.now().plus(platformProperties.shareTokenTtl)
+        val savedItems = mutableListOf<OrderItem>()
         val orders = request.items.groupBy { it.eventId }.map { (eventId, items) ->
-            val total = items.fold(BigDecimal.ZERO) { sum, item -> sum + photos.getValue(item.photoId).pricePhp }
+            val total = items.fold(BigDecimal.ZERO) { sum, item ->
+                sum + photos.getValue(item.photoId).pricePhp - (discounts[item.photoId] ?: BigDecimal.ZERO)
+            }
             val order = orderRepository.save(
                 Order(
                     userId = userId,
@@ -209,15 +232,17 @@ class OrderService(
                     status = OrderStatus.PENDING,
                     totalPhp = total,
                     idempotencyKey = idempotencyKey,
+                    couponCode = coupon?.code,
                     legacyShareTokenHash = null,
                     tokenExpiresAt = expiresAt,
                 ),
             )
             items.forEach { item ->
-                orderItemRepository.save(
+                savedItems += orderItemRepository.save(
                     OrderItem(
                         id = OrderItemId(order.id, item.photoId),
                         pricePhpAtPurchase = photos.getValue(item.photoId).pricePhp,
+                        discountPhp = discounts[item.photoId] ?: BigDecimal.ZERO,
                     ),
                 )
             }
@@ -231,7 +256,7 @@ class OrderService(
             )
             order
         }
-        return CheckoutReservation(orders, photos, events)
+        return CheckoutReservation(orders, photos, events, savedItems)
     }
 
     private fun replayAfterConstraintRace(
@@ -243,22 +268,37 @@ class OrderService(
     ): CheckoutReservation? {
         val existing = findScopedOrders(userId, recipientEmail, idempotencyKey)
         if (existing.isEmpty()) return null
-        validateReplay(existing, request, paymentMethod)
-        return CheckoutReservation(existing, loadAndValidatePhotos(request.items), loadAndValidateEvents(request.items))
+        val items = validateReplay(existing, request, paymentMethod)
+        return CheckoutReservation(
+            existing,
+            loadAndValidatePhotos(request.items),
+            loadAndValidateEvents(request.items),
+            items,
+        )
     }
 
-    private fun validateReplay(orders: List<Order>, request: CreateOrderRequest, paymentMethod: PaymentMethod) {
+    // Returns the persisted items so the caller can charge exactly what was
+    // reserved (price − discount) instead of re-pricing from the photo.
+    private fun validateReplay(
+        orders: List<Order>,
+        request: CreateOrderRequest,
+        paymentMethod: PaymentMethod,
+    ): List<OrderItem> {
         if (orders.isEmpty()) throw checkoutConflict("Checkout is already in progress.")
-        val existingPhotoIds = orderItemRepository.findByIdOrderIdIn(orders.map { it.id })
-            .map { it.id.photoId }
-            .toSet()
+        val existingItems = orderItemRepository.findByIdOrderIdIn(orders.map { it.id })
+        val existingPhotoIds = existingItems.map { it.id.photoId }.toSet()
         val requestedPhotoIds = request.items.map { it.photoId }.toSet()
-        if (existingPhotoIds != requestedPhotoIds || orders.any { it.paymentMethod != paymentMethod }) {
+        // Pure string compare — never resolve the coupon on a replay.
+        val requestedCoupon = request.couponCode?.let { CouponService.normalise(it) }
+        if (existingPhotoIds != requestedPhotoIds ||
+            orders.any { it.paymentMethod != paymentMethod || it.couponCode != requestedCoupon }
+        ) {
             throw checkoutConflict("Idempotency-Key was already used for a different checkout.")
         }
         if (orders.any { it.status == OrderStatus.EXPIRED }) {
             throw checkoutConflict("This checkout expired. Start again with a new Idempotency-Key.")
         }
+        return existingItems
     }
 
     private fun findScopedOrders(userId: UUID?, recipientEmail: String, idempotencyKey: String): List<Order> =
@@ -273,7 +313,6 @@ class OrderService(
 
     private fun buildCheckoutRequest(
         reservation: CheckoutReservation,
-        request: CreateOrderRequest,
         paymentMethod: PaymentMethod,
         recipientEmail: String,
         isAndroid: Boolean,
@@ -285,10 +324,10 @@ class OrderService(
                 attributes = PaymongoCheckoutSessionAttributes(
                     cancelUrl = baseCancelUrl,
                     successUrl = buildSuccessUrl(primary, isAndroid),
-                    lineItems = buildLineItems(request.items, reservation.photos, reservation.events),
+                    lineItems = buildLineItems(reservation.items, reservation.photos, reservation.events),
                     paymentMethodTypes = paymongoMethodsFor(paymentMethod),
                     description = buildSessionDescription(
-                        request.items.size,
+                        reservation.items.size,
                         reservation.events.values.map { it.name },
                     ),
                     billing = PaymongoBilling(email = recipientEmail),
@@ -471,26 +510,30 @@ class OrderService(
                     photoId = item.id.photoId,
                     price = item.pricePhpAtPurchase,
                     downloadUrl = photos[item.id.photoId]?.let { downloadUrlOf(it, grants[item.id.photoId]) },
+                    discount = item.discountPhp,
                 )
             },
             totalAmount = order.totalPhp,
             paymentMethod = order.paymentMethodWire,
             createdAt = order.createdAt,
             redirectUrl = redirectUrl,
+            couponCode = order.couponCode,
         )
     }
 
+    // Charged from the persisted order rows, never re-priced from the photo:
+    // Payment.amountPhp, the ledger and PayMongo then share one figure.
     private fun buildLineItems(
-        items: List<CreateOrderItem>,
+        items: List<OrderItem>,
         photos: Map<UUID, Photo>,
         events: Map<UUID, Event>,
     ): List<PaymongoLineItem> = items.map { item ->
-        val photo = photos.getValue(item.photoId)
+        val photo = photos.getValue(item.id.photoId)
         val bib = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber?.let { "BIB $it" } ?: "Untagged"
         PaymongoLineItem(
             name = "Race photo - $bib".take(120),
-            amount = photo.pricePhp.multiply(BigDecimal(100)).toLong(),
-            description = events[item.eventId]?.name?.take(120),
+            amount = item.pricePhpAtPurchase.subtract(item.discountPhp).multiply(BigDecimal(100)).toLong(),
+            description = events[photo.eventId]?.name?.take(120),
         )
     }
 
@@ -556,6 +599,8 @@ class OrderService(
                 eventState = event?.let { EventDtoMapper.deriveAdminEventState(it) },
                 status = order.status,
                 disputes = disputes[order.id].orEmpty(),
+                couponCode = order.couponCode,
+                discountTotal = itemsByOrder[order.id].orEmpty().sumOf { it.discountPhp },
             )
         }
     }
@@ -621,6 +666,8 @@ class OrderService(
             recipientEmail = order.recipientEmail,
             shareToken = orderAccessTokenService.issue(order, OrderCapability.BUNDLE),
             disputes = hydrateDisputesByOrderId(listOf(order.id))[order.id].orEmpty(),
+            couponCode = order.couponCode,
+            discountTotal = items.sumOf { it.discountPhp },
         )
     }
 
@@ -655,6 +702,7 @@ class OrderService(
         val orders: List<Order>,
         val photos: Map<UUID, Photo>,
         val events: Map<UUID, Event>,
+        val items: List<OrderItem>,
     )
 
     private companion object {

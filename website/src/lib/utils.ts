@@ -20,6 +20,19 @@ export function formatPrice(amount: number): string {
   }).format(amount);
 }
 
+// Guarded clipboard write. Resolves false (never throws) when the Clipboard
+// API is missing — insecure origins, some in-app browsers — so callers can
+// toast an honest "couldn't copy" instead of a silent no-op.
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.clipboard) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function slugify(text: string): string {
   return text
     .toLowerCase()

@@ -8,7 +8,8 @@ import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-sty
 import { ZoomableImage } from "@/components/photos/zoomable-image";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { formatRaceDate } from "@/lib/format";
-import { cn, formatPrice } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import { cn, copyToClipboard, formatPrice } from "@/lib/utils";
 
 // The lightbox is a photograph on a dark stage with one caption rail beside
 // it. Every fact and every action lives in that rail, top to bottom: event ·
@@ -36,6 +37,12 @@ export interface PhotoPreviewItem {
   // the credit renders as plain text, never a link to /{null}.
   photographerHandle?: string | null;
   photographerName?: string | null;
+  // Photographer coupon (V45), priced by the BE: `couponPrice` is what the
+  // runner pays with the code. Absent when the photographer has no live
+  // coupon or the photo is free.
+  couponCode?: string | null;
+  couponPercentOff?: number | null;
+  couponPrice?: number | null;
   alt?: string;
 }
 
@@ -187,6 +194,18 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
       name={photo.photographerName}
     />
   );
+  // The photographer's coupon, priced by the BE. Browse mode only — an owned
+  // or review photo has nothing left to discount.
+  const offer =
+    mode === "browse" && photo.couponCode && photo.couponPercentOff != null ? (
+      <CouponOffer
+        code={photo.couponCode}
+        percentOff={photo.couponPercentOff}
+        handle={photo.photographerHandle}
+        name={photo.photographerName}
+      />
+    ) : null;
+  const hasCouponPrice = mode === "browse" && photo.couponPrice != null && Boolean(photo.couponCode);
 
   const content = (
     <div
@@ -366,9 +385,16 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                   {eventName}
                 </Kicker>
                 {mode === "browse" && (
-                  <p className="shrink-0 font-mono font-semibold tnum text-[22px] leading-none text-ink">
-                    {formatPrice(photo.price)}
-                  </p>
+                  <div className="shrink-0 text-right">
+                    <p className="font-mono font-semibold tnum text-[22px] leading-none text-ink">
+                      {formatPrice(hasCouponPrice ? photo.couponPrice! : photo.price)}
+                    </p>
+                    {hasCouponPrice && (
+                      <Kicker as="p" tone="soft" tnum className="mt-1 whitespace-nowrap">
+                        list {formatPrice(photo.price)}
+                      </Kicker>
+                    )}
+                  </div>
                 )}
                 {mode === "owned" && (
                   <Kicker as="p" tone="soft" className="shrink-0">
@@ -377,6 +403,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                 )}
               </div>
               {credit && <div className="mt-1.5">{credit}</div>}
+              {offer}
             </div>
 
             {/* lg rail: event name, credit. (Date lives in the header row.) */}
@@ -385,6 +412,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                 {eventName}
               </p>
               {credit && <div className="mt-5">{credit}</div>}
+              {offer}
             </div>
           </div>
 
@@ -393,10 +421,12 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             {mode === "browse" && (
               <div className="hidden lg:block mb-4">
                 <p className="font-mono font-semibold tnum text-[26px] leading-none text-ink">
-                  {formatPrice(photo.price)}
+                  {formatPrice(hasCouponPrice ? photo.couponPrice! : photo.price)}
                 </p>
-                <Kicker as="p" tone="soft" className="mt-1.5">
-                  Per photo · download forever
+                <Kicker as="p" tone="soft" tnum className="mt-1.5">
+                  {hasCouponPrice
+                    ? `With ${photo.couponCode} · list ${formatPrice(photo.price)}`
+                    : "Per photo · download forever"}
                 </Kicker>
               </div>
             )}
@@ -517,5 +547,52 @@ function PhotographerCredit({
         <span className="text-ink">{name}</span>
       )}
     </Kicker>
+  );
+}
+
+// The photographer's coupon offer in the rail: the code, whose photos it
+// covers, and a one-tap copy. Ink outline, not fresh — Buy now owns the
+// accent. The BE has already priced it (see couponPrice on the item).
+function CouponOffer({
+  code,
+  percentOff,
+  handle,
+  name,
+}: {
+  code: string;
+  percentOff: number;
+  handle?: string | null;
+  name?: string | null;
+}) {
+  const { showToast } = useToast();
+  // The credit line directly above already names the photographer; a full
+  // handle here truncates on the 340px rail. Keep the row about the offer.
+  const who = handle || name ? "their" : "this photographer's";
+
+  const copy = async () => {
+    const ok = await copyToClipboard(code);
+    showToast(
+      ok
+        ? { kind: "success", message: `Code ${code} copied. Paste it at checkout.` }
+        : { kind: "error", message: "Couldn't copy the code." },
+    );
+  };
+
+  return (
+    <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-line bg-bone-deep/60 px-4 py-3">
+      <div className="min-w-0">
+        <p className="font-mono font-semibold tnum text-ink truncate">{code}</p>
+        <Kicker as="p" tone="soft" tnum className="leading-snug">
+          {percentOff}% off {who} photos
+        </Kicker>
+      </div>
+      <button
+        type="button"
+        onClick={() => void copy()}
+        className={cn(BTN_SECONDARY, "shrink-0 px-4 py-2 text-sm min-h-[44px]")}
+      >
+        Copy
+      </button>
+    </div>
   );
 }

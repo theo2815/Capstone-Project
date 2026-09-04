@@ -23,12 +23,17 @@ export interface Order {
   // and for idempotent replays of PENDING orders. Null when the order is
   // already PAID (success path on replay) or when the legacy stub flow ran.
   redirectUrl?: string | null;
+  // Photographer coupon entered at checkout (V45), if any.
+  couponCode?: string | null;
 }
 
+// `price` is the list price; `discount` the coupon's share of it (0 or absent
+// when none). `totalAmount` on the order is what was charged.
 export interface OrderItem {
   photoId: string;
   downloadUrl?: string;
   price: number;
+  discount?: number;
 }
 
 // Phase E hydration shape for /me/orders/{id}.photos[]. Server bakes the

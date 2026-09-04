@@ -4,6 +4,7 @@ import com.quickpitik.entity.OrderStatus
 import jakarta.validation.constraints.Email
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotEmpty
+import jakarta.validation.constraints.Size
 import java.math.BigDecimal
 import java.time.OffsetDateTime
 import java.util.UUID
@@ -23,6 +24,10 @@ data class CreateOrderRequest(
     // for PayMongo success/cancel so the user lands back in the app via the
     // quickpitik:// deep link instead of the website. null/empty → website flow.
     val clientPlatform: String? = null,
+    // Photographer coupon (V45). Validated and priced server-side only; a code
+    // that covers none of the items is a 400 COUPON_NOT_APPLICABLE.
+    @field:Size(max = 32, message = "couponCode is too long")
+    val couponCode: String? = null,
 )
 
 data class CreateOrderItem(
@@ -42,10 +47,14 @@ data class OrderResponse(
     val paymentMethod: String,
     val createdAt: OffsetDateTime,
     val redirectUrl: String? = null,
+    val couponCode: String? = null,
 )
 
+// `price` is the list price; `discount` is the coupon's share of it (0 when
+// none). totalAmount on the parent is what was actually charged.
 data class OrderResponseItem(
     val photoId: UUID,
     val price: BigDecimal,
     val downloadUrl: String? = null,
+    val discount: BigDecimal = BigDecimal.ZERO,
 )

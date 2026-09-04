@@ -103,6 +103,20 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
         @Param("to") to: OffsetDateTime,
     ): BigDecimal
 
+    // Coupon discounts in the window (V45), net of refunds like kept. Added
+    // back to kept before dividing by the keep rate, or the reconstructed
+    // gross — and with it the platform fee — under-reports by the discount.
+    @Query(
+        """
+        SELECT COALESCE(SUM(t.discountPhp), 0) FROM Transaction t
+        WHERE t.paidAt >= :from AND t.paidAt < :to
+        """,
+    )
+    fun sumDiscountsInWindow(
+        @Param("from") from: OffsetDateTime,
+        @Param("to") to: OffsetDateTime,
+    ): BigDecimal
+
     // Per-photographer net kept amount + non-refund sale count for a single
     // week window. Drives the admin "Generate cycles" action — one row per
     // photographer who had at least ₱0.01 net activity in the window. Refund

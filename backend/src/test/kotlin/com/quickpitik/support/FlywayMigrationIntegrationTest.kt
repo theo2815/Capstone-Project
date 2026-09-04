@@ -68,6 +68,25 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1, count)
     }
 
+    // V45: one coupon per photographer, discount carried on order items and
+    // the earnings ledger, the entered code on the order.
+    @Test
+    fun `photographer coupon schema is present`() {
+        val couponColumns = jdbcTemplate.queryForList(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'photographer_coupons'",
+            String::class.java,
+        )
+        assertTrue(couponColumns.containsAll(listOf("photographer_id", "code", "percent_off", "active", "expires_at")))
+
+        fun columns(table: String) = jdbcTemplate.queryForList(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = '$table'",
+            String::class.java,
+        )
+        assertTrue("coupon_code" in columns("orders"))
+        assertTrue("discount_php" in columns("order_items"))
+        assertTrue("discount_php" in columns("transactions"))
+    }
+
     @Test
     fun `checkout hardening schema is present`() {
         val orderColumns = jdbcTemplate.queryForList(

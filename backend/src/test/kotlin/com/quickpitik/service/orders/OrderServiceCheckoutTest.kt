@@ -17,6 +17,7 @@ import com.quickpitik.entity.OrderItemId
 import com.quickpitik.entity.Payment
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.entity.PhotographerCoupon
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.CartItemRepository
@@ -27,6 +28,8 @@ import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.PhotographerCouponRepository
+import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.support.testTransactionTemplate
@@ -65,7 +68,9 @@ class OrderServiceCheckoutTest {
     private lateinit var paymentRepository: PaymentRepository
     private lateinit var photoRepository: PhotoRepository
     private lateinit var paymongoClient: PaymongoClient
+    private lateinit var couponRepository: PhotographerCouponRepository
     private lateinit var service: OrderService
+    private var lastProviderRequest: PaymongoCheckoutSessionRequest? = null
     private val savedOrders = mutableListOf<Order>()
     private val savedItems = mutableListOf<OrderItem>()
     private val savedPayments = mutableListOf<Payment>()
@@ -77,6 +82,7 @@ class OrderServiceCheckoutTest {
         paymentRepository = Mockito.mock(PaymentRepository::class.java)
         photoRepository = Mockito.mock(PhotoRepository::class.java)
         paymongoClient = Mockito.mock(PaymongoClient::class.java)
+        couponRepository = Mockito.mock(PhotographerCouponRepository::class.java)
         val downloadGrants = Mockito.mock(DownloadGrantRepository::class.java)
         val events = Mockito.mock(EventRepository::class.java)
 
@@ -130,6 +136,15 @@ class OrderServiceCheckoutTest {
             platform,
             OrderAccessTokenService(platform),
             testTransactionTemplate(),
+            // Real service over a mocked repository: the discount arithmetic is
+            // the thing under test, so it must not be a stub.
+            CouponService(
+                couponRepository,
+                photoRepository,
+                Mockito.mock(PhotographerSettingsRepository::class.java),
+                Mockito.mock(UserRepository::class.java),
+                platform,
+            ),
         )
     }
 
@@ -192,10 +207,113 @@ class OrderServiceCheckoutTest {
         Mockito.verifyNoInteractions(paymongoClient)
     }
 
-    private fun request() = CreateOrderRequest(
-        items = listOf(CreateOrderItem(photo.id, eventId)),
+    @Test
+    fun `a coupon discounts only its owner's photos and every charged amount agrees`() {
+        val owner = UUID.randomUUID()
+        photo.photographerId = owner
+        val theirs = Photo(eventId = eventId, s3Key = "photos/theirs.jpg", pricePhp = BigDecimal("150.00"))
+            .also { it.photographerId = UUID.randomUUID() }
+        Mockito.`when`(photoRepository.findAllByIdForUpdate(anyArg())).thenReturn(listOf(photo, theirs))
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo, theirs))
+        Mockito.`when`(couponRepository.findByCode("PHOTO20"))
+            .thenReturn(PhotographerCoupon(photographerId = owner, code = "PHOTO20", percentOff = 20))
+        stubProvider()
+
+        val response = service.create(
+            null,
+            request(
+                items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(theirs.id, eventId)),
+                couponCode = " photo20",
+            ),
+            key,
+        )
+
+        // ₱125 × 0.75 × 20% = ₱18.75 off the owner's photo; the other
+        // photographer's ₱150 is untouched. Recorded total, payment placeholder,
+        // PayMongo line items and the response must all say the same thing.
+        val order = savedOrders.single()
+        assertEquals(BigDecimal("256.25"), order.totalPhp)
+        assertEquals("PHOTO20", order.couponCode)
+        assertEquals(BigDecimal("18.75"), savedItems.single { it.id.photoId == photo.id }.discountPhp)
+        assertEquals(0, savedItems.single { it.id.photoId == theirs.id }.discountPhp.signum())
+        assertEquals(BigDecimal("256.25"), savedPayments.single().amountPhp)
+        val amounts = lastProviderRequest!!.data.attributes.lineItems.map { it.amount }
+        assertEquals(listOf(10625L, 15000L), amounts.sorted())
+        assertEquals(order.totalPhp.multiply(BigDecimal(100)).toLong(), amounts.sum())
+        assertEquals("PHOTO20", response.couponCode)
+        assertEquals(BigDecimal("18.75"), response.items.single { it.photoId == photo.id }.discount)
+    }
+
+    @Test
+    fun `replaying an idempotency key with a different coupon code is refused`() {
+        val existing = Order(
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = "gcash",
+            totalPhp = photo.pricePhp,
+            idempotencyKey = key,
+            couponCode = "PHOTO20",
+        )
+        Mockito.`when`(
+            orderRepository.findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(email, key),
+        ).thenReturn(listOf(existing))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(listOf(existing.id))).thenReturn(
+            listOf(OrderItem(OrderItemId(existing.id, photo.id), photo.pricePhp)),
+        )
+
+        assertFailsWith<ConflictException> { service.create(null, request(couponCode = "OTHER5"), key) }
+
+        Mockito.verifyNoInteractions(paymongoClient)
+    }
+
+    @Test
+    fun `a same-key retry charges the persisted discount without re-validating the coupon`() {
+        val existing = Order(
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = "gcash",
+            totalPhp = BigDecimal("106.25"),
+            idempotencyKey = key,
+            couponCode = "PHOTO20",
+        )
+        Mockito.`when`(
+            orderRepository.findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(email, key),
+        ).thenReturn(listOf(existing))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(listOf(existing.id))).thenReturn(
+            listOf(OrderItem(OrderItemId(existing.id, photo.id), photo.pricePhp, discountPhp = BigDecimal("18.75"))),
+        )
+        savedPayments += Payment(orderId = existing.id, provider = "paymongo", amountPhp = existing.totalPhp)
+        // The coupon has since been deleted — re-resolving it would 400 a
+        // runner who is only retrying after a provider timeout.
+        Mockito.`when`(couponRepository.findByCode("PHOTO20")).thenReturn(null)
+        stubProvider()
+
+        val response = service.create(null, request(couponCode = "photo20"), key)
+
+        assertEquals(listOf(10625L), lastProviderRequest!!.data.attributes.lineItems.map { it.amount })
+        assertEquals("https://pay.test/cs_test", response.redirectUrl)
+    }
+
+    private fun stubProvider() {
+        Mockito.`when`(paymongoClient.createCheckoutSession(anyArg(), anyArg())).thenAnswer { call ->
+            lastProviderRequest = call.getArgument(0)
+            PaymongoCheckoutSessionResponse(
+                PaymongoCheckoutSessionResponseEnvelope(
+                    id = "cs_test",
+                    attributes = PaymongoCheckoutSessionResponseAttributes(checkoutUrl = "https://pay.test/cs_test"),
+                ),
+            )
+        }
+    }
+
+    private fun request(
+        items: List<CreateOrderItem> = listOf(CreateOrderItem(photo.id, eventId)),
+        couponCode: String? = null,
+    ) = CreateOrderRequest(
+        items = items,
         paymentMethod = "gcash",
         recipientEmail = email,
+        couponCode = couponCode,
     )
 
     private fun <T> anyArg(): T = Mockito.any()

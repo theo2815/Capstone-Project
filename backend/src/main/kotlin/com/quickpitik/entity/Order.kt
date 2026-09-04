@@ -42,6 +42,12 @@ class Order(
     @Column(name = "idempotency_key", length = 64)
     var idempotencyKey: String? = null,
 
+    // Coupon code the runner entered at checkout (V45), stamped on every order
+    // of that checkout so an idempotent replay compares codes without
+    // re-resolving a coupon that may since have expired.
+    @Column(name = "coupon_code", length = 16)
+    var couponCode: String? = null,
+
     @Column(name = "paid_at")
     var paidAt: OffsetDateTime? = null,
 

@@ -1,6 +1,8 @@
 package com.quickpitik.controller
 
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.dto.orders.CouponDto
+import com.quickpitik.dto.orders.UpsertCouponRequest
 import com.quickpitik.dto.photographer.BrandPatchRequest
 import com.quickpitik.dto.photographer.CreatePayoutRequest
 import com.quickpitik.dto.photographer.CreateSocialRequest
@@ -14,6 +16,7 @@ import com.quickpitik.dto.photographer.SocialLinkDto
 import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.earnings.PayoutCycleService
+import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.photographer.PayoutAccountService
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.photographer.SocialLinkService
@@ -58,6 +61,7 @@ class MePhotographerSettingsController(
     private val payoutAccountService: PayoutAccountService,
     private val payoutCycleService: PayoutCycleService,
     private val rateLimiter: RateLimiter,
+    private val couponService: CouponService,
 ) {
     // ─── Brand / Handle / Region ──────────────────────────────────────────
     @GetMapping("/brand")
@@ -150,6 +154,23 @@ class MePhotographerSettingsController(
         @PathVariable id: UUID,
     ): Map<String, Boolean> {
         socialLinkService.delete(principal.userId, id)
+        return mapOf("removed" to true)
+    }
+
+    // ─── Coupon (one per photographer, V45) ───────────────────────────────
+    @GetMapping("/coupon")
+    fun getCoupon(@AuthenticationPrincipal principal: AuthPrincipal): CouponDto? =
+        couponService.get(principal.userId)
+
+    @PutMapping("/coupon")
+    fun putCoupon(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @Valid @RequestBody body: UpsertCouponRequest,
+    ): CouponDto = couponService.upsert(principal.userId, body)
+
+    @DeleteMapping("/coupon")
+    fun deleteCoupon(@AuthenticationPrincipal principal: AuthPrincipal): Map<String, Boolean> {
+        couponService.delete(principal.userId)
         return mapOf("removed" to true)
     }
 

@@ -28,6 +28,9 @@ data class RateLimitProperties(
     // Return pages poll every two seconds for one minute; leave room for the
     // final detail request and a second tab without leaving reads unlimited.
     val orderRead: Policy = Policy(capacity = 90, refillPeriod = Duration.ofMinutes(1)),
+    // Public coupon preview: one lookup + a page of photos per call. Its own
+    // bucket so typo'd "Apply" clicks can't drain the checkout bucket.
+    val couponPreview: Policy = Policy(capacity = 30, refillPeriod = Duration.ofMinutes(1)),
     // Public token-gated bundle download streams one S3 GET per photo + zip
     // CPU per call.
     val bundleDownload: Policy = Policy(capacity = 6, refillPeriod = Duration.ofMinutes(1)),

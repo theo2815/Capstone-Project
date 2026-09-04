@@ -7,6 +7,9 @@
 export const PHOTO_PRICE_PHP = 125;
 export const PLATFORM_CUT_RATE = 0.25;
 export const PHOTOGRAPHER_KEEP_RATE = 1 - PLATFORM_CUT_RATE;
+// Largest photographer coupon, as a whole percent of the photographer's
+// share. Mirrors the backend's PlatformProperties.couponMaxPercent default.
+export const COUPON_MAX_PERCENT = 50;
 
 export const PER_PHOTO_PLATFORM_CUT = PHOTO_PRICE_PHP * PLATFORM_CUT_RATE;
 export const PER_PHOTO_PHOTOGRAPHER_KEEP =

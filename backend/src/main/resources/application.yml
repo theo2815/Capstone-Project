@@ -240,6 +240,11 @@ app:
     order-read:
       capacity: 90
       refill-period: PT1M
+    # Public coupon preview: one lookup + a page of photos per call; its own
+    # bucket so typo'd "Apply" clicks can't drain the checkout bucket.
+    coupon-preview:
+      capacity: 30
+      refill-period: PT1M
     # Public token-gated bundle download: one S3 GET per photo + zip CPU.
     bundle-download:
       capacity: 6
@@ -256,6 +261,9 @@ app:
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
     platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}
+    # Largest photographer coupon (whole percent of the photographer's share).
+    # The platform cut never moves, whatever this is set to.
+    coupon-max-percent: ${COUPON_MAX_PERCENT:50}
     # Upper bound for emailed bundle capabilities and migrated legacy tokens.
     share-token-ttl: ${SHARE_TOKEN_TTL:P90D}
     order-capability-secret: ${ORDER_CAPABILITY_SECRET:dev-only-order-capability-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random}

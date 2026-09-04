@@ -22,6 +22,7 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.orders.CouponService
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
@@ -39,6 +40,7 @@ class PublicPhotographerService(
     private val photoRepository: PhotoRepository,
     private val storageProperties: StorageProperties,
     private val storageService: com.quickpitik.service.storage.StorageService,
+    private val couponService: CouponService,
 ) {
     fun getProfile(handle: String): PhotographerProfileDto {
         val normalized = handle.trim().lowercase()
@@ -137,11 +139,13 @@ class PublicPhotographerService(
         // so attribution is a constant — no per-page lookup like PhotoService
         // needs for a mixed event grid.
         val photographer = PhotographerRef(handle = settings.handle, name = user.name)
+        val coupon = couponService.activeFor(setOf(settings.userId))[settings.userId]
         return PaginatedResponse(
             items = page.content.map {
                 it.toDto(
                     thumbnailUrlResolver = ::resolveWatermarkedUrl,
                     photographerResolver = { photographer },
+                    couponResolver = { photo -> couponService.quoteFor(photo, coupon) },
                 )
             },
             total = page.totalElements,

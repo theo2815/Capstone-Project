@@ -13,6 +13,7 @@ import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -29,6 +30,7 @@ class PhotoService(
     private val userRepository: UserRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
+    private val couponService: CouponService,
 ) {
     fun listForEvent(
         eventId: UUID,
@@ -91,6 +93,9 @@ class PhotoService(
     ): PaginatedResponse<PhotoDto> {
         val ownedIds = resolveOwnedIds(requesterUserId, photos)
         val photographers = resolvePhotographers(photos)
+        // Live coupons for the page's photographers — one IN query, same
+        // batch shape as attribution.
+        val coupons = couponService.activeFor(photographers.keys)
         return PaginatedResponse(
             items = photos.map {
                 it.toDto(
@@ -100,6 +105,9 @@ class PhotoService(
                     },
                     photographerResolver = { photo ->
                         photo.photographerId?.let { photographers[it] }
+                    },
+                    couponResolver = { photo ->
+                        couponService.quoteFor(photo, photo.photographerId?.let { coupons[it] })
                     },
                 )
             },

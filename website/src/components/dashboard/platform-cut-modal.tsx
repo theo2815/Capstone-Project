@@ -92,6 +92,10 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
               <span className="font-mono tnum text-ink">{keepPct}%</span>, paid
               out weekly.
             </p>
+            <p className="font-sans text-sm md:text-base text-slate mt-3 max-w-md">
+              A coupon you create comes out of your share only; the platform
+              cut on that sale is unchanged.
+            </p>
           </div>
 
           <section aria-labelledby="per-photo-heading">

@@ -117,6 +117,10 @@ class SecurityConfig(
                 // below: permitted here, authorized in the service layer.
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/events/*/photos/search-by-face").permitAll()
                 auth.requestMatchers(HttpMethod.POST, "/api/v1/orders").permitAll()
+                // Coupon preview is a guest checkout surface too — the code is
+                // printed on public photo cards. IP-keyed bucket in the
+                // controller; the answer is a priced item list, never a URL.
+                auth.requestMatchers(HttpMethod.POST, "/api/v1/coupons/preview").permitAll()
                 auth.requestMatchers(
                     HttpMethod.GET,
                     "/api/v1/orders/mobile-return",

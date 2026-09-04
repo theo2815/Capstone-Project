@@ -1,15 +1,19 @@
 package com.quickpitik.service.photos
 
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotographerCoupon
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -36,6 +40,7 @@ class PhotoServiceAttributionTest {
     private lateinit var photographerSettingsRepository: PhotographerSettingsRepository
     private lateinit var userRepository: UserRepository
     private lateinit var storageService: StorageService
+    private lateinit var couponRepository: PhotographerCouponRepository
 
     private val eventId: UUID = UUID.randomUUID()
     private val pagination = PaginationParams.of(0, 240)
@@ -47,7 +52,52 @@ class PhotoServiceAttributionTest {
         photographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
         userRepository = Mockito.mock(UserRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
+        couponRepository = Mockito.mock(PhotographerCouponRepository::class.java)
         Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
+    }
+
+    // Photographer coupons (V45): the card shows the code and the price with
+    // it, computed server-side so no client ever does money math.
+    @Test
+    fun `a photo carries its photographer's live coupon and the discounted price`() {
+        val id = UUID.randomUUID()
+        stubPage(listOf(photo(id)))
+        stubPhotographers(listOf(settings(id, handle = "cebu-shots")), listOf(user(id, name = "Cebu Shots")))
+        Mockito.`when`(couponRepository.findAllById(anyArg())).thenReturn(
+            listOf(PhotographerCoupon(photographerId = id, code = "SHOTS10", percentOff = 10)),
+        )
+
+        val dto = service().listForEvent(eventId, bib = null, pagination = pagination).items.single()
+
+        assertEquals("SHOTS10", dto.couponCode)
+        assertEquals(10, dto.couponPercentOff)
+        // ₱199 × 0.75 × 10% = ₱14.93 off the photographer's share.
+        assertEquals(BigDecimal("184.07"), dto.couponPrice)
+    }
+
+    @Test
+    fun `a switched-off coupon and a free photo carry no coupon fields`() {
+        val paused = UUID.randomUUID()
+        val generous = UUID.randomUUID()
+        stubPage(listOf(photo(paused), photo(generous, price = "0.00")))
+        stubPhotographers(
+            listOf(settings(paused, handle = "paused"), settings(generous, handle = "generous")),
+            listOf(user(paused, name = "Paused"), user(generous, name = "Generous")),
+        )
+        Mockito.`when`(couponRepository.findAllById(anyArg())).thenReturn(
+            listOf(
+                PhotographerCoupon(photographerId = paused, code = "PAUSED1", percentOff = 10, active = false),
+                PhotographerCoupon(photographerId = generous, code = "FREEBIE", percentOff = 10),
+            ),
+        )
+
+        val items = service().listForEvent(eventId, bib = null, pagination = pagination).items
+
+        assertEquals(2, items.size)
+        items.forEach {
+            assertNull(it.couponCode, "photo ${it.id}")
+            assertNull(it.couponPrice, "photo ${it.id}")
+        }
     }
 
     @Test
@@ -136,6 +186,13 @@ class PhotoServiceAttributionTest {
         userRepository,
         storageService,
         StorageProperties(),
+        CouponService(
+            couponRepository,
+            photoRepository,
+            photographerSettingsRepository,
+            userRepository,
+            PlatformProperties(),
+        ),
     )
 
     private fun stubPage(photos: List<Photo>) {
@@ -152,12 +209,12 @@ class PhotoServiceAttributionTest {
         Mockito.`when`(userRepository.findAllById(anyArg())).thenReturn(users)
     }
 
-    private fun photo(photographerId: UUID?): Photo = Photo(
+    private fun photo(photographerId: UUID?, price: String = "199.00"): Photo = Photo(
         eventId = eventId,
         photographerId = photographerId,
         s3Key = "events/$eventId/photos/x/original.jpg",
         thumbnailS3Key = "events/$eventId/photos/x/watermark.jpg",
-        pricePhp = BigDecimal("199.00"),
+        pricePhp = BigDecimal(price),
     )
 
     private fun settings(id: UUID, handle: String?) =

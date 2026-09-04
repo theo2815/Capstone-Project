@@ -30,6 +30,13 @@ export interface MockPhoto {
   // Both are absent on legacy/seed rows that carry no photographer at all.
   photographerHandle?: string | null;
   photographerName?: string | null;
+  // Photographer coupon (V45). Present only while the photographer's coupon
+  // is live and the photo is priced. `couponPrice` is what the runner pays
+  // with the code — computed server-side (list price − the photographer's
+  // share × percentOff); the client never does money math.
+  couponCode?: string | null;
+  couponPercentOff?: number | null;
+  couponPrice?: number | null;
   alt?: string;
 }
 

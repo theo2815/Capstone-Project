@@ -31,6 +31,10 @@ data class OrderDetailDto(
     // resolution note, and timestamps so /orders can render the chip +
     // timeline + cancel button off a single detail fetch.
     val disputes: List<RunnerDisputeDto> = emptyList(),
+    // Photographer coupon (V45): the code entered at checkout and the sum of
+    // the per-item discounts. `total` is already what was charged.
+    val couponCode: String? = null,
+    val discountTotal: BigDecimal = BigDecimal.ZERO,
 )
 
 data class OrderPhotoDetailDto(
