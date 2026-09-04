@@ -482,6 +482,14 @@ class UsbEventCaptureController(
                 delay(RETRY_MS)
                 continue
             }
+            // EOS R10, five sessions on 2026-09-04: in the FIRST session since
+            // attach the body answers GetDeviceInfo and OpenSession, then never
+            // answers the first EOS vendor op (SetRemoteMode) and NAKs every
+            // later send until a power-cycle. A plain session first — storage
+            // + handles, then a clean CloseSession, which is exactly what the
+            // card-import path does — made the next session's SetRemoteMode
+            // answer every time. So do that warm-up before the real open.
+            if (attempt == 1) warmUp(device, onLog)
             onLog(if (attempt == 1) "Opening PTP session…" else "Retry $attempt — opening PTP session…")
             val s = try {
                 PtpSession(manager, device)
@@ -527,7 +535,25 @@ class UsbEventCaptureController(
         return null
     }
 
+    private suspend fun warmUp(device: UsbDevice, onLog: (String) -> Unit) {
+        onLog("Warming up the camera link…")
+        val ok = runCatching {
+            PtpSession(manager, device).use { w ->
+                val rc = w.openSession()
+                if (rc != Ptp.RC_OK && rc != Ptp.RC_SESSION_ALREADY_OPEN) {
+                    throw PtpException("warm-up OpenSession 0x%04X".format(rc))
+                }
+                val stores = w.getStorageIds()
+                val handles = w.getObjectHandles(0xFFFFFFFFL)
+                onLog("  ${stores.size} store(s), ${handles.size} object(s)")
+            } // use{} → close(): CloseSession + release, the part that matters
+        }
+        onLog(if (ok.isSuccess) "  warm-up done" else "  warm-up failed: ${ok.exceptionOrNull()?.message}")
+        delay(WARMUP_SETTLE_MS)
+    }
+
     private companion object {
+        const val WARMUP_SETTLE_MS = 1000L
         // Known latency characteristic (tuning hooks for the on-device session):
         // on an EMPTY event queue PtpSession.eosGetEvent() blocks up to ~3 s
         // (two 1.5 s readContainerOrNull legs around a clearHalt), so the
