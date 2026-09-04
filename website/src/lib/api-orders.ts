@@ -1,5 +1,5 @@
 import { api } from "@/lib/api";
-import { API_BASE_URL } from "@/lib/constants";
+import { API_BASE_URL, ROUTES } from "@/lib/constants";
 import type {
   DisputeReason,
   DisputeResolution,
@@ -134,22 +134,55 @@ export interface OrderStatusPayload {
   paidAt: string | null;
 }
 
+// `verify: true` makes the backend ask PayMongo about the pending intent right
+// now (and settle it) instead of waiting for the webhook — used when the
+// runner says "I've paid". Rate-limited tighter than the plain read, so the
+// automatic poll never sets it.
+export interface OrderStatusOptions {
+  verify?: boolean;
+}
+
 export async function fetchOrderStatus(
   orderId: string,
   token: string,
+  opts: OrderStatusOptions = {},
 ): Promise<OrderStatusPayload> {
-  const qs = `?token=${encodeURIComponent(token)}`;
+  const params = new URLSearchParams({ token });
+  if (opts.verify) params.set("verify", "true");
   return api.get<OrderStatusPayload>(
-    `/orders/${encodeURIComponent(orderId)}/status${qs}`,
+    `/orders/${encodeURIComponent(orderId)}/status?${params.toString()}`,
   );
 }
 
 export async function fetchOrderStatusForUser(
   orderId: string,
+  opts: OrderStatusOptions = {},
 ): Promise<OrderStatusPayload> {
+  const qs = opts.verify ? "?verify=true" : "";
   return api.get<OrderStatusPayload>(
-    `/me/orders/${encodeURIComponent(orderId)}/status`,
+    `/me/orders/${encodeURIComponent(orderId)}/status${qs}`,
   );
+}
+
+// One status call for a pending record: guest orders use their signed return
+// token, signed-in orders the JWT route. Shared by the checkout modal and the
+// background watcher so both pick the endpoint the same way.
+export function fetchPendingStatus(
+  pending: { orderId: string; returnToken: string | null },
+  opts: OrderStatusOptions = {},
+): Promise<OrderStatusPayload> {
+  return pending.returnToken
+    ? fetchOrderStatus(pending.orderId, pending.returnToken, opts)
+    : fetchOrderStatusForUser(pending.orderId, opts);
+}
+
+// Receipt page for a pending/paid record — guests need the token in the URL.
+export function buildOrderReturnPath(
+  pending: { orderId: string; returnToken: string | null },
+): string {
+  const params = new URLSearchParams({ orderId: pending.orderId });
+  if (pending.returnToken) params.set("token", pending.returnToken);
+  return `${ROUTES.ORDERS_RETURN}?${params.toString()}`;
 }
 
 // Guest-friendly full order detail (hydrated photos + receipt fields).

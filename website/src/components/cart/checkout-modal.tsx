@@ -12,19 +12,44 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
+import { useConfirmationStore } from "@/store/confirmation-store";
+import { usePendingPaymentStore } from "@/store/pending-payment-store";
+import { useConfirmation } from "@/hooks/use-confirmation";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
-import { cn, formatPrice, safeUUID } from "@/lib/utils";
+import { cn, formatOrderRef, formatPrice, safeUUID } from "@/lib/utils";
 import {
-  fetchOrderStatus,
-  fetchOrderStatusForUser,
+  buildOrderReturnPath,
+  fetchPendingStatus,
   postOrder,
 } from "@/lib/api-orders";
 import { postCouponPreview, type CouponPreview } from "@/lib/api-coupons";
-import { ApiError } from "@/lib/api";
+import { ApiError, formatRetryWait } from "@/lib/api";
 import { Kicker } from "@/components/ui/kicker";
-import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import {
+  BTN_GHOST,
+  BTN_PRIMARY,
+  BTN_SECONDARY,
+  BTN_SIZE,
+} from "@/components/ui/button-styles";
 import type { CartItem } from "@/types/order";
+
+// Poll cadence while a QR is on screen. The plain read is cheap (one row);
+// `verify` asks PayMongo and is throttled server-side, so it only runs on
+// the runner's word ("I've paid" / "Check again") and every VERIFY_EVERY_MS
+// after that.
+const STATUS_POLL_MS = 2500;
+const VERIFY_EVERY_MS = 20_000;
+const MANUAL_COOLDOWN_MS = 20_000;
+// After this long past "I've paid" with no confirmation the copy switches to
+// "taking longer than usual" — banks usually report back within 10–30 s.
+const SLOW_AFTER_MS = 60_000;
+
+// "h:mm am/pm" in the runner's locale — QR validity, confirm dialog, paid-at.
+const formatClock = (iso: string) =>
+  new Intl.DateTimeFormat("en-PH", { hour: "numeric", minute: "2-digit" }).format(
+    new Date(iso),
+  );
 
 // Build the post-login resume URL: original page + `?checkout=1` flag.
 // `<CheckoutResumeWatcher>` reads the flag on mount and re-opens the modal,
@@ -43,7 +68,18 @@ interface QrPayment {
   orderId: string;
   imageUrl: string;
   expiresAt: string;
-  returnToken?: string | null;
+  returnToken: string | null;
+}
+
+// What the success step shows — snapshotted before the cart and the pending
+// record are cleared, since both are gone by the time it renders.
+interface Receipt {
+  orderId: string;
+  returnToken: string | null;
+  email: string;
+  total: number;
+  itemCount: number;
+  paidAt: string | null;
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -81,11 +117,25 @@ export function CheckoutModal({
   );
 
   const [paymentError, setPaymentError] = useState<string | null>(null);
-  const [orderId, setOrderId] = useState<string | null>(null);
   const [qrPayment, setQrPayment] = useState<QrPayment | null>(null);
   const [qrCheckError, setQrCheckError] = useState<string | null>(null);
   const [checkingPayment, setCheckingPayment] = useState(false);
+  // The return token died (35-min guest window) or the order vanished: we
+  // can't poll from here any more, but the backend still emails the receipt.
+  const [checkUnreachable, setCheckUnreachable] = useState(false);
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
+  // Bumped by every manual check so the automatic verify timer restarts and
+  // the button cools down — keeps verify traffic under the server bucket.
+  const [lastManualCheckAt, setLastManualCheckAt] = useState(0);
   const paymentCheckInFlight = useRef(false);
+
+  const pending = usePendingPaymentStore((s) => s.pending);
+  const setPending = usePendingPaymentStore((s) => s.set);
+  const markPaid = usePendingPaymentStore((s) => s.markPaid);
+  const clearPending = usePendingPaymentStore((s) => s.clear);
+  const paidClaimedAt = pending?.paidClaimedAt ?? null;
+  const confirmActive = useConfirmationStore((s) => s.active !== null);
+  const { confirm } = useConfirmation();
   // Q-008 RESOLVED: one client-generated UUID per checkout attempt.
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   // Photographer coupon (V45). `coupon` is the server's priced preview for
@@ -97,43 +147,89 @@ export function CheckoutModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    setStep(isAuthenticated ? "payment" : "identify");
-    setEmail(authUser?.email ?? "");
     setConfirmEmail("");
     setErrors({});
     setPaymentError(null);
-    setOrderId(null);
-    setQrPayment(null);
     setQrCheckError(null);
+    setCheckUnreachable(false);
+    setReceipt(null);
     setIdempotencyKey(safeUUID());
     // A coupon was previewed against a specific cart; re-entry may follow a
     // cart edit, so it has to be re-applied.
     setCoupon(null);
     setCouponInput("");
     setCouponError(null);
+    // A live QR (refresh, closed tab, accidental dismissal, auth flip) resumes
+    // where it left off instead of resetting — the record is the source of
+    // truth, not React state.
+    const live = usePendingPaymentStore.getState().pending;
+    if (live) {
+      setEmail(live.email);
+      setQrPayment({
+        orderId: live.orderId,
+        imageUrl: live.imageUrl,
+        expiresAt: live.expiresAt,
+        returnToken: live.returnToken,
+      });
+      setStep("qr");
+      return;
+    }
+    setStep(isAuthenticated ? "payment" : "identify");
+    setEmail(authUser?.email ?? "");
+    setQrPayment(null);
   }, [isOpen, isAuthenticated, authUser?.email]);
 
   useScrollLock(isOpen);
-
-  // Esc is gated on `step` for the same reason the backdrop and the header ✕
-  // are: closing mid-`processing` drops the in-flight postOrder's orderId (the
-  // isOpen reset effect above nulls it on re-entry) and the user is left with
-  // a charge they can't see a reference for.
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && step !== "processing") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [isOpen, step, onClose]);
 
   const itemCount = items.length;
   const recipientEmail = isAuthenticated ? authUser?.email ?? email : email;
   const discountTotal = coupon?.discountTotal ?? 0;
   const payable = Math.max(0, total - discountTotal);
+  // While a QR is live the cart may already be empty (resume after refresh),
+  // so the amount on screen comes from the record.
+  const qrTotal = pending?.total ?? payable;
+  const qrEmail = pending?.email ?? recipientEmail ?? "";
+
+  // Every dismissal path (backdrop, ✕, Esc) routes through here so the policy
+  // lives in one place: free before payment and after success, locked while
+  // the order is being created, and a real question while a QR is live —
+  // money may already have moved, so leaving is intentional, never a slip.
+  // Leaving keeps the pending record; the cart pill brings the runner back.
+  const requestClose = useCallback(async () => {
+    if (step === "processing") return;
+    if (step === "qr" && qrPayment && !checkUnreachable) {
+      const ok = await confirm({
+        title: "Leave checkout?",
+        message: (
+          <>
+            Your QR code stays valid until{" "}
+            <span className="text-ink tnum">{formatClock(qrPayment.expiresAt)}</span>.
+            If you&rsquo;ve already paid, your photos and receipt are safe
+            &mdash; we&rsquo;ll email them to{" "}
+            <span className="text-ink break-all">{qrEmail}</span>. You can come
+            back to this payment from the cart.
+          </>
+        ),
+        confirmLabel: "Leave",
+        cancelLabel: "Stay",
+      });
+      if (!ok) return;
+    }
+    onClose();
+  }, [step, qrPayment, checkUnreachable, confirm, qrEmail, onClose]);
+
+  // Gated while the confirmation dialog is up so one Esc closes only the
+  // topmost layer (ui-pitfalls 2026-05-06 stacked-modal rule).
+  useEffect(() => {
+    if (!isOpen || confirmActive) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") void requestClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [isOpen, confirmActive, requestClose]);
 
   const handleApplyCoupon = async () => {
     const code = couponInput.trim().toUpperCase();
@@ -202,9 +298,19 @@ export function CheckoutModal({
         idempotencyKey,
       });
 
-      setOrderId(order.id);
       if (order.status === "PAID" || order.status === "FULFILLED") {
+        // Idempotent replay of an already-paid order (e.g. paid, then the
+        // record was lost). Same landing as the polled success.
+        setReceipt({
+          orderId: order.id,
+          returnToken: order.qrPh?.returnToken ?? null,
+          email: recipientEmail ?? "",
+          total: payable,
+          itemCount,
+          paidAt: null,
+        });
         clearCart();
+        clearPending();
         queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
         setStep("success");
         return;
@@ -214,7 +320,20 @@ export function CheckoutModal({
         setStep("payment");
         return;
       }
-      setQrPayment({ orderId: order.id, ...order.qrPh });
+      const qr: QrPayment = {
+        orderId: order.id,
+        imageUrl: order.qrPh.imageUrl,
+        expiresAt: order.qrPh.expiresAt,
+        returnToken: order.qrPh.returnToken ?? null,
+      };
+      setQrPayment(qr);
+      setPending({
+        ...qr,
+        email: recipientEmail ?? "",
+        total: payable,
+        itemCount,
+        paidClaimedAt: null,
+      });
       setStep("qr");
     } catch (err) {
       const message =
@@ -226,42 +345,92 @@ export function CheckoutModal({
     }
   };
 
-  const checkPaymentStatus = useCallback(async () => {
-    if (!qrPayment || paymentCheckInFlight.current) return;
-    paymentCheckInFlight.current = true;
-    setCheckingPayment(true);
-    try {
-      const status = isAuthenticated
-        ? await fetchOrderStatusForUser(qrPayment.orderId)
-        : qrPayment.returnToken
-          ? await fetchOrderStatus(qrPayment.orderId, qrPayment.returnToken)
-          : null;
-      if (!status) throw new Error("Missing payment status token");
-      setQrCheckError(null);
-      if (status.status === "PAID" || status.status === "FULFILLED") {
-        clearCart();
-        queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
-        setStep("success");
-      } else if (status.status === "EXPIRED") {
-        setQrPayment(null);
-        setIdempotencyKey(safeUUID());
-        setPaymentError("That QR code expired. Generate a new one to continue.");
-        setStep("payment");
+  const checkPaymentStatus = useCallback(
+    async (opts: { verify?: boolean; manual?: boolean } = {}) => {
+      if (!qrPayment || paymentCheckInFlight.current) return;
+      paymentCheckInFlight.current = true;
+      setCheckingPayment(true);
+      try {
+        const status = await fetchPendingStatus(qrPayment, { verify: opts.verify });
+        setQrCheckError(null);
+        if (status.status === "PAID" || status.status === "FULFILLED") {
+          const live = usePendingPaymentStore.getState().pending;
+          setReceipt({
+            orderId: qrPayment.orderId,
+            returnToken: qrPayment.returnToken,
+            email: live?.email ?? recipientEmail ?? "",
+            total: live?.total ?? payable,
+            itemCount: live?.itemCount ?? itemCount,
+            paidAt: status.paidAt,
+          });
+          clearCart();
+          clearPending();
+          queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
+          setStep("success");
+        } else if (status.status === "EXPIRED") {
+          clearPending();
+          setQrPayment(null);
+          setIdempotencyKey(safeUUID());
+          setPaymentError(
+            "That QR code expired before a payment was detected. Nothing was charged — generate a new one to continue.",
+          );
+          setStep("payment");
+        }
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          // Token dead or order gone — stop asking; the email is the backstop.
+          clearPending();
+          setCheckUnreachable(true);
+        } else if (err instanceof ApiError && err.status === 429 && opts.manual) {
+          setQrCheckError(
+            `Too many checks — try again in ${formatRetryWait(err.retryAfterSeconds ?? 20)}. We're still checking automatically.`,
+          );
+        } else {
+          setQrCheckError("We couldn't check yet. Your QR is still safe to use.");
+        }
+      } finally {
+        paymentCheckInFlight.current = false;
+        setCheckingPayment(false);
       }
-    } catch {
-      setQrCheckError("We couldn't check yet. Your QR is still safe to use.");
-    } finally {
-      paymentCheckInFlight.current = false;
-      setCheckingPayment(false);
-    }
-  }, [clearCart, isAuthenticated, qrPayment, queryClient]);
+    },
+    [clearCart, clearPending, itemCount, payable, qrPayment, queryClient, recipientEmail],
+  );
 
+  const pollingActive = step === "qr" && qrPayment !== null && !checkUnreachable;
+
+  // Cheap DB read on a fixed cadence for as long as the QR is on screen.
   useEffect(() => {
-    if (step !== "qr" || !qrPayment) return;
+    if (!pollingActive) return;
     void checkPaymentStatus();
-    const timer = window.setInterval(() => void checkPaymentStatus(), 2500);
+    const timer = window.setInterval(() => void checkPaymentStatus(), STATUS_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [checkPaymentStatus, qrPayment, step]);
+  }, [checkPaymentStatus, pollingActive]);
+
+  // Once the runner says they've paid, also ask PayMongo directly every
+  // VERIFY_EVERY_MS. A manual check restarts this timer (dependency below).
+  useEffect(() => {
+    if (!pollingActive || !paidClaimedAt) return;
+    const timer = window.setInterval(
+      () => void checkPaymentStatus({ verify: true }),
+      VERIFY_EVERY_MS,
+    );
+    return () => window.clearInterval(timer);
+  }, [checkPaymentStatus, pollingActive, paidClaimedAt, lastManualCheckAt]);
+
+  // At the QR's own expiry, one verify makes the backend flip the order to
+  // EXPIRED right away instead of on the next minute sweep.
+  useEffect(() => {
+    if (!pollingActive || !qrPayment) return;
+    const delay = Math.max(0, new Date(qrPayment.expiresAt).getTime() - Date.now() + 2000);
+    const timer = window.setTimeout(() => void checkPaymentStatus({ verify: true }), delay);
+    return () => window.clearTimeout(timer);
+  }, [checkPaymentStatus, pollingActive, qrPayment]);
+
+  const handlePaidClaim = () => {
+    markPaid();
+    setLastManualCheckAt(Date.now());
+    void checkPaymentStatus({ verify: true, manual: true });
+  };
 
   const handleSuccessClose = () => {
     clearCart();
@@ -279,7 +448,7 @@ export function CheckoutModal({
     >
       <button
         type="button"
-        onClick={step === "processing" ? () => {} : onClose}
+        onClick={() => void requestClose()}
         aria-label="Close checkout"
         disabled={step === "processing"}
         className="absolute inset-0 bg-ink/55 backdrop-blur-sm cursor-default"
@@ -303,14 +472,18 @@ export function CheckoutModal({
                   : step === "processing"
                     ? "Generating your QR…"
                     : step === "qr"
-                      ? "Scan. Pay. Done."
+                      ? checkUnreachable
+                        ? "Check your inbox."
+                        : paidClaimedAt
+                          ? "Confirming your payment."
+                          : "Scan. Pay. Done."
                     : "All yours."}
             </p>
             <StepIndicator step={step} isAuthenticated={isAuthenticated} />
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => void requestClose()}
             disabled={step === "processing"}
             aria-label="Close checkout"
             className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
@@ -370,21 +543,31 @@ export function CheckoutModal({
             />
           )}
           {step === "processing" && <ProcessingStep />}
-          {step === "qr" && qrPayment && (
-            <QrPaymentStep
-              payment={qrPayment}
-              total={payable}
-              checking={checkingPayment}
-              checkError={qrCheckError}
-              onCheck={() => void checkPaymentStatus()}
+          {step === "qr" && qrPayment && checkUnreachable && (
+            <UnreachableNotice
+              email={qrEmail}
+              orderId={qrPayment.orderId}
+              onDone={onClose}
             />
           )}
-          {step === "success" && (
+          {step === "qr" && qrPayment && !checkUnreachable && (
+            <QrPaymentStep
+              payment={qrPayment}
+              total={qrTotal}
+              email={qrEmail}
+              paidClaimedAt={paidClaimedAt}
+              lastManualCheckAt={lastManualCheckAt}
+              checking={checkingPayment}
+              checkError={qrCheckError}
+              onPaid={handlePaidClaim}
+              onCheck={handlePaidClaim}
+              onLeaveForEmail={onClose}
+            />
+          )}
+          {step === "success" && receipt && (
             <SuccessStep
-              email={recipientEmail ?? ""}
-              orderId={orderId}
-              itemCount={itemCount}
-              total={payable}
+              receipt={receipt}
+              hasAccount={isAuthenticated}
               onDone={handleSuccessClose}
             />
           )}
@@ -767,23 +950,54 @@ function PaymentStep({
   );
 }
 
+type WaitMode = "awaiting" | "confirming" | "slow";
+
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 function QrPaymentStep({
   payment,
   total,
+  email,
+  paidClaimedAt,
+  lastManualCheckAt,
   checking,
   checkError,
+  onPaid,
   onCheck,
+  onLeaveForEmail,
 }: {
   payment: QrPayment;
   total: number;
+  email: string;
+  paidClaimedAt: string | null;
+  lastManualCheckAt: number;
   checking: boolean;
   checkError: string | null;
+  onPaid: () => void;
   onCheck: () => void;
+  onLeaveForEmail: () => void;
 }) {
-  const expiresAt = new Intl.DateTimeFormat("en-PH", {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(payment.expiresAt));
+  // 1 s clock, only while the runner has said they've paid — drives the
+  // elapsed kicker, the slow-tier switch, and the manual-check cooldown.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!paidClaimedAt) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [paidClaimedAt]);
+
+  const elapsedMs = paidClaimedAt ? now - new Date(paidClaimedAt).getTime() : 0;
+  const mode: WaitMode = !paidClaimedAt
+    ? "awaiting"
+    : elapsedMs < SLOW_AFTER_MS
+      ? "confirming"
+      : "slow";
+  const cooldownLeft = Math.max(0, lastManualCheckAt + MANUAL_COOLDOWN_MS - now);
+  const ref = formatOrderRef(payment.orderId);
 
   return (
     <div className="px-6 md:px-7 py-6 flex flex-col gap-6">
@@ -801,7 +1015,7 @@ function QrPaymentStep({
           />
         </div>
         <p className="mt-3 font-mono uppercase tracking-[0.14em] text-[13px] text-slate-soft tnum">
-          Valid until {expiresAt}
+          Valid until {formatClock(payment.expiresAt)} · One payment only · Ref {ref}
         </p>
       </div>
 
@@ -815,38 +1029,90 @@ function QrPaymentStep({
 
       <div
         aria-live="polite"
-        className="rounded-xl border border-fresh/40 bg-fresh/10 px-5 py-4 flex items-start gap-3"
+        className={cn(
+          "rounded-xl border px-5 py-4 flex items-start gap-3",
+          mode === "slow"
+            ? "border-warning/50 bg-warning/10"
+            : "border-fresh/40 bg-fresh/10",
+        )}
       >
-        <span className="mt-1.5 size-2 rounded-full bg-fresh animate-pulse shrink-0" aria-hidden="true" />
-        <div>
+        <span
+          className={cn(
+            "mt-1.5 size-2 rounded-full animate-pulse shrink-0",
+            mode === "slow" ? "bg-warning" : "bg-fresh",
+          )}
+          aria-hidden="true"
+        />
+        <div className="min-w-0">
+          {mode !== "awaiting" && (
+            <Kicker as="p" tone="soft" tnum className="mb-1">
+              {mode === "slow" ? "Still confirming" : "Confirming"} · {formatElapsed(elapsedMs)}
+            </Kicker>
+          )}
           <p className="font-display text-base font-medium text-ink">
-            {checking ? "Checking payment…" : "Waiting for payment"}
+            {mode === "awaiting"
+              ? "Waiting for your payment"
+              : mode === "confirming"
+                ? "Confirming your payment…"
+                : "Taking longer than usual"}
           </p>
-          <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
-            Keep this checkout open after paying. Confirmation can take a few seconds.
-          </p>
+          {mode === "awaiting" && (
+            <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
+              Scan with your bank or e-wallet app. We check automatically every
+              few seconds — no need to refresh.
+            </p>
+          )}
+          {mode === "confirming" && (
+            <>
+              <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
+                Banks usually take <span className="tnum">10–30</span> seconds to
+                report back. <span className="font-semibold text-ink">Don&rsquo;t pay again</span>{" "}
+                — your <span className="tnum text-ink">{formatPrice(total)}</span> is tied to
+                Ref <span className="tnum text-ink">{ref}</span>.
+              </p>
+              <p className="mt-2 font-sans text-sm leading-relaxed text-ink-soft">
+                Safe to refresh or close — we&rsquo;ll pick up where you left off,
+                and your receipt goes to{" "}
+                <span className="text-ink break-all">{email}</span> either way.
+              </p>
+            </>
+          )}
+          {mode === "slow" && (
+            <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
+              Your payment is still safe. If it went through, this page will
+              confirm it and we&rsquo;ll email your download links to{" "}
+              <span className="text-ink break-all">{email}</span> — even if you
+              leave. Please don&rsquo;t pay a second time.
+            </p>
+          )}
         </div>
       </div>
 
-      <section className="rounded-xl border border-line bg-bone-deep px-5 py-4">
-        <p className="font-mono uppercase tracking-[0.14em] text-[13px] text-slate mb-3">
-          How to pay
-        </p>
-        <ol className="space-y-3 font-sans text-sm leading-relaxed text-ink-soft">
-          <li className="flex gap-3">
-            <span className="font-mono tnum text-fresh">01</span>
-            Open a participating bank or e-wallet app and choose Scan QR.
-          </li>
-          <li className="flex gap-3">
-            <span className="font-mono tnum text-fresh">02</span>
-            Scan this code, or save it and open the image on another device.
-          </li>
-          <li className="flex gap-3">
-            <span className="font-mono tnum text-fresh">03</span>
-            Confirm the exact amount in your app, then return here. We&apos;ll detect the payment automatically.
-          </li>
-        </ol>
-      </section>
+      {mode === "awaiting" && (
+        <section className="rounded-xl border border-line bg-bone-deep px-5 py-4">
+          <p className="font-mono uppercase tracking-[0.14em] text-[13px] text-slate mb-3">
+            How to pay
+          </p>
+          <ol className="space-y-3 font-sans text-sm leading-relaxed text-ink-soft">
+            <li className="flex gap-3">
+              <span className="font-mono tnum text-fresh">01</span>
+              Open a participating bank or e-wallet app and choose Scan QR.
+            </li>
+            <li className="flex gap-3">
+              <span className="font-mono tnum text-fresh">02</span>
+              Scan this code, or save it and open the image on another device.
+            </li>
+            <li className="flex gap-3">
+              <span className="font-mono tnum text-fresh">03</span>
+              <span>
+                Confirm the exact amount in your app, then tap{" "}
+                <span className="text-ink">I&rsquo;ve paid</span> below. We
+                detect the payment automatically either way.
+              </span>
+            </li>
+          </ol>
+        </section>
+      )}
 
       {checkError && (
         <p role="alert" className="font-sans text-sm text-error">
@@ -854,18 +1120,76 @@ function QrPaymentStep({
         </p>
       )}
 
+      {mode === "awaiting" ? (
+        <button
+          type="button"
+          onClick={onPaid}
+          disabled={checking}
+          className={cn(BTN_PRIMARY, BTN_SIZE.md, "w-full justify-center")}
+        >
+          I&rsquo;ve paid
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={onCheck}
+          disabled={checking || cooldownLeft > 0}
+          className={cn(BTN_SECONDARY, BTN_SIZE.md, "w-full justify-center tnum")}
+        >
+          {checking
+            ? "Checking…"
+            : cooldownLeft > 0
+              ? `Checking again in ${Math.ceil(cooldownLeft / 1000)}s`
+              : "Check again"}
+        </button>
+      )}
+
+      {mode === "slow" && (
+        <button
+          type="button"
+          onClick={onLeaveForEmail}
+          className={cn(BTN_GHOST, BTN_SIZE.sm, "self-center")}
+        >
+          I&rsquo;ll wait for the email →
+        </button>
+      )}
+    </div>
+  );
+}
+
+// The return token is dead (35-minute guest window) or the order vanished:
+// polling is over, but the backend still emails the receipt on settlement.
+function UnreachableNotice({
+  email,
+  orderId,
+  onDone,
+}: {
+  email: string;
+  orderId: string;
+  onDone: () => void;
+}) {
+  return (
+    <div className="px-6 md:px-7 py-6 flex flex-col gap-6">
+      <div className="rounded-xl border border-line bg-bone-deep px-5 py-4">
+        <p className="font-display text-base font-medium text-ink">
+          We can&rsquo;t check this payment from here any more.
+        </p>
+        <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
+          If you paid, your receipt and download links are on their way to{" "}
+          <span className="text-ink break-all">{email}</span>. If you
+          didn&rsquo;t, nothing was charged and you can start a fresh checkout.
+        </p>
+        <Kicker as="p" tone="soft" tnum className="mt-4">
+          Ref · {formatOrderRef(orderId)}
+        </Kicker>
+      </div>
       <button
         type="button"
-        onClick={onCheck}
-        disabled={checking}
-        className="inline-flex w-full items-center justify-center bg-ink hover:bg-ink-soft text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[13px] transition-colors disabled:opacity-60"
+        onClick={onDone}
+        className={cn(BTN_SECONDARY, BTN_SIZE.md, "w-full justify-center")}
       >
-        {checking ? "Checking…" : "I've paid · Check status"}
+        Done
       </button>
-
-      <Kicker as="p" tone="soft" tnum className="text-center break-all">
-        Reference · {payment.orderId}
-      </Kicker>
     </div>
   );
 }
@@ -888,18 +1212,15 @@ function ProcessingStep() {
 }
 
 function SuccessStep({
-  email,
-  orderId,
-  itemCount,
-  total,
+  receipt,
+  hasAccount,
   onDone,
 }: {
-  email: string;
-  orderId: string | null;
-  itemCount: number;
-  total: number;
+  receipt: Receipt;
+  hasAccount: boolean;
   onDone: () => void;
 }) {
+  const { email, itemCount, total, orderId, paidAt } = receipt;
   return (
     <div className="px-6 md:px-7 py-6 flex flex-col gap-7">
       <div className="rounded-2xl bg-bone-deep border border-line p-6">
@@ -920,7 +1241,7 @@ function SuccessStep({
           </span>
           <div className="min-w-0">
             <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-1">
-              Order placed
+              Payment confirmed{paidAt ? ` · ${formatClock(paidAt)}` : ""}
             </p>
             <p className="font-display text-xl font-medium text-ink tracking-tight leading-tight">
               <span className="tnum">{itemCount}</span>{" "}
@@ -929,11 +1250,9 @@ function SuccessStep({
             </p>
           </div>
         </div>
-        {orderId && (
-          <p className="mt-5 pt-4 border-t border-line font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-            Reference · <span className="text-ink tnum">{orderId}</span>
-          </p>
-        )}
+        <p className="mt-5 pt-4 border-t border-line font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+          Ref · <span className="text-ink tnum">{formatOrderRef(orderId)}</span>
+        </p>
       </div>
 
       <div>
@@ -941,24 +1260,38 @@ function SuccessStep({
           Download links
         </p>
         <p className="font-sans text-sm text-ink-soft leading-relaxed">
-          We&apos;ve emailed full-resolution download links to{" "}
-          <span className="text-ink break-all">{email}</span>. Links don&apos;t
-          expire — re-download anytime from{" "}
-          <Link
-            href={ROUTES.ORDERS}
-            onClick={onDone}
-            className="text-ink underline decoration-fresh underline-offset-4 hover:text-fresh transition-colors"
-          >
-            Orders
-          </Link>
-          .
+          Your receipt with full-resolution download links is on its way to{" "}
+          <span className="text-ink break-all">{email}</span> — usually within
+          a minute.
+          {hasAccount ? (
+            <>
+              {" "}
+              Re-download anytime from{" "}
+              <Link
+                href={ROUTES.ORDERS}
+                onClick={onDone}
+                className="text-ink underline decoration-fresh underline-offset-4 hover:text-fresh transition-colors"
+              >
+                Orders
+              </Link>
+              .
+            </>
+          ) : null}
         </p>
       </div>
+
+      <Link
+        href={buildOrderReturnPath(receipt)}
+        onClick={onDone}
+        className={cn(BTN_PRIMARY, BTN_SIZE.md, "w-full justify-center")}
+      >
+        View receipt &amp; download →
+      </Link>
 
       <button
         type="button"
         onClick={onDone}
-        className="inline-flex w-full items-center justify-center bg-ink hover:bg-ink-soft text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
+        className={cn(BTN_SECONDARY, BTN_SIZE.md, "w-full justify-center")}
       >
         Done
       </button>

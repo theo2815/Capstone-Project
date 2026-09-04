@@ -49,6 +49,19 @@ class PaymongoCheckoutReconciler(
             .forEach(::reconcileGroup)
     }
 
+    // On-demand variant of the QRPH pass for one order: the checkout's
+    // "I've paid" check asks PayMongo now instead of waiting for the webhook
+    // or the next sweep. Reconciles every sibling row on the same intent so a
+    // multi-event split settles or expires together.
+    fun reconcileOrder(orderId: UUID) {
+        val intentId = paymentRepository.findByOrderId(orderId)
+            .firstOrNull { it.status == PaymentStatus.PENDING && it.providerRef?.startsWith("pi_") == true }
+            ?.providerRef ?: return
+        val pending = paymentRepository.findAllByProviderAndProviderRef("paymongo", intentId)
+            .filter { it.status == PaymentStatus.PENDING }
+        if (pending.isNotEmpty()) reconcilePaymentIntent(pending)
+    }
+
     private fun reconcilePaymentIntent(payments: List<com.quickpitik.entity.Payment>) {
         val intentId = payments.first().providerRef!!
         val intent = try {

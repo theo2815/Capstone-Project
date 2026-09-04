@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
+import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { useUiStore } from "@/store/ui-store";
 
 // Pairs with the redirect built by `<CheckoutModal>`'s `IdentifyStep`. When
@@ -23,6 +24,9 @@ export function CheckoutResumeWatcher() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isLoading = useAuthStore((s) => s.isLoading);
   const cartItemCount = useCartStore((s) => s.items.length);
+  // A live QR Ph payment survives an empty cart (the backend clears the
+  // server cart when the QR is minted), so it must still re-open.
+  const hasPendingPayment = usePendingPaymentStore((s) => s.pending !== null);
   const openCheckout = useUiStore((s) => s.openCheckout);
 
   useEffect(() => {
@@ -35,7 +39,7 @@ export function CheckoutResumeWatcher() {
     const cleanQuery = params.toString();
     router.replace(pathname + (cleanQuery ? `?${cleanQuery}` : ""));
 
-    if (cartItemCount > 0) {
+    if (cartItemCount > 0 || hasPendingPayment) {
       openCheckout();
     }
   }, [
@@ -46,6 +50,7 @@ export function CheckoutResumeWatcher() {
     router,
     openCheckout,
     cartItemCount,
+    hasPendingPayment,
   ]);
 
   return null;
