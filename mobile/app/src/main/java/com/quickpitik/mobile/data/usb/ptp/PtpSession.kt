@@ -344,8 +344,13 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
 
         if (containerType(first) != Ptp.TYPE_DATA) {
             val rc = responseCode(first)
-            if (rc != Ptp.RC_OK) throw PtpException("op 0x%04X resp 0x%04X (no data)".format(op, rc))
-            return 0L
+            // An OK with no data phase is bogus for an object pull (seen on a
+            // Canon 2026-09-04 after a card import); name it instead of
+            // returning 0 so the field log says what actually came back.
+            throw PtpException(
+                "op 0x%04X resp 0x%04X, no data (type %d, %d bytes)"
+                    .format(op, rc, containerType(first), n)
+            )
         }
 
         val declared = ByteBuffer.wrap(first, 0, 4).order(ByteOrder.LITTLE_ENDIAN).int
@@ -465,7 +470,9 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
         // size limits went away before minSdk 29. Small responses keep
         // READ_CHUNK so the 3/s polls don't churn 512 KB allocations.
         // ponytail: tune on-device; drop to 256 KB if a body short-reads.
-        const val PULL_CHUNK = 512 * 1024
+        // 2026-09-04 A/B: 512 KB coincided with GetObject answering OK-with-no-data
+        // on the R6 after a card import; back to 16 KB until that is proven unrelated.
+        const val PULL_CHUNK = 16384
         const val TIMEOUT_MS = 5000
         const val GET_EVENT_TIMEOUT_MS = 1500 // short — empty polls shouldn't hang
         const val MAX_CONTAINER = 256 * 1024 * 1024 // sanity ceiling for one data phase

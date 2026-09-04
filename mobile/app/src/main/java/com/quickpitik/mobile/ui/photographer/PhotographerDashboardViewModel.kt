@@ -195,7 +195,7 @@ sealed class ShutterWatchState {
     data class Error(val message: String, val recentLog: List<String> = emptyList()) : ShutterWatchState()
 }
 
-private const val WATCH_LOG_LINES = 6
+private const val WATCH_LOG_LINES = 12
 // Newest rows the Capture tab observes for its strip (the screen shows ≤30).
 private const val RECENT_RECORDS_LIMIT = 200
 // Prefs key: event id of a live shutter watch, so a relaunch after process
