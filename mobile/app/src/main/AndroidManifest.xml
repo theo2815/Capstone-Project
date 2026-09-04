@@ -87,7 +87,8 @@
                 <data android:scheme="http" />
                 <data android:scheme="https" />
                 <data android:host="localhost" />
-                <data android:host="snippet-sheath-cloak.ngrok-free.dev" />
+                <data android:host="quickpitik.com" />
+                <data android:host="www.quickpitik.com" />
                 <data android:pathPrefix="/verify-email" />
                 <data android:pathPrefix="/confirm-email-change" />
             </intent-filter>
