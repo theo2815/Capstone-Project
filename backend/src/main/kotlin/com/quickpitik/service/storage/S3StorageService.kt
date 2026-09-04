@@ -126,7 +126,7 @@ class S3StorageService(
             .serviceConfiguration(
                 S3Configuration.builder().pathStyleAccessEnabled(props.pathStyleAccess).build(),
             )
-        props.endpoint?.let { builder.endpointOverride(URI.create(it)) }
+        props.endpoint?.takeIf { it.isNotBlank() }?.let { builder.endpointOverride(URI.create(it)) }
         return builder.build()
     }
 
@@ -134,12 +134,14 @@ class S3StorageService(
         val builder = S3Presigner.builder()
             .region(Region.of(props.region))
             .credentialsProvider(credentials())
-        props.endpoint?.let { builder.endpointOverride(URI.create(it)) }
+        props.endpoint?.takeIf { it.isNotBlank() }?.let { builder.endpointOverride(URI.create(it)) }
         return builder.build()
     }
 
+    // `${STORAGE_ACCESS_KEY:}` binds "" rather than null, so a blank check is
+    // what actually decides between static keys and the AWS default chain.
     private fun credentials() =
-        if (props.accessKey != null && props.secretKey != null) {
+        if (!props.accessKey.isNullOrBlank() && !props.secretKey.isNullOrBlank()) {
             StaticCredentialsProvider.create(AwsBasicCredentials.create(props.accessKey, props.secretKey))
         } else {
             DefaultCredentialsProvider.create()

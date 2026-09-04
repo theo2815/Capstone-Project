@@ -31,7 +31,7 @@ class EmailVerificationListener(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    @Async
+    @Async("imageProcessing")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     fun onUserRegistered(event: UserRegisteredEvent) {
         try {

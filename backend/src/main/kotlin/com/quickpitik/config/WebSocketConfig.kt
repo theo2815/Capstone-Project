@@ -6,6 +6,7 @@ import com.quickpitik.websocket.EventPhotoHandshakeInterceptor
 import com.quickpitik.websocket.EventPhotoWebSocketHandler
 import com.quickpitik.websocket.MeNotificationHandshakeInterceptor
 import com.quickpitik.websocket.MeNotificationWebSocketHandler
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Configuration
 import org.springframework.web.socket.config.annotation.EnableWebSocket
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer
@@ -20,17 +21,23 @@ class WebSocketConfig(
     private val meNotificationHandshake: MeNotificationHandshakeInterceptor,
     private val adminNotificationHandler: AdminNotificationWebSocketHandler,
     private val adminNotificationHandshake: AdminNotificationHandshakeInterceptor,
+    @Value("\${app.cors.allowed-origins}") allowedOriginsCsv: String,
 ) : WebSocketConfigurer {
+    // Same origin list as CorsConfig. WebSockets ignore the same-origin policy,
+    // so "*" here let any site open an authenticated socket with a stolen token.
+    private val allowedOrigins: Array<String> =
+        allowedOriginsCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }.toTypedArray()
+
     override fun registerWebSocketHandlers(registry: WebSocketHandlerRegistry) {
         registry
             .addHandler(eventPhotoHandler, "/ws/events/*/photos")
             .addInterceptors(eventPhotoHandshake)
-            .setAllowedOriginPatterns("*")
+            .setAllowedOrigins(*allowedOrigins)
 
         registry
             .addHandler(meNotificationHandler, "/ws/me/photographer/notifications")
             .addInterceptors(meNotificationHandshake)
-            .setAllowedOriginPatterns("*")
+            .setAllowedOrigins(*allowedOrigins)
 
         // Runner-side inbox shares the same handler + handshake — the
         // handler is generic (keyed by userId, role-agnostic) and the
@@ -40,11 +47,11 @@ class WebSocketConfig(
         registry
             .addHandler(meNotificationHandler, "/ws/me/runner/notifications")
             .addInterceptors(meNotificationHandshake)
-            .setAllowedOriginPatterns("*")
+            .setAllowedOrigins(*allowedOrigins)
 
         registry
             .addHandler(adminNotificationHandler, "/ws/admin/notifications")
             .addInterceptors(adminNotificationHandshake)
-            .setAllowedOriginPatterns("*")
+            .setAllowedOrigins(*allowedOrigins)
     }
 }

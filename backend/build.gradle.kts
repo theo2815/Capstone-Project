@@ -101,6 +101,12 @@ allOpen {
 	annotation("jakarta.persistence.Embeddable")
 }
 
+// One artifact: build/libs/backend-<version>.jar. The classes-only `-plain.jar`
+// is a start-command footgun (no Main-Class), and application-local.yml
+// (gitignored, real secrets) lives in src/main/resources so must never be packaged.
+tasks.jar { enabled = false }
+tasks.bootJar { exclude("application-local.yml") }
+
 // `./gradlew test` stays Docker-free — backend/CLAUDE.md promises that, and it
 // is what keeps the unit suite runnable on a machine with nothing installed but
 // a JDK. Everything that needs a real Postgres is tagged "integration" and runs

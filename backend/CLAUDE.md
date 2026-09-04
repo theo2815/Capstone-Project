@@ -110,6 +110,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 
 | Variable | Default | Production behavior |
 |----------|---------|---------------------|
+| `SPRING_PROFILES_ACTIVE` | *(none)* | **Set `prod` in production.** Activates `ProductionSecretsGuard`, which refuses to boot while any secret below is still its `dev-only` placeholder, the bootstrap password is the default, or `STORAGE_BACKEND` is not `S3`; also disables the dev mock-photo seeder. Railway runs from `backend/Dockerfile` (JDK 21, fontconfig, honours `PORT`); the variable list lives in vault `backend/notes/production-deploy.md`. |
 | `DB_HOST` | `localhost` | RDS endpoint |
 | `DB_PORT` | `5432` | — |
 | `DB_NAME` | `quickpitik` | — |
@@ -246,4 +247,5 @@ See vault `QuickPitik Vault/backend/`:
 | `org.postgresql.util.PSQLException: Connection refused` | Postgres not started | `docker compose up -d postgres` |
 | `validate ddl-auto` errors on entity rename | Entity ↔ migration mismatch | Either change migration (dev) or write a new one (prod-shaped) |
 | 401 on every authenticated request | `Authorization: Bearer ...` header missing or expired | Re-login or refresh |
-| Previews show the QuickPitik wordmark tiles but no credit text | JDK image lacks fontconfig/freetype, so `WatermarkService` disabled text (one WARN at first render) | `apt-get install -y fontconfig` in the runtime image |
+| Previews show the QuickPitik wordmark tiles but no credit text | JDK image lacks fontconfig/freetype, so `WatermarkService` disabled text (one WARN at first render) | `apt-get install -y fontconfig` in the runtime image (`backend/Dockerfile` already does) |
+| Boot fails with `Refusing to start with profile 'prod'` | A secret is still its dev placeholder (see `SPRING_PROFILES_ACTIVE` above) | Set the named variables; never unset the profile to get past it |

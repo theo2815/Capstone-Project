@@ -23,8 +23,8 @@ import org.testcontainers.containers.PostgreSQLContainer
  * to Ryuk to reap at JVM exit, rather than `@Container` per class, which would
  * pay the ~3s startup for every test class. Schema state therefore carries
  * across classes: build your own fixtures with unique keys and never assume an
- * empty table. `BootstrapAdminRunner` and `BootstrapPhotosRunner` also run on
- * this database, so `users` and `photos` are non-empty from the first boot.
+ * empty table. `BootstrapAdminRunner` also runs on this database, so `users`
+ * is non-empty from the first boot.
  */
 @Tag("integration")
 @SpringBootTest
