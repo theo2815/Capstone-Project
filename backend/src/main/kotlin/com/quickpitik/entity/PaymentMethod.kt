@@ -6,7 +6,8 @@ import com.quickpitik.exception.ValidationException
 enum class PaymentMethod(val wire: String) {
     GCASH("gcash"),
     MAYA("maya"),
-    CARD("card");
+    CARD("card"),
+    QRPH("qrph");
 
     companion object {
         fun fromWire(raw: String?): PaymentMethod {
@@ -14,7 +15,7 @@ enum class PaymentMethod(val wire: String) {
             return entries.firstOrNull { it.wire == normalised }
                 ?: throw ValidationException(
                     code = ErrorCodes.VALIDATION_ERROR,
-                    message = "paymentMethod must be gcash, maya, or card",
+                    message = "paymentMethod must be gcash, maya, card, or qrph",
                     field = "paymentMethod",
                 )
         }

@@ -57,7 +57,7 @@ export interface OrderDetail extends MockOrder {
 
 export interface CreateOrderArgs {
   items: { photoId: string; eventId: string }[];
-  paymentMethod: "gcash" | "maya" | "card";
+  paymentMethod: "qrph";
   recipientEmail?: string;
   // Photographer coupon (V45). Validated and priced server-side; the client
   // only forwards what the runner typed.
@@ -141,6 +141,14 @@ export async function fetchOrderStatus(
   const qs = `?token=${encodeURIComponent(token)}`;
   return api.get<OrderStatusPayload>(
     `/orders/${encodeURIComponent(orderId)}/status${qs}`,
+  );
+}
+
+export async function fetchOrderStatusForUser(
+  orderId: string,
+): Promise<OrderStatusPayload> {
+  return api.get<OrderStatusPayload>(
+    `/me/orders/${encodeURIComponent(orderId)}/status`,
   );
 }
 

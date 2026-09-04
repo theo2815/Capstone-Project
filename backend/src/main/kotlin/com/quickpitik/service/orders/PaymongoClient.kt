@@ -3,6 +3,11 @@ package com.quickpitik.service.orders
 import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionRequest
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionResponse
+import com.quickpitik.dto.orders.PaymongoPaymentIntentAttachRequest
+import com.quickpitik.dto.orders.PaymongoPaymentIntentRequest
+import com.quickpitik.dto.orders.PaymongoPaymentIntentResponse
+import com.quickpitik.dto.orders.PaymongoPaymentMethodRequest
+import com.quickpitik.dto.orders.PaymongoPaymentMethodResponse
 import com.quickpitik.dto.orders.PaymongoRefundRequest
 import com.quickpitik.dto.orders.PaymongoRefundResponse
 import org.slf4j.LoggerFactory
@@ -108,6 +113,65 @@ class PaymongoClient(
             )
             throw ex
         }
+    }
+
+    fun createPaymentIntent(
+        request: PaymongoPaymentIntentRequest,
+        idempotencyKey: String,
+    ): PaymongoPaymentIntentResponse = try {
+        restClient.post()
+            .uri("/payment_intents")
+            .header("Idempotency-Key", idempotencyKey)
+            .body(request)
+            .retrieve()
+            .body(PaymongoPaymentIntentResponse::class.java)
+            ?: throw IllegalStateException("PayMongo returned empty response on POST /payment_intents")
+    } catch (ex: RestClientResponseException) {
+        log.error("PayMongo POST /payment_intents failed: status={} body={}", ex.statusCode, ex.responseBodyAsString)
+        throw ex
+    }
+
+    fun retrievePaymentIntent(id: String): PaymongoPaymentIntentResponse = try {
+        restClient.get()
+            .uri("/payment_intents/{id}", id)
+            .retrieve()
+            .body(PaymongoPaymentIntentResponse::class.java)
+            ?: throw IllegalStateException("PayMongo returned empty response on GET /payment_intents/$id")
+    } catch (ex: RestClientResponseException) {
+        log.error("PayMongo GET /payment_intents/{} failed: status={} body={}", id, ex.statusCode, ex.responseBodyAsString)
+        throw ex
+    }
+
+    fun createPaymentMethod(request: PaymongoPaymentMethodRequest): PaymongoPaymentMethodResponse = try {
+        restClient.post()
+            .uri("/payment_methods")
+            .body(request)
+            .retrieve()
+            .body(PaymongoPaymentMethodResponse::class.java)
+            ?: throw IllegalStateException("PayMongo returned empty response on POST /payment_methods")
+    } catch (ex: RestClientResponseException) {
+        log.error("PayMongo POST /payment_methods failed: status={} body={}", ex.statusCode, ex.responseBodyAsString)
+        throw ex
+    }
+
+    fun attachPaymentMethod(
+        paymentIntentId: String,
+        request: PaymongoPaymentIntentAttachRequest,
+    ): PaymongoPaymentIntentResponse = try {
+        restClient.post()
+            .uri("/payment_intents/{id}/attach", paymentIntentId)
+            .body(request)
+            .retrieve()
+            .body(PaymongoPaymentIntentResponse::class.java)
+            ?: throw IllegalStateException("PayMongo returned empty response while attaching $paymentIntentId")
+    } catch (ex: RestClientResponseException) {
+        log.error(
+            "PayMongo POST /payment_intents/{}/attach failed: status={} body={}",
+            paymentIntentId,
+            ex.statusCode,
+            ex.responseBodyAsString,
+        )
+        throw ex
     }
 
     fun createRefund(request: PaymongoRefundRequest, idempotencyKey: String): PaymongoRefundResponse {

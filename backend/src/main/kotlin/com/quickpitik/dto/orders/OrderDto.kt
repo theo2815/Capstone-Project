@@ -49,6 +49,15 @@ data class OrderResponse(
     val createdAt: OffsetDateTime,
     val redirectUrl: String? = null,
     val couponCode: String? = null,
+    val qrPh: QrPhPaymentResponse? = null,
+)
+
+data class QrPhPaymentResponse(
+    val imageUrl: String,
+    val expiresAt: OffsetDateTime,
+    // Guest status polling uses the purpose-bound capability that formerly
+    // travelled in PayMongo's success redirect. Signed-in runners use JWT.
+    val returnToken: String? = null,
 )
 
 // `price` is the list price; `discount` is the coupon's share of it (0 when

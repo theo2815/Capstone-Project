@@ -55,5 +55,6 @@ data class PaymongoResourceAttributes(
     val status: String? = null,
     val payments: List<PaymongoPaymentResource> = emptyList(),
     @JsonProperty("payment_id") val paymentId: String? = null,
+    @JsonProperty("payment_intent_id") val paymentIntentId: String? = null,
     val amount: Long? = null,
 )

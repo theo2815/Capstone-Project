@@ -40,6 +40,14 @@ class PaymongoCheckoutReconcilerTest {
         val orders = Mockito.mock(OrderRepository::class.java)
         val webhooks = Mockito.mock(PaymongoWebhookService::class.java)
         Mockito.`when`(
+            payments.findByProviderAndStatusAndProviderRefStartingWithOrderByCreatedAtAsc(
+                eqArg("paymongo"),
+                eqArg(PaymentStatus.PENDING),
+                eqArg("pi_"),
+                anyArg(),
+            ),
+        ).thenReturn(emptyList())
+        Mockito.`when`(
             payments.findByProviderAndStatusAndProviderRefIsNotNullAndCreatedAtBeforeOrderByCreatedAtAsc(
                 eqArg("paymongo"),
                 eqArg(PaymentStatus.PENDING),

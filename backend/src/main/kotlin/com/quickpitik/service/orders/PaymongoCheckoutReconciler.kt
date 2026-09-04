@@ -26,6 +26,13 @@ class PaymongoCheckoutReconciler(
 
     @Scheduled(fixedDelayString = "\${app.payments.paymongo.reconcile-interval-ms:60000}")
     fun reconcile() {
+        paymentRepository.findByProviderAndStatusAndProviderRefStartingWithOrderByCreatedAtAsc(
+            "paymongo",
+            PaymentStatus.PENDING,
+            "pi_",
+            PageRequest.of(0, BATCH_SIZE),
+        ).groupBy { it.providerRef!! }.values.forEach(::reconcilePaymentIntent)
+
         val cutoff = OffsetDateTime.now().minus(properties.checkoutTtl)
         // ponytail: a missing providerRef means the provider outcome is
         // unknown; keep the photos reserved for same-key retry/manual repair.
@@ -36,7 +43,31 @@ class PaymongoCheckoutReconciler(
             cutoff,
             PageRequest.of(0, BATCH_SIZE),
         )
-        stale.groupBy { it.providerRef!! }.values.forEach(::reconcileGroup)
+        stale.filterNot { it.providerRef!!.startsWith("pi_") }
+            .groupBy { it.providerRef!! }
+            .values
+            .forEach(::reconcileGroup)
+    }
+
+    private fun reconcilePaymentIntent(payments: List<com.quickpitik.entity.Payment>) {
+        val intentId = payments.first().providerRef!!
+        val intent = try {
+            paymongoClient.retrievePaymentIntent(intentId)
+        } catch (ex: Exception) {
+            log.warn("Payment Intent reconciliation deferred for {}: {}", intentId, ex.message)
+            return
+        }
+        if (intent.data.attributes.status == "succeeded") {
+            webhookService.settlePaymentIntent(
+                intentId,
+                intent.data.attributes.payments.firstOrNull()?.id,
+                intent.data.attributes.metadata,
+            )
+            return
+        }
+        if (payments.mapNotNull { it.expiresAt }.minOrNull()?.isBefore(OffsetDateTime.now()) == true) {
+            markExpired(payments.map { it.orderId })
+        }
     }
 
     private fun reconcileGroup(payments: List<com.quickpitik.entity.Payment>) {
