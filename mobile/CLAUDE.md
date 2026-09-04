@@ -50,6 +50,7 @@ Sub-agents (feature / Explore / general-purpose) do **NOT** automatically load t
 * **Build app:** `.\gradlew.bat assembleDebug` (from the `mobile/` directory)
 * **Clean cache:** `.\gradlew.bat clean`
 * **Check compile validity:** `.\gradlew.bat compileDebugKotlin`
+* **Release APK:** `.\gradlew.bat assembleRelease` — signed only when `mobile/keystore.properties` (gitignored; keys `storeFile`/`storePassword`/`keyAlias`/`keyPassword`) exists; the keystore's SHA-1 must be an Android OAuth client in Google Cloud for Google sign-in to work on that build.
 ## 📱 Mobile-to-PC Backend Network Bridging Guide (ADB & Emulator)
 
 When debugging the mobile app on a physical phone or an emulator, the Android device sees **"localhost"** as its own internal loopback interface rather than your PC. To route phone traffic straight to your laptop's running Spring Boot server on port `8080`, use the guides below.
@@ -70,7 +71,7 @@ Everything derives from that one value — image URLs (`backendHost`/`backendOri
 
 This is what unblocked the physical-device protocols: during a camera shoot the phone's USB-C port is occupied by the body, so there is no cable to push a new build over.
 
-The options below remain valid, and `DEFAULT_BASE_URL` in `RetrofitClient.kt` is still what a fresh install uses.
+The options below remain valid. `DEFAULT_BASE_URL` in `RetrofitClient.kt` is the **production** origin (`https://api.quickpitik.com/`, since 2026-09-04) — a fresh install and every release build talk to production; only a debug build can be repointed via the SERVER row.
 
 ### 🔌 Option A: Physical Android Phone via USB (Highly Recommended)
 1. **Enable USB Debugging on your phone:**
@@ -100,14 +101,11 @@ The options below remain valid, and `DEFAULT_BASE_URL` in `RetrofitClient.kt` is
 
 ### 💻 Option B: Android Emulator (Virtual Device)
 * If using the standard Android Studio Emulator, the laptop's loopback interface is mapped to the special IP address **`10.0.2.2`**.
-* Enter `10.0.2.2:8080` via **Option 0**, or change the compiled default in `RetrofitClient.kt`:
-  ```kotlin
-  const val DEFAULT_BASE_URL = "http://10.0.2.2:8080/"
-  ```
+* Enter `10.0.2.2:8080` via **Option 0**. (Do not change the compiled default — it is the production origin and release builds are pinned to it.)
 
 ### 📶 Option C: Wireless local Wi-Fi (No USB cable)
 * Ensure both your laptop and phone are connected to the exact same Wi-Fi network.
-* Run `ipconfig` (PowerShell) to find the laptop's Wi-Fi IPv4, then enter it via **Option 0** — e.g. `192.168.1.50:8080`. Editing `DEFAULT_BASE_URL` also works but needs a rebuild.
+* Run `ipconfig` (PowerShell) to find the laptop's Wi-Fi IPv4, then enter it via **Option 0** — e.g. `192.168.1.50:8080`.
 * Allow inbound `8080` through the Windows firewall.
 
 ---

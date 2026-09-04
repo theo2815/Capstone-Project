@@ -61,6 +61,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.ui.runner.PhotoPreview
 import com.quickpitik.mobile.ui.runner.PhotoPreviewData
 import com.quickpitik.mobile.ui.runner.PhotoPreviewMode
@@ -589,6 +590,22 @@ private fun CameraConnectedCard(
                                 style = Typography.bodyMedium,
                                 lineHeight = 20.sp
                             )
+                            // Same diagnostics tail the live card shows — the only
+                            // window into the PTP handshake on a release build.
+                            if (state.recentLog.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Divider(color = Line)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                state.recentLog.forEach { line ->
+                                    Text(
+                                        text = line,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = SlateSoft,
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
                     }
                     PrimaryCta(
@@ -617,12 +634,15 @@ private fun CameraConnectedCard(
         }
 
         // Simulate stays as the wire-free pipeline exercise; it never touches
-        // USB, so it's safe even while a live watch holds the session.
-        GhostCta(
-            text = "Simulate DSLR shoot",
-            onClick = onSimulate,
-            modifier = Modifier.fillMaxWidth()
-        )
+        // USB, so it's safe even while a live watch holds the session. Debug
+        // only: it enqueues a synthetic frame into a REAL event.
+        if (BuildConfig.DEBUG) {
+            GhostCta(
+                text = "Simulate DSLR shoot",
+                onClick = onSimulate,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         // Manual card-import opens its OWN PTP session, which would force-claim
         // the interface out from under a live watch — disabled while watching.
         GhostCta(

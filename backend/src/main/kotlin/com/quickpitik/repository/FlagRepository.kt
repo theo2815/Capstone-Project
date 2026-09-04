@@ -14,13 +14,13 @@ interface FlagRepository : JpaRepository<Flag, UUID> {
         """
         SELECT f FROM Flag f
         WHERE (:statusWire IS NULL OR f.statusWire = :statusWire)
-          AND (:query IS NULL OR LOWER(f.reason) LIKE LOWER(CONCAT('%', :query, '%')) OR LOWER(f.note) LIKE LOWER(CONCAT('%', :query, '%')))
+          AND (:query = '' OR LOWER(f.reason) LIKE LOWER(CONCAT('%', :query, '%')) OR LOWER(f.note) LIKE LOWER(CONCAT('%', :query, '%')))
         ORDER BY f.createdAt DESC, f.id ASC
         """,
         countQuery = """
         SELECT COUNT(f) FROM Flag f
         WHERE (:statusWire IS NULL OR f.statusWire = :statusWire)
-          AND (:query IS NULL OR LOWER(f.reason) LIKE LOWER(CONCAT('%', :query, '%')) OR LOWER(f.note) LIKE LOWER(CONCAT('%', :query, '%')))
+          AND (:query = '' OR LOWER(f.reason) LIKE LOWER(CONCAT('%', :query, '%')) OR LOWER(f.note) LIKE LOWER(CONCAT('%', :query, '%')))
         """,
     )
     fun pageForAdmin(
