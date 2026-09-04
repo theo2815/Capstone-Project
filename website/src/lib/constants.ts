@@ -37,6 +37,7 @@ export const ROUTES = {
   ADMIN_INBOX: "/admin/inbox",
   ADMIN_OVERVIEW: "/admin/overview",
   ADMIN_EVENTS: "/admin/events",
+  ADMIN_EVENT_REQUESTS: "/admin/event-requests",
   ADMIN_VERIFICATIONS: "/admin/verifications",
   ADMIN_DISPUTES: "/admin/disputes",
   ADMIN_PAYOUTS: "/admin/payouts",

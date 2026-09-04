@@ -81,6 +81,8 @@ export interface AdminKpis {
   openDisputes: number;
   openFlags: number;
   pendingPayouts: number;
+  /** V46 — photographer-owned events awaiting a decision (new + pricing change). */
+  pendingEventRequests: number;
 }
 
 export interface AdminTrendPoint {

@@ -186,8 +186,10 @@ class AdminEventService(
         return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
     }
 
+    // Locked read: a second admin deciding the same row waits here and then
+    // hits the 409 above instead of double-logging + double-notifying.
     private fun loadForReview(eventId: UUID): Event =
-        eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
+        eventRepository.findByIdForReview(eventId)?.takeIf { it.deletedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
 
     private fun markReviewed(event: Event, adminId: UUID, status: EventReviewStatus) {
@@ -340,6 +342,15 @@ class AdminEventService(
         // photos.price_php, which is also what OrderService.create charges.
         req.pricePerPhoto?.let { rawPrice ->
             val newPrice = validatedPrice(rawPrice)
+            // A FREE photographer event (V46) has no price; the trio only
+            // changes through an approved pricing request.
+            if (event.isFree && newPrice.signum() != 0) {
+                throw ValidationException(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "This is a free event — approve a pricing change from the event requests queue instead.",
+                    field = "pricePerPhoto",
+                )
+            }
             if (event.pricePerPhoto.compareTo(newPrice) != 0) {
                 val oldPriceStr = event.pricePerPhoto.toPlainString()
                 val newPriceStr = newPrice.toPlainString()

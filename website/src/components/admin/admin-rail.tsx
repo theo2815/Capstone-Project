@@ -36,7 +36,7 @@ interface AdminRoute {
 }
 
 // Phase 1 admin redesign — Inbox-led order, grouped 2026-05-08 into the
-// editorial-data sidebar pattern. QUEUES (4) carry live counts and the
+// editorial-data sidebar pattern. QUEUES (5) carry live counts and the
 // breathing attention dot; CATALOG (2) and REPORTS (1) are router-only.
 // Numbers mirror admin-section-guide.ts so the rail and tooltip headings
 // stay in sync.
@@ -70,29 +70,35 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
     group: "queues",
   },
   {
+    href: ROUTES.ADMIN_EVENT_REQUESTS,
+    label: "Event requests",
+    number: "05",
+    group: "queues",
+  },
+  {
     href: ROUTES.ADMIN_EVENTS,
     label: "Events",
-    number: "05",
+    number: "06",
     group: "catalog",
     nestedPrefix: ROUTES.ADMIN_EVENTS,
   },
   {
     href: ROUTES.ADMIN_PHOTOGRAPHERS,
     label: "Photographers",
-    number: "06",
+    number: "07",
     group: "catalog",
     nestedPrefix: ROUTES.ADMIN_PHOTOGRAPHERS,
   },
   {
     href: ROUTES.ADMIN_OVERVIEW,
     label: "Overview",
-    number: "07",
+    number: "08",
     group: "reports",
   },
   {
     href: ROUTES.ADMIN_SALES,
     label: "Sales",
-    number: "08",
+    number: "09",
     group: "reports",
   },
 ];
@@ -162,6 +168,8 @@ export function AdminRail() {
         return counts.flags;
       case ROUTES.ADMIN_PAYOUTS:
         return counts.payouts;
+      case ROUTES.ADMIN_EVENT_REQUESTS:
+        return counts.events;
       default:
         return null;
     }

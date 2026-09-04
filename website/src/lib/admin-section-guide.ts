@@ -17,7 +17,7 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<SectionGuideEntry> = [
     number: "01",
     href: ROUTES.ADMIN_INBOX,
     label: "Inbox",
-    body: "Your morning landing. Pending verifications by default — disputes and payouts arrive as filter chips.",
+    body: "Your morning landing. Pending verifications by default — event requests, disputes and payouts arrive as filter chips.",
   },
   {
     number: "02",
@@ -39,24 +39,30 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<SectionGuideEntry> = [
   },
   {
     number: "05",
+    href: ROUTES.ADMIN_EVENT_REQUESTS,
+    label: "Event requests",
+    body: "Photographer-created events waiting on a decision, and pricing changes parked on live ones. Approve, or send back with a reason.",
+  },
+  {
+    number: "06",
     href: ROUTES.ADMIN_EVENTS,
     label: "Events",
     body: "Every race on the platform. Edit lifecycle state, archive, or unhide.",
   },
   {
-    number: "06",
+    number: "07",
     href: ROUTES.ADMIN_PHOTOGRAPHERS,
     label: "Photographers",
     body: "Directory of approved + pending photographers. Drill in for history and brand checks.",
   },
   {
-    number: "07",
+    number: "08",
     href: ROUTES.ADMIN_OVERVIEW,
     label: "Overview",
     body: "Weekly review — eight KPIs, a 30-day trend, and your latest decisions. Not the daily home.",
   },
   {
-    number: "08",
+    number: "09",
     href: ROUTES.ADMIN_SALES,
     label: "Sales",
     body: "Where the money comes from — GMV, platform cut, refunds, top photographers and events.",

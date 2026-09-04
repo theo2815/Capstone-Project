@@ -3,9 +3,11 @@ package com.quickpitik.repository
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.EventStatus
+import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
@@ -34,6 +36,14 @@ interface EventRepository : JpaRepository<Event, UUID> {
 
     // Admin review queue (V46): submissions + pending pricing changes, oldest first.
     fun findByReviewStatusInAndDeletedAtIsNullOrderByCreatedAtAsc(statuses: Collection<EventReviewStatus>): List<Event>
+
+    fun countByReviewStatusInAndDeletedAtIsNull(statuses: Collection<EventReviewStatus>): Long
+
+    // Row lock for approve/reject so two admins deciding the same event
+    // serialize on the state check (same shape as DisputeRepository.findByIdForUpdate).
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT e FROM Event e WHERE e.id = :id")
+    fun findByIdForReview(@Param("id") id: UUID): Event?
 
     // Sentinel values keep every named parameter typed (Postgres rejects nullable
     // unknown-typed parameters with "function lower(bytea) does not exist").

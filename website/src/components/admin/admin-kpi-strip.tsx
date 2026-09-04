@@ -32,7 +32,7 @@ import {
 // header has no fresh accent of its own — the priority dot owns it).
 //
 // Priority order matches useAdminAttentionTarget: Disputes > Flags >
-// Verifications > Payouts. First non-zero wins.
+// Verifications > Event requests > Payouts. First non-zero wins.
 
 interface KpiEntry {
   readonly count: number;
@@ -77,6 +77,8 @@ export function AdminKpiStrip() {
       serverPayouts,
       payoutOverrides,
     ).filter((p) => p.status === "pending_review").length;
+    // Event requests (V46) have no client-side fallback — BE count only.
+    const pendingEventRequests = liveKpis?.pendingEventRequests ?? 0;
 
     if (liveKpis) {
       pendingVerifications = liveKpis.pendingVerifications;
@@ -108,11 +110,18 @@ export function AdminKpiStrip() {
         priorityRank: 2,
       },
       {
+        count: pendingEventRequests,
+        label: "Event requests",
+        singularLabel: "Event request",
+        href: `${ROUTES.ADMIN_INBOX}?type=events`,
+        priorityRank: 4,
+      },
+      {
         count: pendingPayouts,
         label: "Payouts",
         singularLabel: "Payout",
         href: `${ROUTES.ADMIN_INBOX}?type=payouts`,
-        priorityRank: 4,
+        priorityRank: 5,
       },
     ];
     return ADMIN_FLAGS_ENABLED

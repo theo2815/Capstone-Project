@@ -32,6 +32,7 @@ const EMPTY_KPIS: AdminKpis = {
   openDisputes: 0,
   openFlags: 0,
   pendingPayouts: 0,
+  pendingEventRequests: 0,
 };
 
 export default function AdminOverviewPage() {

@@ -2,6 +2,7 @@ package com.quickpitik.service.admin
 
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.AiApiProperties
+import com.quickpitik.dto.admin.UpdateAdminEventRequest
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventPricingMode
@@ -10,6 +11,7 @@ import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.WatermarkPolicy
 import com.quickpitik.exception.ConflictException
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -155,6 +157,31 @@ class AdminEventServiceReviewTest {
     }
 
     @Test
+    fun `approve and reject read the row under a lock`() {
+        val event = submitted()
+
+        service.approve(adminId, event.id)
+
+        Mockito.verify(eventRepository).findByIdForReview(event.id)
+        Mockito.verify(eventRepository, Mockito.never()).findById(anyArg())
+    }
+
+    @Test
+    fun `an admin price edit on a free event is refused`() {
+        val event = live().apply {
+            pricingMode = EventPricingMode.FREE
+            pricePerPhoto = BigDecimal.ZERO
+            watermarkPolicy = WatermarkPolicy.OWN
+        }
+
+        assertFailsWith<ValidationException> {
+            service.update(adminId, event.id, UpdateAdminEventRequest(pricePerPhoto = BigDecimal("100")))
+        }
+        assertEquals(0, event.pricePerPhoto.signum())
+        Mockito.verify(photoRepository, Mockito.never()).updatePriceByEventId(anyArg(), anyArg())
+    }
+
+    @Test
     fun `the review queue lists only pending submissions and change requests`() {
         val queue = listOf(submitted(), live().apply { reviewStatus = EventReviewStatus.CHANGE_PENDING })
         Mockito.`when`(eventRepository.findByReviewStatusInAndDeletedAtIsNullOrderByCreatedAtAsc(anyArg()))
@@ -180,6 +207,7 @@ class AdminEventServiceReviewTest {
             createdBy = photographerId,
             reviewStatus = review,
         )
+        Mockito.`when`(eventRepository.findByIdForReview(event.id)).thenReturn(event)
         Mockito.`when`(eventRepository.findById(event.id)).thenReturn(Optional.of(event))
         return event
     }

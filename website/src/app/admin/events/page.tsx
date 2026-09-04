@@ -3,7 +3,10 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Slab } from "@/components/profile-shell";
-import { AdminEventCard } from "@/components/admin/admin-event-card";
+import {
+  AdminEventCard,
+  type AdminEventReview,
+} from "@/components/admin/admin-event-card";
 import { AdminEventFormModal } from "@/components/admin/admin-event-form-modal";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
@@ -97,6 +100,23 @@ export default function AdminEventsPage() {
       items: byState(catalog, section.matchState),
     }));
   }, [catalog]);
+
+  // Owner + review state for photographer-owned rows (V46). The catalog
+  // merge narrows rows to ListEvent, so read the extra fields off the raw
+  // admin list by id; admin-created events have no createdBy* and get none.
+  const reviewById = useMemo(() => {
+    const map = new Map<string, AdminEventReview>();
+    for (const row of liveEvents ?? []) {
+      if (row.createdByHandle === null && row.createdByName === null) continue;
+      map.set(row.id, {
+        owner: row.createdByHandle
+          ? `@${row.createdByHandle}`
+          : (row.createdByName ?? "Photographer"),
+        status: row.reviewStatus,
+      });
+    }
+    return map;
+  }, [liveEvents]);
 
   const liveCount = byState(catalog, "live").length;
 
@@ -229,6 +249,7 @@ export default function AdminEventsPage() {
                     key={event.id}
                     event={event}
                     index={i}
+                    review={reviewById.get(event.id)}
                     onEdit={(e) => setEditTarget(e)}
                     onDelete={handleDelete}
                   />

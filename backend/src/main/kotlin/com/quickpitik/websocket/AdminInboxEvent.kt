@@ -10,8 +10,9 @@ package com.quickpitik.websocket
 // if we pushed the full row, so the FE refetches the list it cares about
 // using `type` as the dispatch key. Schema:
 //   {
-//     "type": "verification_submitted" | "dispute_filed" | "payout_report_filed",
-//     "entityId": "<uuid|cycleId>",   // userId | disputeId | reportId
+//     "type": "verification_submitted" | "dispute_filed" | "payout_report_filed"
+//           | "event_submitted" | "event_change_requested",   // V46 event review queue
+//     "entityId": "<uuid|cycleId>",   // userId | disputeId | reportId | eventId
 //     "actorId":  "<uuid>",            // photographerId | runnerId | photographerId
 //     "occurredAt": "<ISO-8601>"
 //   }

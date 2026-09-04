@@ -39,6 +39,7 @@ export function useAdminQueueRealtime(enabled: boolean): void {
       if (document.hidden) return;
       queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "payouts"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
       useAdminUsersServerStore.getState().invalidate();
       void useAdminUsersServerStore.getState().refetch();

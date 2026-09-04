@@ -43,7 +43,6 @@ export function EventRequestsQueue() {
     setBusyId(row.id);
     try {
       await action();
-      await queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
       showToast({ kind: "success", message: ok });
     } catch (err) {
       showToast({
@@ -54,6 +53,12 @@ export function EventRequestsQueue() {
             : "Couldn't update the event. Try again.",
       });
     } finally {
+      // Refetch on failure too: a 409 means another admin already decided
+      // this row, so it must leave the list; counts follow the queue.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["admin", "events"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] }),
+      ]);
       setBusyId(null);
     }
   }
