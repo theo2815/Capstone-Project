@@ -141,7 +141,7 @@ class PublicPhotographerService(
         // so attribution is a constant — no per-page lookup like PhotoService
         // needs for a mixed event grid.
         val photographer = PhotographerRef(handle = settings.handle, name = user.name)
-        val coupon = couponService.activeFor(setOf(settings.userId))[settings.userId]
+        val coupon = couponService.activeFor(event.id, setOf(settings.userId))[settings.userId]
         // Free event (V46): originals are anyone's — mirror PhotoService.
         val free = event.isFree
         val ttl = storageProperties.presignedTtl.runnerDownload

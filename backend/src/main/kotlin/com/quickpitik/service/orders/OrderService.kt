@@ -201,7 +201,7 @@ class OrderService(
         // Fresh checkout only — the replay branches above never re-resolve the
         // coupon, so a code that expired between attempts cannot strand a
         // retry whose discount is already persisted on the order rows.
-        val coupon = request.couponCode?.let(couponService::resolveForCheckout)
+        val coupon = request.couponCode?.let(couponService::reserveForCheckout)
         val discounts: Map<UUID, BigDecimal> = if (coupon == null) {
             emptyMap()
         } else {
@@ -220,6 +220,9 @@ class OrderService(
         val expiresAt = OffsetDateTime.now().plus(platformProperties.shareTokenTtl)
         val savedItems = mutableListOf<OrderItem>()
         val orders = request.items.groupBy { it.eventId }.map { (eventId, items) ->
+            val appliedCoupon = coupon?.takeIf {
+                items.any { discounts.containsKey(it.photoId) }
+            }
             val total = items.fold(BigDecimal.ZERO) { sum, item ->
                 sum + photos.getValue(item.photoId).pricePhp - (discounts[item.photoId] ?: BigDecimal.ZERO)
             }
@@ -232,7 +235,8 @@ class OrderService(
                     status = OrderStatus.PENDING,
                     totalPhp = total,
                     idempotencyKey = idempotencyKey,
-                    couponCode = coupon?.code,
+                    couponCode = appliedCoupon?.code,
+                    couponId = appliedCoupon?.id,
                     legacyShareTokenHash = null,
                     tokenExpiresAt = expiresAt,
                 ),
@@ -290,8 +294,10 @@ class OrderService(
         val requestedPhotoIds = request.items.map { it.photoId }.toSet()
         // Pure string compare — never resolve the coupon on a replay.
         val requestedCoupon = request.couponCode?.let { CouponService.normalise(it) }
+        val persistedCoupons = orders.mapNotNull { it.couponCode }.toSet()
         if (existingPhotoIds != requestedPhotoIds ||
-            orders.any { it.paymentMethod != paymentMethod || it.couponCode != requestedCoupon }
+            orders.any { it.paymentMethod != paymentMethod } ||
+            persistedCoupons != requestedCoupon?.let(::setOf).orEmpty()
         ) {
             throw checkoutConflict("Idempotency-Key was already used for a different checkout.")
         }
@@ -483,7 +489,9 @@ class OrderService(
 
     private fun loadAndValidateEvents(items: List<CreateOrderItem>): Map<UUID, Event> {
         val eventIds = items.map { it.eventId }.toSet()
-        val events = eventRepository.findAllById(eventIds).associateBy { it.id }
+        val events = eventRepository.findAllById(eventIds)
+            .filter { it.deletedAt == null }
+            .associateBy { it.id }
         if (events.size != eventIds.size) {
             throw NotFoundException(message = "Event not found", code = ErrorCodes.EVENT_NOT_FOUND)
         }

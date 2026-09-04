@@ -12,12 +12,20 @@ import com.quickpitik.dto.photos.CouponQuote
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerCoupon
+import com.quickpitik.entity.OrderStatus
+import com.quickpitik.entity.VerificationStatus
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
@@ -42,12 +50,18 @@ class CouponService(
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val userRepository: UserRepository,
     private val platformProperties: PlatformProperties,
+    private val eventRepository: EventRepository,
+    private val orderRepository: OrderRepository,
 ) {
     @Transactional(readOnly = true)
-    fun get(photographerId: UUID): CouponDto? =
-        couponRepository.findById(photographerId).orElse(null)?.toDto()
+    fun get(photographerId: UUID, eventId: UUID): CouponDto? {
+        requireOwnedEvent(photographerId, eventId)
+        return couponRepository.findByEventIdAndPhotographerId(eventId, photographerId)
+            ?.let { it.toDto(usageCountOf(it)) }
+    }
 
-    fun upsert(photographerId: UUID, req: UpsertCouponRequest): CouponDto {
+    fun upsert(photographerId: UUID, eventId: UUID, req: UpsertCouponRequest): CouponDto {
+        requireEligibleOwner(photographerId, eventId)
         val code = normalise(req.code)
         if (!CODE_PATTERN.matches(code)) {
             throw ValidationException(
@@ -72,66 +86,79 @@ class CouponService(
                 field = "expiresAt",
             )
         }
-        if (couponRepository.existsByCodeAndPhotographerIdNot(code, photographerId)) {
-            throw ConflictException(
-                message = "That code is already taken by another photographer",
-                code = ErrorCodes.COUPON_CODE_TAKEN,
+        if (req.usageLimit != null && req.usageLimit !in 1..MAX_USAGE_LIMIT) {
+            throw ValidationException(
+                message = "usageLimit must be between 1 and $MAX_USAGE_LIMIT",
+                code = ErrorCodes.VALIDATION_ERROR,
+                field = "usageLimit",
             )
         }
-        val coupon = couponRepository.findById(photographerId).orElse(null)?.apply {
+        val coupon = couponRepository.findByEventIdAndPhotographerId(eventId, photographerId)?.apply {
             this.code = code
             percentOff = req.percentOff
             active = req.active
             expiresAt = req.expiresAt
+            usageLimit = req.usageLimit
             updatedAt = now
         } ?: PhotographerCoupon(
+            eventId = eventId,
             photographerId = photographerId,
             code = code,
             percentOff = req.percentOff,
             active = req.active,
             expiresAt = req.expiresAt,
+            usageLimit = req.usageLimit,
         )
-        return couponRepository.save(coupon).toDto()
+        if (couponRepository.existsByCodeAndEventIdIsNotNullAndIdNot(code, coupon.id)) {
+            throw ConflictException(
+                message = "That code is already taken by another photographer",
+                code = ErrorCodes.COUPON_CODE_TAKEN,
+            )
+        }
+        return try {
+            couponRepository.saveAndFlush(coupon).toDto(usageCountOf(coupon))
+        } catch (_: DataIntegrityViolationException) {
+            throw ConflictException(
+                message = "That coupon code or event already has a coupon",
+                code = ErrorCodes.COUPON_CODE_TAKEN,
+            )
+        }
     }
 
     // Silent-idempotent, like SocialLinkService.delete.
-    fun delete(photographerId: UUID) {
-        val existing = couponRepository.findById(photographerId).orElse(null) ?: return
+    fun delete(photographerId: UUID, eventId: UUID) {
+        requireOwnedEvent(photographerId, eventId)
+        val existing = couponRepository.findByEventIdAndPhotographerId(eventId, photographerId) ?: return
         couponRepository.delete(existing)
     }
 
     // Live coupons for a page of photos, one IN query — the photo DTO resolvers
     // batch this the same way they batch photographer attribution.
     @Transactional(readOnly = true)
-    fun activeFor(photographerIds: Set<UUID>): Map<UUID, PhotographerCoupon> {
+    fun activeFor(eventId: UUID, photographerIds: Set<UUID>): Map<UUID, PhotographerCoupon> {
         if (photographerIds.isEmpty()) return emptyMap()
-        val now = OffsetDateTime.now()
-        return couponRepository.findAllById(photographerIds)
-            .filter { it.isLive(now) }
+        return couponRepository.findLiveForEvent(eventId, photographerIds, OffsetDateTime.now())
             .associateBy { it.photographerId }
     }
 
     @Transactional(readOnly = true)
     fun resolveForCheckout(raw: String): PhotographerCoupon {
-        val coupon = couponRepository.findByCode(normalise(raw))?.takeIf { it.active }
-            ?: throw ValidationException(
-                message = "That coupon code isn't valid",
-                code = ErrorCodes.COUPON_INVALID,
-                field = "couponCode",
-            )
-        if (coupon.expiresAt?.isBefore(OffsetDateTime.now()) == true) {
-            throw ValidationException(
-                message = "That coupon code has expired",
-                code = ErrorCodes.COUPON_EXPIRED,
-                field = "couponCode",
-            )
-        }
-        return coupon
+        val coupon = couponRepository.findByCodeAndEventIdIsNotNull(normalise(raw))
+        return requireRedeemable(coupon)
+    }
+
+    // Checkout calls this inside its reservation transaction. The row lock
+    // serializes the usage-count check with creation of the discounted order.
+    fun reserveForCheckout(raw: String): PhotographerCoupon {
+        val coupon = couponRepository.findScopedByCodeForUpdate(normalise(raw))
+        return requireRedeemable(coupon)
     }
 
     // Free (₱0) photos are never eligible — there is no share to discount.
     fun eligible(photo: Photo, coupon: PhotographerCoupon): Boolean =
-        photo.photographerId == coupon.photographerId && photo.pricePhp.signum() > 0
+        photo.eventId == coupon.eventId &&
+            photo.photographerId == coupon.photographerId &&
+            photo.pricePhp.signum() > 0
 
     fun discountFor(photo: Photo, coupon: PhotographerCoupon): BigDecimal =
         couponDiscount(photo.pricePhp, platformProperties.photographerKeepRate, coupon.percentOff)
@@ -173,8 +200,69 @@ class CouponService(
         )
     }
 
+    private fun requireRedeemable(coupon: PhotographerCoupon?): PhotographerCoupon {
+        val scoped = coupon?.takeIf { it.eventId != null && it.active }
+            ?: throw ValidationException(
+                message = "That coupon code isn't valid",
+                code = ErrorCodes.COUPON_INVALID,
+                field = "couponCode",
+            )
+        if (scoped.expiresAt?.isAfter(OffsetDateTime.now()) == false) {
+            throw ValidationException(
+                message = "That coupon code has expired",
+                code = ErrorCodes.COUPON_EXPIRED,
+                field = "couponCode",
+            )
+        }
+        if (scoped.usageLimit?.let { usageCountOf(scoped) >= it.toLong() } == true) {
+            throw ValidationException(
+                message = "That coupon has reached its usage limit",
+                code = ErrorCodes.COUPON_USAGE_LIMIT_REACHED,
+                field = "couponCode",
+            )
+        }
+        return scoped
+    }
+
+    private fun usageCountOf(coupon: PhotographerCoupon): Long =
+        orderRepository.countByCouponIdAndStatusNot(coupon.id, OrderStatus.EXPIRED)
+
+    private fun requireOwnedEvent(photographerId: UUID, eventId: UUID) =
+        eventRepository.findByIdAndCreatedByAndDeletedAtIsNull(eventId, photographerId)
+            ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+
+    private fun requireEligibleOwner(photographerId: UUID, eventId: UUID) {
+        val event = requireOwnedEvent(photographerId, eventId)
+        val user = userRepository.findById(photographerId).orElse(null)
+            ?: throw NotFoundException(code = ErrorCodes.USER_NOT_FOUND, message = "User not found")
+        if (user.suspendedAt != null) {
+            throw ApiException(
+                status = HttpStatus.FORBIDDEN,
+                code = ErrorCodes.ACCOUNT_SUSPENDED,
+                message = "Your account is suspended. Contact support before creating coupons.",
+            )
+        }
+        if (photographerSettingsRepository.findById(photographerId).orElse(null)?.verificationStatus !=
+            VerificationStatus.APPROVED
+        ) {
+            throw ApiException(
+                status = HttpStatus.FORBIDDEN,
+                code = ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED,
+                message = "Complete photographer verification before creating coupons.",
+            )
+        }
+        if (event.isFree) {
+            throw ValidationException(
+                message = "Free events cannot use coupons",
+                code = ErrorCodes.COUPON_NOT_APPLICABLE,
+                field = "eventId",
+            )
+        }
+    }
+
     companion object {
         fun normalise(raw: String): String = raw.trim().uppercase()
         private val CODE_PATTERN = Regex("^[A-Z0-9]{4,16}$")
+        private const val MAX_USAGE_LIMIT = 1_000_000
     }
 }

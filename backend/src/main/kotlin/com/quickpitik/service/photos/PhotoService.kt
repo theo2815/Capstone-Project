@@ -101,7 +101,7 @@ class PhotoService(
         val photographers = resolvePhotographers(photos)
         // Live coupons for the page's photographers — one IN query, same
         // batch shape as attribution.
-        val coupons = couponService.activeFor(photographers.keys)
+        val coupons = couponService.activeFor(eventId, photographers.keys)
         return PaginatedResponse(
             items = photos.map {
                 it.toDto(

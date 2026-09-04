@@ -157,20 +157,26 @@ class MePhotographerSettingsController(
         return mapOf("removed" to true)
     }
 
-    // ─── Coupon (one per photographer, V45) ───────────────────────────────
-    @GetMapping("/coupon")
-    fun getCoupon(@AuthenticationPrincipal principal: AuthPrincipal): CouponDto? =
-        couponService.get(principal.userId)
+    // ─── Event coupon ─────────────────────────────────────────────────────
+    @GetMapping("/events/{eventId}/coupon")
+    fun getCoupon(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+    ): CouponDto? = couponService.get(principal.userId, eventId)
 
-    @PutMapping("/coupon")
+    @PutMapping("/events/{eventId}/coupon")
     fun putCoupon(
         @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
         @Valid @RequestBody body: UpsertCouponRequest,
-    ): CouponDto = couponService.upsert(principal.userId, body)
+    ): CouponDto = couponService.upsert(principal.userId, eventId, body)
 
-    @DeleteMapping("/coupon")
-    fun deleteCoupon(@AuthenticationPrincipal principal: AuthPrincipal): Map<String, Boolean> {
-        couponService.delete(principal.userId)
+    @DeleteMapping("/events/{eventId}/coupon")
+    fun deleteCoupon(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+    ): Map<String, Boolean> {
+        couponService.delete(principal.userId, eventId)
         return mapOf("removed" to true)
     }
 

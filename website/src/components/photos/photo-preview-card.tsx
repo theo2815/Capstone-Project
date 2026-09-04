@@ -37,9 +37,9 @@ export interface PhotoPreviewItem {
   // the credit renders as plain text, never a link to /{null}.
   photographerHandle?: string | null;
   photographerName?: string | null;
-  // Photographer coupon (V45), priced by the BE: `couponPrice` is what the
-  // runner pays with the code. Absent when the photographer has no live
-  // coupon or the photo is free.
+  // Event coupon, priced by the BE: `couponPrice` is what the runner pays
+  // with the code. Absent unless this exact event/photo/photographer is
+  // eligible.
   couponCode?: string | null;
   couponPercentOff?: number | null;
   couponPrice?: number | null;

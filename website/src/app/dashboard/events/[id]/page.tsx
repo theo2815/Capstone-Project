@@ -5,6 +5,7 @@ import { notFound, useParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
+import { EventCouponModal } from "@/components/dashboard/event-coupon-modal";
 import { MyEventForm } from "@/components/dashboard/my-event-form";
 import { SiteHeader } from "@/components/layout/site-header";
 import {
@@ -74,6 +75,7 @@ export default function FocusedSharePage() {
   // Owned-event controls (V46): edit modal + withdraw of a parked pricing
   // change. Hooks stay above the early returns.
   const [editOpen, setEditOpen] = useState(false);
+  const [couponOpen, setCouponOpen] = useState(false);
   const queryClient = useQueryClient();
   const { showToast } = useToast();
 
@@ -132,6 +134,11 @@ export default function FocusedSharePage() {
       <OwnedBand
         detail={liveDetail}
         onEdit={() => setEditOpen(true)}
+        onCoupon={
+          liveDetail.pricingMode === "free"
+            ? undefined
+            : () => setCouponOpen(true)
+        }
         onWithdraw={handleWithdraw}
       />
       <Modal
@@ -157,6 +164,13 @@ export default function FocusedSharePage() {
           onCancel={() => setEditOpen(false)}
         />
       </Modal>
+      <EventCouponModal
+        isOpen={couponOpen}
+        onClose={() => setCouponOpen(false)}
+        events={[liveDetail]}
+        initialEventId={liveDetail.id}
+        lockEvent
+      />
     </>
   ) : null;
 
@@ -206,10 +220,12 @@ export default function FocusedSharePage() {
 function OwnedBand({
   detail,
   onEdit,
+  onCoupon,
   onWithdraw,
 }: {
   detail: PhotographerEventDetail;
   onEdit: () => void;
+  onCoupon?: () => void;
   onWithdraw: () => void;
 }) {
   const status = detail.reviewStatus ?? "approved";
@@ -265,6 +281,15 @@ function OwnedBand({
         >
           Edit event
         </button>
+        {onCoupon && (
+          <button
+            type="button"
+            onClick={onCoupon}
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          >
+            Event coupon
+          </button>
+        )}
         {status === "change_pending" && (
           <button
             type="button"

@@ -15,6 +15,7 @@ import java.util.UUID
 // via the HTTP header (RFC 9110 §9.2.2), not the body — see OrderController.create.
 data class CreateOrderRequest(
     @field:NotEmpty(message = "items must not be empty")
+    @field:Size(max = 100, message = "items must contain at most 100 photos")
     val items: List<CreateOrderItem> = emptyList(),
     @field:NotBlank(message = "paymentMethod is required")
     val paymentMethod: String = "",

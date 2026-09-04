@@ -3,7 +3,6 @@ import type {
   BrandColor,
   PayoutAccount,
   PayoutMethod,
-  PhotographerCoupon,
   PhotographerRegion,
   SocialLink,
   SocialPlatform,
@@ -41,11 +40,8 @@ import type {
 // ─── Verification submit ──────────────────────────────────────────────────
 //   POST   /api/v1/me/photographer/verification                     → { status }
 //
-// ─── Coupon (one per photographer, V45) ───────────────────────────────────
-//   GET    /api/v1/me/photographer/coupon                           → PhotographerCoupon | null
-//   PUT    /api/v1/me/photographer/coupon  { code, percentOff, active, expiresAt? }
-//          → PhotographerCoupon   (400 on shape/cap, 409 COUPON_CODE_TAKEN)
-//   DELETE /api/v1/me/photographer/coupon                           → ok
+// ─── Event coupons ─────────────────────────────────────────────────────────
+// Event coupon CRUD is event-scoped in api-coupons.ts.
 
 // ───────────────────────────────────────────── Regions reference
 
@@ -134,20 +130,6 @@ export async function postWatermark(file: File): Promise<MediaUploadResponse> {
 }
 
 // ───────────────────────────────────────────── Coupon (V45)
-
-export async function fetchCoupon(): Promise<PhotographerCoupon | null> {
-  return api.get<PhotographerCoupon | null>("/me/photographer/coupon");
-}
-
-export async function putCoupon(
-  coupon: PhotographerCoupon,
-): Promise<PhotographerCoupon> {
-  return api.put<PhotographerCoupon>("/me/photographer/coupon", coupon);
-}
-
-export async function deleteCoupon(): Promise<void> {
-  await api.delete<unknown>("/me/photographer/coupon");
-}
 
 // ───────────────────────────────────────────── Socials CRUD
 

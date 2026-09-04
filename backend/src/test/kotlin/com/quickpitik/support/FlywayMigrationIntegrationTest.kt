@@ -68,23 +68,32 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1, count)
     }
 
-    // V45: one coupon per photographer, discount carried on order items and
-    // the earnings ledger, the entered code on the order.
+    // V45/V47: one coupon per owned event, with usage reservation on orders.
     @Test
     fun `photographer coupon schema is present`() {
         val couponColumns = jdbcTemplate.queryForList(
             "SELECT column_name FROM information_schema.columns WHERE table_name = 'photographer_coupons'",
             String::class.java,
         )
-        assertTrue(couponColumns.containsAll(listOf("photographer_id", "code", "percent_off", "active", "expires_at")))
+        assertTrue(
+            couponColumns.containsAll(
+                listOf("id", "event_id", "photographer_id", "code", "percent_off", "active", "expires_at", "usage_limit"),
+            ),
+        )
 
         fun columns(table: String) = jdbcTemplate.queryForList(
             "SELECT column_name FROM information_schema.columns WHERE table_name = '$table'",
             String::class.java,
         )
-        assertTrue("coupon_code" in columns("orders"))
+        assertTrue(columns("orders").containsAll(listOf("coupon_code", "coupon_id")))
         assertTrue("discount_php" in columns("order_items"))
         assertTrue("discount_php" in columns("transactions"))
+
+        val ownerConstraint = jdbcTemplate.queryForObject(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'fk_photographer_coupons_owned_event'",
+            String::class.java,
+        ).orEmpty()
+        assertTrue(ownerConstraint.contains("event_id, photographer_id"), ownerConstraint)
     }
 
     // V46: photographer-owned events + the four event review message kinds.

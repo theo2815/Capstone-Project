@@ -7,13 +7,20 @@ import jakarta.persistence.Table
 import java.time.OffsetDateTime
 import java.util.UUID
 
-// One coupon per photographer — the photographer's user id is the primary key.
-// `code` is stored UPPERCASE and is globally unique (V45) because a runner
-// types only the code at checkout; the owner is derived from it.
+// One coupon per photographer-owned event. `code` stays globally unique
+// because a runner types only the code at checkout; event and owner are
+// derived from the persisted row, never accepted from the checkout client.
 @Entity
 @Table(name = "photographer_coupons")
 class PhotographerCoupon(
     @Id
+    @Column(nullable = false, updatable = false)
+    val id: UUID = UUID.randomUUID(),
+
+    // Nullable only for disabled V45 rows retained by the migration.
+    @Column(name = "event_id", updatable = false)
+    val eventId: UUID?,
+
     @Column(name = "photographer_id", nullable = false, updatable = false)
     val photographerId: UUID,
 
@@ -28,6 +35,9 @@ class PhotographerCoupon(
 
     @Column(name = "expires_at")
     var expiresAt: OffsetDateTime? = null,
+
+    @Column(name = "usage_limit")
+    var usageLimit: Int? = null,
 
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),

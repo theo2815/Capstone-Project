@@ -14,6 +14,8 @@ import java.time.OffsetDateTime
 import java.util.UUID
 
 interface OrderRepository : JpaRepository<Order, UUID> {
+    fun countByCouponIdAndStatusNot(couponId: UUID, status: OrderStatus): Long
+
     fun findByUserIdOrderByPaidAtDescCreatedAtDesc(userId: UUID, pageable: Pageable): Page<Order>
 
     fun findByUserIdAndIdempotencyKey(userId: UUID, idempotencyKey: String): List<Order>

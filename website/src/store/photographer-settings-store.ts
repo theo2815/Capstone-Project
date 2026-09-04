@@ -60,10 +60,8 @@ export interface WatermarkMedia {
   uploadedAt: string;
 }
 
-// Photographer coupon (V45). One per photographer; `expiresAt` is an ISO
-// datetime or null. The discount is a percentage of the photographer's own
-// share of each sale — the platform cut never moves. Managed via
-// GET/PUT/DELETE /me/photographer/coupon.
+// Legacy V45 settings shape retained only to read existing persisted browser
+// state. Event coupons are managed outside this store via api-coupons.ts.
 export interface PhotographerCoupon {
   code: string;
   percentOff: number;

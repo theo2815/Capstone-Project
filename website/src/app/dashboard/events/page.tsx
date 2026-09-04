@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
+import { EventCouponModal } from "@/components/dashboard/event-coupon-modal";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   EventFilterBar,
@@ -56,6 +57,11 @@ export default function DashboardEventsPage() {
   const [date, setDate] = useState<EventDateKey>("any");
   const [query, setQuery] = useState("");
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EVENT_GRID_INITIAL);
+  const [couponOpen, setCouponOpen] = useState(false);
+  const couponEvents = useMemo(
+    () => covered.map(({ photographer }) => photographer),
+    [covered],
+  );
 
   const filtered = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -94,58 +100,72 @@ export default function DashboardEventsPage() {
   }
 
   return (
-    <Slab
-      id="covered"
-      number="01"
-      title="Your events"
-      caption="Races you've covered or created"
-      trailing={trailing}
-    >
-      <div className="flex justify-end mb-6">
-        <CreateEventLink />
-      </div>
-      {covered.length === 0 ? (
-        <CoveredEmpty />
-      ) : (
-        <>
-          <EventFilterBar
-            date={date}
-            onDateChange={setDate}
-            query={query}
-            onQueryChange={setQuery}
-            dateAriaLabel="Filter covered events by date"
-            searchAriaLabel="Search covered events"
-          />
-          {filtered.length === 0 ? (
-            <EventFilterEmpty onClear={clearFilters} />
-          ) : (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
-                {visibleSlice.map(({ catalog, photographer }, i) => (
-                  <EventTile
-                    key={catalog.id}
-                    mode="manage"
-                    event={catalog}
-                    index={i}
-                    photoCount={photographer.photoCount}
-                    salesCount={photographer.salesCount}
-                    note={ownedEventNote(photographer)}
-                  />
-                ))}
-              </div>
-              <LoadMoreButton
-                shown={visibleSlice.length}
-                total={filtered.length}
-                increment={PAGE_SIZE.EVENT_GRID_INCREMENT}
-                onLoadMore={() =>
-                  setLoadedCount((n) => n + PAGE_SIZE.EVENT_GRID_INCREMENT)
-                }
-              />
-            </>
-          )}
-        </>
-      )}
-    </Slab>
+    <>
+      <Slab
+        id="covered"
+        number="01"
+        title="Your events"
+        caption="Races you've covered or created"
+        trailing={trailing}
+      >
+        <div className="flex flex-wrap justify-end gap-2 mb-6">
+          <button
+            type="button"
+            onClick={() => setCouponOpen(true)}
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          >
+            + Create event coupon
+          </button>
+          <CreateEventLink />
+        </div>
+        {covered.length === 0 ? (
+          <CoveredEmpty />
+        ) : (
+          <>
+            <EventFilterBar
+              date={date}
+              onDateChange={setDate}
+              query={query}
+              onQueryChange={setQuery}
+              dateAriaLabel="Filter covered events by date"
+              searchAriaLabel="Search covered events"
+            />
+            {filtered.length === 0 ? (
+              <EventFilterEmpty onClear={clearFilters} />
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
+                  {visibleSlice.map(({ catalog, photographer }, i) => (
+                    <EventTile
+                      key={catalog.id}
+                      mode="manage"
+                      event={catalog}
+                      index={i}
+                      photoCount={photographer.photoCount}
+                      salesCount={photographer.salesCount}
+                      note={ownedEventNote(photographer)}
+                    />
+                  ))}
+                </div>
+                <LoadMoreButton
+                  shown={visibleSlice.length}
+                  total={filtered.length}
+                  increment={PAGE_SIZE.EVENT_GRID_INCREMENT}
+                  onLoadMore={() =>
+                    setLoadedCount((n) => n + PAGE_SIZE.EVENT_GRID_INCREMENT)
+                  }
+                />
+              </>
+            )}
+          </>
+        )}
+      </Slab>
+      <EventCouponModal
+        isOpen={couponOpen}
+        onClose={() => setCouponOpen(false)}
+        events={couponEvents}
+      />
+    </>
   );
 }
 

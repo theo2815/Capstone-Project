@@ -28,7 +28,6 @@ import { useToast } from "@/hooks/use-toast";
 import { ApiError } from "@/lib/api";
 import { uploadAvatar } from "@/lib/api-avatar";
 import {
-  deleteCoupon,
   deletePayoutAccount,
   deleteSocial,
   patchPayoutAccount,
@@ -40,7 +39,6 @@ import {
   postSocial,
   postWatermark,
   putBrand,
-  putCoupon,
   putHandle,
   putRegion,
   submitVerification,
@@ -71,6 +69,7 @@ import {
 import { useRegions } from "@/hooks/use-regions";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { validateHandle } from "@/lib/reserved-handles";
+import { ROUTES } from "@/lib/constants";
 import {
   usePhotographerSettingsStore,
   BRAND_COLOR_HEX,
@@ -343,31 +342,6 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     // One row per photographer: PUT upserts, DELETE removes. The BE owns the
     // validation (code shape, percent cap, uniqueness) and answers 400/409
     // with a message the failure toast below surfaces verbatim.
-    const couponDirty =
-      JSON.stringify(snap.coupon) !== JSON.stringify(settings.coupon);
-    if (couponDirty) {
-      const next = settings.coupon;
-      if (next) {
-        tasks.push({
-          label: "Coupon",
-          run: () => putCoupon({ ...next, code: next.code.trim().toUpperCase() }),
-          onSuccess: (result) => {
-            const saved = result as PhotographerCoupon;
-            usePhotographerSettingsStore.setState({ coupon: saved });
-            snap.coupon = { ...saved };
-          },
-        });
-      } else if (snap.coupon) {
-        tasks.push({
-          label: "Coupon",
-          run: () => deleteCoupon(),
-          onSuccess: () => {
-            snap.coupon = null;
-          },
-        });
-      }
-    }
-
     // ── Socials diff ────────────────────────────────────────────────────
     // Three buckets: added (new local rows with non-empty URL), updated (id
     // exists in both but URL changed), removed (id only in snapshot, or URL
@@ -953,10 +927,27 @@ export default function SettingsPage() {
       <RegionSlab />
       <SocialSlab />
       <PayoutSlab />
-      <CouponSlab />
+      <EventCouponsSlab />
       <ReadyToSubmitNudge />
       <EditModePill />
     </EditModeProvider>
+  );
+}
+
+function EventCouponsSlab() {
+  return (
+    <Slab id="coupon" number="07" title="Event coupons" caption="One offer per event">
+      <p className="font-sans text-base text-ink-soft leading-relaxed max-w-md">
+        Coupons belong to a paid event, so they only appear on that event&apos;s
+        eligible photos.
+      </p>
+      <Link
+        href={ROUTES.DASHBOARD_EVENTS}
+        className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-5")}
+      >
+        Manage event coupons
+      </Link>
+    </Slab>
   );
 }
 
@@ -976,7 +967,9 @@ const COUPON_DEFAULT: PhotographerCoupon = {
   expiresAt: null,
 };
 
-function CouponSlab() {
+// Retained for the V45 UI history until the settings store is migrated.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function LegacyCouponSlab() {
   const { editing } = useEditMode();
   const coupon = usePhotographerSettingsStore((s) => s.coupon);
   const setCoupon = usePhotographerSettingsStore((s) => s.setCoupon);

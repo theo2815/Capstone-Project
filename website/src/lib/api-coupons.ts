@@ -1,6 +1,42 @@
 import { api } from "@/lib/api";
 
-// Photographer coupons (V45) backend contract
+export interface EventCoupon {
+  eventId: string;
+  code: string;
+  percentOff: number;
+  active: boolean;
+  expiresAt: string | null;
+  usageLimit: number | null;
+  usageCount: number;
+  updatedAt: string;
+}
+
+export type EventCouponInput = Omit<
+  EventCoupon,
+  "eventId" | "usageCount" | "updatedAt"
+>;
+
+const eventCouponPath = (eventId: string) =>
+  `/me/photographer/events/${encodeURIComponent(eventId)}/coupon`;
+
+export async function fetchEventCoupon(
+  eventId: string,
+): Promise<EventCoupon | null> {
+  return api.get<EventCoupon | null>(eventCouponPath(eventId));
+}
+
+export async function putEventCoupon(
+  eventId: string,
+  coupon: EventCouponInput,
+): Promise<EventCoupon> {
+  return api.put<EventCoupon>(eventCouponPath(eventId), coupon);
+}
+
+export async function deleteEventCoupon(eventId: string): Promise<void> {
+  await api.delete<unknown>(eventCouponPath(eventId));
+}
+
+// Event coupon preview contract
 //   POST /api/v1/coupons/preview   { code, photoIds[] } → CouponPreview   (public)
 //
 // The preview is priced by the same backend rule checkout charges — the

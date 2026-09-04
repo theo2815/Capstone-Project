@@ -13,6 +13,7 @@ import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -121,8 +122,8 @@ class PhotoServiceAttributionTest {
         val id = UUID.randomUUID()
         stubPage(listOf(photo(id)))
         stubPhotographers(listOf(settings(id, handle = "cebu-shots")), listOf(user(id, name = "Cebu Shots")))
-        Mockito.`when`(couponRepository.findAllById(anyArg())).thenReturn(
-            listOf(PhotographerCoupon(photographerId = id, code = "SHOTS10", percentOff = 10)),
+        Mockito.`when`(couponRepository.findLiveForEvent(eqArg(eventId), anyArg(), anyArg())).thenReturn(
+            listOf(PhotographerCoupon(eventId = eventId, photographerId = id, code = "SHOTS10", percentOff = 10)),
         )
 
         val dto = service().listForEvent(eventId, bib = null, pagination = pagination).items.single()
@@ -142,10 +143,9 @@ class PhotoServiceAttributionTest {
             listOf(settings(paused, handle = "paused"), settings(generous, handle = "generous")),
             listOf(user(paused, name = "Paused"), user(generous, name = "Generous")),
         )
-        Mockito.`when`(couponRepository.findAllById(anyArg())).thenReturn(
+        Mockito.`when`(couponRepository.findLiveForEvent(eqArg(eventId), anyArg(), anyArg())).thenReturn(
             listOf(
-                PhotographerCoupon(photographerId = paused, code = "PAUSED1", percentOff = 10, active = false),
-                PhotographerCoupon(photographerId = generous, code = "FREEBIE", percentOff = 10),
+                PhotographerCoupon(eventId = eventId, photographerId = generous, code = "FREEBIE", percentOff = 10),
             ),
         )
 
@@ -250,6 +250,8 @@ class PhotoServiceAttributionTest {
             photographerSettingsRepository,
             userRepository,
             PlatformProperties(),
+            eventRepository,
+            Mockito.mock(OrderRepository::class.java),
         ),
         eventRepository,
     )
@@ -288,4 +290,5 @@ class PhotoServiceAttributionTest {
     )
 
     private fun <T> anyArg(): T = Mockito.any()
+    private fun <T> eqArg(value: T): T = Mockito.eq(value) ?: value
 }
