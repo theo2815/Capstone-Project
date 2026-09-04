@@ -75,7 +75,7 @@
 
 ## Phase 3: Overview & KPI Dashboard (`/admin/overview`)
 
-- [ ] **TC-ADM-10: KPI Metric Strip Rendering**
+- [x] **TC-ADM-10: KPI Metric Strip Rendering**
   - **Action:** Inspect the top KPI summary tiles (Total Revenue, Pending Payouts, Open Disputes, Pending Verifications, Active Photographers).
   - **Expected Result:** Numbers match server data (tabular numerals formatted cleanly, non-zero where data exists, no `NaN` or `undefined`).
 - [ ] **TC-ADM-11: 30-Day Decisions Trend Chart**
