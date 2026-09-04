@@ -82,3 +82,8 @@ node_modules/
 
 # ngok
 dev-start.ps1
+# vercel cli link
+.vercel
+
+.vercel
+.env*
