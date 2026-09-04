@@ -31,7 +31,7 @@ class WatermarkServiceTest {
 
     @Test
     fun `output is a JPEG capped at 1280 on the long edge`() {
-        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit)
+        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = true)
 
         val decoded = ImageIO.read(ByteArrayInputStream(marked.jpeg))
         assertEquals(1280, decoded.width)
@@ -40,7 +40,7 @@ class WatermarkServiceTest {
 
     @Test
     fun `credit layer touches every region of the frame`() {
-        val marked = ImageIO.read(ByteArrayInputStream(service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit).jpeg))
+        val marked = ImageIO.read(ByteArrayInputStream(service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = true).jpeg))
         val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
 
         // 4×4 grid; each cell must carry some of the mark. This is the
@@ -59,7 +59,7 @@ class WatermarkServiceTest {
 
     @Test
     fun `statement block claims the centre of the frame`() {
-        val marked = ImageIO.read(ByteArrayInputStream(service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit).jpeg))
+        val marked = ImageIO.read(ByteArrayInputStream(service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = true).jpeg))
         val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
 
         // The middle band (where the runner's torso and bib sit) must carry a
@@ -79,7 +79,7 @@ class WatermarkServiceTest {
 
     @Test
     fun `credit is embedded as XMP metadata`() {
-        val marked = service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit)
+        val marked = service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit, platformMark = true)
 
         val xmp = ImageMetadataReader.readMetadata(ByteArrayInputStream(marked.jpeg))
             .getFirstDirectoryOfType(XmpDirectory::class.java)
@@ -96,8 +96,8 @@ class WatermarkServiceTest {
 
     @Test
     fun `same photo and credit render identical bytes`() {
-        val a = service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit)
-        val b = service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit)
+        val a = service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit, platformMark = true)
+        val b = service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit, platformMark = true)
 
         assertContentEquals(a.jpeg, b.jpeg)
         assertEquals(a.phash, b.phash)
@@ -109,8 +109,8 @@ class WatermarkServiceTest {
     // only knows the id can regenerate the exact layer and subtract it.
     @Test
     fun `a different seed secret moves the tile pattern`() {
-        val a = ImageIO.read(ByteArrayInputStream(service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit).jpeg))
-        val b = ImageIO.read(ByteArrayInputStream(WatermarkService("another-secret").processThumbnail(photoJpeg(1200, 800), logoPng(), credit).jpeg))
+        val a = ImageIO.read(ByteArrayInputStream(service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit, platformMark = true).jpeg))
+        val b = ImageIO.read(ByteArrayInputStream(WatermarkService("another-secret").processThumbnail(photoJpeg(1200, 800), logoPng(), credit, platformMark = true).jpeg))
 
         val samePixels = (0 until a.width step 7).sumOf { x -> (0 until a.height step 7).count { y -> a.getRGB(x, y) == b.getRGB(x, y) } }
         val total = (a.width / 7 + 1) * (a.height / 7 + 1)
@@ -150,7 +150,7 @@ class WatermarkServiceTest {
     // still hashes to what we registered.
     @Test
     fun `clean and centre hashes are taken before the mark is drawn`() {
-        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit)
+        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = true)
         val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
 
         assertEquals(PerceptualHash.of(plain), marked.phashClean)
@@ -159,7 +159,7 @@ class WatermarkServiceTest {
 
     @Test
     fun `a cleaned, downscaled, recompressed full-frame copy matches the clean hash`() {
-        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit)
+        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = true)
         val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
 
         val copy = recompress(scaleToLongEdge(plain, 896), 0.6f)
@@ -169,7 +169,7 @@ class WatermarkServiceTest {
 
     @Test
     fun `a centre crop of a cleaned copy matches the centre hash`() {
-        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit)
+        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = true)
         val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
 
         // The theft shape after screenshot: crop to the runner (middle 60%),
@@ -182,10 +182,10 @@ class WatermarkServiceTest {
 
     @Test
     fun `a different photo id shifts the tile pattern`() {
-        val a = ImageIO.read(ByteArrayInputStream(service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit).jpeg))
+        val a = ImageIO.read(ByteArrayInputStream(service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit, platformMark = true).jpeg))
         val b = ImageIO.read(
             ByteArrayInputStream(
-                service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit.copy(photoId = UUID.randomUUID())).jpeg,
+                service.processThumbnail(photoJpeg(1200, 800), logoPng(), credit.copy(photoId = UUID.randomUUID()), platformMark = true).jpeg,
             ),
         )
 
@@ -196,11 +196,63 @@ class WatermarkServiceTest {
 
     @Test
     fun `phash of the marked preview stays within the verify threshold of the unmarked one`() {
-        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit)
+        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = true)
         val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
 
         val distance = PerceptualHash.distance(marked.phash, PerceptualHash.of(plain))
         assertTrue(distance <= 12, "marked vs unmarked drifted $distance bits")
+    }
+
+    // ─── Free events (V46): the platform mark is a per-event policy ───────
+    // A FREE photographer-owned event ships its previews without the QuickPitik
+    // layers; the photographer's own logo is optional. The preview must still
+    // be the ≤1280 derivative with all three fingerprints, so nothing in the
+    // serving path ever falls back to the clean original.
+
+    @Test
+    fun `no platform mark and no logo renders the plain frame with its fingerprints`() {
+        val marked = service.processThumbnail(photoJpeg(2000, 1500), null, credit, platformMark = false)
+        val decoded = ImageIO.read(ByteArrayInputStream(marked.jpeg))
+        val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
+
+        assertEquals(1280, decoded.width)
+        // Nothing was drawn: the marked hash IS the clean hash.
+        assertEquals(marked.phashClean, marked.phash)
+        assertEquals(PerceptualHash.ofCentre(plain), marked.phashCentre)
+        var changed = 0
+        for (y in 0 until decoded.height) for (x in 0 until decoded.width) {
+            if (channelDelta(decoded.getRGB(x, y), plain.getRGB(x, y)) >= 40) changed++
+        }
+        assertTrue(changed < decoded.width * decoded.height * 0.005, "frame should be unmarked, $changed px changed")
+    }
+
+    @Test
+    fun `no platform mark with a logo touches only the corner`() {
+        val marked = ImageIO.read(
+            ByteArrayInputStream(service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = false).jpeg),
+        )
+        val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
+
+        fun changedRatio(x0: Int, x1: Int, y0: Int, y1: Int): Double {
+            var changed = 0
+            for (y in y0 until y1) for (x in x0 until x1) {
+                if (channelDelta(marked.getRGB(x, y), plain.getRGB(x, y)) >= 40) changed++
+            }
+            return changed.toDouble() / ((x1 - x0) * (y1 - y0))
+        }
+        val centre = changedRatio(marked.width / 4, marked.width * 3 / 4, marked.height * 2 / 5, marked.height * 3 / 5)
+        val corner = changedRatio(marked.width * 4 / 5, marked.width, marked.height * 4 / 5, marked.height)
+        assertTrue(centre < 0.01, "centre band should be untouched without the platform mark: ${"%.3f".format(centre)}")
+        assertTrue(corner > 0.05, "photographer logo missing from the corner: ${"%.3f".format(corner)}")
+    }
+
+    @Test
+    fun `credit metadata is still embedded without the platform mark`() {
+        val marked = service.processThumbnail(photoJpeg(1200, 800), null, credit, platformMark = false)
+
+        val xmp = ImageMetadataReader.readMetadata(ByteArrayInputStream(marked.jpeg))
+            .getFirstDirectoryOfType(XmpDirectory::class.java)
+        assertEquals("Ana Reyes Studio", xmp?.xmpProperties?.get("dc:creator[1]"))
     }
 
     // ─── fixtures ─────────────────────────────────────────────────────────

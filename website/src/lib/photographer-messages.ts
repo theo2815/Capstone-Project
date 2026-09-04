@@ -8,6 +8,10 @@ export type PhotographerMessageKind =
   | "verification_approved"
   | "verification_rejected"
   | "verification_reset"
+  | "event_approved"
+  | "event_rejected"
+  | "event_change_approved"
+  | "event_change_rejected"
   | "suspended"
   | "unsuspended"
   | "force_edit"
@@ -39,6 +43,10 @@ export const MESSAGE_KIND_LABEL: Record<PhotographerMessageKind, string> = {
   verification_approved: "Verification approved",
   verification_rejected: "Verification needs changes",
   verification_reset: "Verification reset",
+  event_approved: "Event approved",
+  event_rejected: "Event sent back",
+  event_change_approved: "Event change approved",
+  event_change_rejected: "Event change declined",
   suspended: "Account suspended",
   unsuspended: "Account reinstated",
   force_edit: "Profile updated by admin",

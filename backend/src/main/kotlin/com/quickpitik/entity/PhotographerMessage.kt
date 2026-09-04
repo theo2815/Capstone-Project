@@ -27,7 +27,12 @@ enum class PhotographerMessageKind(val wire: String) {
     PAYOUT_PAID("payout_paid"),
     PAYOUT_REPORT_ACKNOWLEDGED("payout_report_acknowledged"),
     PAYOUT_REPORT_RESOLVED("payout_report_resolved"),
-    ADMIN_MESSAGE("admin_message");
+    ADMIN_MESSAGE("admin_message"),
+    // Photographer-owned event review (V46).
+    EVENT_APPROVED("event_approved"),
+    EVENT_REJECTED("event_rejected"),
+    EVENT_CHANGE_APPROVED("event_change_approved"),
+    EVENT_CHANGE_REJECTED("event_change_rejected");
 }
 
 // DB-backed photographer inbox per Q-A2. Admin actions write a row in the

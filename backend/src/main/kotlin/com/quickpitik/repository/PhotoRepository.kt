@@ -27,6 +27,18 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     // automatically: CartService renders the live photos.price_php and
     // OrderService.create charges it, so cart_items.price_php_at_add is
     // deliberately left alone — nothing displays or bills off that column.
+    // V46: an approved watermark-policy change makes every LIVE preview stale.
+    // Back to PROCESSING with a fresh budget; PhotoWatermarkTrigger.reconcile
+    // re-renders them under the new policy within a sweep. Runners lose the
+    // photos for that cycle — acceptable for an owner-requested, admin-
+    // approved change.
+    @Modifying
+    @Query(
+        "UPDATE Photo p SET p.status = com.quickpitik.entity.PhotoStatus.PROCESSING, p.processingAttempts = 0 " +
+            "WHERE p.eventId = :eventId AND p.status = com.quickpitik.entity.PhotoStatus.LIVE",
+    )
+    fun resetForRewatermark(@Param("eventId") eventId: UUID): Int
+
     @Modifying
     @Query("UPDATE Photo p SET p.pricePhp = :price WHERE p.eventId = :eventId")
     fun updatePriceByEventId(

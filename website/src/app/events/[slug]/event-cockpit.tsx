@@ -11,7 +11,7 @@ import {
 import Link from "next/link";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
-import { cn } from "@/lib/utils";
+import { cn, triggerDownload } from "@/lib/utils";
 import type { EventDetail } from "@/types/event";
 import { type MockPhoto } from "@/types/photo";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
@@ -565,24 +565,47 @@ function AboutStrip({ event }: { event: EventDetail }) {
             <Kicker as="p" className="mb-3">
               Pricing
             </Kicker>
-            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-              <span className="font-display text-5xl md:text-6xl font-extrabold text-fresh tracking-tight tnum">
-                ₱{event.pricePerPhoto}
-              </span>
-              <Kicker>per photo</Kicker>
-              {event.bundlePrice && event.bundleSize && (
-                <>
-                  <span className="text-slate-soft">·</span>
-                  <Kicker className="text-ink">
-                    or <span className="tnum">₱{event.bundlePrice}</span> for{" "}
-                    <span className="tnum">{event.bundleSize}</span>
+            {event.pricingMode === "free" ? (
+              // Photographer-owned free event (V46): no checkout anywhere on
+              // this page, so the pricing block names the giver instead.
+              <>
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+                  <span className="font-display text-5xl md:text-6xl font-extrabold text-fresh tracking-tight">
+                    Free
+                  </span>
+                  <Kicker>
+                    courtesy of{" "}
+                    {event.photographerHandle
+                      ? `@${event.photographerHandle}`
+                      : "the photographer"}
                   </Kicker>
-                </>
-              )}
-            </div>
-            <p className="mt-3 font-sans text-sm text-slate-soft max-w-md">
-              Watermarked previews are free. Pay once, download forever.
-            </p>
+                </div>
+                <p className="mt-3 font-sans text-sm text-slate-soft max-w-md">
+                  Every photo downloads in full — no watermark, no checkout.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+                  <span className="font-display text-5xl md:text-6xl font-extrabold text-fresh tracking-tight tnum">
+                    ₱{event.pricePerPhoto}
+                  </span>
+                  <Kicker>per photo</Kicker>
+                  {event.bundlePrice && event.bundleSize && (
+                    <>
+                      <span className="text-slate-soft">·</span>
+                      <Kicker className="text-ink">
+                        or <span className="tnum">₱{event.bundlePrice}</span> for{" "}
+                        <span className="tnum">{event.bundleSize}</span>
+                      </Kicker>
+                    </>
+                  )}
+                </div>
+                <p className="mt-3 font-sans text-sm text-slate-soft max-w-md">
+                  Watermarked previews are free. Pay once, download forever.
+                </p>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -655,7 +678,8 @@ function BrowseMode({
   }, [visible.length, previewIndex]);
 
   const totalPrice = visible.reduce((sum, p) => sum + p.price, 0);
-  const showBuyAll = isAnyFilter && visible.length > 0;
+  const showBuyAll =
+    isAnyFilter && visible.length > 0 && event.pricingMode !== "free";
   const previewPhoto =
     previewIndex !== null ? visible[previewIndex] ?? null : null;
 
@@ -1020,6 +1044,31 @@ function PhotoPreviewMount({
   const openCart = useUiStore((s) => s.openCart);
   const openCheckout = useUiStore((s) => s.openCheckout);
   const startExpressCheckout = useUiStore((s) => s.startExpressCheckout);
+
+  // Free event (V46): no cart, no checkout — the original is anyone's, so
+  // the lightbox is the owned-mode card with a Download CTA.
+  if (photo.free && photo.downloadUrl) {
+    const downloadUrl = photo.downloadUrl;
+    return (
+      <PhotoPreviewCard
+        mode="owned"
+        photo={photo}
+        eventName={event.name}
+        eventDate={event.date}
+        index={index + 1}
+        total={total}
+        onClose={onClose}
+        onPrev={onPrev}
+        onNext={onNext}
+        footnote={
+          event.photographerHandle
+            ? `Free from @${event.photographerHandle}`
+            : "Free from the photographer"
+        }
+        onDownload={() => triggerDownload(downloadUrl)}
+      />
+    );
+  }
 
   const handleToggle = () => {
     if (inCart) {

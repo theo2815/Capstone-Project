@@ -11,6 +11,7 @@ import {
   usePendingVerificationsCount,
 } from "@/components/admin/verifications-queue";
 import { DisputesQueue } from "@/components/admin/disputes-queue";
+import { EventRequestsQueue } from "@/components/admin/event-requests-queue";
 import { FlagsQueue } from "@/components/admin/flags-queue";
 import { PayoutsQueue } from "@/components/admin/payouts-queue";
 import { Kicker } from "@/components/ui/kicker";
@@ -42,6 +43,7 @@ export default function AdminInboxPage() {
         onChange={(next) => setActive(next)}
       />
       {active === "verifications" && <VerificationsQueue />}
+      {active === "events" && <EventRequestsQueue />}
       {active === "disputes" && <DisputesQueue />}
       {active === "flags" && ADMIN_FLAGS_ENABLED && <FlagsQueue />}
       {active === "payouts" && <PayoutsQueue />}

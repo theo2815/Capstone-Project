@@ -5,7 +5,7 @@ import { useEffect, useState, type MouseEvent } from "react";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
 import { useToast } from "@/hooks/use-toast";
-import { cn, copyToClipboard } from "@/lib/utils";
+import { cn, copyToClipboard, triggerDownload } from "@/lib/utils";
 import type { EventDetail } from "@/types/event";
 import type { MockPhoto } from "@/types/photo";
 
@@ -173,6 +173,26 @@ export function PhotoMosaicTile({
           <span className="hidden sm:inline">· {photo.couponCode}</span>
         </button>
       )}
+      {photo.free && photo.downloadUrl ? (
+        // Free event (V46): the original is anyone's — one ink pill, no cart.
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            triggerDownload(photo.downloadUrl!);
+          }}
+          aria-label={`Download ${photo.bib ?? "untagged photo"} for free`}
+          className={cn(
+            "absolute bottom-3 right-3 inline-flex items-center gap-1 px-3 py-1.5 rounded-full font-display font-bold text-[12px] whitespace-nowrap",
+            "shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)] transition-colors duration-200",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+            "bg-ink/85 backdrop-blur-sm text-surface hover:bg-fresh",
+          )}
+        >
+          <span>Download</span>
+          <span aria-hidden="true">↓</span>
+        </button>
+      ) : (
       <div className="absolute bottom-3 right-3 flex items-center gap-1.5">
         <button
           type="button"
@@ -212,6 +232,7 @@ export function PhotoMosaicTile({
           <span aria-hidden="true">→</span>
         </button>
       </div>
+      )}
     </div>
   );
 }

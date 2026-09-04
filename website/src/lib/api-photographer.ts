@@ -23,6 +23,60 @@ import type { PaginatedResponse } from "@/types/api";
 export interface PhotographerEventDetail extends PhotographerEventSummary {
   firstUploadAt: string | null;
   lastUploadAt: string | null;
+  // V46 — prefill for the owner's edit form.
+  description: string;
+  organizerName: string;
+  pricePerPhoto: number;
+}
+
+// Photographer-owned events (V46). Multipart like the admin create; text
+// fields ride as form parts, `cover` carries the bytes.
+//   POST   /api/v1/me/photographer/events        → PhotographerEventDetail (pending review)
+//   PATCH  /api/v1/me/photographer/events/{id}   → PhotographerEventDetail
+// On a live event the pricing trio (pricingMode · pricePerPhoto ·
+// watermarkPolicy) becomes an edit request the admin approves; the BE
+// parks it in `pendingChange` and the event keeps its current settings.
+export interface MyEventFields {
+  title?: string;
+  date?: string;
+  location?: string;
+  organizerName?: string;
+  description?: string;
+  visibility?: "public" | "unlisted";
+  pricingMode?: "paid" | "free";
+  pricePerPhoto?: number;
+  watermarkPolicy?: "platform" | "own" | "none";
+  cover?: File | null;
+  withdrawPendingChange?: boolean;
+}
+
+function toEventForm(fields: MyEventFields): FormData {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || value === null || key === "cover") continue;
+    form.append(key, String(value));
+  }
+  if (fields.cover) form.append("cover", fields.cover);
+  return form;
+}
+
+export async function createMyEvent(
+  fields: MyEventFields,
+): Promise<PhotographerEventDetail> {
+  return api.post<PhotographerEventDetail>(
+    "/me/photographer/events",
+    toEventForm(fields),
+  );
+}
+
+export async function updateMyEvent(
+  eventId: string,
+  fields: MyEventFields,
+): Promise<PhotographerEventDetail> {
+  return api.fetch<PhotographerEventDetail>(
+    `/me/photographer/events/${encodeURIComponent(eventId)}`,
+    { method: "PATCH", body: toEventForm(fields) },
+  );
 }
 
 // aiDetectionStatus surfaces partial failure of the best-effort ai-api

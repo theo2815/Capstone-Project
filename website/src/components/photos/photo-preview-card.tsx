@@ -76,6 +76,9 @@ interface BrowsePhotoPreviewProps extends BasePhotoPreviewProps {
 interface OwnedPhotoPreviewProps extends BasePhotoPreviewProps {
   mode: "owned";
   onDownload: () => void;
+  /** Replaces the "Yours to keep" kicker — e.g. "Free from @handle" when a
+   *  free-event photo is opened by a visitor rather than its owner. */
+  footnote?: string;
 }
 
 // "review" — read-only mode for admin disputes (and any future internal
@@ -396,9 +399,9 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                     )}
                   </div>
                 )}
-                {mode === "owned" && (
+                {props.mode === "owned" && (
                   <Kicker as="p" tone="soft" className="shrink-0">
-                    Yours to keep
+                    {props.footnote ?? "Yours to keep"}
                   </Kicker>
                 )}
               </div>
@@ -434,7 +437,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             {props.mode === "owned" ? (
               <>
                 <Kicker as="p" tone="soft" className="hidden lg:block mb-3">
-                  Yours to keep
+                  {props.footnote ?? "Yours to keep"}
                 </Kicker>
                 <button
                   type="button"

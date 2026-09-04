@@ -10,6 +10,7 @@ import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
+import com.quickpitik.entity.WatermarkPolicy
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
@@ -306,6 +307,92 @@ class PhotoUploadServiceTest {
         assertEquals("different_event", byHash[otherEventHash]?.status)
         assertEquals("Cebu Night Run", byHash[otherEventHash]?.eventName)
         assertEquals("new", byHash[newHash]?.status)
+    }
+
+    // ── Photographer-owned events (V46) ──────────────────────────────────
+    // The owner is not bound to the race-day window (they set the date), but a
+    // pending event takes nothing and nobody else may upload into their event.
+    // A NONE watermark policy is the one case that needs no logo at all.
+
+    private fun ownedEvent(
+        date: LocalDate,
+        status: EventStatus = EventStatus.ACTIVE,
+        policy: WatermarkPolicy = WatermarkPolicy.PLATFORM,
+        owner: UUID = photographerId,
+    ): Event = Event(
+        id = eventId,
+        slug = "e-$eventId",
+        name = "Own Run",
+        date = date,
+        location = "Cebu",
+        status = status,
+        pricePerPhoto = BigDecimal.ZERO,
+        createdBy = owner,
+        watermarkPolicy = policy,
+    )
+
+    private fun stubOwnedUpload(event: Event, settings: PhotographerSettings = approvedSettings()) {
+        Mockito.`when`(eventRepository.findById(eventId)).thenReturn(Optional.of(event))
+        Mockito.`when`(userRepository.findById(photographerId)).thenReturn(Optional.of(photographer()))
+        Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.of(settings))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+    }
+
+    @Test
+    fun `the owner may upload to their live event outside the race-day window`() {
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")).minusDays(30)))
+
+        val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        assertEquals("processing", dto.status)
+        Mockito.verify(photoRepository).saveAndFlush(anyArg<Photo>())
+    }
+
+    @Test
+    fun `another photographer cannot upload into an owned event`() {
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")), owner = UUID.randomUUID()))
+
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+        assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, ex.code)
+        Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
+    }
+
+    @Test
+    fun `an owned event still awaiting review takes no uploads`() {
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")), status = EventStatus.DRAFT))
+
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+        assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, ex.code)
+    }
+
+    @Test
+    fun `a no-watermark event needs no logo`() {
+        stubOwnedUpload(
+            ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")), policy = WatermarkPolicy.NONE),
+            settings = PhotographerSettings(userId = photographerId, watermarkS3Key = null, verificationStatus = VerificationStatus.APPROVED),
+        )
+
+        val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        assertEquals("processing", dto.status)
+    }
+
+    @Test
+    fun `a platform-marked event without a logo is still refused`() {
+        stubOwnedUpload(
+            ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila"))),
+            settings = PhotographerSettings(userId = photographerId, watermarkS3Key = null, verificationStatus = VerificationStatus.APPROVED),
+        )
+
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+        assertEquals(ErrorCodes.WATERMARK_MISSING, ex.code)
     }
 
     // The race-safe backstop: when a concurrent identical-bytes upload slips past

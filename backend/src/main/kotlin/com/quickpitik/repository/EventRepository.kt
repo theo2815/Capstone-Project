@@ -1,6 +1,7 @@
 package com.quickpitik.repository
 
 import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.EventStatus
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
@@ -14,6 +15,26 @@ import java.util.UUID
 interface EventRepository : JpaRepository<Event, UUID> {
     fun findBySlugAndDeletedAtIsNull(slug: String): Event?
 
+    // Public read of one event (V46): a DRAFT — a pending or rejected
+    // photographer submission — is not a public page. An UNLISTED live event
+    // still is: that is what "link-only" means.
+    @Query(
+        """
+        SELECT e FROM Event e
+        WHERE e.slug = :slug
+          AND e.deletedAt IS NULL
+          AND e.status <> com.quickpitik.entity.EventStatus.DRAFT
+        """,
+    )
+    fun findPublicBySlug(@Param("slug") slug: String): Event?
+
+    // Owner-scoped lookup for photographer-owned events (V46): the tenant
+    // filter lives in the query, so a foreign event id simply misses → 404.
+    fun findByIdAndCreatedByAndDeletedAtIsNull(id: UUID, createdBy: UUID): Event?
+
+    // Admin review queue (V46): submissions + pending pricing changes, oldest first.
+    fun findByReviewStatusInAndDeletedAtIsNullOrderByCreatedAtAsc(statuses: Collection<EventReviewStatus>): List<Event>
+
     // Sentinel values keep every named parameter typed (Postgres rejects nullable
     // unknown-typed parameters with "function lower(bytea) does not exist").
     @Query(
@@ -21,6 +42,7 @@ interface EventRepository : JpaRepository<Event, UUID> {
         SELECT e FROM Event e
         WHERE e.deletedAt IS NULL
           AND e.status IN :statuses
+          AND e.visibility = com.quickpitik.entity.EventVisibility.PUBLIC
           AND (:search = '' OR
                LOWER(e.name) LIKE LOWER(CONCAT('%', :search, '%')) OR
                LOWER(e.location) LIKE LOWER(CONCAT('%', :search, '%')))

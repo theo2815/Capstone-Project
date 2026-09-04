@@ -48,6 +48,15 @@ class CartService(
         if (photo.status != PhotoStatus.LIVE) {
             throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
         }
+        // Free events (V46): a ₱0 photo is downloaded from the gallery, never
+        // bought — OrderService would refuse it at checkout anyway.
+        if (photo.pricePhp.signum() <= 0) {
+            throw ValidationException(
+                message = "This photo is free — download it from the gallery",
+                code = ErrorCodes.PHOTO_FREE,
+                field = "photoId",
+            )
+        }
         if (photo.eventId != eventId) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
@@ -117,6 +126,8 @@ class CartService(
             val photo = photoLookup[photoId] ?: continue
             if (photo.eventId != eventId) continue
             if (photo.status != PhotoStatus.LIVE) continue
+            // A free photo (V46) would 409 every checkout after login — skip.
+            if (photo.pricePhp.signum() <= 0) continue
             val event = eventLookup[eventId] ?: continue
             if (event.status == EventStatus.ARCHIVED) continue
             val key = CartItemId(userId, photoId)

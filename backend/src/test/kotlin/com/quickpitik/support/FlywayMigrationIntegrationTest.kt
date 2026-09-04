@@ -87,6 +87,25 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         assertTrue("discount_php" in columns("transactions"))
     }
 
+    // V46: photographer-owned events + the four event review message kinds.
+    @Test
+    fun `photographer-owned event schema is present`() {
+        val eventColumns = jdbcTemplate.queryForList(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'events'",
+            String::class.java,
+        )
+        assertTrue(
+            eventColumns.containsAll(
+                listOf("created_by", "visibility", "pricing_mode", "watermark_policy", "review_status", "pending_change", "review_note"),
+            ),
+        )
+        val kindCheck = jdbcTemplate.queryForObject(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'photographer_messages_kind_check'",
+            String::class.java,
+        )
+        assertTrue(kindCheck!!.contains("event_change_rejected"), kindCheck)
+    }
+
     @Test
     fun `checkout hardening schema is present`() {
         val orderColumns = jdbcTemplate.queryForList(

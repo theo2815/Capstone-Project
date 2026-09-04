@@ -52,3 +52,15 @@ export function safeUUID(): string {
     return v.toString(16);
   });
 }
+
+// Programmatic save of a signed attachment URL — the same anchor-click the
+// orders page and the photographer library use, shared because free-event
+// tiles, both lightboxes and the share page all need it.
+export function triggerDownload(url: string): void {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}

@@ -3,6 +3,8 @@ package com.quickpitik.service.photographer
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.entity.WatermarkPolicy
+import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
@@ -35,6 +37,7 @@ class PhotoWatermarkService(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val photoRepository: PhotoRepository,
+    private val eventRepository: EventRepository,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val userRepository: UserRepository,
     private val watermarkService: WatermarkService,
@@ -61,12 +64,24 @@ class PhotoWatermarkService(
             settleSemanticFailure(photo.id, photo.processingAttempts, "photo has no photographer")
             return
         }
+        // The event decides which marks the preview carries (V46): PLATFORM
+        // (QuickPitik layers + logo — every admin event), OWN (logo only) or
+        // NONE (plain frame). A missing event row is an inconsistency, not a
+        // property of the bytes — transport.
+        val event = eventRepository.findById(photo.eventId).orElse(null)
+        if (event == null) {
+            log.warn("Event {} missing for photo {}; stays PROCESSING", photo.eventId, photoId)
+            meterRegistry.counter("qp.watermark.outcome", "outcome", "transport").increment()
+            return
+        }
+        val policy = event.watermarkPolicy
         val settings = photographerSettingsRepository.findById(photographerId).orElse(null)
         val watermarkKeySetting = settings?.watermarkS3Key
-        if (settings == null || watermarkKeySetting == null) {
+        if (settings == null || (watermarkKeySetting == null && policy != WatermarkPolicy.NONE)) {
             // Settings row or logo pointer missing. Transient from this job's
             // point of view — the photographer can (re)upload the logo and the
-            // sweep will then succeed — so the budget stays intact.
+            // sweep will then succeed — so the budget stays intact. A NONE
+            // event needs no logo at all.
             log.warn("Watermark logo not configured for photographer {}; photo {} stays PROCESSING", photographerId, photoId)
             meterRegistry.counter("qp.watermark.outcome", "outcome", "transport").increment()
             return
@@ -88,7 +103,9 @@ class PhotoWatermarkService(
 
         val marked = try {
             val original = storageService.getBytes(photo.s3Key)
-            val logo = watermarkLogoCache.get(watermarkKeySetting)
+            val logo = watermarkKeySetting
+                ?.takeIf { policy != WatermarkPolicy.NONE }
+                ?.let { watermarkLogoCache.get(it) }
             // Direct-to-storage uploads (2026-09-02) never pass through the
             // request-time pixel guard, so the decompression-bomb check has to
             // live here, before the only full decode of client bytes. Semantic:
@@ -98,7 +115,12 @@ class PhotoWatermarkService(
                 return
             }
             try {
-                watermarkService.processThumbnail(original, logo, credit)
+                watermarkService.processThumbnail(
+                    original,
+                    logo,
+                    credit,
+                    platformMark = policy == WatermarkPolicy.PLATFORM,
+                )
             } catch (ex: IllegalArgumentException) {
                 settleSemanticFailure(photo.id, photo.processingAttempts, ex.message ?: "undecodable image")
                 return

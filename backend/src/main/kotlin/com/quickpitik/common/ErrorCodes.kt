@@ -18,6 +18,8 @@ object ErrorCodes {
     const val EVENT_NOT_UPLOADABLE = "EVENT_NOT_UPLOADABLE"
 
     const val PHOTO_NOT_FOUND = "PHOTO_NOT_FOUND"
+    // Free events (V46): a ₱0 photo is downloaded from the gallery, never carted.
+    const val PHOTO_FREE = "PHOTO_FREE"
     const val PHOTO_DUPLICATE_SAME_EVENT = "PHOTO_DUPLICATE_SAME_EVENT"
     // Direct-to-storage upload (2026-09-02): commit named an object that
     // isn't in storage (PUT never happened or expired), or a key that doesn't

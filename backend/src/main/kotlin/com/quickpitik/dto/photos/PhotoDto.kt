@@ -45,6 +45,11 @@ data class PhotoDto(
     val couponCode: String? = null,
     val couponPercentOff: Int? = null,
     val couponPrice: BigDecimal? = null,
+    // Free event (V46): the preview is unmarked and the original is anyone's.
+    // `downloadUrl` is a presigned attachment URL for the clean file; `cleanUrl`
+    // is set for every visitor too. Both null on paid events unless owned.
+    val free: Boolean = false,
+    val downloadUrl: String? = null,
 )
 
 // Resolved attribution for one photo's photographer. Callers batch-load these
@@ -70,6 +75,8 @@ fun Photo.toDto(
     cleanUrlResolver: (Photo) -> String? = { null },
     photographerResolver: (Photo) -> PhotographerRef? = { null },
     couponResolver: (Photo) -> CouponQuote? = { null },
+    downloadUrlResolver: (Photo) -> String? = { null },
+    free: Boolean = false,
 ): PhotoDto {
     val photographer = photographerResolver(this)
     val coupon = couponResolver(this)
@@ -89,5 +96,7 @@ fun Photo.toDto(
         couponCode = coupon?.code,
         couponPercentOff = coupon?.percentOff,
         couponPrice = coupon?.price,
+        free = free,
+        downloadUrl = downloadUrlResolver(this),
     )
 }

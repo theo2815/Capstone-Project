@@ -32,6 +32,15 @@ data class PhotographerEventSummaryDto(
     val photoCount: Int,
     val salesCount: Int,
     val revenueKept: BigDecimal,
+    // Photographer-owned events (V46). ownedByMe = the caller created it;
+    // the rest are wire-lowercase enums. Defaults keep older clients safe.
+    val ownedByMe: Boolean = false,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val reviewStatus: String = "approved",
+    val reviewNote: String? = null,
+    val pendingChange: Map<String, Any?>? = null,
 )
 
 // Mirrors website/src/lib/api-photographer.ts PhotographerEventDetail
@@ -49,6 +58,56 @@ data class PhotographerEventDetailDto(
     val revenueKept: BigDecimal,
     val firstUploadAt: OffsetDateTime?,
     val lastUploadAt: OffsetDateTime?,
+    val ownedByMe: Boolean = false,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val reviewStatus: String = "approved",
+    val reviewNote: String? = null,
+    val pendingChange: Map<String, Any?>? = null,
+    val description: String = "",
+    val organizerName: String = "",
+    val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
+)
+
+// POST /me/photographer/events (multipart text fields, parsed by the
+// controller like the admin create). pricingMode paid|free; a paid event
+// needs pricePerPhoto > 0; a free one may pick watermarkPolicy own|none.
+data class CreateMyEventRequest(
+    @field:NotBlank
+    @field:Size(max = 200)
+    val title: String,
+    @field:NotBlank
+    val date: String,
+    @field:NotBlank
+    @field:Size(max = 200)
+    val location: String,
+    @field:Size(max = 120)
+    val organizerName: String? = null,
+    @field:Size(max = 600)
+    val description: String? = null,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val pricePerPhoto: BigDecimal? = null,
+    val watermarkPolicy: String? = null,
+)
+
+// PATCH /me/photographer/events/{id}. Null/blank = no change. Pricing
+// fields on a live event become an edit request (see
+// PhotographerOwnedEventService.update); withdrawPendingChange drops it.
+data class UpdateMyEventRequest(
+    val title: String? = null,
+    val date: String? = null,
+    val location: String? = null,
+    @field:Size(max = 120)
+    val organizerName: String? = null,
+    @field:Size(max = 600)
+    val description: String? = null,
+    val visibility: String? = null,
+    val pricingMode: String? = null,
+    val pricePerPhoto: BigDecimal? = null,
+    val watermarkPolicy: String? = null,
+    val withdrawPendingChange: Boolean = false,
 )
 
 // Mirrors website/src/lib/photographer-mock.ts PhotographerLibraryPhoto.
@@ -149,6 +208,7 @@ fun summaryDto(
     event: Event,
     ep: EventPhotographer,
     bannerUrl: String?,
+    viewerId: UUID? = null,
 ): PhotographerEventSummaryDto =
     PhotographerEventSummaryDto(
         id = event.id,
@@ -161,12 +221,20 @@ fun summaryDto(
         photoCount = ep.photoCount,
         salesCount = ep.salesCount,
         revenueKept = ep.revenueKeptPhp,
+        ownedByMe = event.createdBy != null && event.createdBy == viewerId,
+        visibility = event.visibility.wire,
+        pricingMode = event.pricingMode.wire,
+        watermarkPolicy = event.watermarkPolicy.wire,
+        reviewStatus = event.reviewStatus.wire,
+        reviewNote = event.reviewNote,
+        pendingChange = event.pendingChange,
     )
 
 fun detailDto(
     event: Event,
     ep: EventPhotographer,
     bannerUrl: String?,
+    viewerId: UUID? = null,
 ): PhotographerEventDetailDto =
     PhotographerEventDetailDto(
         id = event.id,
@@ -181,6 +249,16 @@ fun detailDto(
         revenueKept = ep.revenueKeptPhp,
         firstUploadAt = ep.firstUploadAt,
         lastUploadAt = ep.lastUploadAt,
+        ownedByMe = event.createdBy != null && event.createdBy == viewerId,
+        visibility = event.visibility.wire,
+        pricingMode = event.pricingMode.wire,
+        watermarkPolicy = event.watermarkPolicy.wire,
+        reviewStatus = event.reviewStatus.wire,
+        reviewNote = event.reviewNote,
+        pendingChange = event.pendingChange,
+        description = event.description,
+        organizerName = event.organizerName,
+        pricePerPhoto = event.pricePerPhoto,
     )
 
 fun Photo.toLibraryDto(

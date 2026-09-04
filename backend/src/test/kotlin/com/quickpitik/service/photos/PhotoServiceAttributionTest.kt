@@ -3,12 +3,16 @@ package com.quickpitik.service.photos
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventPricingMode
+import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerCoupon
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.repository.DownloadGrantRepository
+import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -20,9 +24,13 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.data.domain.PageImpl
 import java.math.BigDecimal
+import java.time.LocalDate
+import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 // Cross-module reconciliation (2026-08-15). PhotoDto carried no photographer
 // attribution, which left mobile's runner-side photographer discovery blocked
@@ -41,6 +49,7 @@ class PhotoServiceAttributionTest {
     private lateinit var userRepository: UserRepository
     private lateinit var storageService: StorageService
     private lateinit var couponRepository: PhotographerCouponRepository
+    private lateinit var eventRepository: EventRepository
 
     private val eventId: UUID = UUID.randomUUID()
     private val pagination = PaginationParams.of(0, 240)
@@ -53,7 +62,56 @@ class PhotoServiceAttributionTest {
         userRepository = Mockito.mock(UserRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
         couponRepository = Mockito.mock(PhotographerCouponRepository::class.java)
+        eventRepository = Mockito.mock(EventRepository::class.java)
         Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
+    }
+
+    // Free events (V46): the preview is unmarked and the original is anyone's
+    // to download, so the clean + download URLs are minted for every visitor —
+    // grant or no grant, signed in or not.
+    @Test
+    fun `a free event hands every visitor the clean and download URLs`() {
+        stubEvent(EventPricingMode.FREE)
+        stubPage(listOf(photo(UUID.randomUUID(), price = "0.00")))
+        Mockito.`when`(storageService.presignedDownloadUrl(anyArg(), anyArg(), anyArg())).thenReturn("https://dl")
+
+        val dto = service().listForEvent(eventId, bib = null, pagination = pagination).items.single()
+
+        assertTrue(dto.free)
+        assertEquals(0, dto.price.signum())
+        assertEquals("https://thumb", dto.cleanUrl)
+        assertEquals("https://dl", dto.downloadUrl)
+        assertNull(dto.couponCode)
+        Mockito.verify(downloadGrantRepository, Mockito.never()).findOwnedPhotoIdsByUserAndPhotoIds(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a paid event keeps the original behind a grant`() {
+        stubEvent(EventPricingMode.PAID)
+        stubPage(listOf(photo(UUID.randomUUID())))
+
+        val dto = service().listForEvent(eventId, bib = null, pagination = pagination).items.single()
+
+        assertFalse(dto.free)
+        assertNull(dto.cleanUrl)
+        assertNull(dto.downloadUrl)
+        Mockito.verify(storageService, Mockito.never()).presignedDownloadUrl(anyArg(), anyArg(), anyArg())
+    }
+
+    private fun stubEvent(mode: EventPricingMode) {
+        Mockito.`when`(eventRepository.findById(eventId)).thenReturn(
+            Optional.of(
+                Event(
+                    id = eventId,
+                    slug = "e-$eventId",
+                    name = "Fun Run",
+                    date = LocalDate.of(2026, 9, 1),
+                    location = "Cebu City",
+                    status = EventStatus.ACTIVE,
+                    pricingMode = mode,
+                ),
+            ),
+        )
     }
 
     // Photographer coupons (V45): the card shows the code and the price with
@@ -193,6 +251,7 @@ class PhotoServiceAttributionTest {
             userRepository,
             PlatformProperties(),
         ),
+        eventRepository,
     )
 
     private fun stubPage(photos: List<Photo>) {

@@ -10,6 +10,7 @@ import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.repository.DownloadGrantRepository
+import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
@@ -31,6 +32,7 @@ class PhotoService(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val couponService: CouponService,
+    private val eventRepository: EventRepository,
 ) {
     fun listForEvent(
         eventId: UUID,
@@ -63,7 +65,7 @@ class PhotoService(
                 pageable = OffsetLimitPageable(pagination),
             )
         }
-        return toPaginatedDto(page.content, page.totalElements, pagination, requesterUserId)
+        return toPaginatedDto(page.content, page.totalElements, pagination, requesterUserId, eventId)
             .copy(snapshotAt = gallerySnapshot)
     }
 
@@ -82,7 +84,7 @@ class PhotoService(
             aiPersonIds = aiPersonIds,
             pageable = OffsetLimitPageable(pagination),
         )
-        return toPaginatedDto(page.content, page.totalElements, pagination, requesterUserId)
+        return toPaginatedDto(page.content, page.totalElements, pagination, requesterUserId, eventId)
     }
 
     private fun toPaginatedDto(
@@ -90,8 +92,12 @@ class PhotoService(
         total: Long,
         pagination: PaginationParams,
         requesterUserId: UUID?,
+        eventId: UUID,
     ): PaginatedResponse<PhotoDto> {
-        val ownedIds = resolveOwnedIds(requesterUserId, photos)
+        // Free event (V46): the original is anyone's, so no grant lookup and
+        // every visitor gets the clean + download URLs.
+        val free = eventRepository.findById(eventId).map { it.isFree }.orElse(false)
+        val ownedIds = if (free) emptySet() else resolveOwnedIds(requesterUserId, photos)
         val photographers = resolvePhotographers(photos)
         // Live coupons for the page's photographers — one IN query, same
         // batch shape as attribution.
@@ -101,7 +107,7 @@ class PhotoService(
                 it.toDto(
                     thumbnailUrlResolver = ::resolveThumbnailUrl,
                     cleanUrlResolver = { photo ->
-                        if (photo.id in ownedIds) resolveCleanUrl(photo) else null
+                        if (free || photo.id in ownedIds) resolveCleanUrl(photo) else null
                     },
                     photographerResolver = { photo ->
                         photo.photographerId?.let { photographers[it] }
@@ -109,6 +115,8 @@ class PhotoService(
                     couponResolver = { photo ->
                         couponService.quoteFor(photo, photo.photographerId?.let { coupons[it] })
                     },
+                    downloadUrlResolver = { photo -> if (free) resolveDownloadUrl(photo) else null },
+                    free = free,
                 )
             },
             total = total,
@@ -159,6 +167,15 @@ class PhotoService(
     // both are gated on proof of ownership upstream.
     private fun resolveCleanUrl(photo: Photo): String =
         storageService.presignedGetUrl(photo.s3Key, storageProperties.presignedTtl.runnerDownload)
+
+    // Attachment-disposition URL for a free photo's original, same TTL and
+    // filename rule as the order download.
+    private fun resolveDownloadUrl(photo: Photo): String =
+        storageService.presignedDownloadUrl(
+            photo.s3Key,
+            storageProperties.presignedTtl.runnerDownload,
+            PhotoFilenames.downloadFilenameOf(photo),
+        )
 
     private fun normalizeBib(raw: String?): String {
         if (raw.isNullOrBlank()) return ""

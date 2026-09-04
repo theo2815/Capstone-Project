@@ -116,10 +116,15 @@ export default function FocusedUploadPage() {
   // On a miss, resolve directly by id through the photographer detail
   // endpoint — it 404s only for events this photographer never touched,
   // which are unreachable from the picker anyway.
+  // Resolved unconditionally (V46): an approved public owned event is in
+  // the catalog too, and only the detail says it is ours — which is what
+  // lifts the race-day gate below. A 404 here is only fatal on a catalog
+  // miss; for a catalog hit it just means "not covered yet".
   const needFallback = liveEvents !== null && !catalogEvent && !!eventId;
   const { detail: fallbackDetail, isMissing } = usePhotographerEventDetail(
-    needFallback ? (eventId ?? null) : null,
+    eventId ?? null,
   );
+  const ownedByMe = fallbackDetail?.ownedByMe === true;
 
   // Same ListEvent synthesis as /dashboard/events/[id] — summary fields from
   // the BE; participantCount + status + city are slot fillers the upload
@@ -160,14 +165,14 @@ export default function FocusedUploadPage() {
 
       <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
         <BackChip />
-        <Hero event={event} />
+        <Hero event={event} ownedByMe={ownedByMe} />
         <VerificationBanner />
         {/* Boundary scoped to the gate + dropzone so a thrown error in the
             upload pipeline (drag handler, batch validator, mock progress
             tick) keeps the back chip + hero usable. The header is outside
             the boundary so the user can always navigate away. */}
         <ErrorBoundary>
-          <UploadGate event={event} />
+          <UploadGate event={event} ownedByMe={ownedByMe} />
         </ErrorBoundary>
       </div>
     </main>
@@ -211,14 +216,20 @@ function BackChip() {
   );
 }
 
-function Hero({ event }: { event: ListEvent }) {
+function Hero({
+  event,
+  ownedByMe,
+}: {
+  event: ListEvent;
+  ownedByMe: boolean;
+}) {
   return (
     <section className="mb-12 md:mb-16">
       <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum flex items-center gap-2 flex-wrap">
         <span>{formatLongDate(event.date, true)}</span>
         <span className="text-slate-soft">·</span>
         <StateChip state={event.state} />
-        <GraceBadge event={event} />
+        {!ownedByMe && <GraceBadge event={event} />}
       </p>
       <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight text-ink mt-4 leading-[1.05]">
         {event.name}
@@ -245,10 +256,18 @@ function StateChip({ state }: { state: EventState }) {
   return <span>{STATE_LABEL[state]}</span>;
 }
 
-function UploadGate({ event }: { event: ListEvent }) {
+function UploadGate({
+  event,
+  ownedByMe,
+}: {
+  event: ListEvent;
+  ownedByMe: boolean;
+}) {
   const gate = useCanUpload();
 
-  if (event.state === "upcoming") {
+  // The owner of a photographer-owned event (V46) uploads on any date — the
+  // BE skips the window for them too. Verification still gates below.
+  if (!ownedByMe && event.state === "upcoming") {
     return (
       <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
@@ -271,7 +290,7 @@ function UploadGate({ event }: { event: ListEvent }) {
   // Grace period closed — race day was 4+ days ago. Photographers cannot
   // push fresh photos to this event; the gallery itself stays open for sale
   // (and remains searchable on /events/[slug]).
-  if (!canUploadToEvent(event.date)) {
+  if (!ownedByMe && !canUploadToEvent(event.date)) {
     return (
       <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">

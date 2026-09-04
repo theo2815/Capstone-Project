@@ -60,7 +60,7 @@ class EventPhotoController(
         if (!bib.isNullOrBlank()) {
             rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_SEARCH, searchKey(principal, request))
         }
-        val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
+        val event = eventRepository.findPublicBySlug(slug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         return photoService.listForEvent(
             eventId = event.id,
@@ -85,7 +85,7 @@ class EventPhotoController(
     ): PaginatedResponse<PhotoDto> {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_SEARCH, searchKey(principal, request))
         validateSelfieUpload(selfie)
-        val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
+        val event = eventRepository.findPublicBySlug(slug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         return photoSearchService.searchByFace(
             eventId = event.id,
@@ -125,7 +125,7 @@ class EventPhotoController(
         // pick. Every selfie the runner saved is a different angle of the
         // same face; unioning them is what lets a side-on race photo match.
         if (body.allSelfies == true) {
-            val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
+            val event = eventRepository.findPublicBySlug(slug)
                 ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
             val library = userSelfieRepository.findByUserIdOrderByUploadedAtDesc(principal.userId)
             if (library.isEmpty()) {
@@ -169,7 +169,7 @@ class EventPhotoController(
                 message = "selfieId must be a UUID",
                 field = "selfieId",
             )
-        val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
+        val event = eventRepository.findPublicBySlug(slug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         val selfie = userSelfieRepository.findByIdAndUserId(selfieUuid, principal.userId)
             ?: throw NotFoundException(

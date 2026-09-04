@@ -3,22 +3,35 @@
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { useCallback, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
+import { MyEventForm } from "@/components/dashboard/my-event-form";
 import { SiteHeader } from "@/components/layout/site-header";
 import {
   PhotoPreviewCard,
   type PhotoPreviewItem,
 } from "@/components/photos/photo-preview-card";
+import {
+  BTN_GHOST,
+  BTN_SECONDARY,
+  BTN_SIZE,
+} from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Modal } from "@/components/ui/modal";
 import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import {
   usePhotographerEventDetail,
   usePhotographerEventPhotos,
 } from "@/hooks/use-photographer-data";
 import { useToast } from "@/hooks/use-toast";
-import { fetchPhotographerPhotoDownload } from "@/lib/api-photographer";
+import {
+  fetchPhotographerPhotoDownload,
+  updateMyEvent,
+  type PhotographerEventDetail,
+} from "@/lib/api-photographer";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
+import { describePricing, isOwnedEventLive } from "@/lib/photographer-events";
 import type {
   PhotographerEventSummary,
   PhotographerLibraryPhoto,
@@ -58,6 +71,11 @@ export default function FocusedSharePage() {
     id ?? null,
   );
   const livePhotos = usePhotographerEventPhotos(id ?? null);
+  // Owned-event controls (V46): edit modal + withdraw of a parked pricing
+  // change. Hooks stay above the early returns.
+  const [editOpen, setEditOpen] = useState(false);
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
 
   // Only events the photographer actually covers render this page. A 404 means
   // no event_photographer row, or the event is gone — either way the page
@@ -91,6 +109,57 @@ export default function FocusedSharePage() {
   };
   const photographer = liveDetail;
 
+  const refreshEvents = () =>
+    queryClient.invalidateQueries({ queryKey: ["photographer", "events"] });
+
+  async function handleWithdraw() {
+    if (!liveDetail) return;
+    try {
+      await updateMyEvent(liveDetail.id, { withdrawPendingChange: true });
+      await refreshEvents();
+      showToast({ kind: "success", message: "Pricing request withdrawn." });
+    } catch {
+      showToast({ kind: "error", message: "Couldn't withdraw the request." });
+    }
+  }
+
+  // Owned event (V46): the review band and the edit modal ride on both
+  // layouts below. Uploads (and the share band) only make sense once live.
+  const owned = liveDetail.ownedByMe === true;
+  const uploadsOpen = !owned || isOwnedEventLive(liveDetail);
+  const ownedUi = owned ? (
+    <>
+      <OwnedBand
+        detail={liveDetail}
+        onEdit={() => setEditOpen(true)}
+        onWithdraw={handleWithdraw}
+      />
+      <Modal
+        isOpen={editOpen}
+        onClose={() => setEditOpen(false)}
+        title="Edit event"
+      >
+        <MyEventForm
+          event={liveDetail}
+          onDone={(saved) => {
+            void refreshEvents();
+            setEditOpen(false);
+            showToast({
+              kind: "success",
+              message:
+                saved.reviewStatus === "change_pending"
+                  ? "Saved. The pricing change waits for admin approval."
+                  : saved.reviewStatus === "pending"
+                    ? "Saved and resubmitted for review."
+                    : "Event updated.",
+            });
+          }}
+          onCancel={() => setEditOpen(false)}
+        />
+      </Modal>
+    </>
+  ) : null;
+
   // A covered event with nothing uploaded yet is a normal state, not an error.
   // The events list filters to photoCount > 0, so this is only reachable by
   // deep link or bookmark — and it used to 404, which reads as "your event is
@@ -103,7 +172,8 @@ export default function FocusedSharePage() {
         <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
           <BackChip />
           <Hero event={event} />
-          <NoPhotosYet eventId={event.id} />
+          {ownedUi}
+          {uploadsOpen && <NoPhotosYet eventId={event.id} />}
         </div>
       </main>
     );
@@ -115,6 +185,7 @@ export default function FocusedSharePage() {
       <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
         <BackChip />
         <Hero event={event} />
+        {ownedUi}
         <ShareHeroBand event={event} />
         <Stats photographer={photographer} />
         <PhotoGrid
@@ -124,6 +195,87 @@ export default function FocusedSharePage() {
         />
       </div>
     </main>
+  );
+}
+
+// Review band for a photographer-owned event (V46). States mirror the BE
+// review lifecycle: pending (draft, invisible), rejected (+ admin note),
+// live, or live with a pricing change parked for approval. The pricing trio
+// on a live event is never edited in place — the band says what is live and
+// what is requested, and the form behind "Edit event" files a request.
+function OwnedBand({
+  detail,
+  onEdit,
+  onWithdraw,
+}: {
+  detail: PhotographerEventDetail;
+  onEdit: () => void;
+  onWithdraw: () => void;
+}) {
+  const status = detail.reviewStatus ?? "approved";
+  const current = describePricing({
+    pricingMode: detail.pricingMode ?? "paid",
+    pricePerPhoto: detail.pricePerPhoto,
+    watermarkPolicy: detail.watermarkPolicy ?? "platform",
+  });
+  const where = detail.visibility === "unlisted" ? "Unlisted" : "Public";
+
+  let headline: string;
+  let body: string;
+  switch (status) {
+    case "pending":
+      headline = "Waiting for admin review.";
+      body = `${where} · ${current}. Uploads open the moment an admin approves it.`;
+      break;
+    case "rejected":
+      headline = "Sent back by admin.";
+      body = detail.reviewNote
+        ? `Reason: ${detail.reviewNote}`
+        : "Edit the event and it goes back into review.";
+      break;
+    case "change_pending":
+      headline = "Live · pricing change waiting for approval.";
+      body = detail.pendingChange
+        ? `Now ${current} → requested ${describePricing(detail.pendingChange)}. The gallery keeps the current pricing until an admin approves.`
+        : current;
+      break;
+    default:
+      headline = `Live · ${where}.`;
+      body = detail.reviewNote
+        ? `${current}. Last admin note: ${detail.reviewNote}`
+        : current;
+  }
+
+  return (
+    <section className="mb-10 md:mb-12 border border-line rounded-2xl bg-bone-deep/30 p-6 md:p-8 flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
+      <div className="flex-1 min-w-0">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+          Your event
+        </p>
+        <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
+          {headline}
+        </p>
+        <p className="font-sans text-sm text-ink-soft mt-2 tnum">{body}</p>
+      </div>
+      <div className="flex flex-wrap gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={onEdit}
+          className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+        >
+          Edit event
+        </button>
+        {status === "change_pending" && (
+          <button
+            type="button"
+            onClick={onWithdraw}
+            className={cn(BTN_GHOST, BTN_SIZE.sm)}
+          >
+            Withdraw request
+          </button>
+        )}
+      </div>
+    </section>
   );
 }
 

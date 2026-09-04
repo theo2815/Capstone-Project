@@ -5,12 +5,14 @@ import { cn } from "@/lib/utils";
 
 export type InboxQueueType =
   | "verifications"
+  | "events"
   | "disputes"
   | "flags"
   | "payouts";
 
 const INBOX_QUEUE_TYPES_ALL: readonly InboxQueueType[] = [
   "verifications",
+  "events",
   "disputes",
   "flags",
   "payouts",
@@ -23,6 +25,7 @@ export const INBOX_QUEUE_TYPES: readonly InboxQueueType[] = ADMIN_FLAGS_ENABLED
 
 const LABEL: Record<InboxQueueType, string> = {
   verifications: "Verifications",
+  events: "Event requests",
   disputes: "Disputes",
   flags: "Flags",
   payouts: "Payouts",

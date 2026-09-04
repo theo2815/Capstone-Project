@@ -124,7 +124,11 @@ function ProfileLayout({
       ? BRAND_COLOR_HEX[profile.brandColor]
       : null;
   const totals = getProfileTotals(profile);
-  const portfolioEvents = profile.events.filter((e) => e.photoCount > 0);
+  // Unlisted (V46) coverage stays reachable by its share link but never
+  // appears on the portfolio wall.
+  const portfolioEvents = profile.events.filter(
+    (e) => e.photoCount > 0 && e.visibility !== "unlisted",
+  );
 
   return (
     <div className="flex-1">

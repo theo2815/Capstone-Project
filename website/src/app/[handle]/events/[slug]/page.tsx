@@ -22,6 +22,7 @@ import { useUiStore } from "@/store/ui-store";
 import { isReservedHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
+import { triggerDownload } from "@/lib/utils";
 import { fetchEventDetail } from "@/lib/api-events";
 import {
   fetchPublicPhotographer,
@@ -178,7 +179,8 @@ function Gallery({
   }, [visible.length, previewIndex]);
 
   const total = visible.reduce((sum, p) => sum + p.price, 0);
-  const showBuyAll = isFiltered && visible.length > 0;
+  const showBuyAll =
+    isFiltered && visible.length > 0 && event.pricingMode !== "free";
   const previewPhoto =
     previewIndex !== null ? visible[previewIndex] ?? null : null;
 
@@ -254,19 +256,30 @@ function Gallery({
             )}
           </p>
           <Kicker as="p" tone="soft" className="mt-3">
-            ₱<span className="tnum">{event.pricePerPhoto}</span> per photo ·
-            free watermarked previews · pay once, download forever
+            {event.pricingMode === "free" ? (
+              <>Free · every photo downloads in full, no watermark</>
+            ) : (
+              <>
+                ₱<span className="tnum">{event.pricePerPhoto}</span> per photo ·
+                free watermarked previews · pay once, download forever
+              </>
+            )}
           </Kicker>
 
-          <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-3">
-            <Kicker
-              as={Link}
-              href={`/events/${event.slug}`}
-              className="hover:text-ink transition-colors px-3 py-1.5 rounded-full border border-line hover:border-slate"
-            >
-              See all photographers →
-            </Kicker>
-          </div>
+          {/* An unlisted event (V46) is link-only — /events/{slug} would
+              still resolve, but the cross-link invites a browse it was
+              never meant to join. */}
+          {event.visibility !== "unlisted" && (
+            <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-3">
+              <Kicker
+                as={Link}
+                href={`/events/${event.slug}`}
+                className="hover:text-ink transition-colors px-3 py-1.5 rounded-full border border-line hover:border-slate"
+              >
+                See all photographers →
+              </Kicker>
+            </div>
+          )}
         </div>
       </header>
 
@@ -512,6 +525,28 @@ function PhotoPreviewMount({
   const openCart = useUiStore((s) => s.openCart);
   const openCheckout = useUiStore((s) => s.openCheckout);
   const startExpressCheckout = useUiStore((s) => s.startExpressCheckout);
+
+  // Free event (V46): the original is anyone's — owned-mode card, Download
+  // CTA, no cart. The credit stays off: the page is already theirs.
+  if (photo.free && photo.downloadUrl) {
+    const downloadUrl = photo.downloadUrl;
+    return (
+      <PhotoPreviewCard
+        mode="owned"
+        photo={photo}
+        eventName={event.name}
+        eventDate={event.date}
+        index={index + 1}
+        total={total}
+        showPhotographerCredit={false}
+        onClose={onClose}
+        onPrev={onPrev}
+        onNext={onNext}
+        footnote="Free · yours to keep"
+        onDownload={() => triggerDownload(downloadUrl)}
+      />
+    );
+  }
 
   const cartPayload = {
     photoId: photo.id,

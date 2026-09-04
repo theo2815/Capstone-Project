@@ -37,6 +37,11 @@ export interface MockPhoto {
   couponCode?: string | null;
   couponPercentOff?: number | null;
   couponPrice?: number | null;
+  // Free event (V46): the original is anyone's. `downloadUrl` is a short-
+  // lived attachment-disposition link the BE signs for every visitor; the
+  // tile and lightbox swap Cart/Buy for a single Download.
+  free?: boolean;
+  downloadUrl?: string | null;
   alt?: string;
 }
 

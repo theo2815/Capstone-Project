@@ -18,6 +18,10 @@ import type {
   PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
 import type { ListEvent } from "@/app/events/events-browser";
+import type {
+  EventReviewStatus,
+  PendingPricingChange,
+} from "@/lib/photographer-mock";
 import type { DecisionLogEntry } from "@/store/admin-user-store";
 import type { PaginatedResponse } from "@/types/api";
 import { safeUUID } from "@/lib/utils";
@@ -525,21 +529,60 @@ export async function resolvePayoutReport(
 
 export interface AdminEventListArgs {
   state?: ListEvent["state"];
+  /** `queue` (V46) = photographer-owned events awaiting review — a new
+   *  submission or a parked pricing change on a live event. */
+  review?: "queue";
   offset?: number;
   limit?: number;
 }
 
+// AdminListEventDto — the catalog row plus the V46 ownership + review fields.
+// createdBy* are null for admin-created events.
+export interface AdminEventRow extends ListEvent {
+  createdByHandle: string | null;
+  createdByName: string | null;
+  visibility: "public" | "unlisted";
+  pricingMode: "paid" | "free";
+  watermarkPolicy: "platform" | "own" | "none";
+  reviewStatus: EventReviewStatus;
+  reviewNote: string | null;
+  pendingChange: PendingPricingChange | null;
+}
+
 export async function fetchAdminEvents(
   args: AdminEventListArgs = {},
-): Promise<ListEvent[]> {
+): Promise<AdminEventRow[]> {
   const p = new URLSearchParams();
   if (args.state) p.set("state", args.state);
+  if (args.review) p.set("review", args.review);
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
-  const res = await api.get<PaginatedResponse<ListEvent>>(
+  const res = await api.get<PaginatedResponse<AdminEventRow>>(
     `/admin/events?${p.toString()}`,
   );
   return res.items;
+}
+
+// Photographer-owned event review (V46).
+//   POST /admin/events/{id}/approve — PENDING → live; CHANGE_PENDING → apply the parked trio
+//   POST /admin/events/{id}/reject  — PENDING → rejected (+reason); CHANGE_PENDING → drop the request
+export async function approveAdminEvent(
+  eventId: string,
+): Promise<AdminEventRow> {
+  return api.post<AdminEventRow>(
+    `/admin/events/${encodeURIComponent(eventId)}/approve`,
+    {},
+  );
+}
+
+export async function rejectAdminEvent(
+  eventId: string,
+  reason: string,
+): Promise<AdminEventRow> {
+  return api.post<AdminEventRow>(
+    `/admin/events/${encodeURIComponent(eventId)}/reject`,
+    { reason },
+  );
 }
 
 export interface CreateAdminEventArgs {

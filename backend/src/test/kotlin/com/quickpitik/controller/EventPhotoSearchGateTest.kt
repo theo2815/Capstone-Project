@@ -43,7 +43,7 @@ class EventPhotoSearchGateTest {
     fun setUp() {
         eventRepository = Mockito.mock(EventRepository::class.java)
         photoSearchService = Mockito.mock(PhotoSearchService::class.java)
-        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull(slug)).thenReturn(
+        Mockito.`when`(eventRepository.findPublicBySlug(slug)).thenReturn(
             Event(
                 slug = slug,
                 name = "Cebu Marathon",

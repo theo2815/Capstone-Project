@@ -89,7 +89,45 @@ class Event(
     @Column(name = "admin_overrides", nullable = false, columnDefinition = "jsonb")
     @JdbcTypeCode(SqlTypes.JSON)
     var adminOverrides: List<Map<String, Any?>> = emptyList(),
+
+    // ── Photographer-owned events (V46) ──────────────────────────────────
+    // Owner photographer; null = platform/admin event (the defaults below
+    // reproduce the pre-V46 behaviour exactly).
+    @Column(name = "created_by")
+    var createdBy: UUID? = null,
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "visibility", nullable = false, length = 10)
+    var visibility: EventVisibility = EventVisibility.PUBLIC,
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "pricing_mode", nullable = false, length = 10)
+    var pricingMode: EventPricingMode = EventPricingMode.PAID,
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "watermark_policy", nullable = false, length = 10)
+    var watermarkPolicy: WatermarkPolicy = WatermarkPolicy.PLATFORM,
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "review_status", nullable = false, length = 16)
+    var reviewStatus: EventReviewStatus = EventReviewStatus.APPROVED,
+
+    // The owner's requested pricing trio while CHANGE_PENDING — the live
+    // columns above are untouched until an admin approves it.
+    @Column(name = "pending_change", columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    var pendingChange: Map<String, Any?>? = null,
+
+    @Column(name = "review_note", length = 500)
+    var reviewNote: String? = null,
+
+    @Column(name = "reviewed_at")
+    var reviewedAt: OffsetDateTime? = null,
+
+    @Column(name = "reviewed_by")
+    var reviewedBy: UUID? = null,
 ) {
+    val isFree: Boolean get() = pricingMode == EventPricingMode.FREE
     @PreUpdate
     fun onUpdate() {
         updatedAt = OffsetDateTime.now()

@@ -692,11 +692,8 @@ class OrderService(
         )
     }
 
-    private fun downloadFilenameOf(photo: Photo): String {
-        val bib = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber
-        val tag = if (!bib.isNullOrBlank()) "bib-$bib" else "untagged-${photo.id.toString().take(8)}"
-        return "quickpitik-$tag.jpg".replace(FILENAME_UNSAFE, "_")
-    }
+    private fun downloadFilenameOf(photo: Photo): String =
+        com.quickpitik.service.photos.PhotoFilenames.downloadFilenameOf(photo)
 
     private data class CheckoutReservation(
         val orders: List<Order>,
@@ -709,7 +706,6 @@ class OrderService(
         const val PAYMONGO = "paymongo"
         val ACTIVE_ORDER_STATUSES = listOf(OrderStatus.PENDING, OrderStatus.PAID, OrderStatus.FULFILLED)
         val SETTLED_ORDER_STATUSES = setOf(OrderStatus.PAID, OrderStatus.FULFILLED, OrderStatus.REFUNDED)
-        val FILENAME_UNSAFE = Regex("[^A-Za-z0-9._-]")
         val TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
         val DISPLAY_ZONE: ZoneId = ZoneId.of("Asia/Manila")
         val EMAIL_REGEX = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")

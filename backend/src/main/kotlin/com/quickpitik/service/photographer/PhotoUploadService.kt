@@ -123,7 +123,7 @@ class PhotoUploadService(
         // misconfiguration; the storage-drift case (pointer present, bytes
         // gone) now surfaces async and the sweep retries it after the
         // photographer re-uploads the logo in Settings.
-        requireWatermark(settings)
+        requireWatermark(settings, event)
 
         storageService.put(originalKey, bytes, contentType)
 
@@ -152,7 +152,7 @@ class PhotoUploadService(
         contentType: String,
         sizeBytes: Long,
     ): DirectUploadBeginResponse {
-        val (_, settings) = gate(photographerId, eventId)
+        val (event, settings) = gate(photographerId, eventId)
         val type = contentType.lowercase()
         if (type !in ALLOWED_CONTENT_TYPES || sizeBytes > MAX_DIRECT_UPLOAD_BYTES) {
             throw ApiException(
@@ -164,7 +164,7 @@ class PhotoUploadService(
         duplicateOf(photographerId, eventId, contentHash.lowercase())?.let {
             return DirectUploadBeginResponse(mode = "existing", existing = existingPhotoDto(it))
         }
-        requireWatermark(settings)
+        requireWatermark(settings, event)
         if (!storageService.supportsDirectUpload) return DirectUploadBeginResponse(mode = "multipart")
         val photoId = UUID.randomUUID()
         val key = originalKeyFor(eventId, photoId)
@@ -208,7 +208,7 @@ class PhotoUploadService(
             runCatching { storageService.delete(key) }
             return existingPhotoDto(existing)
         }
-        requireWatermark(settings)
+        requireWatermark(settings, event)
         val dto = persistNew(photoId, eventId, photographerId, key, hash, event)
         timerSample.stop(meterRegistry.timer("qp.upload.duration"))
         return dto
@@ -227,13 +227,25 @@ class PhotoUploadService(
                 message = "This event is not accepting uploads.",
             )
         }
+        // Photographer-owned events (V46): only the owner uploads into their
+        // event, and since they set the date the race-day window below does
+        // not bind them. The status gate above still closes a DRAFT (pending
+        // review) event.
+        val owned = event.createdBy != null
+        if (owned && event.createdBy != photographerId) {
+            throw ApiException(
+                status = HttpStatus.UNPROCESSABLE_ENTITY,
+                code = ErrorCodes.EVENT_NOT_UPLOADABLE,
+                message = "This event belongs to another photographer.",
+            )
+        }
         // Photographer upload window is race day + 3 days (4 days inclusive,
         // Asia/Manila). Outside that window the gallery is open for sale
         // (or future-dated and not yet opened to runners) and new uploads
         // are closed — mirrors website/src/lib/event-catalog.ts
         // canUploadToEvent so the FE upload tile and the backend agree.
         val today = LocalDate.now(PH_ZONE)
-        if (today.isBefore(event.date) || today.isAfter(event.date.plusDays(UPLOAD_GRACE_DAYS - 1L))) {
+        if (!owned && (today.isBefore(event.date) || today.isAfter(event.date.plusDays(UPLOAD_GRACE_DAYS - 1L)))) {
             throw ApiException(
                 status = HttpStatus.UNPROCESSABLE_ENTITY,
                 code = ErrorCodes.EVENT_NOT_UPLOADABLE,
@@ -287,7 +299,13 @@ class PhotoUploadService(
         return null
     }
 
-    private fun requireWatermark(settings: com.quickpitik.entity.PhotographerSettings) {
+    // A NONE watermark policy (free event, V46) composites nothing, so it is
+    // the one case that needs no logo.
+    private fun requireWatermark(
+        settings: com.quickpitik.entity.PhotographerSettings,
+        event: com.quickpitik.entity.Event,
+    ) {
+        if (event.watermarkPolicy == com.quickpitik.entity.WatermarkPolicy.NONE) return
         if (settings.watermarkS3Key == null) {
             throw ApiException(
                 status = HttpStatus.UNPROCESSABLE_ENTITY,

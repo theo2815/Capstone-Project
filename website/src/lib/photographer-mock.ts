@@ -39,6 +39,23 @@ export interface PhotographerPipeline {
 
 export type EventState = "live" | "upcoming" | "open" | "past";
 
+// V46 review lifecycle of a photographer-owned event. `change_pending` = the
+// event is live on its current pricing while an edit request waits.
+export type EventReviewStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "change_pending";
+
+// The parked edit request (events.pending_change). pricePerPhoto is the
+// BE's plain-string decimal.
+export interface PendingPricingChange {
+  pricingMode: "paid" | "free";
+  pricePerPhoto: string;
+  watermarkPolicy: "platform" | "own" | "none";
+  requestedAt: string;
+}
+
 export interface PhotographerEventSummary {
   id: string;
   slug: string;
@@ -56,6 +73,16 @@ export interface PhotographerEventSummary {
   photoCount: number;
   /** Number of distinct sales (one buyer can buy multiple photos = 1 sale). */
   salesCount: number;
+  // Photographer-owned events (V46). `ownedByMe` = the caller created it;
+  // the review lifecycle + pricing trio are wire-lowercase. Optional so the
+  // mock seeds stay valid — absent reads as an approved, paid admin event.
+  ownedByMe?: boolean;
+  visibility?: "public" | "unlisted";
+  pricingMode?: "paid" | "free";
+  watermarkPolicy?: "platform" | "own" | "none";
+  reviewStatus?: EventReviewStatus;
+  reviewNote?: string | null;
+  pendingChange?: PendingPricingChange | null;
   /** ₱ kept by the photographer for this event (post-platform-cut). */
   revenueKept: number;
 }

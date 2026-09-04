@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   EventFilterBar,
   EventFilterEmpty,
@@ -15,40 +17,25 @@ import {
   usePhotographerEvents,
   COVERED_EVENTS_MAX,
 } from "@/hooks/use-photographer-data";
-import type { EventState, ListEvent } from "@/app/events/events-browser";
+import { ROUTES } from "@/lib/constants";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import type { PhotographerEventSummary } from "@/lib/photographer-mock";
+import {
+  ownedEventNote,
+  summaryToListEvent,
+} from "@/lib/photographer-events";
+import { cn } from "@/lib/utils";
 
-// Photographer's "events I've covered" list — only events with at least one
-// uploaded photo show up. Each card routes to the focused share page at
-// /dashboard/events/[id].
-
-// Build a ListEvent-shaped record from the BE PhotographerEventSummary so
-// EventTile (which expects ListEvent) can render it. The BE response already
-// carries every field manage-mode uses (id/slug/name/date/location/state);
-// participantCount + status are slot fillers for manage mode and aren't read.
-function toListEvent(p: PhotographerEventSummary): ListEvent {
-  return {
-    id: p.id,
-    slug: p.slug,
-    name: p.name,
-    date: p.date,
-    location: p.location,
-    bannerUrl: p.bannerUrl ?? undefined,
-    photoCount: p.photoCount,
-    participantCount: 0,
-    status: "ACTIVE",
-    state: p.state as EventState,
-    // "City Center, Cebu City" → "Cebu City". Manage mode doesn't currently
-    // surface city, but ListEvent requires the field — derive it cheaply
-    // instead of querying a second BE endpoint.
-    city: p.location.split(",").pop()?.trim() ?? "",
-  };
-}
+// Photographer's events list — races they've uploaded to, plus every event
+// they created themselves (V46), which shows up from the moment it is
+// submitted so its review chip is visible. Each card routes to the focused
+// share page at /dashboard/events/[id].
 
 export default function DashboardEventsPage() {
+  // withUploads:false — a just-submitted owned event has no photos yet and
+  // the server-side filter would hide it. Coverage rows for admin events
+  // only exist after a first upload, so nothing else sneaks in.
   const liveEvents = usePhotographerEvents({
-    withUploads: true,
+    withUploads: false,
     limit: COVERED_EVENTS_MAX,
   });
   const isLoading = liveEvents === null;
@@ -56,8 +43,8 @@ export default function DashboardEventsPage() {
   const covered = useMemo(
     () =>
       (liveEvents ?? [])
-        .filter((p) => p.photoCount > 0)
-        .map((p) => ({ catalog: toListEvent(p), photographer: p })),
+        .filter((p) => p.photoCount > 0 || p.ownedByMe)
+        .map((p) => ({ catalog: summaryToListEvent(p), photographer: p })),
     [liveEvents],
   );
 
@@ -94,8 +81,8 @@ export default function DashboardEventsPage() {
       <Slab
         id="covered"
         number="01"
-        title="Your covered events"
-        caption="Events where you've uploaded photos"
+        title="Your events"
+        caption="Races you've covered or created"
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
           {[0, 1, 2, 3].map((i) => (
@@ -110,10 +97,13 @@ export default function DashboardEventsPage() {
     <Slab
       id="covered"
       number="01"
-      title="Your covered events"
-      caption="Events where you've uploaded photos"
+      title="Your events"
+      caption="Races you've covered or created"
       trailing={trailing}
     >
+      <div className="flex justify-end mb-6">
+        <CreateEventLink />
+      </div>
       {covered.length === 0 ? (
         <CoveredEmpty />
       ) : (
@@ -139,6 +129,7 @@ export default function DashboardEventsPage() {
                     index={i}
                     photoCount={photographer.photoCount}
                     salesCount={photographer.salesCount}
+                    note={ownedEventNote(photographer)}
                   />
                 ))}
               </div>
@@ -158,15 +149,26 @@ export default function DashboardEventsPage() {
   );
 }
 
+function CreateEventLink() {
+  return (
+    <Link
+      href={`${ROUTES.DASHBOARD_EVENTS}/new`}
+      className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+    >
+      + Create an event
+    </Link>
+  );
+}
+
 function CoveredEmpty() {
   return (
     <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
       <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
-        No events covered yet.
+        No events yet.
       </p>
       <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
-        Once you upload your first batch from the Upload page, the event lands
-        here so you can share its public gallery.
+        Upload your first batch to a race from the Upload page, or create an
+        event of your own — paid or free, public or link-only.
       </p>
     </div>
   );

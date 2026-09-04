@@ -84,6 +84,8 @@ class PublicPhotographerService(
                 state = deriveEventState(event),
                 photoCount = ep.photoCount,
                 salesCount = ep.salesCount,
+                visibility = event.visibility.wire,
+                pricingMode = event.pricingMode.wire,
             )
         }
 
@@ -140,12 +142,28 @@ class PublicPhotographerService(
         // needs for a mixed event grid.
         val photographer = PhotographerRef(handle = settings.handle, name = user.name)
         val coupon = couponService.activeFor(setOf(settings.userId))[settings.userId]
+        // Free event (V46): originals are anyone's — mirror PhotoService.
+        val free = event.isFree
+        val ttl = storageProperties.presignedTtl.runnerDownload
         return PaginatedResponse(
             items = page.content.map {
                 it.toDto(
                     thumbnailUrlResolver = ::resolveWatermarkedUrl,
+                    cleanUrlResolver = { photo -> if (free) storageService.presignedGetUrl(photo.s3Key, ttl) else null },
                     photographerResolver = { photographer },
                     couponResolver = { photo -> couponService.quoteFor(photo, coupon) },
+                    downloadUrlResolver = { photo ->
+                        if (free) {
+                            storageService.presignedDownloadUrl(
+                                photo.s3Key,
+                                ttl,
+                                com.quickpitik.service.photos.PhotoFilenames.downloadFilenameOf(photo),
+                            )
+                        } else {
+                            null
+                        }
+                    },
+                    free = free,
                 )
             },
             total = page.totalElements,

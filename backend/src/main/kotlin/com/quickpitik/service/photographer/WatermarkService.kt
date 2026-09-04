@@ -78,22 +78,37 @@ class WatermarkService(
     //   3. Crisp bottom-left caption with the same credit — the attribution
     //      that stays legible at phone size where the stripes are just texture.
     //   4. The photographer's own uploaded logo, corner, on top.
-    fun processThumbnail(input: ByteArray, watermarkImage: ByteArray, credit: WatermarkCredit): MarkedPreview {
+    //
+    // Both marks are per-event policy (V46): a FREE photographer-owned event
+    // sets `platformMark = false` (layers 1–3 skipped) and may pass no logo
+    // (layer 4 skipped). The ≤1280 derivative, the three fingerprints and the
+    // XMP credit are unconditional — the preview object must always exist so
+    // the serving path never falls back to the clean original.
+    fun processThumbnail(
+        input: ByteArray,
+        watermarkImage: ByteArray?,
+        credit: WatermarkCredit,
+        platformMark: Boolean,
+    ): MarkedPreview {
         val source = ImageIO.read(ByteArrayInputStream(input))
             ?: throw IllegalArgumentException("Unreadable image bytes")
         val upright = ExifOrientation.apply(source, ExifOrientation.read(input))
         val target = scaleToLongEdge(upright, MAX_LONG_EDGE)
-        val watermark = ImageIO.read(ByteArrayInputStream(watermarkImage))
-            ?: throw IllegalArgumentException("Unreadable watermark image bytes")
+        val watermark = watermarkImage?.let {
+            ImageIO.read(ByteArrayInputStream(it))
+                ?: throw IllegalArgumentException("Unreadable watermark image bytes")
+        }
         // Fingerprints of the frame BEFORE any mark: a copy someone has
         // cleaned or cropped still hashes to these.
         val phashClean = PerceptualHash.of(target)
         val phashCentre = PerceptualHash.ofCentre(target)
-        val rnd = Random(seed(credit.photoId))
-        drawCreditTiles(target, credit, rnd)
-        drawStatement(target, credit)
-        drawCaption(target, credit)
-        drawWatermarkImage(target, watermark)
+        if (platformMark) {
+            val rnd = Random(seed(credit.photoId))
+            drawCreditTiles(target, credit, rnd)
+            drawStatement(target, credit)
+            drawCaption(target, credit)
+        }
+        if (watermark != null) drawWatermarkImage(target, watermark)
         val phash = PerceptualHash.of(target)
         val out = ByteArrayOutputStream()
         ImageIO.write(target, "jpg", out)

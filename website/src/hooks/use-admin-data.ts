@@ -33,7 +33,7 @@ import type {
   PayoutReport,
   PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { AdminEventListArgs, AdminEventRow } from "@/lib/api-admin";
 import type { PaginatedResponse } from "@/types/api";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 
@@ -163,10 +163,10 @@ export function useAdminPayoutReports(args: {
 
 // ───────────────────────────────────────────── Events catalog
 
-export function useAdminEvents(args: {
-  state?: ListEvent["state"];
-} = {}): ListEvent[] | null {
-  const query = useQuery<ListEvent[]>({
+export function useAdminEvents(
+  args: AdminEventListArgs = {},
+): AdminEventRow[] | null {
+  const query = useQuery<AdminEventRow[]>({
     queryKey: ["admin", "events", args],
     queryFn: () => fetchAdminEvents(args),
     staleTime: LIST_STALE_MS,

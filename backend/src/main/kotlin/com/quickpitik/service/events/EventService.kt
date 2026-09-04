@@ -7,6 +7,7 @@ import com.quickpitik.dto.events.EventDetailDto
 import com.quickpitik.dto.events.EventDto
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.PhotographerSettingsRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDate
@@ -16,6 +17,7 @@ import java.time.LocalDate
 class EventService(
     private val eventRepository: EventRepository,
     private val eventDtoMapper: EventDtoMapper,
+    private val photographerSettingsRepository: PhotographerSettingsRepository,
 ) {
     // Date filtering for "race-day-only viewing" lives on the FE: upcoming
     // events stay visible as cards on /events and the /events/[slug] page
@@ -49,8 +51,13 @@ class EventService(
         )
     }
 
-    fun findBySlug(slug: String): EventDetailDto? =
-        eventRepository.findBySlugAndDeletedAtIsNull(slug)?.let(eventDtoMapper::toDetailDto)
+    // Public detail (V46): drafts are not pages; unlisted events are reachable
+    // by link. The owner's handle rides along so a free gallery credits them.
+    fun findBySlug(slug: String): EventDetailDto? {
+        val event = eventRepository.findPublicBySlug(slug) ?: return null
+        val ownerHandle = event.createdBy?.let { photographerSettingsRepository.findById(it).orElse(null)?.handle }
+        return eventDtoMapper.toDetailDto(event, ownerHandle)
+    }
 
     private companion object {
         val LIST_DEFAULT_STATUSES = listOf(EventStatus.ACTIVE, EventStatus.COMPLETED, EventStatus.ARCHIVED)

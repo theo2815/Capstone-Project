@@ -9,6 +9,7 @@ import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.exception.NotFoundException
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.CartItemRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
@@ -147,6 +148,32 @@ class CartServiceTest {
         val ex = assertFailsWith<NotFoundException> { service.add(userId, hidden.id, event.id) }
 
         assertEquals(ErrorCodes.PHOTO_NOT_FOUND, ex.code)
+        assertEquals(emptyList(), written)
+    }
+
+    // Free events (V46): a ₱0 photo is downloaded from the gallery, never bought.
+    // add() says so; merge() skips it so a guest cart holding one can't 409
+    // every checkout after login.
+    @Test
+    fun `add refuses a free photo with a clear code`() {
+        val event = event(EventStatus.ACTIVE)
+        val free = photo(event.id, price = BigDecimal.ZERO)
+        Mockito.`when`(photoRepository.findById(free.id)).thenReturn(Optional.of(free))
+
+        val ex = assertFailsWith<ValidationException> { service.add(userId, free.id, event.id) }
+
+        assertEquals(ErrorCodes.PHOTO_FREE, ex.code)
+        assertEquals(emptyList(), written)
+    }
+
+    @Test
+    fun `merge skips a free photo`() {
+        val event = event(EventStatus.ACTIVE)
+        val free = photo(event.id, price = BigDecimal.ZERO)
+        stub(listOf(free), listOf(event))
+
+        service.merge(userId, listOf(free.id to event.id))
+
         assertEquals(emptyList(), written)
     }
 

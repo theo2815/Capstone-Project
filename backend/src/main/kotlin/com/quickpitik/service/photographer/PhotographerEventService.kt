@@ -53,7 +53,7 @@ class PhotographerEventService(
         val items = page.content.mapNotNull { ep ->
             val event = eventsById[ep.id.eventId] ?: return@mapNotNull null
             if (event.deletedAt != null) return@mapNotNull null
-            summaryDto(event, ep, eventDtoMapper.resolveBannerUrl(event))
+            summaryDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId)
         }
         return PaginatedResponse(
             items = items,
@@ -68,13 +68,15 @@ class PhotographerEventService(
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         val ep = loadOrEmpty(eventId, photographerId)
         // Hide events the photographer has never touched — anti-leak per Q-014.
-        if (ep.photoCount == 0 && ep.firstUploadAt == null) {
+        // An event they created (V46) is theirs before the first upload.
+        val owned = event.createdBy != null && event.createdBy == photographerId
+        if (!owned && ep.photoCount == 0 && ep.firstUploadAt == null) {
             throw NotFoundException(
                 code = ErrorCodes.EVENT_NOT_FOUND,
                 message = "No coverage for this event",
             )
         }
-        return detailDto(event, ep, eventDtoMapper.resolveBannerUrl(event))
+        return detailDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId)
     }
 
     fun listPhotos(

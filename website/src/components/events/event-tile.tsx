@@ -33,6 +33,9 @@ type EventTileUploadProps = {
   event: ListEvent;
   index?: number;
   canUpload: boolean;
+  /** Photographer-owned event (V46): the owner uploads on any date, so the
+   *  ±4-day grace copy doesn't apply. */
+  bypassWindow?: boolean;
 };
 
 type EventTileManageProps = {
@@ -41,6 +44,9 @@ type EventTileManageProps = {
   index?: number;
   photoCount: number;
   salesCount: number;
+  /** Review / visibility chip for an owned event ("Pending review",
+   *  "Unlisted · Free"). Admin events carry none. */
+  note?: string;
 };
 
 export type EventTileProps =
@@ -121,9 +127,10 @@ export function EventTile(props: EventTileProps) {
           <UploadFooter
             event={event}
             canUpload={(props as EventTileUploadProps).canUpload}
+            bypassWindow={props.mode === "upload" ? props.bypassWindow : undefined}
           />
         )}
-        {mode === "manage" && <ManageFooter />}
+        {props.mode === "manage" && <ManageFooter note={props.note} />}
       </div>
     </>
   );
@@ -211,20 +218,25 @@ function BrowseFooter({ isUpcoming }: { isUpcoming: boolean }) {
 function UploadFooter({
   event,
   canUpload,
+  bypassWindow = false,
 }: {
   event: ListEvent;
   canUpload: boolean;
+  bypassWindow?: boolean;
 }) {
   // Verification-incomplete is the most actionable issue, so it wins over
   // the date-based hints. Once verified, the date drives copy:
   //   upcoming      → opens on race day
   //   live (grace)  → upload →
   //   open / past   → window closed (4-day grace expired)
+  // An owned event (V46) skips the date gate entirely.
   const inGrace = canUploadToEvent(event.date);
   let cta: string;
   let muted = false;
   if (!canUpload) {
     cta = "Finish settings →";
+  } else if (bypassWindow) {
+    cta = "Upload →";
   } else if (event.state === "upcoming") {
     cta = "Opens on race day →";
   } else if (inGrace) {
@@ -249,9 +261,12 @@ function UploadFooter({
   );
 }
 
-function ManageFooter() {
+function ManageFooter({ note }: { note?: string }) {
   return (
-    <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
+    <div className="mt-6 pt-4 border-t border-line flex items-center justify-between gap-4">
+      <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate truncate">
+        {note}
+      </span>
       <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors">
         Open →
       </span>

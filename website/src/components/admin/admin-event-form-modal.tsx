@@ -308,7 +308,8 @@ interface CoverFieldProps {
   onRemove: () => void;
 }
 
-function CoverField({
+// Exported for the photographer's own event form (V46) — same cover recipe.
+export function CoverField({
   bannerUrl,
   error,
   onPick,

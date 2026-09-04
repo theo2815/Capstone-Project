@@ -35,6 +35,8 @@ class AdminEventServiceReindexTest {
         Mockito.mock(EventCoverService::class.java),
         Mockito.mock(FaceBibProvider::class.java),
         AiApiProperties(),
+        Mockito.mock(com.quickpitik.repository.PhotographerSettingsRepository::class.java),
+        Mockito.mock(com.quickpitik.repository.UserRepository::class.java),
     )
 
     private val adminId = UUID.randomUUID()

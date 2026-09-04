@@ -32,6 +32,22 @@ data class AdminListEventDto(
     val organizerName: String,
     val categories: List<String>,
     val adminOverrides: List<Map<String, Any?>> = emptyList(),
+    // Photographer-owned events (V46). createdBy* null = admin event.
+    val createdByHandle: String? = null,
+    val createdByName: String? = null,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val reviewStatus: String = "approved",
+    val reviewNote: String? = null,
+    val pendingChange: Map<String, Any?>? = null,
+)
+
+// POST /admin/events/{id}/reject — the reason reaches the photographer's inbox.
+data class RejectEventRequest(
+    @field:NotBlank
+    @field:Size(max = 500)
+    val reason: String,
 )
 
 // POST /admin/events is now multipart — the controller pulls title/date/
