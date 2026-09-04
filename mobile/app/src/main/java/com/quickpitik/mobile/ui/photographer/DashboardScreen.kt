@@ -590,6 +590,22 @@ private fun CameraConnectedCard(
                                 style = Typography.bodyMedium,
                                 lineHeight = 20.sp
                             )
+                            // Same diagnostics tail the live card shows — the only
+                            // window into the PTP handshake on a release build.
+                            if (state.recentLog.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Divider(color = Line)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                state.recentLog.forEach { line ->
+                                    Text(
+                                        text = line,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = SlateSoft,
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
                     }
                     PrimaryCta(

@@ -70,11 +70,13 @@ class CameraConnectionManager(context: Context) {
                 ACTION_USB_PERMISSION -> {
                     // A denial must not be permanent: forget the ask so the next
                     // Rescan tap (or replug) prompts again instead of leaving a
-                    // "Connected" camera the watch can never open.
-                    if (!intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
+                    // "Connected" camera the watch can never open. Do NOT refresh
+                    // on a denial — refresh() re-asks, which would nag in a loop.
+                    if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
+                        refresh()
+                    } else {
                         permissionAskedFor = null
                     }
-                    refresh()
                 }
             }
         }

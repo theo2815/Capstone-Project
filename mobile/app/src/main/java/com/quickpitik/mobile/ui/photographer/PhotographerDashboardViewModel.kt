@@ -191,7 +191,8 @@ sealed class ShutterWatchState {
          */
         val reconnecting: Boolean = false,
     ) : ShutterWatchState()
-    data class Error(val message: String) : ShutterWatchState()
+    /** [recentLog] = the controller's last lines, so a release build (no logcat) still shows WHY. */
+    data class Error(val message: String, val recentLog: List<String> = emptyList()) : ShutterWatchState()
 }
 
 private const val WATCH_LOG_LINES = 6
@@ -1537,10 +1538,12 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                         // ended on its own — surface that instead of a silent reset.
                         is ShutterWatchState.Starting -> ShutterWatchState.Error(
                             "The camera isn't answering over USB. Unplug and replug the cable " +
-                                "(or switch it off and on), wait a few seconds, then try again."
+                                "(or switch it off and on), wait a few seconds, then try again.",
+                            watchLogTail,
                         )
                         is ShutterWatchState.Watching -> ShutterWatchState.Error(
-                            "Auto-upload stopped unexpectedly — check the cable and start again. Pulled photos keep uploading."
+                            "Auto-upload stopped unexpectedly — check the cable and start again. Pulled photos keep uploading.",
+                            watchLogTail,
                         )
                         else -> s
                     }
