@@ -101,8 +101,8 @@ class UsbEventCaptureController(
                     // Never got going at all: a setup problem, not a blip.
                     if (!baselined) {
                         onLog(
-                            "The camera isn't answering over USB. Unplug and replug the cable " +
-                                "(or switch the camera off and on), wait a few seconds, then tap " +
+                            "The camera isn't answering over USB. Switch the camera off and on " +
+                                "(a replug alone doesn't clear this), wait a few seconds, then tap " +
                                 "Start auto-upload again. Photos already pulled keep uploading."
                         )
                         return
@@ -495,7 +495,7 @@ class UsbEventCaptureController(
                 // and a fresh OpenSession alone never clears it (see
                 // PtpSession.resetDevice). Reset first, then give it a moment.
                 if (attempt > 1) {
-                    onLog("  resetting camera USB link…")
+                    onLog("  clearing USB pipes…")
                     s.resetDevice()
                     delay(RESET_SETTLE_MS)
                 }

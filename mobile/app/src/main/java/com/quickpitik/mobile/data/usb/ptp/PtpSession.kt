@@ -436,7 +436,11 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
      * Best-effort; the caller retries the open afterwards.
      */
     fun resetDevice() {
-        runCatching { connection.controlTransfer(0x21, 0x66, 0, iface.id, null, 0, 2000) }
+        // 2026-09-04, four sessions on the R-series body: the class Device Reset
+        // (0x21/0x66) never recovered a silent OpenSession and every attempt
+        // after it failed at the bulk-OUT send itself — it wedges the pipe. Only
+        // a camera power-cycle clears that state, so this is now halt-clears
+        // only; the request is kept out deliberately.
         clearHalt(bulkOut)
         clearHalt(bulkIn)
         sessionOpen = false
