@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.jetbrainsKotlinAndroid)
@@ -30,6 +32,24 @@ android {
         )
     }
 
+    // Release signing from a gitignored mobile/keystore.properties:
+    //   storeFile=<path to .jks>  storePassword=…  keyAlias=…  keyPassword=…
+    // Absent file → the release APK is built unsigned (uninstallable), so debug
+    // builds and CI without the keystore still work. The keystore's SHA-1 must
+    // also be registered as an Android OAuth client in Google Cloud.
+    val keystoreProps = rootProject.file("keystore.properties")
+    if (keystoreProps.exists()) {
+        val props = Properties().apply { keystoreProps.inputStream().use { load(it) } }
+        signingConfigs {
+            create("release") {
+                storeFile = rootProject.file(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
@@ -37,6 +57,7 @@ android {
         release {
             isMinifyEnabled = false
             manifestPlaceholders["usesCleartextTraffic"] = "false"
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

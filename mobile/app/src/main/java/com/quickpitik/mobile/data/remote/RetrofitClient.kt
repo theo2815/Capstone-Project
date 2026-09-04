@@ -28,13 +28,11 @@ object RetrofitClient {
     // Compiled-in fallback. Used verbatim on a fresh install, in every release
     // build, and whenever the debug override is cleared.
     //
-    // When using the Android Studio Emulator, "http://10.0.2.2:8080/" routes to your PC's backend.
-    // If you use a physical phone via USB instead of Wi-Fi, run "adb reverse tcp:8080 tcp:8080".
-    //
-    // Release manifests set usesCleartextTraffic=false, so this MUST become an
-    // https origin before any release ships — with this http value a release
-    // APK cannot reach the network at all.
-    const val DEFAULT_BASE_URL = "http://10.0.2.2:8080/"
+    // The production backend (Railway, since 2026-09-04). Release manifests set
+    // usesCleartextTraffic=false, so this must stay an https origin. For a local
+    // backend on a debug build use the SERVER row on Login (emulator:
+    // 10.0.2.2:8080, USB: adb reverse tcp:8080 tcp:8080 + localhost:8080).
+    const val DEFAULT_BASE_URL = "https://api.quickpitik.com/"
 
     // The live backend origin. Was a `const val` until 2026-08-16, which meant
     // every laptop IP change cost a Kotlin edit + recompile + reinstall — and on
@@ -74,7 +72,7 @@ object RetrofitClient {
     // the scheme + authority. Mirrors the website's buildWsUrl().
     val wsOrigin: String
         get() {
-            val url = BASE_URL.toHttpUrlOrNull() ?: return "ws://10.0.2.2:8080"
+            val url = BASE_URL.toHttpUrlOrNull() ?: return "wss://api.quickpitik.com:443"
             val scheme = if (url.isHttps) "wss" else "ws"
             return "$scheme://${url.host}:${url.port}"
         }
