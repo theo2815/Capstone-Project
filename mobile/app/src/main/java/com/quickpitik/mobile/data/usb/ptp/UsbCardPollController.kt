@@ -7,6 +7,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
 /**
+ * UNWIRED — zero call sites as of 2026-08-14, and the "PRIMARY tether path"
+ * claim below is stale. On-device testing (2026-05-26) showed the R6 locks its
+ * physical shutter for as long as a plain card-poll PTP session is open, so
+ * this cannot run while the photographer is shooting. The live path is now
+ * UsbEventCaptureController (EOS event mode, shutter stays alive) and bulk
+ * card reads go through UsbCardBrowseController + UsbCardImportController.
+ * Retained as the reference implementation for non-locking bodies (some
+ * Nikon/Sony), which nobody has tested yet.
+ *
  * Zno-style USB card-poll capture for a PTP camera — the PRIMARY tether path.
  *
  * Instead of fighting the Canon EOS remote-capture extension (host RemoteRelease

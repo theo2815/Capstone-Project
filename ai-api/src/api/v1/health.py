@@ -47,6 +47,7 @@ async def readiness(
 
     checks = ReadinessResponse(
         models_loaded=registry.all_loaded(),
+        models=registry.status(),
         database=db_ok,
         redis=redis_ok,
     )

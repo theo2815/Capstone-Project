@@ -2,7 +2,7 @@ package com.quickpitik.service.photographer
 
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.service.ai.AiApiClient
+import com.quickpitik.service.ai.FaceBibProvider
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
@@ -27,7 +27,7 @@ import java.util.UUID
 @Component
 class PhotoOrphanReaper(
     private val photoRepository: PhotoRepository,
-    private val aiApiClient: AiApiClient,
+    private val aiApiClient: FaceBibProvider,
     private val aiApiProperties: AiApiProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)

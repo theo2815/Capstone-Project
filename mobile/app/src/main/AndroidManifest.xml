@@ -4,9 +4,42 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+        Tethered-shoot lifecycle. A race runs 3+ hours with the phone pocketed,
+        so the USB ingest loop has to survive the app going to the background.
+        Without a foreground service the process is merely "cached", and
+        Android 12+ freezes cached processes — the coroutine isn't cancelled,
+        it just stops running, which looks identical from the outside.
+
+        FOREGROUND_SERVICE_CONNECTED_DEVICE is mandatory at targetSdk 34: the
+        typed permission must match the service's foregroundServiceType or
+        startForeground throws SecurityException.
+
+        WAKE_LOCK because a foreground service does NOT keep the CPU awake with
+        the screen off — the ingest loop's delay() points would stretch under
+        suspend without a partial wakelock.
+
+        POST_NOTIFICATIONS (API 33+) is what makes the service's notification
+        VISIBLE. The service still runs when it's denied, but the photographer
+        loses the only way to see and stop the ingest from the shade.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+        required="false" deliberately: runners are half the user base and never
+        plug a camera in. required="true" would make the app un-installable on
+        any phone without USB-host (OTG) support.
+    -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+
     <application
         android:name=".QuickPitikApp"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -14,12 +47,11 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.QuickPitikMobile"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="${usesCleartextTraffic}"
         tools:targetApi="31">
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="@string/app_name"
             android:launchMode="singleTask"
             android:theme="@style/Theme.QuickPitikMobile">
             <intent-filter>
@@ -39,7 +71,59 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="quickpitik" />
             </intent-filter>
+            <!--
+                Deep-link entry point for email verification links.
+                Intercepts both localhost and the ngrok tunnel so runners
+                can verify their emails without being dumped into a browser.
+                autoVerify stays FALSE: Digital Asset Links can't verify
+                localhost/ngrok (no assetlinks.json), and a failed autoVerify
+                makes Android 12+ skip the app entirely. Production needs a
+                real domain serving assetlinks.json before flipping this.
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="localhost" />
+                <data android:host="snippet-sheath-cloak.ngrok-free.dev" />
+                <data android:pathPrefix="/verify-email" />
+                <data android:pathPrefix="/confirm-email-change" />
+            </intent-filter>
+            <!--
+                Camera attach. Paired with res/xml/device_filter.xml so the OS
+                offers "always open QuickPitik for this device" — that tick is
+                what grants persistent USB permission and stops the prompt from
+                interrupting a replug mid-race.
+
+                The delivered intent needs no handling: singleTask routes it to
+                onNewIntent, which ignores anything that isn't a quickpitik://
+                URI, and CameraConnectionManager's own receiver is what actually
+                reacts to the attach broadcast.
+            -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/device_filter" />
         </activity>
+
+        <!--
+            Holds the process foreground-alive for the duration of a USB ingest
+            (live shutter watch or card import). Started and stopped by
+            PhotographerDashboardViewModel; see TetherIngestService for why it
+            does not own the ingest loop itself. The lint suppression covers
+            the connected-device runtime prerequisite supplied by
+            UsbManager.requestPermission(); lint only recognizes manifest-based
+            prerequisites here.
+        -->
+        <service
+            android:name=".service.TetherIngestService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            tools:ignore="ForegroundServicePermission" />
     </application>
 
 </manifest>

@@ -151,10 +151,17 @@ function Hero({ liveCount }: { liveCount: number }) {
 
       <div className="relative max-w-7xl mx-auto">
         <div className="max-w-2xl stagger-children">
-          <Kicker as="p" size="md" className="mb-4">
-            Race photos · Cebu
-          </Kicker>
-          <h1 className="font-display text-5xl md:text-7xl lg:text-8xl font-medium tracking-tight leading-[0.95]">
+          <div className="flex items-center gap-3 mb-4">
+            <span className="race-stripe" aria-hidden="true">
+              <span className="bg-fresh" />
+              <span className="bg-fresh-deep" />
+              <span className="bg-ink" />
+            </span>
+            <Kicker as="p" size="md">
+              Race photos · Cebu
+            </Kicker>
+          </div>
+          <h1 className="font-hero text-ink text-5xl md:text-7xl lg:text-8xl">
             Pick your race.
             <br />
             <span className="text-fresh">Find your photos.</span>
@@ -206,7 +213,7 @@ function HeroVisual() {
         className="absolute top-20 left-20 w-56 h-40 rounded-2xl bg-bone border-2 border-fresh shadow-[0_24px_40px_-12px_rgba(17,17,17,0.22)] overflow-hidden"
         style={{ animation: "fade-up 0.6s 1.35s both", opacity: 0 }}
       >
-        <span className="absolute top-3 left-4 font-mono uppercase tracking-[0.25em] text-[9px] text-fresh">
+        <span className="absolute top-3 left-4 font-mono uppercase tracking-[0.14em] text-[9px] text-fresh">
           Match · 98%
         </span>
         <span className="absolute bottom-3 right-3 size-2.5 rounded-full bg-fresh breathe" />
@@ -237,13 +244,13 @@ function HeroVisual() {
       </div>
 
       <div
-        className="absolute top-[268px] left-[120px] font-mono uppercase tracking-[0.3em] text-[10px] text-slate"
+        className="absolute top-[268px] left-[120px] font-mono uppercase tracking-[0.14em] text-[10px] text-slate"
         style={{ animation: "fade-in 0.6s 1.6s both", opacity: 0 }}
       >
         BIB · 4082
       </div>
       <div
-        className="absolute top-[88px] right-[16px] font-mono uppercase tracking-[0.3em] text-[10px] text-slate"
+        className="absolute top-[88px] right-[16px] font-mono uppercase tracking-[0.14em] text-[10px] text-slate"
         style={{ animation: "fade-in 0.6s 1.75s both", opacity: 0 }}
       >
         00:34:21
@@ -264,7 +271,7 @@ function LiveTodayBlock({ liveCount }: { liveCount: number }) {
         <span className="size-1.5 rounded-full bg-fresh breathe" />
         Live today
       </Kicker>
-      <p className="font-display text-6xl md:text-7xl font-medium tracking-tight leading-none text-ink mt-2 tnum count-up">
+      <p className="font-display text-6xl md:text-7xl font-extrabold tracking-tight leading-none text-ink mt-2 tnum count-up">
         {liveCount}
       </p>
       <Kicker as="p" className="mt-2 group-hover:text-fresh transition-colors">
@@ -300,7 +307,7 @@ function FilterStrip({
   const handleClearFilters = onClearFilters;
 
   return (
-    <div className="sticky top-[3.75rem] z-20 bg-bone/90 backdrop-blur-md border-y border-line">
+    <div className="sticky top-[var(--site-header-h)] z-20 bg-bone/90 backdrop-blur-md border-y border-line">
       <div className="max-w-7xl mx-auto px-6 md:px-10 py-3">
         <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-8">
           <div className="md:flex-1 min-w-0">
@@ -406,7 +413,7 @@ function StripSearchInput({
         onChange={(e) => onChange(e.target.value)}
         placeholder="Search by event name…"
         aria-label="Search events"
-        className="block w-full pl-7 pr-2 py-1.5 bg-transparent border-0 outline-none font-mono text-sm tracking-wide placeholder:text-slate-soft text-ink"
+        className="block w-full pl-7 pr-2 py-1.5 bg-transparent border-b border-line focus:border-fresh transition-colors outline-none font-mono text-sm tracking-wide placeholder:text-slate-soft text-ink"
       />
     </div>
   );
@@ -480,6 +487,11 @@ function SegmentBlock({
   highlight?: boolean;
 }) {
   const bgClass = bg === "bone-deep" ? "bg-bone-deep" : "bg-bone";
+  // Client-slice so a large segment (a growing Archive especially) doesn't
+  // render every tile at once. The catalog itself is capped at the BE max
+  // upstream; reaching beyond that needs server-side lifecycle segmentation.
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EVENT_GRID_INITIAL);
+  const visibleItems = items.slice(0, loadedCount);
   return (
     <section id={id} className={`${bgClass} px-6 md:px-10 py-14 md:py-20 scroll-mt-28`}>
       <div className="max-w-7xl mx-auto">
@@ -505,10 +517,18 @@ function SegmentBlock({
           </Kicker>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
-          {items.map((e, i) => (
+          {visibleItems.map((e, i) => (
             <EventTile key={e.id} event={e} index={i} />
           ))}
         </div>
+        <LoadMoreButton
+          shown={visibleItems.length}
+          total={items.length}
+          increment={PAGE_SIZE.EVENT_GRID_INCREMENT}
+          onLoadMore={() =>
+            setLoadedCount((n) => n + PAGE_SIZE.EVENT_GRID_INCREMENT)
+          }
+        />
       </div>
     </section>
   );
@@ -577,7 +597,7 @@ function EmptyState() {
         <Kicker as="p" className="mb-3">
           No matches
         </Kicker>
-        <p className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight">
+        <p className="font-display text-3xl md:text-4xl font-extrabold text-ink tracking-tight">
           Nothing here yet.
         </p>
         <p className="font-sans text-base md:text-lg text-ink-soft mt-4">

@@ -3,6 +3,8 @@
 import Link from "next/link";
 import type { ListEvent } from "@/app/events/events-browser";
 import { StatusChip } from "@/components/events/event-tile";
+import { ROUTES } from "@/lib/constants";
+import type { EventReviewStatus } from "@/lib/photographer-mock";
 
 // Admin-side variant of <EventTile>. Reuses the dark banner + StatusChip
 // from the runner-facing tile but trades navigation for a row of explicit
@@ -13,9 +15,24 @@ import { StatusChip } from "@/components/events/event-tile";
 // Card body shows only Title + Date + City + Location — same fields the
 // runner-facing tile shows.
 
+// Photographer-owned event (V46): who owns it and where it sits in review.
+// Admin-created events pass nothing and render exactly as before.
+export interface AdminEventReview {
+  owner: string;
+  status: EventReviewStatus;
+}
+
+const REVIEW_LABEL: Record<EventReviewStatus, string> = {
+  pending: "Pending review",
+  rejected: "Sent back",
+  change_pending: "Pricing change pending",
+  approved: "Live",
+};
+
 interface AdminEventCardProps {
   event: ListEvent;
   index?: number;
+  review?: AdminEventReview;
   onEdit: (event: ListEvent) => void;
   onDelete: (event: ListEvent) => void;
 }
@@ -23,11 +40,15 @@ interface AdminEventCardProps {
 export function AdminEventCard({
   event,
   index = 0,
+  review,
   onEdit,
   onDelete,
 }: AdminEventCardProps) {
   const dateLabel = formatShortDate(event.date);
   const cityUpper = event.city.toUpperCase();
+  // A pending / sent-back submission is a DRAFT: no public page to view,
+  // so the link points at the queue instead.
+  const awaitingReview = review !== undefined && event.status === "DRAFT";
 
   return (
     <article
@@ -56,7 +77,7 @@ export function AdminEventCard({
         <StatusChip state={event.state} />
       </div>
       <div className="p-6 md:p-7">
-        <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-3">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-3">
           <span className="tnum">{dateLabel}</span> · {cityUpper}
         </p>
         <h3 className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-tight text-ink">
@@ -65,6 +86,11 @@ export function AdminEventCard({
         <p className="mt-3 font-sans text-sm md:text-base text-ink-soft">
           {event.location}
         </p>
+        {review && (
+          <p className="mt-3 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+            Photographer event · {review.owner} · {REVIEW_LABEL[review.status]}
+          </p>
+        )}
 
         <div className="mt-6 pt-4 border-t border-line flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-4">
@@ -84,14 +110,23 @@ export function AdminEventCard({
               Delete
             </button>
           </div>
-          <Link
-            href={`/events/${event.slug}`}
-            target="_blank"
-            rel="noreferrer"
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
-          >
-            View ↗
-          </Link>
+          {awaitingReview ? (
+            <Link
+              href={ROUTES.ADMIN_EVENT_REQUESTS}
+              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+            >
+              Review →
+            </Link>
+          ) : (
+            <Link
+              href={`/events/${event.slug}`}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+            >
+              View ↗
+            </Link>
+          )}
         </div>
       </div>
     </article>
@@ -99,7 +134,7 @@ export function AdminEventCard({
 }
 
 const actionBtn =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink hover:text-fresh transition-colors";
+  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors";
 
 function formatShortDate(iso: string) {
   const d = new Date(iso + "T00:00:00");

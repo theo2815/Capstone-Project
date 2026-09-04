@@ -234,7 +234,7 @@ photographer wants to clean up the set (see Journey 2).
 |-----------|-----------|---------|
 | **Mobile App** | Kotlin (Android first, iOS planned) | Google Play Store |
 | **Website** | Next.js | Vercel |
-| **Desktop App** | Electron (already built) | Direct download |
+| **Desktop App** | Electron (already built) | Microsoft Store |
 | **Web/Mobile Backend** | Spring Boot (Kotlin) | AWS EC2 |
 | **Desktop Backend** | (own backend, own database) | TBD |
 | **AI Services (ai-api)** | FastAPI + Celery (Python) — already built | AWS EC2 |
@@ -343,18 +343,12 @@ See `ai-api/docs/integration-architecture.md` and `ai-api/docs/integration-contr
 
 ## Current Development Status
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| **ai-api** | Phases 1-6 complete | Blur, face, bib, batch processing, C++ acceleration all built. Production hardening pending. |
-| **Desktop App** | Built | Electron app for photographers. Own backend + database. |
-| **Backend** | Not started | Spring Boot. Will handle users, events, payments, marketplace. |
-| **Mobile App** | Not started | Kotlin (Android first, iOS planned). Camera tethering + runner search. |
-| **Website** | Not started | Next.js on Vercel. Runner search + photographer dashboard. |
+Per-module status, ship-state, and test counts are **not pinned here** — they drift. Read the vault `VAULT-INDEX.md` (day-to-day dashboard) and `docs/IMPLEMENTATION_PLAN.md` (phase history + live roadmap). This document owns the *vision*, not the *status*.
 
 **Next priorities:**
-1. Finish ai-api production hardening (Phase 7) — event isolation, confidence thresholds
-2. Build backend (Spring Boot) — user auth, events, participant management, marketplace
-3. Build mobile app and website in parallel
+1. Mobile emulator/device verification → hardware tether verification on the R6
+2. ai-api public deployment + desktop restricted-key issuance
+3. Real-event beta (one Cebu marathon) → payments launch
 
 ---
 
@@ -362,11 +356,11 @@ See `ai-api/docs/integration-architecture.md` and `ai-api/docs/integration-contr
 
 | Document | Location | Content |
 |----------|----------|---------|
+| Implementation plan | `docs/IMPLEMENTATION_PLAN.md` | Phase history + live roadmap |
 | ai-api Architecture | `ai-api/docs/architecture.md` | 4-layer design, model registry, async patterns |
 | ai-api API Reference | `ai-api/docs/api-reference.md` | All endpoints, request/response examples |
 | Integration Architecture | `ai-api/docs/integration-architecture.md` | Responsibility boundary: ai-api vs backends vs desktop |
 | Integration Contracts | `ai-api/docs/integration-contracts.md` | Exact API usage patterns per backend, code examples |
-| Feature Analysis | `ai-api/docs/feature-analysis-report.md` | Production readiness audit — issues to fix before launch |
 
 ---
 

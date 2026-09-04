@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { CollapsibleReviewSlab } from "@/components/admin/admin-collapse";
 import { AvatarDisc } from "@/components/account/avatar-disc";
+import { Kicker } from "@/components/ui/kicker";
 import { AdminActionAside } from "@/components/admin/admin-action-aside";
 import { AdminDecisionsTimeline } from "@/components/admin/admin-decisions-timeline";
 import {
@@ -12,6 +13,7 @@ import {
 } from "@/lib/admin-photographer-view";
 import type { EffectivePhotographerSettings } from "@/lib/admin-photographer-view";
 import { ROUTES } from "@/lib/constants";
+import { safeHttpUrl } from "@/lib/utils";
 import { formatLongDate, formatMemberSince } from "@/lib/format";
 import { useEventCatalog } from "@/lib/event-catalog";
 import {
@@ -25,6 +27,7 @@ import type { CoverSource } from "@/lib/photographer-registry";
 import type { PhotographerSettingsSnapshot } from "@/lib/admin-user-registry";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { formatRegionLabel } from "@/lib/ph-regions";
+import { useRegions } from "@/hooks/use-regions";
 
 const COMPLETENESS_FIELDS: ReadonlyArray<{
   key: keyof PhotographerSettingsSnapshot;
@@ -89,7 +92,7 @@ export default function AdminPhotographerDetailPage() {
       <div className="pb-2">
         <Link
           href={ROUTES.ADMIN_PHOTOGRAPHERS}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
         >
           ← Photographers
         </Link>
@@ -200,11 +203,11 @@ function Hero({
           avatarOverride={avatarUrl ? { dataUrl: avatarUrl } : null}
         />
         <div className="flex-1 min-w-0">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+          <Kicker as="p">
             Photographer
-          </p>
+          </Kicker>
           <div className="mt-2 flex items-baseline gap-3 flex-wrap">
-            <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink leading-[1.05] flex items-baseline gap-2.5">
+            <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink leading-[1.05] flex items-baseline gap-2.5">
               {brandHex && (
                 <span
                   aria-hidden
@@ -216,12 +219,12 @@ function Hero({
             </h1>
             <StatusPill label={statusLabel} tone={statusTone} />
           </div>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-3">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3">
             {handle ? `@${handle}` : "No handle yet"}
             <span className="text-slate-soft"> · </span>
             <span className="tnum">since {formatMemberSince(memberSince)}</span>
           </p>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-2">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2">
             {region ?? "Region not set"}
             <span className="text-slate-soft"> · </span>
             {city}
@@ -250,7 +253,7 @@ function StatusPill({
         : "border-line text-slate";
   return (
     <span
-      className={`inline-flex items-center font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full border px-3 py-0.5 ${toneClass}`}
+      className={`inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border px-3 py-0.5 ${toneClass}`}
     >
       {label}
     </span>
@@ -347,7 +350,7 @@ function CompletenessRow({
         />
         <p className="font-sans text-sm text-ink-soft truncate">{label}</p>
       </div>
-      <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum shrink-0">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum shrink-0">
         {detail ?? (filled ? "set" : "missing")}
       </p>
     </li>
@@ -373,8 +376,9 @@ function AboutSlab({
   email: string;
   brandColor?: EffectivePhotographerSettings["brandColor"];
 }) {
+  const { regions } = useRegions();
   const resolvedRegion = regionCodes
-    ? formatRegionLabel(regionCodes.regionCode, regionCodes.provinceCode)
+    ? formatRegionLabel(regions, regionCodes.regionCode, regionCodes.provinceCode)
     : null;
   const regionLine = resolvedRegion ?? region ?? "—";
   return (
@@ -406,7 +410,7 @@ function DefRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         {label}
       </dt>
       <dd
@@ -452,7 +456,7 @@ function PublicUrlSlab({ handle }: { handle: string }) {
           href={`/${handle}`}
           target="_blank"
           rel="noopener"
-          className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+          className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
         >
           Open ↗
         </Link>
@@ -548,14 +552,16 @@ function SocialsSlab({
                   {social.url}
                 </p>
               </div>
-              <a
-                href={social.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
-              >
-                Open ↗
-              </a>
+              {safeHttpUrl(social.url) && (
+                <a
+                  href={safeHttpUrl(social.url)!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+                >
+                  Open ↗
+                </a>
+              )}
             </li>
           ))}
         </ul>
@@ -595,12 +601,12 @@ function PayoutsSlab({
                 <p className="font-display text-base text-ink truncate">
                   {PAYOUT_METHOD_LABEL[p.method]}
                   {p.isPrimary && (
-                    <span className="ml-2 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh tnum">
+                    <Kicker tone="active" tnum className="ml-2">
                       Primary
-                    </span>
+                    </Kicker>
                   )}
                 </p>
-                <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+                <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
                   {formatPayoutNumber(p.method, p.accountNumber)}
                 </p>
               </div>
@@ -655,7 +661,7 @@ function EventsCoveredSlab({
                   <p className="font-display text-base text-ink truncate">
                     {eventName}
                   </p>
-                  <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+                  <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
                     {coverage.state.toUpperCase()}
                     <span className="text-slate-soft"> · </span>
                     <span>{coverage.photoCount.toLocaleString()} photos</span>

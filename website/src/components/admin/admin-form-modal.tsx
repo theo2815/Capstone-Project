@@ -21,9 +21,9 @@ import { Modal } from "@/components/ui/modal";
 
 const FOOTER_CLS = "flex items-center justify-end gap-3 pt-2";
 const CANCEL_BTN_CLS =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2";
+  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2";
 const SUBMIT_BTN_CLS =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone transition-colors rounded-full px-5 py-2 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink disabled:cursor-not-allowed";
+  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink disabled:cursor-not-allowed";
 
 interface AdminFormModalProps {
   open: boolean;

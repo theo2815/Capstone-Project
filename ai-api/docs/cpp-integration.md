@@ -15,7 +15,7 @@ Most of the "heavy" work (model inference) is already in C++ under the hood via 
 | Laplacian variance (single image) | `laplacian_variance` | ~5.4× | Single-pass sum + sum_sq kernel; biggest win |
 | Batch cosine top-K | `batch_cosine_topk` | 1.8–2.8× (N ≤ ~5K) | GIL release + partial_sort; NumPy BLAS wins on very large N |
 | FFT high-frequency ratio | `fft_hf_ratio` | ~1.2× | Radix-2 Cooley-Tukey; ~parity with NumPy FFTPACK |
-| BGR → gray, resize, classifier preprocess | `bgr_to_gray`, `resize_gray`, `classify_preprocess` | neutral to slower | OpenCV/NumPy already use hand-tuned SIMD; kept for the GIL-release benefit inside threaded pipelines |
+| BGR → gray, resize, classifier preprocess | `bgr_to_gray`, `resize_gray`, `classify_preprocess` | neutral to slower | OpenCV/NumPy already use hand-tuned SIMD; kept for the GIL-release benefit inside threaded pipelines. **`classify_preprocess` is no longer called by `BlurClassifier`** — it is bilinear, and the classifier needs an area-averaged downscale for accuracy (2026-08-14). Still exported and tested. |
 
 Numbers are from `benchmarks/bench_cpp_vs_python.py` on MSVC 19.50 / Windows / AVX2 / Python 3.12. They will differ on Linux-glibc with GCC.
 

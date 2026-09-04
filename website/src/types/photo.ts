@@ -23,6 +23,25 @@ export interface MockPhoto {
   // bought a photo sees an unwatermarked preview while browsing the event.
   // Null for everyone else — closes G-2.
   cleanUrl?: string | null;
+  // Who took the shot, so a runner can tap through to /{handle}.
+  // `photographerHandle` is null for a photographer who hasn't been verified
+  // yet — the handle is only assigned at verification. A null handle means
+  // "not linkable": render the name as plain text, never a link to /{null}.
+  // Both are absent on legacy/seed rows that carry no photographer at all.
+  photographerHandle?: string | null;
+  photographerName?: string | null;
+  // Event coupon. Present only while this event/photo/photographer is eligible
+  // and the coupon is live. `couponPrice` is what the runner pays
+  // with the code — computed server-side (list price − the photographer's
+  // share × percentOff); the client never does money math.
+  couponCode?: string | null;
+  couponPercentOff?: number | null;
+  couponPrice?: number | null;
+  // Free event (V46): the original is anyone's. `downloadUrl` is a short-
+  // lived attachment-disposition link the BE signs for every visitor; the
+  // tile and lightbox swap Cart/Buy for a single Download.
+  free?: boolean;
+  downloadUrl?: string | null;
   alt?: string;
 }
 

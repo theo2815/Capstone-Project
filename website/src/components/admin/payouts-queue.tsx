@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Kicker } from "@/components/ui/kicker";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminPayoutRow } from "@/components/admin/admin-payout-row";
 import { AdminPayoutBulkBar } from "@/components/admin/admin-payout-bulk-bar";
@@ -17,7 +18,7 @@ import {
   useAdminPayoutStore,
   mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
-import { useAdminPayouts } from "@/hooks/use-admin-data";
+import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -97,7 +98,7 @@ export function PayoutsQueue() {
   // the matching api-admin mutation in the background so the BE catches up
   // before the next refetch. `useAdminPayouts()` returns null while in
   // flight — `?? []` keeps the merge stable.
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   const effective = useMemo(
     () => mergePayoutsWithOverrides(serverPayouts, overrides),
     [serverPayouts, overrides],
@@ -193,7 +194,7 @@ export function PayoutsQueue() {
     selectedCycles.length === 0
       ? null
       : selectedCycles.some((c) => c.status === "approved")
-        ? "Some selected cycles are already approved"
+        ? "Some selected payouts are already approved"
         : null;
 
   const selectionActive = selected.size > 0;
@@ -315,7 +316,7 @@ export function PayoutsQueue() {
     if (ok) {
       showToast({
         kind: "success",
-        message: `Approved · ${ids.length} cycles`,
+        message: `Approved · ${ids.length} payouts`,
       });
     }
   }
@@ -349,7 +350,7 @@ export function PayoutsQueue() {
       if (ok) {
         showToast({
           kind: "info",
-          message: `Held · ${target.payoutIds.length} cycles`,
+          message: `Held · ${target.payoutIds.length} payouts`,
         });
       }
     }
@@ -394,7 +395,7 @@ export function PayoutsQueue() {
         caption="Awaiting first decision"
         totalCount={pending.length}
         rows={pending}
-        empty="No cycles pending review."
+        empty="No payouts pending review."
         selected={selected}
         selectionActive={selectionActive}
         toggleSelect={toggleSelect}
@@ -412,7 +413,7 @@ export function PayoutsQueue() {
         caption="Awaiting payment"
         totalCount={approved.length}
         rows={approvedVisible}
-        empty="No approved cycles waiting on payment."
+        empty="No approved payouts waiting on payment."
         selected={selected}
         selectionActive={selectionActive}
         toggleSelect={toggleSelect}
@@ -437,7 +438,7 @@ export function PayoutsQueue() {
         caption="Paused with reason"
         totalCount={held.length}
         rows={heldVisible}
-        empty="No held cycles."
+        empty="No held payouts."
         selected={selected}
         selectionActive={selectionActive}
         toggleSelect={toggleSelect}
@@ -462,7 +463,7 @@ export function PayoutsQueue() {
         caption="Settled"
         totalCount={paid.length}
         rows={paidVisible}
-        empty="No paid cycles yet."
+        empty="No paid payouts yet."
         selected={selected}
         selectionActive={selectionActive}
         toggleSelect={toggleSelect}
@@ -556,7 +557,7 @@ export function PayoutsQueue() {
 
 export function usePendingPayoutsCount(): number {
   const overrides = useAdminPayoutStore((s) => s.overrides);
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   return useMemo(
     () =>
       mergePayoutsWithOverrides(serverPayouts, overrides).filter(
@@ -568,7 +569,7 @@ export function usePendingPayoutsCount(): number {
 
 export function usePendingPayoutsTotal(): number {
   const overrides = useAdminPayoutStore((s) => s.overrides);
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   return useMemo(
     () =>
       mergePayoutsWithOverrides(serverPayouts, overrides)
@@ -620,7 +621,7 @@ function PayoutSlab({
     onLoadMore: () => void;
   };
 }) {
-  const noun = totalCount === 1 ? "cycle" : "cycles";
+  const noun = totalCount === 1 ? "payout" : "payouts";
   return (
     <Slab
       id={id}
@@ -665,13 +666,18 @@ function PayoutSlab({
   );
 }
 
+// `submittedAt` is the photographer's request time (BE maps it from
+// `cycle.createdAt`, the same source as the photographer-side `requestedAt`),
+// so admin and photographer now read the same date for the same payout. The
+// old `weekOf → +6d` range described scheduled weekly cycles, which the
+// request-based flow replaced on 2026-05-19 — it was the last live consumer of
+// the deprecated `weekOf`. No `dateOnly` flag: this is a full ISO timestamp.
 function PayoutSubtitle({ cycle }: { cycle: AdminPayoutCycle }) {
-  const weekEnd = addDays(cycle.weekOf, 6);
   return (
-    <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
       {cycle.handle ? `@${cycle.handle}` : "—"}
       <span className="text-slate-soft"> · </span>
-      {formatLongDate(cycle.weekOf, true)} → {formatLongDate(weekEnd, true)}
+      {formatLongDate(cycle.submittedAt)}
       <span className="text-slate-soft"> · </span>
       {formatPrice(cycle.amount)}
     </p>
@@ -703,7 +709,7 @@ function PayoutDrawerActions({
         <button
           type="button"
           onClick={onHold}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
         >
           Hold…
         </button>
@@ -712,7 +718,7 @@ function PayoutDrawerActions({
         <button
           type="button"
           onClick={onMarkPaid}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
         >
           Mark paid…
         </button>
@@ -721,7 +727,7 @@ function PayoutDrawerActions({
         <button
           type="button"
           onClick={onApprove}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
         >
           Approve
         </button>
@@ -731,7 +737,6 @@ function PayoutDrawerActions({
 }
 
 function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
-  const weekEnd = addDays(cycle.weekOf, 6);
   // "approved" is the post-review, pre-payment state — the moment the admin
   // actually has to send money. Surface the focal ReadyToSendCard at the
   // top; we hide the duplicate inline PayoutAccountCard below so the same
@@ -742,16 +747,15 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
     <div className="space-y-10">
       {isReadyToSend && <ReadyToSendCard cycle={cycle} />}
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
-          Cycle
-        </p>
+        <Kicker as="p" tone="soft" className="mb-3">
+          Payout
+        </Kicker>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
-          <FieldRow label="Cycle id" value={cycle.id} mono />
-          <FieldRow
-            label="Week of"
-            value={`${formatLongDate(cycle.weekOf, true)} → ${formatLongDate(weekEnd, true)}`}
-            mono
-          />
+          <FieldRow label="Payout id" value={cycle.id} mono />
+          {/* No "Week of" row: payouts are request-based, so there is no week
+              they cover. `Submitted` below is the real date and has been
+              backed by `cycle.createdAt` all along (BE AdminPayoutService
+              .hydrateOne). */}
           <FieldRow
             label="Submitted"
             value={formatLongDate(cycle.submittedAt)}
@@ -776,16 +780,16 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
       </section>
 
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        <Kicker as="p" tone="soft" className="mb-3">
           Photographer
-        </p>
+        </Kicker>
         <div className="space-y-3">
           <div className="rounded-2xl border border-line bg-bone-deep p-4">
             <p className="font-display text-lg text-ink">
               {cycle.brandName ?? cycle.photographerName}
             </p>
             {cycle.handle && (
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mt-1">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-1">
                 @{cycle.handle}
               </p>
             )}
@@ -796,15 +800,15 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
 
       {cycle.status === "held" && cycle.holdReason && (
         <section>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+          <Kicker as="p" tone="soft" className="mb-3">
             Hold reason
-          </p>
+          </Kicker>
           <div className="rounded-xl border border-line bg-bone-deep p-4">
             <p className="font-sans text-sm text-ink-soft">
               {cycle.holdReason}
             </p>
             {cycle.reviewedAt && (
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-2 tnum">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2 tnum">
                 Held {formatLongDate(cycle.reviewedAt)}
               </p>
             )}
@@ -814,9 +818,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
 
       {cycle.status === "paid" && (
         <section>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+          <Kicker as="p" tone="soft" className="mb-3">
             Payment
-          </p>
+          </Kicker>
           <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
             {cycle.paymentReference && (
               <FieldRow
@@ -838,9 +842,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
 
       {cycle.status === "approved" && cycle.reviewedAt && (
         <section>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+          <Kicker as="p" tone="soft" className="mb-3">
             Approval
-          </p>
+          </Kicker>
           <p className="font-sans text-sm text-ink-soft tnum">
             Approved {formatLongDate(cycle.reviewedAt)} — awaiting payment.
           </p>
@@ -861,13 +865,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         {label}
       </dt>
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink tnum"
+            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >
@@ -875,10 +879,4 @@ function FieldRow({
       </dd>
     </div>
   );
-}
-
-function addDays(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
 }

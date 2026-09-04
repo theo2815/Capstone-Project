@@ -35,6 +35,10 @@ export interface MockOrder {
   eventDate?: string;
   eventState?: "upcoming" | "live" | "open" | "past";
   status?: OrderStatus;
+  // Photographer coupon (V45): the code entered at checkout and the sum of
+  // per-item discounts. `total` is already what was charged.
+  couponCode?: string | null;
+  discountTotal?: number;
   // Refund disputes filed against this order. Source of truth for the
   // /orders status chip, photo locks, timeline, and cancel button. Embedded
   // on every BE payload from /me/orders since 2026-05-19; locally-pushed

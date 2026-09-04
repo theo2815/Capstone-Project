@@ -10,7 +10,7 @@ import java.time.OffsetDateTime
 import java.util.UUID
 
 enum class FlagStatus(val wire: String) {
-    OPEN("open"), RESOLVED("resolved"), HIDDEN("hidden"), DISMISSED("dismissed");
+    OPEN("open"), RESOLVED("resolved"), HIDDEN("hidden"), DISMISSED("dismissed"), ESCALATED("escalated");
 
     companion object {
         fun fromWire(value: String): FlagStatus =

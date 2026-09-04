@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
-import { ApiError } from "@/lib/api";
 import { isSafeRedirect, roleHome } from "@/lib/redirect";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types/user";
@@ -17,9 +16,10 @@ import {
 import { FieldError } from "@/components/ui/field-error";
 import {
   NAME_MAX,
+  splitApiFieldErrors,
   validateEmail,
   validateName,
-  validatePassword,
+  validateNewPassword,
 } from "@/lib/auth-validation";
 
 interface RoleOption {
@@ -47,6 +47,15 @@ interface FieldErrors {
   password?: string | null;
 }
 
+// Backend field name → the local state key that has an input to render under.
+// Allow-list: `role` is deliberately absent — it's a segmented control with no
+// error slot, so a role failure belongs in the submit-level message.
+const BE_FIELDS = {
+  name: "name",
+  email: "email",
+  password: "password",
+} as const;
+
 export function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -68,6 +77,9 @@ export function RegisterForm() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Not `isLoading` — setIsLoading lands on the next render, so a burst of
+  // submit events before a paint reads it as false every time. See login-form.
+  const submitting = useRef(false);
 
   function clearFieldError(field: keyof FieldErrors) {
     if (errors[field] || submitError) {
@@ -78,15 +90,17 @@ export function RegisterForm() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submitting.current) return;
     const next: FieldErrors = {
       name: validateName(name),
       email: validateEmail(email),
-      password: validatePassword(password),
+      password: validateNewPassword(password),
     };
     setErrors(next);
     setSubmitError(null);
     if (next.name || next.email || next.password) return;
 
+    submitting.current = true;
     setIsLoading(true);
     try {
       const user = await register({
@@ -97,23 +111,27 @@ export function RegisterForm() {
       });
       router.push(preservedRedirect ?? roleHome(user.role));
     } catch (err) {
+      // Per-field BE validation goes under its input; anything field-less
+      // (e.g. EMAIL_ALREADY_REGISTERED) stays in the submit slot.
+      const { fields, message } = splitApiFieldErrors(err, BE_FIELDS);
+      const handled = message !== null || Object.keys(fields).length > 0;
+      setErrors(fields);
       setSubmitError(
-        err instanceof ApiError
-          ? err.message
-          : "Registration failed. Please try again.",
+        handled ? message : "Registration failed. Please try again.",
       );
     } finally {
+      submitting.current = false;
       setIsLoading(false);
     }
   }
 
   return (
     <form onSubmit={handleSubmit} noValidate className="stagger-children space-y-7">
-      <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
         Create account
       </p>
 
-      <h1 className="font-display text-5xl md:text-6xl font-medium tracking-tight leading-[1.0]">
+      <h1 className="font-hero text-5xl md:text-6xl">
         Join
         <br />
         <span className="text-fresh">QuickPitik.</span>
@@ -143,12 +161,12 @@ export function RegisterForm() {
                 "group text-left p-4 rounded-2xl border transition-colors duration-200",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
                 active
-                  ? "border-ink bg-bone-deep"
-                  : "border-line bg-bone hover:border-slate-soft",
+                  ? "border-ink ring-1 ring-ink bg-fresh-tint/40"
+                  : "border-line bg-bone hover:border-slate-soft hover:bg-bone-deep/50",
               )}
             >
               <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum">
+                <span className="font-mono text-[12px] tracking-[0.15em] text-slate-soft tnum">
                   {pad2(idx + 1)}
                 </span>
                 <span
@@ -159,7 +177,7 @@ export function RegisterForm() {
                   aria-hidden="true"
                 />
               </div>
-              <p className="font-display text-lg text-ink leading-tight mt-3">
+              <p className="font-display font-bold text-lg text-ink leading-tight mt-3">
                 {option.label}
               </p>
               <p className="font-sans text-sm text-slate mt-1.5">
@@ -174,7 +192,7 @@ export function RegisterForm() {
         <FieldBlock>
           <label
             htmlFor="name"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="kicker"
           >
             Full name
           </label>
@@ -198,7 +216,7 @@ export function RegisterForm() {
         <FieldBlock>
           <label
             htmlFor="email"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="kicker"
           >
             Email
           </label>
@@ -222,7 +240,7 @@ export function RegisterForm() {
         <FieldBlock>
           <label
             htmlFor="password"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="kicker"
           >
             Password
             <span className="ml-2 text-slate-soft normal-case tracking-normal">
@@ -256,13 +274,13 @@ export function RegisterForm() {
       <button
         type="submit"
         disabled={isLoading}
-        className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isLoading ? "Creating account…" : "Create account →"}
       </button>
 
       <div className="border-t border-line pt-6">
-        <p className="text-center font-mono uppercase tracking-[0.2em] text-[10px] text-slate">
+        <p className="text-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
           Already have an account?{" "}
           <Link
             href={

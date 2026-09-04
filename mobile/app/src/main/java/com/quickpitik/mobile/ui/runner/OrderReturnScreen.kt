@@ -1,7 +1,5 @@
 package com.quickpitik.mobile.ui.runner
 
-import android.content.Context
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,8 +17,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
@@ -30,8 +29,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -44,16 +41,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.download.PhotoDownloader
-import com.quickpitik.mobile.data.remote.OrderPhotoDetailDto
 import com.quickpitik.mobile.data.remote.OrderDetailDto
+import com.quickpitik.mobile.data.remote.OrderPhotoDetailDto
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.BrandLogo
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.GhostCta
@@ -84,6 +82,7 @@ import java.util.Locale
 @Composable
 fun OrderReturnScreen(
     orderId: String,
+    shareToken: String? = null,
     cartViewModel: CartViewModel,
     onNavigateToOrders: () -> Unit,
     onBrowseEvents: () -> Unit,
@@ -96,8 +95,8 @@ fun OrderReturnScreen(
     val hapticFire = rememberQpHaptic()
     var bulkBusy by remember { mutableStateOf(false) }
 
-    LaunchedEffect(orderId) {
-        cartViewModel.pollOrderReturn(orderId)
+    LaunchedEffect(orderId, shareToken) {
+        cartViewModel.pollOrderReturn(orderId, shareToken)
     }
 
     val downloadOne: (OrderPhotoDetailDto) -> Unit = { photo ->
@@ -205,8 +204,10 @@ private fun ReturnTopBar(onClose: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        BrandLogo(compact = true)
         IconButton(onClick = onClose) {
             Icon(
                 imageVector = Icons.Default.Close,
@@ -368,7 +369,7 @@ private fun PhotoReturnCard(
         ) {
             if (previewSrc != null) {
                 AsyncImage(
-                    model = previewSrc,
+                    model = RetrofitClient.resolveImageUrl(previewSrc),
                     contentDescription = label,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -491,7 +492,7 @@ private fun TimeoutBody(orderId: String, onNavigateToOrders: () -> Unit) {
         )
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "PayMongo confirmed your payment, but the receipt hasn't reached us yet. Check your email in a minute — we'll send the download links the moment it lands.",
+            text = "We haven't received the payment confirmation yet — banks sometimes take a few minutes. If you completed the payment, check your email shortly; the download links arrive the moment it clears. Your order status is on the orders page.",
             style = Typography.bodyMedium,
             color = SlateSoft,
             textAlign = TextAlign.Center,

@@ -1,13 +1,15 @@
 "use client";
 
+import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useCartStore } from "@/store/cart-store";
 import { useConfirmation } from "@/hooks/use-confirmation";
+import { fetchEventDetail } from "@/lib/api-events";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
-import { cn } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 import type { CartItem } from "@/types/order";
 import {
   PhotoPreviewCard,
@@ -47,7 +49,66 @@ export function CartModal({
   const removeItem = useCartStore((s) => s.removeItem);
   const clear = useCartStore((s) => s.clear);
   const total = useCartStore((s) => s.total());
+  const syncEnabled = useCartStore((s) => s.syncEnabled);
   const { confirm } = useConfirmation();
+
+  // Guest carts carry the price captured at browse time. A signed-in runner's
+  // cart self-corrects — the server owns the row and `GET /me/cart` renders
+  // the live `photos.price_php` — but a guest has no `cart_items` row for the
+  // BE to correct, while checkout still charges the live price. So an admin
+  // re-price between browsing and checking out would bill more than the cart
+  // showed. Re-read on open.
+  //
+  // One GET per distinct event, not per photo: price is an event-level value
+  // (admin PATCH re-prices every photo under the event), so the event detail
+  // answers for the whole cart. Items with no `eventSlug` — persisted before
+  // the field existed — are skipped rather than guessed at.
+  useEffect(() => {
+    if (!isOpen || syncEnabled) return;
+    let cancelled = false;
+
+    const slugs = Array.from(
+      new Set(
+        useCartStore
+          .getState()
+          .items.map((i) => i.eventSlug)
+          .filter((s): s is string => Boolean(s)),
+      ),
+    );
+    if (slugs.length === 0) return;
+
+    void Promise.all(
+      slugs.map(async (slug) => {
+        const event = await fetchEventDetail(slug);
+        return [slug, event?.pricePerPhoto ?? null] as const;
+      }),
+    ).then((pairs) => {
+      if (cancelled) return;
+      const priceBySlug = new Map<string, number>();
+      for (const [slug, price] of pairs) {
+        if (price !== null) priceBySlug.set(slug, price);
+      }
+      if (priceBySlug.size === 0) return;
+
+      // Re-read at write time — an add or remove may have landed while the
+      // requests were in flight, and setItems replaces the whole array.
+      const current = useCartStore.getState().items;
+      let changed = false;
+      const next = current.map((item) => {
+        const price = item.eventSlug
+          ? priceBySlug.get(item.eventSlug)
+          : undefined;
+        if (price === undefined || price === item.price) return item;
+        changed = true;
+        return { ...item, price };
+      });
+      if (changed) useCartStore.getState().setItems(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, syncEnabled]);
 
   async function handleClearCart() {
     const ok = await confirm({
@@ -205,7 +266,7 @@ export function CartModal({
       >
         <header className="flex items-start justify-between gap-3 px-6 md:px-7 pt-6 pb-5 border-b border-line">
           <div>
-            <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-1.5">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-1.5">
               Your cart
             </p>
             <p className="font-display text-2xl md:text-3xl font-medium text-ink tracking-tight leading-tight">
@@ -221,7 +282,7 @@ export function CartModal({
             onClick={onClose}
             disabled={isClosing}
             aria-label="Close cart"
-            className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh disabled:opacity-40"
+            className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg
               viewBox="0 0 16 16"
@@ -257,14 +318,14 @@ export function CartModal({
 
             <footer className="border-t border-line bg-bone-deep px-6 md:px-7 py-5 md:py-6">
               <div className="flex items-baseline justify-between gap-3 mb-4">
-                <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+                <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
                   Subtotal
                 </span>
                 <span className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight tnum">
-                  ₱{total.toLocaleString()}
+                  {formatPrice(total)}
                 </span>
               </div>
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mb-5">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mb-5">
                 Watermarked previews are free. Pay once, download forever.
               </p>
               <button
@@ -276,7 +337,7 @@ export function CartModal({
                     onClose();
                   }
                 }}
-                className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep"
+                className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep"
               >
                 Continue to checkout →
               </button>
@@ -284,7 +345,7 @@ export function CartModal({
                 <button
                   type="button"
                   onClick={handleKeepBrowsing}
-                  className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors text-left sm:max-w-[60%] sm:truncate"
+                  className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors text-left sm:max-w-[60%] sm:truncate"
                   title={browseTarget.label}
                 >
                   ← {browseTarget.label}
@@ -292,7 +353,7 @@ export function CartModal({
                 <button
                   type="button"
                   onClick={handleClearCart}
-                  className="self-start sm:self-auto font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft hover:text-fresh transition-colors shrink-0"
+                  className="self-start sm:self-auto font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft hover:text-fresh transition-colors shrink-0"
                 >
                   Clear cart
                 </button>
@@ -371,30 +432,30 @@ function CartRow({
             <img
               src={item.thumbnailUrl}
               alt=""
-              className="absolute inset-0 w-full h-full object-cover"
-              draggable={false}
+              className={`absolute inset-0 w-full h-full object-cover ${PROTECTED_IMG_CLASS}`}
+              {...PROTECTED_IMG_PROPS}
             />
           ) : (
-            <span className="absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.2em] text-[8px] text-bone/40 rotate-[-18deg]">
+            <span className="absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.14em] text-[8px] text-bone/40 rotate-[-18deg]">
               QuickPitik
             </span>
           )}
           <span className="absolute inset-0 bg-ink/0 group-hover:bg-ink/25 transition-colors duration-200 flex items-center justify-center">
-            <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/0 group-hover:text-bone/95 transition-colors duration-200">
+            <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/0 group-hover:text-bone/95 transition-colors duration-200">
               View
             </span>
           </span>
         </div>
 
         <div className="flex-1 min-w-0">
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate truncate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate truncate">
             {item.eventName ?? "QuickPitik"}
           </p>
           <p className="mt-1 font-display text-lg font-medium text-ink tracking-tight tnum truncate group-hover:text-fresh transition-colors">
             {item.bib ?? "Untagged"}
           </p>
           {item.time ? (
-            <p className="mt-1 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+            <p className="mt-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
               {item.time}
             </p>
           ) : null}
@@ -402,7 +463,7 @@ function CartRow({
 
         <div className="flex flex-col items-end gap-2 shrink-0">
           <span className="font-mono text-sm text-ink tnum">
-            ₱{item.price.toLocaleString()}
+            {formatPrice(item.price)}
           </span>
         </div>
       </button>
@@ -414,7 +475,7 @@ function CartRow({
           onRemove();
         }}
         aria-label={`Remove ${item.bib ?? "untagged photo"} from cart`}
-        className="absolute right-6 md:right-7 bottom-5 inline-flex items-center gap-1 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft hover:text-fresh transition-colors focus:outline-none focus-visible:text-fresh"
+        className="absolute right-6 md:right-7 bottom-5 inline-flex items-center gap-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft hover:text-fresh transition-colors focus:outline-none focus-visible:text-fresh"
       >
         <span aria-hidden="true">✕</span>
         <span>Remove</span>
@@ -454,7 +515,7 @@ function EmptyCart({ onClose }: { onClose: () => void }) {
         onClick={onClose}
         className={cn(
           "inline-flex items-center bg-ink hover:bg-ink-soft text-bone px-6 py-3 rounded-full",
-          "font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors",
+          "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors",
         )}
       >
         Browse events →

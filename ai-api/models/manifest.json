@@ -1,0 +1,40 @@
+{
+  "version": "1.0.0",
+  "models": {
+    "face_detection": {
+      "name": "RetinaFace (det_10g)",
+      "file": "models/buffalo_l/det_10g.onnx",
+      "source": "insightface buffalo_l bundle",
+      "notes": "Downloaded automatically by insightface on first run. The doubled 'models/' is real, not a typo: FaceAnalysis(root=MODEL_DIR) appends its own 'models' directory, so with MODEL_DIR=./models the bundle lands at ./models/models/buffalo_l/. FaceEmbedder drops every model in the bundle except detection + recognition at load."
+    },
+    "face_recognition": {
+      "name": "ArcFace R50 (w600k_r50), 512-dim",
+      "file": "models/buffalo_l/w600k_r50.onnx",
+      "source": "insightface buffalo_l bundle",
+      "notes": "Downloaded automatically by insightface on first run. Same doubled-'models/' path as face_detection."
+    },
+    "bib_detection": {
+      "name": "YOLOv8n Bib Detector",
+      "file": "bib_detection/yolov8n_bib.onnx",
+      "source": "scripts/train_bib_detector.py -> scripts/export_bib_detector.py",
+      "export": { "imgsz": 640, "dynamic": false, "simplify": true },
+      "input_shape": [1, 3, 640, 640],
+      "notes": "Trained and deployed (2026-03-21) on 1,713 Roboflow-annotated event photos. Exported with a STATIC input shape, so the decode dimension never reaches the detector — Ultralytics letterboxes every input down to 640 before the ONNX session and rescales boxes back. MAX_INFERENCE_DIMENSION therefore only affects the crop resolution handed to PaddleOCR, not detection. A dynamic re-export would also need simplify=False (the simplifier folds the dynamic axis back to static — see export_blur_classifier.py) AND an imgsz argument in BibDetector, which currently passes none; measured benefit is unproven (1024 vs 1280 gave identical detections). Source checkpoint: runs/detect/detect/bib_det/weights/best.pt."
+    },
+    "bib_ocr": {
+      "name": "PaddleOCR PP-OCRv5",
+      "file": null,
+      "source": "PaddleOCR pre-trained models (paddleocr 3.x)",
+      "notes": "Not stored under models/. PaddleOCR downloads and caches its own weights outside this directory (~/.paddleocr or PADDLE_PDX_MODEL_SOURCE), so there is no artifact here to point at. file is null rather than a path that never resolves."
+    },
+    "blur_classifier": {
+      "name": "YOLOv8n-cls Blur Classifier (4-class)",
+      "file": "blur_classifier/blur_classifier.onnx",
+      "source": "scripts/train_blur_classifier.py -> scripts/export_blur_classifier.py",
+      "classes": ["defocused_blurred", "defocused_object_portrait", "motion_blurred", "sharp"],
+      "export": { "imgsz": 224, "dynamic": true, "simplify": false, "opset": 20 },
+      "input_shape": ["batch", 3, "height", "width"],
+      "notes": "Top-1 98.68%. Re-exported 2026-08-14 with dynamic=True: the batch axis is dynamic so classify_batch issues one (N,3,224,224) ONNX call instead of a per-image loop. Ultralytics also makes H/W dynamic; the wrapper always centre-crops and resizes to 224 so that is inert. Verified bit-identical to the previous static export (max abs diff 0.0) and batched-vs-per-image agreement within float32 epsilon. Measured CPU gain is small (~1.06x on 50 images) because the model is tiny and ONNX Runtime already parallelises a single inference — batching is what pays off on GPU. Optional model, loaded only if the .onnx exists. Re-run export_blur_classifier.py to regenerate; it self-verifies the dynamic axis."
+    }
+  }
+}

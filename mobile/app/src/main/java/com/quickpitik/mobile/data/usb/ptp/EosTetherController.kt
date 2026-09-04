@@ -1,3 +1,11 @@
+// UNWIRED as a controller — zero call sites as of 2026-08-14. Superseded by
+// UsbEventCaptureController, which drives the same EOS event mode without ever
+// issuing RemoteRelease (host-triggered capture needs Live View on the R6 and
+// returns Device_Busy without it — that wall is why this one was demoted).
+// Kept rather than deleted because the EosEvents parser below is the reference
+// decoding of an EOS_GetEvent payload and is worth diffing against if the live
+// path misbehaves on hardware. Never runtime-verified end-to-end.
+
 package com.quickpitik.mobile.data.usb.ptp
 
 import android.hardware.usb.UsbDevice
@@ -254,7 +262,9 @@ object EosEvents {
             val size = bb.getInt(off)
             if (size < 8) break // size 0 / terminator / malformed
             val code = bb.getInt(off + 4)
-            if (code != 0 && off + 12 <= blob.size) {
+            // size >= 12 keeps a payload-less (8-byte) record from reading the
+            // NEXT record's size field as its handle.
+            if (code != 0 && size >= 12 && off + 12 <= blob.size) {
                 val handle = bb.getInt(off + 8).toLong() and 0xFFFFFFFFL
                 events.add(EosEvent(code, handle))
             }

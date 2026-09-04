@@ -7,6 +7,7 @@ import {
   useOpenFlagsCount,
   useHiddenFlagsCount,
 } from "@/components/admin/flags-queue";
+import { Kicker } from "@/components/ui/kicker";
 import { ADMIN_FLAGS_ENABLED, ROUTES } from "@/lib/constants";
 
 // Phase 2 admin redesign — /admin/flags is the focus-mode route for the
@@ -49,11 +50,11 @@ function Header({
 }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <Kicker as="p">
         Flags · <span className="tnum">{openCount}</span> open ·{" "}
         <span className="tnum">{hiddenCount}</span> hidden
-      </p>
-      <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+      </Kicker>
+      <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Flags.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">

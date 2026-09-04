@@ -3,19 +3,23 @@ package com.quickpitik.service.orders
 import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionRequest
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionResponse
+import com.quickpitik.dto.orders.PaymongoRefundRequest
+import com.quickpitik.dto.orders.PaymongoRefundResponse
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpHeaders
+import org.springframework.http.client.SimpleClientHttpRequestFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientResponseException
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
-// Thin REST wrapper for PayMongo. Two endpoints suffice for v1:
+// Thin REST wrapper for the PayMongo checkout and refund endpoints.
 //
 //   POST /checkout_sessions             — create
-//   GET  /checkout_sessions/{id}        — retrieve (used on idempotent replay
-//                                          to recover the checkout_url)
+//   GET  /checkout_sessions/{id}        — retrieve/reconcile
+//   POST /checkout_sessions/{id}/expire — expire abandoned checkout
+//   POST/GET /refunds                    — issue/reconcile refunds
 //
 // PayMongo uses HTTP Basic with the secret key as the username and empty
 // password — no OAuth, no bearer. Errors come back as JSON envelopes
@@ -33,7 +37,14 @@ class PaymongoClient(
     }
 
     private val restClient: RestClient by lazy {
+        // Bound provider latency so request and reconciliation threads cannot
+        // hang indefinitely.
+        val requestFactory = SimpleClientHttpRequestFactory().apply {
+            setConnectTimeout(properties.connectTimeout)
+            setReadTimeout(properties.readTimeout)
+        }
         RestClient.builder()
+            .requestFactory(requestFactory)
             .baseUrl(properties.baseUrl)
             .defaultHeader(HttpHeaders.AUTHORIZATION, authHeader)
             .defaultHeader(HttpHeaders.ACCEPT, "application/json")
@@ -43,10 +54,12 @@ class PaymongoClient(
 
     fun createCheckoutSession(
         request: PaymongoCheckoutSessionRequest,
+        idempotencyKey: String,
     ): PaymongoCheckoutSessionResponse {
         return try {
             restClient.post()
                 .uri("/checkout_sessions")
+                .header("Idempotency-Key", idempotencyKey)
                 .body(request)
                 .retrieve()
                 .body(PaymongoCheckoutSessionResponse::class.java)
@@ -75,6 +88,52 @@ class PaymongoClient(
                 ex.statusCode,
                 ex.responseBodyAsString,
             )
+            throw ex
+        }
+    }
+
+    fun expireCheckoutSession(id: String): PaymongoCheckoutSessionResponse {
+        return try {
+            restClient.post()
+                .uri("/checkout_sessions/{id}/expire", id)
+                .retrieve()
+                .body(PaymongoCheckoutSessionResponse::class.java)
+                ?: throw IllegalStateException("PayMongo returned empty response while expiring $id")
+        } catch (ex: RestClientResponseException) {
+            log.error(
+                "PayMongo POST /checkout_sessions/{}/expire failed: status={} body={}",
+                id,
+                ex.statusCode,
+                ex.responseBodyAsString,
+            )
+            throw ex
+        }
+    }
+
+    fun createRefund(request: PaymongoRefundRequest, idempotencyKey: String): PaymongoRefundResponse {
+        return try {
+            restClient.post()
+                .uri("/refunds")
+                .header("Idempotency-Key", idempotencyKey)
+                .body(request)
+                .retrieve()
+                .body(PaymongoRefundResponse::class.java)
+                ?: throw IllegalStateException("PayMongo returned empty response on POST /refunds")
+        } catch (ex: RestClientResponseException) {
+            log.error("PayMongo POST /refunds failed: status={} body={}", ex.statusCode, ex.responseBodyAsString)
+            throw ex
+        }
+    }
+
+    fun retrieveRefund(id: String): PaymongoRefundResponse {
+        return try {
+            restClient.get()
+                .uri("/refunds/{id}", id)
+                .retrieve()
+                .body(PaymongoRefundResponse::class.java)
+                ?: throw IllegalStateException("PayMongo returned empty response on GET /refunds/$id")
+        } catch (ex: RestClientResponseException) {
+            log.error("PayMongo GET /refunds/{} failed: status={} body={}", id, ex.statusCode, ex.responseBodyAsString)
             throw ex
         }
     }

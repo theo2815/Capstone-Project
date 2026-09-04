@@ -1,6 +1,7 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.AiProperties
 import com.quickpitik.dto.ai.JobStatusResult
 import com.quickpitik.entity.AiIndexBatch
 import com.quickpitik.entity.AiIndexJob
@@ -51,7 +52,7 @@ class PhotoBatchIngestServiceTest {
         jobRepo = Mockito.mock(AiIndexJobRepository::class.java)
         aiClient = Mockito.mock(AiApiClient::class.java)
         publisher = Mockito.mock(ApplicationEventPublisher::class.java)
-        service = PhotoBatchIngestService(photoRepo, batchRepo, jobRepo, aiClient, AiApiProperties(), publisher)
+        service = PhotoBatchIngestService(photoRepo, batchRepo, jobRepo, aiClient, AiApiProperties(), AiProperties(), publisher)
 
         batch = AiIndexBatch(eventId = eventId, photoIds = mutableListOf(pid1, pid2))
         photo1 = batchingPhoto(pid1)

@@ -23,6 +23,10 @@ export interface PhotographerEventCoverage {
   state: EventState;
   photoCount: number;
   salesCount: number;
+  // V46 — the portfolio hides unlisted cards; the share page still resolves
+  // its coverage from this list. Optional so the registry seeds stay valid.
+  visibility?: "public" | "unlisted";
+  pricingMode?: "paid" | "free";
 }
 
 export interface PhotographerProfile {

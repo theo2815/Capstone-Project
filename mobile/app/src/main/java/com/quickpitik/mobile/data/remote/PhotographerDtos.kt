@@ -4,7 +4,8 @@ data class PaginatedResponse<T>(
     val items: List<T>,
     val total: Long,
     val offset: Int,
-    val limit: Int
+    val limit: Int,
+    val snapshotAt: String? = null,
 )
 
 data class PhotographerEventSummaryDto(
@@ -38,20 +39,36 @@ data class EarningsOverviewDto(
 
 data class PhotographerPayoutDto(
     val id: String,
+    // Deprecated backend-side in favour of requestedAt — parsed for
+    // compatibility, never rendered.
     val weekOf: String,
     val amount: Double,
     val status: String,
     val settledAt: String?,
     val method: String,
     val reference: String?,
-    val holdReason: String?
+    val holdReason: String?,
+    // When the photographer filed this request (the field clients should
+    // render — backend EarningsDtos doc-comment).
+    val requestedAt: String? = null,
 )
 
 data class PayoutBalanceDto(
     val unpaidBalance: Double,
     val minimum: Double,
     val hasOpenRequest: Boolean,
-    val openRequest: PhotographerPayoutDto?
+    val openRequest: PhotographerPayoutDto?,
+    // Backend-authoritative primary payout account (null = none configured).
+    // The request-payout CTA gates on THIS, not on any client-side settings
+    // state — the field exists precisely so a client can't offer the CTA and
+    // then eat a PAYOUT_NO_ACCOUNT (backend EarningsDtos.kt:147-154).
+    val primaryAccount: PayoutBalanceAccountDto? = null
+)
+
+data class PayoutBalanceAccountDto(
+    val method: String,
+    val accountNumber: String,
+    val accountName: String
 )
 
 data class PhotographerTransactionDto(
@@ -132,6 +149,58 @@ data class RegionPatchRequest(
     val provinceCode: String
 )
 
+/**
+ * Body for `POST /me/photographer/events/{id}/photos/exists` — the dedup
+ * pre-flight. Ask which of these SHA-256s the backend already holds before
+ * spending bandwidth uploading them. Backend caps the list at 500 and rejects
+ * anything that is not 64 hex characters.
+ */
+data class PhotoExistsRequest(
+    val hashes: List<String>
+)
+
+/**
+ * One result per requested hash. [status] is one of:
+ *  - `new`             — not present for this photographer; upload it
+ *  - `same_event`      — already in THIS event; uploading is a no-op, skip
+ *  - `different_event` — in another of the photographer's events; an upload
+ *                        would be rejected 409 ([eventName] names the holder)
+ */
+data class PhotoExistsResult(
+    val hash: String,
+    val status: String,
+    val eventName: String? = null
+)
+
+data class PhotoExistsResponse(
+    val results: List<PhotoExistsResult>
+)
+
+/**
+ * `GET /api/v1/regions` — the canonical PH region + province list. Mirrors
+ * backend dto/reference/RegionDto.
+ *
+ * Until 2026-08-16 this screen rendered a hardcoded 75-line copy while the
+ * website carried a third copy of its own, so a region added backend-side
+ * reached neither client. The backend owns the list; both clients read it.
+ *
+ * Public endpoint, and the response carries `Cache-Control: max-age=1d`.
+ * `shortName`/`group` are sent by the backend and kept here to match the wire
+ * shape even though this screen currently renders only `name`.
+ */
+data class RegionDto(
+    val code: String,
+    val name: String,
+    val shortName: String,
+    val group: String,
+    val provinces: List<ProvinceDto>
+)
+
+data class ProvinceDto(
+    val code: String,
+    val name: String
+)
+
 data class CreateSocialRequest(
     val platform: String,
     val url: String
@@ -162,6 +231,14 @@ data class PhotographerMessageDto(
     val readAt: String?
 )
 
+// Push frame on /ws/me/photographer/notifications. Built by
+// AdminDecisionLogService.pushMessage from the same field set as the REST DTO
+// above, so it deserializes straight in. Mirrors RunnerMessageFrame.
+data class PhotographerMessageFrame(
+    val type: String?,
+    val message: PhotographerMessageDto?,
+)
+
 data class MarkAllReadResponse(
     val markedRead: Int
 )
@@ -179,6 +256,15 @@ data class PhotographerLibraryPhotoDto(
     val tone: Int,
     val span: String,
     val thumbnailUrl: String? = null
+)
+
+// Presigned URL for the photographer's own un-watermarked original — the
+// thumbnailUrl above is the watermarked variant runners see. Mirrors backend
+// PhotographerDownloadDto; expiresAt is ISO-8601 and unused today (the link is
+// consumed immediately by PhotoDownloader), kept so the shape matches the wire.
+data class PhotographerDownloadDto(
+    val url: String,
+    val expiresAt: String? = null
 )
 
 // --- Public photographer profile (GET /public/photographers/{handle}) ---
@@ -206,4 +292,30 @@ data class PhotographerProfileDto(
     val cover: CoverSourceDto? = null,
     val watermarkLabel: String? = null,
     val events: List<PhotographerEventCoverageDto> = emptyList()
+)
+
+// ── Direct-to-storage upload (backend 2026-09-02) ─────────────────────────
+// begin → PUT the file to `uploadUrl` → commit. `mode` = "direct" | "multipart"
+// (local-disk dev backend — use the classic endpoint) | "existing" (bytes are
+// already in this event; `existing` is the photo, nothing to upload).
+data class DirectUploadBeginRequest(
+    val contentHash: String,
+    val contentType: String,
+    val sizeBytes: Long,
+)
+
+data class DirectUploadBeginResponse(
+    val mode: String? = null,
+    val photoId: String? = null,
+    val key: String? = null,
+    val uploadUrl: String? = null,
+    val expiresInSeconds: Long? = null,
+    val existing: UploadedPhotoDto? = null,
+)
+
+data class DirectUploadCommitRequest(
+    val photoId: String,
+    val key: String,
+    val contentHash: String,
+    val contentType: String,
 )

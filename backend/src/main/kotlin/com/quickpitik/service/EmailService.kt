@@ -25,12 +25,12 @@ class EmailService(
     // RESEND_API_KEY to a real `re_…` key.
     private val devMode: Boolean = resendProperties.apiKey.startsWith("re_dev-only")
 
-    fun sendPasswordResetEmail(toEmail: String, resetToken: String) {
-        val resetUrl = "$frontendOrigin/reset-password?token=" +
-            URLEncoder.encode(resetToken, StandardCharsets.UTF_8)
-
+    // Carries the 6-digit OTP (V37) — no link, so this is the one mail that
+    // does not depend on frontendOrigin. The production path never logs the
+    // code; the dev stub does, as the local-testing affordance.
+    fun sendPasswordResetEmail(toEmail: String, resetCode: String) {
         if (devMode) {
-            log.info("[EMAIL STUB] password reset for {} — link: {}", toEmail, resetUrl)
+            log.info("[EMAIL STUB] password reset for {} — code: {}", toEmail, resetCode)
             return
         }
 
@@ -40,8 +40,8 @@ class EmailService(
                 ResendSendEmailRequest(
                     from = sender,
                     to = listOf(toEmail),
-                    subject = "Reset your QuickPitik password",
-                    html = renderHtml(toEmail, resetUrl),
+                    subject = "Your QuickPitik password reset code",
+                    html = renderHtml(toEmail, resetCode),
                 ),
             )
             log.info("Password reset email sent · to={} resendId={}", toEmail, response.id)
@@ -55,10 +55,256 @@ class EmailService(
         }
     }
 
-    private fun renderHtml(toEmail: String, resetUrl: String): String {
+    // Goes to the NEW address, never the old one — receiving it is the proof
+    // that the requester actually controls that inbox. Unlike the reset mail,
+    // a delivery failure here MUST be visible: EmailChangeService is not
+    // anti-enumeration silent (the caller already proved who they are with
+    // their password), and silently swallowing this would leave the user
+    // waiting for a confirmation that never comes.
+    fun sendEmailChangeConfirmation(toEmail: String, changeToken: String) {
+        val confirmUrl = "$frontendOrigin/confirm-email-change?token=" +
+            URLEncoder.encode(changeToken, StandardCharsets.UTF_8)
+
+        if (devMode) {
+            log.info("[EMAIL STUB] email change for {} — link: {}", toEmail, confirmUrl)
+            return
+        }
+
+        val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
+        val response = resendClient.send(
+            ResendSendEmailRequest(
+                from = sender,
+                to = listOf(toEmail),
+                subject = "Confirm your new QuickPitik email",
+                html = renderEmailChangeHtml(toEmail, confirmUrl),
+            ),
+        )
+        log.info("Email-change confirmation sent · to={} resendId={}", toEmail, response.id)
+    }
+
+    // Sent AFTER_COMMIT of a registration (EmailVerificationListener), never
+    // inline. Failures are swallowed the way the password-reset mail's are, for
+    // a stronger reason: verification is advisory, so a lost mail costs the user
+    // a flag, not access. `POST /auth/resend-verification` is the retry.
+    fun sendEmailVerification(toEmail: String, verificationToken: String) {
+        val verifyUrl = "$frontendOrigin/verify-email?token=" +
+            URLEncoder.encode(verificationToken, StandardCharsets.UTF_8)
+
+        if (devMode) {
+            log.info("[EMAIL STUB] verification for {} — link: {}", toEmail, verifyUrl)
+            return
+        }
+
+        val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
+        try {
+            val response = resendClient.send(
+                ResendSendEmailRequest(
+                    from = sender,
+                    to = listOf(toEmail),
+                    subject = "Confirm your QuickPitik email",
+                    html = renderVerificationHtml(toEmail, verifyUrl),
+                ),
+            )
+            log.info("Verification email sent · to={} resendId={}", toEmail, response.id)
+        } catch (ex: Exception) {
+            log.error("Verification email failed · to={} err={}", toEmail, ex.message, ex)
+        }
+    }
+
+    // Sent by EventPhotosReadyNotifier when the date-based sweep finds the
+    // runner's matched photos. Unlike the reset/verification mails, a failure
+    // here MUST propagate: the notifier claimed notified_at before calling, and
+    // its catch releases that claim so the next sweep retries. Swallowing here
+    // would strand the claim and the runner would never be told.
+    fun sendEventPhotosReadyEmail(
+        toEmail: String,
+        runnerName: String,
+        eventName: String,
+        eventSlug: String,
+        matchCount: Int,
+    ) {
+        // Slug is [a-z0-9-] (events.slug) and ?mine=1 is static, so the URL is
+        // already safe — no URLEncoder needed.
+        val url = "$frontendOrigin/events/$eventSlug?mine=1"
+
+        if (devMode) {
+            log.info("[EMAIL STUB] photos ready for {} — link: {}", toEmail, url)
+            return
+        }
+
+        val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
+        val response = resendClient.send(
+            ResendSendEmailRequest(
+                from = sender,
+                to = listOf(toEmail),
+                subject = "Your photos from $eventName are ready",
+                html = renderEventPhotosReadyHtml(runnerName, eventName, matchCount, url),
+            ),
+        )
+        log.info("Photos-ready email sent · to={} resendId={}", toEmail, response.id)
+    }
+
+    private fun renderVerificationHtml(toEmail: String, verifyUrl: String): String {
         return """
 <!DOCTYPE html>
-<html><head><meta charset="utf-8" /><title>Reset your QuickPitik password</title></head>
+<html><head><meta charset="utf-8" /><title>Confirm your QuickPitik email</title></head>
+<body style="margin:0;padding:0;background:#f7f5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;">
+  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f7f5ee;padding:32px 16px;">
+    <tr><td align="center">
+      <table cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#fafaf6;border-radius:16px;padding:36px 32px;border:1px solid #e5e2d8;">
+        <tr><td>
+          <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:11px;color:#7a7a7a;margin:0 0 10px;">
+            QuickPitik · Welcome
+          </p>
+          <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:32px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.05;color:#1a1a1a;">
+            Confirm your email.
+          </h1>
+          <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 28px;">
+            Thanks for joining QuickPitik. Tap below to confirm <strong>${escapeHtml(toEmail)}</strong> —
+            the link works for 24 hours. Your account is already active either way; confirming just
+            lets us reach you about your photos and orders.
+          </p>
+
+          <table cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
+            <tr><td style="padding:6px 0;">
+              <a href="${escapeUrl(verifyUrl)}"
+                 style="display:inline-block;background:#3b8c5f;color:#fafaf6;
+                        text-decoration:none;padding:16px 32px;border-radius:999px;
+                        font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+                        text-transform:uppercase;letter-spacing:0.2em;font-size:13px;
+                        font-weight:500;">
+                Confirm my email  &rarr;
+              </a>
+            </td></tr>
+          </table>
+
+          <hr style="border:none;border-top:1px solid #e5e2d8;margin:28px 0;" />
+
+          <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
+            If you didn't sign up for QuickPitik, ignore this email — no account action is needed.
+          </p>
+        </td></tr>
+      </table>
+      <p style="text-align:center;font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:10px;color:#a8a8a8;margin:24px 0 0;">
+        QuickPitik · Cebu, Philippines
+      </p>
+    </td></tr>
+  </table>
+</body></html>
+        """.trimIndent()
+    }
+
+    private fun renderEventPhotosReadyHtml(
+        runnerName: String,
+        eventName: String,
+        matchCount: Int,
+        url: String,
+    ): String {
+        val greeting = runnerName.trim().ifBlank { "there" }
+        val photoWord = if (matchCount == 1) "photo" else "photos"
+        return """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /><title>Your QuickPitik photos are ready</title></head>
+<body style="margin:0;padding:0;background:#f7f5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;">
+  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f7f5ee;padding:32px 16px;">
+    <tr><td align="center">
+      <table cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#fafaf6;border-radius:16px;padding:36px 32px;border:1px solid #e5e2d8;">
+        <tr><td>
+          <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:11px;color:#7a7a7a;margin:0 0 10px;">
+            QuickPitik · Your photos
+          </p>
+          <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:32px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.05;color:#1a1a1a;">
+            They're ready.
+          </h1>
+          <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 28px;">
+            Hi ${escapeHtml(greeting)} — we found <strong style="font-variant-numeric:tabular-nums;">$matchCount</strong> $photoWord of you at
+            <strong>${escapeHtml(eventName)}</strong>. Tap below to see just your shots.
+          </p>
+
+          <table cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
+            <tr><td style="padding:6px 0;">
+              <a href="${escapeUrl(url)}"
+                 style="display:inline-block;background:#3b8c5f;color:#fafaf6;
+                        text-decoration:none;padding:16px 32px;border-radius:999px;
+                        font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+                        text-transform:uppercase;letter-spacing:0.2em;font-size:13px;
+                        font-weight:500;">
+                See my photos  &rarr;
+              </a>
+            </td></tr>
+          </table>
+
+          <hr style="border:none;border-top:1px solid #e5e2d8;margin:28px 0;" />
+
+          <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
+            Only you see this view — the photos are matched to your selfie. If this wasn't you, ignore this email.
+          </p>
+        </td></tr>
+      </table>
+      <p style="text-align:center;font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:10px;color:#a8a8a8;margin:24px 0 0;">
+        QuickPitik · Cebu, Philippines
+      </p>
+    </td></tr>
+  </table>
+</body></html>
+        """.trimIndent()
+    }
+
+    private fun renderEmailChangeHtml(toEmail: String, confirmUrl: String): String {
+        return """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /><title>Confirm your new QuickPitik email</title></head>
+<body style="margin:0;padding:0;background:#f7f5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;">
+  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f7f5ee;padding:32px 16px;">
+    <tr><td align="center">
+      <table cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#fafaf6;border-radius:16px;padding:36px 32px;border:1px solid #e5e2d8;">
+        <tr><td>
+          <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:11px;color:#7a7a7a;margin:0 0 10px;">
+            QuickPitik · Email change
+          </p>
+          <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:32px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.05;color:#1a1a1a;">
+            Confirm this address.
+          </h1>
+          <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 28px;">
+            Someone asked to make <strong>${escapeHtml(toEmail)}</strong> the sign-in email for their
+            QuickPitik account. Tap below to confirm — the link works for 1 hour. Until you do,
+            the account keeps its current address.
+          </p>
+
+          <table cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
+            <tr><td style="padding:6px 0;">
+              <a href="${escapeUrl(confirmUrl)}"
+                 style="display:inline-block;background:#3b8c5f;color:#fafaf6;
+                        text-decoration:none;padding:16px 32px;border-radius:999px;
+                        font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+                        text-transform:uppercase;letter-spacing:0.2em;font-size:13px;
+                        font-weight:500;">
+                Confirm this email  →
+              </a>
+            </td></tr>
+          </table>
+
+          <hr style="border:none;border-top:1px solid #e5e2d8;margin:28px 0;" />
+
+          <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
+            If you weren't expecting this, ignore it — nothing changes, and whoever asked
+            cannot sign in with this address.
+          </p>
+        </td></tr>
+      </table>
+      <p style="text-align:center;font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:10px;color:#a8a8a8;margin:24px 0 0;">
+        QuickPitik · Cebu, Philippines
+      </p>
+    </td></tr>
+  </table>
+</body></html>
+        """.trimIndent()
+    }
+
+    private fun renderHtml(toEmail: String, resetCode: String): String {
+        return """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /><title>Your QuickPitik password reset code</title></head>
 <body style="margin:0;padding:0;background:#f7f5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;">
   <table cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f7f5ee;padding:32px 16px;">
     <tr><td align="center">
@@ -68,30 +314,24 @@ class EmailService(
             QuickPitik · Password reset
           </p>
           <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:32px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.05;color:#1a1a1a;">
-            Reset your password.
+            Your reset code.
           </h1>
           <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 28px;">
             Someone (hopefully you) asked to reset the QuickPitik password for
-            <strong>${escapeHtml(toEmail)}</strong>. Tap below to choose a new one — the link works for 15 minutes.
+            <strong>${escapeHtml(toEmail)}</strong>. Enter this code on the reset screen —
+            it works for 10 minutes. Don't share it with anyone.
           </p>
 
-          <table cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
-            <tr><td style="padding:6px 0;">
-              <a href="${escapeUrl(resetUrl)}"
-                 style="display:inline-block;background:#3b8c5f;color:#fafaf6;
-                        text-decoration:none;padding:16px 32px;border-radius:999px;
-                        font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
-                        text-transform:uppercase;letter-spacing:0.2em;font-size:13px;
-                        font-weight:500;">
-                Set a new password  →
-              </a>
-            </td></tr>
-          </table>
+          <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+                    font-size:36px;letter-spacing:0.35em;font-weight:600;color:#1a1a1a;
+                    margin:0 0 28px;">
+            ${escapeHtml(resetCode)}
+          </p>
 
           <hr style="border:none;border-top:1px solid #e5e2d8;margin:28px 0;" />
 
           <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
-            If you didn't request this, ignore this email — your password stays the same. The link expires automatically.
+            If you didn't request this, ignore this email — your password stays the same. The code expires automatically.
           </p>
         </td></tr>
       </table>

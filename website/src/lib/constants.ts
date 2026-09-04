@@ -1,6 +1,11 @@
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1";
 
+// Google OAuth Web client ID (public identifier, not a secret). Unset hides
+// the "Continue with Google" button entirely — the backend's GOOGLE_CLIENT_ID
+// env is the same value, so the two surfaces go dark together.
+export const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
+
 export const ROUTES = {
   HOME: "/",
   RUNNERS: "/runners",
@@ -8,8 +13,16 @@ export const ROUTES = {
   LOGIN: "/login",
   REGISTER: "/register",
   FORGOT_PASSWORD: "/forgot-password",
+  // Target of the confirmation link in the change-email mail. The backend
+  // builds it as `${frontendOrigin}/confirm-email-change?token=…`, so this
+  // path is a contract with backend EmailService — don't rename it alone.
+  CONFIRM_EMAIL_CHANGE: "/confirm-email-change",
+  // Same contract, different mail: the backend builds this one as
+  // `${frontendOrigin}/verify-email?token=…` in the registration email.
+  VERIFY_EMAIL: "/verify-email",
   ONBOARDING: "/onboarding",
   EVENTS: "/events",
+  VERIFY: "/verify",
   ORDERS: "/orders",
   PROFILE: "/profile",
   ACCOUNT: "/account",
@@ -24,6 +37,7 @@ export const ROUTES = {
   ADMIN_INBOX: "/admin/inbox",
   ADMIN_OVERVIEW: "/admin/overview",
   ADMIN_EVENTS: "/admin/events",
+  ADMIN_EVENT_REQUESTS: "/admin/event-requests",
   ADMIN_VERIFICATIONS: "/admin/verifications",
   ADMIN_DISPUTES: "/admin/disputes",
   ADMIN_PAYOUTS: "/admin/payouts",
@@ -47,4 +61,4 @@ export const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 // to revive the rail row, KPI tile, inbox chip, palette entries, and the
 // /admin/flags focus-mode route. Underlying store + queue body are kept
 // intact so reviving needs no code change beyond this constant.
-export const ADMIN_FLAGS_ENABLED: boolean = false;
+export const ADMIN_FLAGS_ENABLED: boolean = true;

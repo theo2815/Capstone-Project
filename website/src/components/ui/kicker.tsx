@@ -18,8 +18,10 @@ type KickerProps<C extends ElementType> = KickerOwnProps & {
 
 // Quiet Studio mono-uppercase eyebrow. Bakes in the comfort-safe floor with
 // a graduated responsive bump:
-//   sm: 13px (≤390) / 14px (≥400 big phones) / 12px (≥md desktop), tracking 0.18em
-//   md: 14px (≤390) / 15px (≥400 big phones) / 13px (≥md desktop), tracking 0.22em
+//   sm: 14px (≤390) / 15px (≥400 big phones) / 13px (≥md desktop), tracking 0.14em
+//   md: 15px (≤390) / 16px (≥400 big phones) / 14px (≥md desktop), tracking 0.16em
+// Retuned 2026-08-26 (readability pass): +1px per step, tracking down — bigger
+// yet still width-safe at 375px. Kept in lockstep with .kicker in globals.css.
 // The 400 px breakpoint catches iPhone XR/11/12/13/14/15 (390-430 px) and most
 // Android phones — bigger viewport → kickers feel relatively smaller in context,
 // so they need +1 px to match the comfort threshold SE-class phones hit at 13.
@@ -30,7 +32,7 @@ type KickerProps<C extends ElementType> = KickerOwnProps & {
 // tone="active"  → text-fresh, reserved for the one-fresh-per-viewport accent.
 //
 // Replaces hand-rolled chains like:
-//   <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+//   <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
 // with:
 //   <Kicker>…</Kicker>
 //
@@ -43,9 +45,15 @@ const TONE_CLASS: Record<KickerTone, string> = {
   active: "text-fresh",
 };
 
-const SIZE_CLASS: Record<KickerSize, string> = {
-  sm: "text-[13px] min-[400px]:text-[14px] md:text-[12px] tracking-[0.18em]",
-  md: "text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.22em]",
+// Exported because the floor has to reach places a <Kicker> element cannot:
+// the tooltip bubble, the dropdown trigger, and a conditional class string in
+// DropdownItem that is never an element of its own. Size and tracking travel
+// together on purpose — bumping the size while leaving tracking at 0.25em
+// inflates mono-uppercase past its container and re-opens the 375px wrap bug
+// in ui-pitfalls.md (2026-05-06).
+export const KICKER_SIZE_CLASS: Record<KickerSize, string> = {
+  sm: "text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.14em]",
+  md: "text-[15px] min-[400px]:text-[16px] md:text-[14px] tracking-[0.16em]",
 };
 
 export function Kicker<C extends ElementType = "span">({
@@ -62,7 +70,7 @@ export function Kicker<C extends ElementType = "span">({
     <Component
       className={cn(
         "font-mono uppercase",
-        SIZE_CLASS[size],
+        KICKER_SIZE_CLASS[size],
         TONE_CLASS[tone],
         tnum && "tnum",
         className,

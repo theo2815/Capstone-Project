@@ -11,19 +11,41 @@ object ErrorCodes {
     const val VALIDATION_FAILED = "VALIDATION_FAILED"
     const val INTERNAL_ERROR = "INTERNAL_ERROR"
     const val NOT_FOUND = "NOT_FOUND"
+    const val METHOD_NOT_ALLOWED = "METHOD_NOT_ALLOWED"
 
     const val EVENT_NOT_FOUND = "EVENT_NOT_FOUND"
     const val EVENT_ARCHIVED = "EVENT_ARCHIVED"
     const val EVENT_NOT_UPLOADABLE = "EVENT_NOT_UPLOADABLE"
 
     const val PHOTO_NOT_FOUND = "PHOTO_NOT_FOUND"
+    // Free events (V46): a ₱0 photo is downloaded from the gallery, never carted.
+    const val PHOTO_FREE = "PHOTO_FREE"
     const val PHOTO_DUPLICATE_SAME_EVENT = "PHOTO_DUPLICATE_SAME_EVENT"
+    // Direct-to-storage upload (2026-09-02): commit named an object that
+    // isn't in storage (PUT never happened or expired), or a key that doesn't
+    // belong to the photo id issued at begin.
+    const val UPLOAD_OBJECT_MISSING = "UPLOAD_OBJECT_MISSING"
+    const val UPLOAD_KEY_MISMATCH = "UPLOAD_KEY_MISMATCH"
     const val PHOTO_DUPLICATE_DIFFERENT_EVENT = "PHOTO_DUPLICATE_DIFFERENT_EVENT"
     const val SELFIE_REQUIRED = "SELFIE_REQUIRED"
     const val SELFIE_REJECTED = "SELFIE_REJECTED"
     const val SELFIE_NOT_FOUND = "SELFIE_NOT_FOUND"
     const val SELFIE_LIMIT_REACHED = "SELFIE_LIMIT_REACHED"
     const val SAME_PASSWORD = "SAME_PASSWORD"
+    const val WEAK_PASSWORD = "WEAK_PASSWORD"
+    const val EMAIL_TAKEN = "EMAIL_TAKEN"
+    const val SAME_EMAIL = "SAME_EMAIL"
+    const val INVALID_EMAIL_CHANGE_TOKEN = "INVALID_EMAIL_CHANGE_TOKEN"
+    const val INVALID_VERIFICATION_TOKEN = "INVALID_VERIFICATION_TOKEN"
+    const val INVALID_RESET_CODE = "INVALID_RESET_CODE"
+    const val INVALID_RESET_TOKEN = "INVALID_RESET_TOKEN"
+    const val EMAIL_ALREADY_VERIFIED = "EMAIL_ALREADY_VERIFIED"
+    // Google sign-in (V38). ROLE_REQUIRED (422) is the "new Google user, pick
+    // RUNNER/PHOTOGRAPHER first" signal both clients branch on.
+    const val ROLE_REQUIRED = "ROLE_REQUIRED"
+    const val INVALID_GOOGLE_TOKEN = "INVALID_GOOGLE_TOKEN"
+    const val GOOGLE_EMAIL_UNVERIFIED = "GOOGLE_EMAIL_UNVERIFIED"
+    const val GOOGLE_AUTH_UNAVAILABLE = "GOOGLE_AUTH_UNAVAILABLE"
     const val LOW_CONFIDENCE = "LOW_CONFIDENCE"
 
     const val CART_ITEM_PRICE_CHANGED = "CART_ITEM_PRICE_CHANGED"
@@ -32,9 +54,19 @@ object ErrorCodes {
     const val PAYMENT_FAILED = "PAYMENT_FAILED"
     const val INVALID_IDEMPOTENCY_KEY = "INVALID_IDEMPOTENCY_KEY"
     const val IDEMPOTENT_REPLAY_IN_PROGRESS = "IDEMPOTENT_REPLAY_IN_PROGRESS"
+    // Photographer coupons (V45). INVALID covers unknown + inactive so a guess
+    // can't tell a switched-off code from a nonexistent one.
+    const val COUPON_INVALID = "COUPON_INVALID"
+    const val COUPON_EXPIRED = "COUPON_EXPIRED"
+    const val COUPON_NOT_APPLICABLE = "COUPON_NOT_APPLICABLE"
+    const val COUPON_CODE_TAKEN = "COUPON_CODE_TAKEN"
+    const val COUPON_USAGE_LIMIT_REACHED = "COUPON_USAGE_LIMIT_REACHED"
 
     const val PHOTOGRAPHER_NOT_VERIFIED = "PHOTOGRAPHER_NOT_VERIFIED"
     const val ACCOUNT_SUSPENDED = "ACCOUNT_SUSPENDED"
+    // Temporary, self-clearing (V29) — unlike ACCOUNT_SUSPENDED, which is an
+    // admin decision and only an admin can lift.
+    const val ACCOUNT_LOCKED = "ACCOUNT_LOCKED"
     const val WATERMARK_MISSING = "WATERMARK_MISSING"
     const val INCOMPLETE_PROFILE = "INCOMPLETE_PROFILE"
     const val RESERVED_HANDLE = "RESERVED_HANDLE"

@@ -5,11 +5,14 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
 import com.quickpitik.dto.admin.AdminListEventDto
+import com.quickpitik.dto.admin.AdminReindexResponseDto
 import com.quickpitik.dto.admin.CreateAdminEventRequest
+import com.quickpitik.dto.admin.RejectEventRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminEventService
+import jakarta.validation.Valid
 import org.springframework.http.MediaType
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -18,6 +21,7 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
@@ -33,9 +37,12 @@ class AdminEventsController(
     private val adminEventService: AdminEventService,
 ) {
 
+    // `review=queue` (V46) lists photographer-owned events awaiting a
+    // decision instead of the full pipeline.
     @GetMapping
     fun list(
         @RequestParam(required = false) state: String?,
+        @RequestParam(required = false) review: String?,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
         @RequestParam(required = false) q: String?,
@@ -48,8 +55,22 @@ class AdminEventsController(
         @Suppress("UNUSED_VARIABLE") val _q = q
         @Suppress("UNUSED_VARIABLE") val _dateFrom = dateFrom
         @Suppress("UNUSED_VARIABLE") val _dateTo = dateTo
-        return adminEventService.list(state, PaginationParams.of(offset, limit))
+        return adminEventService.list(state, review, PaginationParams.of(offset, limit))
     }
+
+    // ── Photographer-owned event review (V46) ────────────────────────────
+    @PostMapping("/{eventId}/approve")
+    fun approve(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+    ): AdminListEventDto = adminEventService.approve(principal.userId, eventId)
+
+    @PostMapping("/{eventId}/reject")
+    fun reject(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody body: RejectEventRequest,
+    ): AdminListEventDto = adminEventService.reject(principal.userId, eventId, body.reason)
 
     // multipart/form-data — text fields ride as @RequestParam (read as
     // plain strings from the multipart parts) and the optional `cover`
@@ -64,6 +85,8 @@ class AdminEventsController(
         @RequestParam("date") date: String,
         @RequestParam("location") location: String,
         @RequestParam("pricePerPhoto", required = false) pricePerPhoto: String?,
+        @RequestParam("organizerName", required = false) organizerName: String?,
+        @RequestParam("description", required = false) description: String?,
         @RequestPart("cover", required = false) cover: MultipartFile?,
     ): AdminListEventDto {
         val req = CreateAdminEventRequest(
@@ -71,7 +94,8 @@ class AdminEventsController(
             date = date.trim(),
             location = location.trim(),
             pricePerPhoto = parsePrice(pricePerPhoto) ?: BigDecimal.ZERO,
-            bannerUrl = null,
+            organizerName = organizerName?.trim(),
+            description = description?.trim(),
         )
         if (req.title.isBlank()) {
             throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "title is required", field = "title")
@@ -100,6 +124,8 @@ class AdminEventsController(
         @RequestParam(required = false) date: String?,
         @RequestParam(required = false) location: String?,
         @RequestParam(required = false) pricePerPhoto: String?,
+        @RequestParam(required = false) organizerName: String?,
+        @RequestParam(required = false) description: String?,
         @RequestParam(required = false) removeCover: Boolean?,
         @RequestPart("cover", required = false) cover: MultipartFile?,
     ): AdminListEventDto {
@@ -108,6 +134,8 @@ class AdminEventsController(
             date = date?.trim()?.takeIf { it.isNotEmpty() },
             location = location?.trim()?.takeIf { it.isNotEmpty() },
             pricePerPhoto = parsePrice(pricePerPhoto),
+            organizerName = organizerName?.trim()?.takeIf { it.isNotEmpty() },
+            description = description?.trim()?.takeIf { it.isNotEmpty() },
         )
         val coverUpload = cover?.takeUnless { it.isEmpty }?.let {
             AdminEventService.CoverUpload(bytes = it.bytes, contentType = it.contentType)
@@ -126,6 +154,17 @@ class AdminEventsController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
     ): AdminEventDeleteResponseDto = adminEventService.delete(principal.userId, eventId)
+
+    // Re-drive AI indexing for this event's photos. Default requeues
+    // FAILED/PARTIAL (outage recovery); ?all=true also requeues INDEXED +
+    // SKIPPED (provider flip, or AI enabled after the photos were uploaded).
+    @PostMapping("/{eventId}/photos/reindex")
+    fun reindexPhotos(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @RequestParam(required = false) all: Boolean?,
+    ): AdminReindexResponseDto =
+        AdminReindexResponseDto(requeued = adminEventService.reindexPhotos(principal.userId, eventId, all == true))
 
     // FormData round-trips floats as strings ("80" or "80.00"). Blank /
     // missing means "no change" on PATCH and "default to 0" on POST. Surface

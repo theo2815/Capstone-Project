@@ -1,9 +1,11 @@
 "use client";
 
+import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image";
 import { useEffect, useState, type MouseEvent } from "react";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
-import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import { cn, copyToClipboard, triggerDownload } from "@/lib/utils";
 import type { EventDetail } from "@/types/event";
 import type { MockPhoto } from "@/types/photo";
 
@@ -16,8 +18,10 @@ const TONE_COLORS = [
 
 // Single mosaic tile used by every browse-style photo grid (runner browse +
 // per-photographer event gallery). Span comes from the photo (`wide` →
-// row-span-1, `default` → row-span-2). Owns its own +cart / buy → buttons that
-// fade in on hover; tile click opens the parent's preview via `onOpen`.
+// row-span-1, `default` → row-span-2). Owns its own always-visible Cart / Buy
+// pills (Buy is the heavier ink pill — fresh is reserved for the in-cart
+// state so a full grid doesn't flood the accent); tile click opens the
+// parent's preview via `onOpen`.
 export function PhotoMosaicTile({
   event,
   photo,
@@ -36,6 +40,7 @@ export function PhotoMosaicTile({
   const removeItem = useCartStore((s) => s.removeItem);
   const startExpressCheckout = useUiStore((s) => s.startExpressCheckout);
   const openCheckout = useUiStore((s) => s.openCheckout);
+  const { showToast } = useToast();
 
   const wide = photo.span === "wide";
   const colorIdx = photo.tone % TONE_COLORS.length;
@@ -80,7 +85,19 @@ export function PhotoMosaicTile({
     addItem(cartPayload);
   };
 
-  const fadeRule = "opacity-100 md:opacity-60 md:group-hover:opacity-100";
+  // The photographer's coupon rides on every one of their tiles so a runner
+  // sees the offer before the lightbox. Ink, not fresh — the grid's single
+  // accent stays reserved for the in-cart state.
+  const handleCopyCoupon = async (e: MouseEvent) => {
+    e.stopPropagation();
+    if (!photo.couponCode) return;
+    const ok = await copyToClipboard(photo.couponCode);
+    showToast(
+      ok
+        ? { kind: "success", message: `Code ${photo.couponCode} copied. Paste it at checkout.` }
+        : { kind: "error", message: "Couldn't copy the code." },
+    );
+  };
 
   return (
     <div
@@ -112,6 +129,8 @@ export function PhotoMosaicTile({
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={photo.imageUrl ?? ""}
+              loading="lazy"
+              decoding="async"
               alt={
                 photo.alt ??
                 (photo.bib
@@ -122,21 +141,58 @@ export function PhotoMosaicTile({
               onError={() => setImageFailed(true)}
               className={cn(
                 "absolute inset-0 w-full h-full object-cover transition-opacity duration-500",
+                PROTECTED_IMG_CLASS,
                 imageLoaded ? "opacity-100" : "opacity-0",
               )}
-              draggable={false}
+              {...PROTECTED_IMG_PROPS}
             />
           )}
           <span
             aria-hidden="true"
             className="absolute inset-0 flex items-center justify-center bg-ink/0 group-hover:bg-ink/30 transition-colors duration-300"
           >
-            <span className="font-mono uppercase tracking-[0.3em] text-[10px] text-bone/0 group-hover:text-bone/95 transition-colors duration-300">
+            <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-bone/0 group-hover:text-bone/95 transition-colors duration-300">
               View →
             </span>
           </span>
         </div>
       </button>
+      {photo.couponCode && photo.couponPercentOff != null && (
+        <button
+          type="button"
+          onClick={handleCopyCoupon}
+          aria-label={`Copy coupon ${photo.couponCode} for ${photo.couponPercentOff}% off this photographer's photos`}
+          className={cn(
+            "absolute top-3 left-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-mono text-[12px] tnum whitespace-nowrap",
+            "bg-ink/85 backdrop-blur-sm text-surface shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)]",
+            "transition-colors duration-200 hover:bg-ink",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+          )}
+        >
+          <span>−{photo.couponPercentOff}%</span>
+          <span className="hidden sm:inline">· {photo.couponCode}</span>
+        </button>
+      )}
+      {photo.free && photo.downloadUrl ? (
+        // Free event (V46): the original is anyone's — one ink pill, no cart.
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            triggerDownload(photo.downloadUrl!);
+          }}
+          aria-label={`Download ${photo.bib ?? "untagged photo"} for free`}
+          className={cn(
+            "absolute bottom-3 right-3 inline-flex items-center gap-1 px-3 py-1.5 rounded-full font-display font-bold text-[12px] whitespace-nowrap",
+            "shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)] transition-colors duration-200",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+            "bg-ink/85 backdrop-blur-sm text-surface hover:bg-fresh",
+          )}
+        >
+          <span>Download</span>
+          <span aria-hidden="true">↓</span>
+        </button>
+      ) : (
       <div className="absolute bottom-3 right-3 flex items-center gap-1.5">
         <button
           type="button"
@@ -148,38 +204,35 @@ export function PhotoMosaicTile({
               : `Add ${photo.bib ?? "untagged photo"} to cart`
           }
           className={cn(
-            "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full font-mono uppercase tracking-[0.2em] text-[9px] whitespace-nowrap",
+            "inline-flex items-center gap-1 px-3 py-1.5 rounded-full font-display font-bold text-[12px] whitespace-nowrap",
             "shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)]",
-            "transition-all duration-200",
+            "transition-colors duration-200",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
             inCart
-              ? "bg-fresh text-bone hover:bg-fresh-deep"
-              : cn(
-                  "bg-bone/90 backdrop-blur-sm text-ink hover:bg-bone hover:scale-105",
-                  fadeRule,
-                ),
+              ? "bg-fresh text-surface hover:bg-fresh-deep"
+              : "bg-surface/95 backdrop-blur-sm text-ink border border-line-strong hover:bg-surface hover:border-ink",
           )}
         >
           <span aria-hidden="true">{inCart ? "✓" : "+"}</span>
-          <span>cart</span>
+          <span>Cart</span>
         </button>
         <button
           type="button"
           onClick={handleBuyNow}
           aria-label={`Buy ${photo.bib ?? "untagged photo"} now for ₱${photo.price}`}
           className={cn(
-            "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full font-mono uppercase tracking-[0.2em] text-[9px] whitespace-nowrap",
+            "inline-flex items-center gap-1 px-3 py-1.5 rounded-full font-display font-bold text-[12px] whitespace-nowrap",
             "shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)]",
-            "transition-all duration-200",
+            "transition-colors duration-200",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
-            "bg-bone/90 backdrop-blur-sm text-ink hover:bg-fresh hover:text-bone hover:scale-105",
-            fadeRule,
+            "bg-ink/85 backdrop-blur-sm text-surface hover:bg-fresh",
           )}
         >
-          <span>buy</span>
+          <span>Buy</span>
           <span aria-hidden="true">→</span>
         </button>
       </div>
+      )}
     </div>
   );
 }

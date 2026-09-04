@@ -11,8 +11,11 @@ import {
   usePendingVerificationsCount,
 } from "@/components/admin/verifications-queue";
 import { DisputesQueue } from "@/components/admin/disputes-queue";
+import { EventRequestsQueue } from "@/components/admin/event-requests-queue";
 import { FlagsQueue } from "@/components/admin/flags-queue";
 import { PayoutsQueue } from "@/components/admin/payouts-queue";
+import { Kicker } from "@/components/ui/kicker";
+import { useAdminKpis } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 
@@ -30,7 +33,11 @@ export default function AdminInboxPage() {
   const active: InboxQueueType = isInboxQueueType(activeRaw)
     ? activeRaw
     : "verifications";
-  const pendingCount = usePendingVerificationsCount();
+  // "Waiting" = the two queues that block a photographer: verifications +
+  // event requests (V46). Disputes/payouts keep their own KPI-strip counts.
+  const pendingCount =
+    usePendingVerificationsCount() +
+    (useAdminKpis()?.pendingEventRequests ?? 0);
 
   return (
     <>
@@ -41,6 +48,7 @@ export default function AdminInboxPage() {
         onChange={(next) => setActive(next)}
       />
       {active === "verifications" && <VerificationsQueue />}
+      {active === "events" && <EventRequestsQueue />}
       {active === "disputes" && <DisputesQueue />}
       {active === "flags" && ADMIN_FLAGS_ENABLED && <FlagsQueue />}
       {active === "payouts" && <PayoutsQueue />}
@@ -51,16 +59,16 @@ export default function AdminInboxPage() {
 function Header({ pendingCount }: { pendingCount: number }) {
   return (
     <header className="pb-6 md:pb-8">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <Kicker as="p">
         Inbox · <span className="tnum">{pendingCount}</span> waiting
-      </p>
-      <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+      </Kicker>
+      <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Today.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
         {ADMIN_FLAGS_ENABLED
-          ? "Switch between Verifications, Disputes, Flags, and Payouts with the chips below. Pick a metric to drill in, or use the rail for focus mode on a single queue."
-          : "Switch between Verifications, Disputes, and Payouts with the chips below. Pick a metric to drill in, or use the rail for focus mode on a single queue."}
+          ? "Switch between Verifications, Event requests, Disputes, Flags, and Payouts with the chips below. Pick a metric to drill in, or use the rail for focus mode on a single queue."
+          : "Switch between Verifications, Event requests, Disputes, and Payouts with the chips below. Pick a metric to drill in, or use the rail for focus mode on a single queue."}
       </p>
     </header>
   );

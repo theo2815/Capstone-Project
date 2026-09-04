@@ -1,7 +1,18 @@
 package com.quickpitik.mobile.data.remote
 
 import okhttp3.MultipartBody
-import retrofit2.http.*
+import retrofit2.Call
+import retrofit2.http.Body
+import retrofit2.http.DELETE
+import retrofit2.http.GET
+import retrofit2.http.Header
+import retrofit2.http.Multipart
+import retrofit2.http.PATCH
+import retrofit2.http.POST
+import retrofit2.http.PUT
+import retrofit2.http.Part
+import retrofit2.http.Path
+import retrofit2.http.Query
 
 interface QuickPitikApi {
     @POST("api/v1/auth/login")
@@ -9,6 +20,51 @@ interface QuickPitikApi {
 
     @POST("api/v1/auth/register")
     suspend fun register(@Body request: RegisterRequest): ApiResponseEnvelope<AuthResponse>
+
+    // "Continue with Google" — exchanges a Credential Manager ID token for the
+    // normal pair. Public, and TokenAuthenticator skips /auth/* — so its 4xx
+    // answers (422 ROLE_REQUIRED = brand-new account, pick a role first) can
+    // never trigger a refresh or a forced logout. See AuthViewModel.googleLogin.
+    @POST("api/v1/auth/google")
+    suspend fun googleLogin(@Body request: GoogleLoginRequest): ApiResponseEnvelope<AuthResponse>
+
+    // Non-suspend Call on purpose: TokenAuthenticator runs on OkHttp's thread
+    // outside any coroutine, so it needs a blocking execute(). Called only via
+    // RetrofitClient.refreshApi (the authenticator-free client).
+    @POST("api/v1/auth/refresh")
+    fun refreshToken(@Body request: RefreshRequest): Call<ApiResponseEnvelope<AuthResponse>>
+
+    // Best-effort refresh-token revocation on sign-out, matching the website
+    // (`use-auth.ts` logout). Public, so it carries no Authorization header.
+    // Callers must not block sign-out on the result — see AuthViewModel.logout.
+    @POST("api/v1/auth/logout")
+    suspend fun logout(
+        @Body request: LogoutRequest
+    ): ApiResponseEnvelope<Map<String, Boolean>>
+
+    @POST("api/v1/auth/verify-email")
+    suspend fun verifyEmail(@Body request: VerifyEmailRequest): ApiResponseEnvelope<MessageResponse>
+
+    @POST("api/v1/auth/confirm-email-change")
+    suspend fun confirmEmailChange(@Body request: EmailChangeConfirmRequest): ApiResponseEnvelope<MessageResponse>
+
+    // Auth recovery. Both are public (SecurityConfig permits /auth/**) so they
+    // carry no Authorization header, and TokenAuthenticator skips /auth/* — a
+    // 4xx here can never trigger a refresh or a forced logout.
+    @POST("api/v1/auth/forgot-password")
+    suspend fun forgotPassword(
+        @Body request: ForgotPasswordRequest
+    ): ApiResponseEnvelope<MessageResponse>
+
+    @POST("api/v1/auth/verify-reset-otp")
+    suspend fun verifyResetOtp(
+        @Body request: VerifyResetOtpRequest
+    ): ApiResponseEnvelope<VerifyResetOtpResponse>
+
+    @POST("api/v1/auth/reset-password")
+    suspend fun resetPassword(
+        @Body request: ResetPasswordRequest
+    ): ApiResponseEnvelope<MessageResponse>
 
     @Multipart
     @POST("api/v1/me/photographer/events/{eventId}/photos")
@@ -18,10 +74,39 @@ interface QuickPitikApi {
         @Part file: MultipartBody.Part
     ): ApiResponseEnvelope<UploadedPhotoDto>
 
+    // Direct-to-storage upload, steps 1 and 2 — see DirectUploadBeginRequest.
+    // PhotoUploadWorker tries this first and falls back to uploadPhoto().
+    @POST("api/v1/me/photographer/events/{eventId}/photos/direct")
+    suspend fun beginDirectUpload(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: DirectUploadBeginRequest
+    ): ApiResponseEnvelope<DirectUploadBeginResponse>
+
+    @POST("api/v1/me/photographer/events/{eventId}/photos/direct/commit")
+    suspend fun commitDirectUpload(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: DirectUploadCommitRequest
+    ): ApiResponseEnvelope<UploadedPhotoDto>
+
+    // Dedup pre-flight — see PhotoExistsRequest. Read-only; the cost (and the
+    // rate limit) lives on the upload this is trying to avoid.
+    @POST("api/v1/me/photographer/events/{eventId}/photos/exists")
+    suspend fun checkPhotosExist(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: PhotoExistsRequest
+    ): ApiResponseEnvelope<PhotoExistsResponse>
+
+    // limit defaults to the backend's MAX_LIMIT (200): without it the server
+    // default of 50 silently truncated a busy photographer's covered events —
+    // no caller pages through this list.
     @GET("api/v1/me/photographer/events")
     suspend fun getPhotographerEvents(
         @Header("Authorization") token: String,
-        @Query("withUploads") withUploads: Boolean = false
+        @Query("withUploads") withUploads: Boolean = false,
+        @Query("limit") limit: Int = 200
     ): ApiResponseEnvelope<PaginatedResponse<PhotographerEventSummaryDto>>
 
     @GET("api/v1/me/photographer/events/{eventId}/photos")
@@ -32,10 +117,24 @@ interface QuickPitikApi {
         @Query("limit") limit: Int = 100
     ): ApiResponseEnvelope<PaginatedResponse<PhotographerLibraryPhotoDto>>
 
+    // Clean original for a photo the caller uploaded. The library listing only
+    // carries the watermarked thumbnailUrl, so the share page resolves this on
+    // demand when the photographer taps Download in the lightbox.
+    @GET("api/v1/me/photographer/photos/{photoId}/download")
+    suspend fun getPhotographerPhotoDownload(
+        @Header("Authorization") token: String,
+        @Path("photoId") photoId: String
+    ): ApiResponseEnvelope<PhotographerDownloadDto>
+
     @GET("api/v1/me/photographer/verification")
     suspend fun getVerificationStatus(
         @Header("Authorization") token: String
     ): ApiResponseEnvelope<VerificationSubmitResponseDto>
+
+    // Public reference data — no Authorization header. Backend owns the list;
+    // see RegionDto for why neither client hardcodes it any more.
+    @GET("api/v1/regions")
+    suspend fun getRegions(): ApiResponseEnvelope<List<RegionDto>>
 
     @GET("api/v1/me/photographer/brand")
     suspend fun getBrandSettings(
@@ -124,6 +223,12 @@ interface QuickPitikApi {
         @Part file: MultipartBody.Part
     ): ApiResponseEnvelope<MediaUploadResponseDto>
 
+    // Clears the avatar and returns the updated user (avatarUrl null).
+    @DELETE("api/v1/me/avatar")
+    suspend fun deleteAvatar(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<UserDto>
+
     @Multipart
     @POST("api/v1/me/avatar")
     suspend fun uploadAvatar(
@@ -169,6 +274,15 @@ interface QuickPitikApi {
         @Header("Authorization") token: String
     ): ApiResponseEnvelope<PhotographerPayoutDto>
 
+    // Photographer cancels a HELD payout request after fixing what the admin
+    // flagged; the backend hard-deletes the cycle so a fresh request can be
+    // filed immediately. Body is empty ({success:true, data:null}).
+    @POST("api/v1/me/photographer/payouts/{id}/withdraw")
+    suspend fun withdrawPayout(
+        @Header("Authorization") token: String,
+        @Path("id") id: String
+    ): ApiResponseEnvelope<Any?>
+
     @GET("api/v1/me/photographer/billing/transactions")
     suspend fun getTransactionsLedger(
         @Header("Authorization") token: String,
@@ -196,12 +310,26 @@ interface QuickPitikApi {
         @Query("limit") limit: Int = 100
     ): ApiResponseEnvelope<PaginatedResponse<EventDto>>
 
+    // Event editorial detail (organizer, description, categories, pricing) —
+    // the cockpit's AboutStrip. The list endpoint deliberately omits these.
+    @GET("api/v1/events/{slug}")
+    suspend fun getEventDetail(
+        @Path("slug") slug: String
+    ): ApiResponseEnvelope<EventDetailDto>
+
+    // The route is public, but the bearer matters when signed in: the backend
+    // reads principal?.userId to populate PhotoDto.cleanUrl for photos the
+    // caller owns (unwatermarked lightbox) and to rate-bucket bib search per
+    // user instead of per IP (shared race-day Wi-Fi). Nullable so the header is
+    // simply omitted if a token is ever absent.
     @GET("api/v1/events/{slug}/photos")
     suspend fun getEventPhotos(
+        @Header("Authorization") token: String? = null,
         @Path("slug") slug: String,
         @Query("bib") bib: String? = null,
         @Query("offset") offset: Int = 0,
-        @Query("limit") limit: Int = 100
+        @Query("limit") limit: Int = 100,
+        @Query("snapshotAt") snapshotAt: String? = null,
     ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
 
     @Multipart
@@ -220,6 +348,28 @@ interface QuickPitikApi {
         @Path("slug") slug: String,
         @Body request: SearchByFaceJsonRequest
     ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
+
+    // "Notify me when my photos are ready" opt-in (RUNNER). The backend matches
+    // the runner's selfie against the event during its date-based sweep and
+    // emails once when photos of them appear. See PhotoAlertDtos.
+    @GET("api/v1/events/{slug}/photo-alert")
+    suspend fun getPhotoAlertStatus(
+        @Header("Authorization") token: String,
+        @Path("slug") slug: String
+    ): ApiResponseEnvelope<PhotoAlertStatusDto>
+
+    @POST("api/v1/events/{slug}/photo-alert")
+    suspend fun registerPhotoAlert(
+        @Header("Authorization") token: String,
+        @Path("slug") slug: String,
+        @Body request: PhotoAlertRequest
+    ): ApiResponseEnvelope<PhotoAlertStatusDto>
+
+    @DELETE("api/v1/events/{slug}/photo-alert")
+    suspend fun unregisterPhotoAlert(
+        @Header("Authorization") token: String,
+        @Path("slug") slug: String
+    ): ApiResponseEnvelope<RemovedResponse>
 
     @GET("api/v1/me/cart")
     suspend fun getCart(
@@ -268,6 +418,15 @@ interface QuickPitikApi {
         @Header("Authorization") token: String,
         @Path("id") orderId: String
     ): ApiResponseEnvelope<OrderDetailDto>
+
+    @GET("api/v1/orders/{id}")
+    suspend fun getGuestOrderDetail(
+        @Path("id") orderId: String,
+        @Query("token") shareToken: String
+    ): ApiResponseEnvelope<OrderDetailDto>
+
+
+
 
     @POST("api/v1/me/orders/{id}/refund")
     suspend fun submitRefund(
@@ -364,6 +523,15 @@ interface QuickPitikApi {
     suspend fun changePassword(
         @Header("Authorization") token: String,
         @Body request: PasswordChangeRequest
+    ): ApiResponseEnvelope<Map<String, String>>
+
+    // Step 1 of 2 — mails a confirmation link to the NEW address and changes
+    // nothing yet. Step 2 (`POST /auth/confirm-email-change`) is web-only; the
+    // backend links the mail to the website origin. See EmailChangeRequest.
+    @PUT("api/v1/me/email")
+    suspend fun requestEmailChange(
+        @Header("Authorization") token: String,
+        @Body request: EmailChangeRequest
     ): ApiResponseEnvelope<Map<String, String>>
 
     @GET("api/v1/me/saved-events")

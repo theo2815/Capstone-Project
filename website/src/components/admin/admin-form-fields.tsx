@@ -11,11 +11,11 @@ import { cn } from "@/lib/utils";
 // length-capped field, amber-700 hint when input is invalid.
 
 const LABEL_CLS =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft block";
+  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft block";
 const COUNTER_CLS =
-  "font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft text-right tnum";
+  "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft text-right tnum";
 const HINT_CLS =
-  "font-mono uppercase tracking-[0.25em] text-[10px] text-amber-700";
+  "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-amber-700";
 const INPUT_BASE =
   "w-full rounded-2xl border border-line bg-surface py-3 font-sans text-sm text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh";
 const INPUT_PADDING_DEFAULT = "px-4";

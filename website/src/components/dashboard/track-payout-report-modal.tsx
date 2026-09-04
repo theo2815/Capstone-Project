@@ -63,7 +63,7 @@ export function TrackPayoutReportModal({
       </div>
 
       <Kicker as="p" tone="soft" tnum className="mb-6">
-        CYCLE · {cycle.id} · {formatLongDate(cycle.weekOf, true)} ·{" "}
+        PAYOUT · {cycle.id} · {formatLongDate(cycle.requestedAt)} ·{" "}
         {formatPrice(cycle.amount)}
       </Kicker>
 
@@ -119,7 +119,7 @@ export function TrackPayoutReportModal({
           <button
             type="button"
             onClick={onFileFollowUp}
-            className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink"
           >
             File a follow-up report →
           </button>
@@ -129,7 +129,7 @@ export function TrackPayoutReportModal({
         <button
           type="button"
           onClick={onClose}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
         >
           Close
         </button>

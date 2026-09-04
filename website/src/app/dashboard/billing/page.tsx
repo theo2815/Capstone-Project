@@ -9,6 +9,7 @@ import { TrackPayoutReportModal } from "@/components/dashboard/track-payout-repo
 import { RequestPayoutModal } from "@/components/dashboard/request-payout-modal";
 import { WithdrawPayoutModal } from "@/components/dashboard/withdraw-payout-modal";
 import { Kicker } from "@/components/ui/kicker";
+import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -70,11 +71,10 @@ function PayoutsSlab() {
   const [trackingCycle, setTrackingCycle] = useState<PhotographerPayout | null>(
     null,
   );
-  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PAYOUT_INITIAL);
   const livePayouts = usePhotographerPayouts();
   const balance = usePhotographerPayoutBalance();
-  const payouts = livePayouts ?? [];
-  const isLoading = livePayouts === null || balance === null;
+  const payouts = livePayouts.items;
+  const isLoading = livePayouts.isLoading || balance === null;
   const { user } = useAuth();
   const photographer = resolveCurrentPhotographer(user);
   // Read reports from BE so admin acknowledge/resolve responses surface to
@@ -106,7 +106,7 @@ function PayoutsSlab() {
     ? (reportByCycleId.get(trackingCycle.id) ?? null)
     : null;
 
-  if (isLoading || !payouts) {
+  if (isLoading) {
     return (
       <Slab id="payouts" number="01" title="Payouts" caption="Weekly · GCash">
         <div>
@@ -150,11 +150,11 @@ function PayoutsSlab() {
               Recent payouts
             </Kicker>
             <Kicker as="p" tone="soft" tnum>
-              {payouts.length} payouts
+              {livePayouts.total} payouts
             </Kicker>
           </div>
           <ul className="border-y border-line divide-y divide-line">
-            {payouts.slice(0, loadedCount).map((payout) => (
+            {payouts.map((payout) => (
               <li key={payout.id} id={`cycle-${payout.id}`}>
                 <PayoutRow
                   payout={payout}
@@ -166,12 +166,11 @@ function PayoutsSlab() {
             ))}
           </ul>
           <LoadMoreButton
-            shown={Math.min(loadedCount, payouts.length)}
-            total={payouts.length}
+            shown={payouts.length}
+            total={livePayouts.total}
             increment={PAGE_SIZE.PAYOUT_INCREMENT}
-            onLoadMore={() =>
-              setLoadedCount((n) => n + PAGE_SIZE.PAYOUT_INCREMENT)
-            }
+            onLoadMore={livePayouts.fetchNextPage}
+            isLoading={livePayouts.isFetchingNextPage}
           />
         </div>
       )}
@@ -320,7 +319,7 @@ function RequestPayoutHero({
           type="button"
           onClick={onRequest}
           disabled={!eligible || !primary}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone bg-fresh hover:bg-fresh-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors rounded-full px-6 py-3"
+          className={`${BTN_PRIMARY} ${BTN_SIZE.md}`}
         >
           Request payout
         </button>
@@ -394,7 +393,7 @@ function OpenRequestHero({
           <>
             Submitted{" "}
             <span className="font-mono">
-              {formatLongDate(cycle.weekOf, true)}
+              {formatLongDate(cycle.requestedAt)}
             </span>{" "}
             · admin is reviewing
           </>
@@ -438,7 +437,7 @@ function OpenRequestHero({
           <button
             type="button"
             onClick={onWithdraw}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-error border border-error hover:bg-error hover:text-bone transition-colors rounded-full px-5 py-2"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-error border border-error hover:bg-error hover:text-bone transition-colors rounded-full px-5 py-2"
           >
             Withdraw request
           </button>
@@ -495,7 +494,7 @@ function PayoutRow({
     <div className="py-5 md:py-6 flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
       <div className="flex-1 min-w-0">
         <Kicker as="p" tnum className="flex items-center gap-2 flex-wrap">
-          <span>Payout of {formatLongDate(payout.weekOf, true)}</span>
+          <span>Payout of {formatLongDate(payout.requestedAt)}</span>
           <span className="text-slate-soft">·</span>
           <span className={STATUS_TONE[payout.status]}>
             {STATUS_LABEL[payout.status]}
@@ -553,40 +552,24 @@ function PayoutRow({
 }
 
 function TransactionsSlab() {
-  // monthTotals lives in the response envelope but the existing render
-  // derives them client-side from the same items, so both paths agree.
   const liveTx = usePhotographerTransactions();
-  const transactions = liveTx?.items ?? [];
-  const isLoading = liveTx === null;
-  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.TRANSACTION_INITIAL);
+  const transactions = liveTx.items;
+  const isLoading = liveTx.isLoading;
 
-  // Memos must run on every render — using `?? []` so the loading branch
-  // still calls them with a stable empty list. Skeleton early-return lives
-  // below the hooks.
-  const txList = transactions ?? [];
-
-  // Full-month totals computed over the complete list — sticky header values
-  // stay stable as load-more reveals more rows within a month.
-  const fullMonthTotals = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const tx of txList) {
-      const key = monthKey(tx.paidAt);
-      map.set(key, (map.get(key) ?? 0) + tx.amountKept);
-    }
-    return map;
-  }, [txList]);
-
-  const loadedSlice = useMemo(
-    () => txList.slice(0, loadedCount),
-    [txList, loadedCount],
+  // Month-header totals come straight from the server envelope (computed over
+  // ALL rows, in PHT), so sticky headers stay stable as Load-more reveals more
+  // rows — no client re-derivation over the loaded page.
+  const monthTotalsMap = useMemo(
+    () => new Map(Object.entries(liveTx.monthTotals)),
+    [liveTx.monthTotals],
   );
 
   const loadedGroups = useMemo(
-    () => groupByMonth(loadedSlice, fullMonthTotals),
-    [loadedSlice, fullMonthTotals],
+    () => groupByMonth(transactions, monthTotalsMap),
+    [transactions, monthTotalsMap],
   );
 
-  if (isLoading || !transactions) {
+  if (isLoading) {
     return (
       <Slab
         id="transactions"
@@ -610,7 +593,9 @@ function TransactionsSlab() {
     );
   }
 
-  const total = transactions.reduce((sum, tx) => sum + tx.amountKept, 0);
+  // Grand total over ALL rows = sum of the server month totals (not just the
+  // loaded page).
+  const total = Object.values(liveTx.monthTotals).reduce((sum, v) => sum + v, 0);
 
   return (
     <Slab
@@ -619,8 +604,8 @@ function TransactionsSlab() {
       title="Transactions"
       caption="Each photo sale, post-platform-cut"
       trailing={
-        transactions.length > 0
-          ? `${transactions.length} · ₱${total.toLocaleString()}`
+        liveTx.total > 0
+          ? `${liveTx.total} · ₱${total.toLocaleString()}`
           : undefined
       }
     >
@@ -634,7 +619,15 @@ function TransactionsSlab() {
             {/* Group by month so the ledger is easier to skim. */}
             {loadedGroups.map((group) => (
               <li key={group.label} className="py-2">
-                <Kicker as="p" tone="soft" tnum className="sticky top-20 bg-bone py-2">
+                {/* Desktop-only sticky month label; on mobile it scrolls
+                    with the content, which is what every other mobile
+                    dashboard surface does. */}
+                <Kicker
+                  as="p"
+                  tone="soft"
+                  tnum
+                  className="md:sticky md:top-20 bg-bone py-2"
+                >
                   {group.label} · ₱{group.total.toLocaleString()}
                 </Kicker>
                 <ul className="divide-y divide-line">
@@ -648,12 +641,11 @@ function TransactionsSlab() {
             ))}
           </ul>
           <LoadMoreButton
-            shown={loadedSlice.length}
-            total={transactions.length}
+            shown={transactions.length}
+            total={liveTx.total}
             increment={PAGE_SIZE.TRANSACTION_INCREMENT}
-            onLoadMore={() =>
-              setLoadedCount((n) => n + PAGE_SIZE.TRANSACTION_INCREMENT)
-            }
+            onLoadMore={liveTx.fetchNextPage}
+            isLoading={liveTx.isFetchingNextPage}
           />
         </>
       )}

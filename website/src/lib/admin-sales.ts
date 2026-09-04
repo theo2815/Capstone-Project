@@ -18,6 +18,7 @@ import {
   useAdminPayouts,
   useAdminSalesKpisLive,
   useAdminSalesByEventLive,
+  EMPTY_PAYOUTS,
 } from "@/hooks/use-admin-data";
 
 // Admin sales — derivation hooks. Pure read-side.
@@ -41,7 +42,7 @@ export interface SalesKpis {
 
 export function useSalesKpis(): SalesKpis {
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
 
@@ -102,7 +103,7 @@ export function useWeeklyGmvSeries(
   weeks: number = SALES_TREND_WEEKS,
 ): WeeklyGmvPoint[] {
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
 
   return useMemo(() => {
     const cycles = mergePayoutsWithOverrides(serverPayouts, payoutOverrides);
@@ -137,7 +138,7 @@ export interface TopPhotographer {
 
 export function useTopPhotographers(limit: number = 10): TopPhotographer[] {
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
 
   return useMemo(() => {
     const cycles = mergePayoutsWithOverrides(serverPayouts, payoutOverrides);
@@ -162,7 +163,13 @@ export function useTopPhotographers(limit: number = 10): TopPhotographer[] {
       }
     }
     return Array.from(byPhotographer.values())
-      .sort((a, b) => b.gmv - a.gmv)
+      // Tie-break on id: equal-GMV photographers otherwise fall back to Map
+      // insertion order, which follows whatever order the payout cycles
+      // arrived in, so the leaderboard reshuffled between reloads.
+      .sort(
+        (a, b) =>
+          b.gmv - a.gmv || a.photographerId.localeCompare(b.photographerId),
+      )
       .slice(0, limit);
   }, [serverPayouts, payoutOverrides, limit]);
 }
@@ -241,7 +248,7 @@ export interface RefundPulse {
 
 export function useRefundPulse(): RefundPulse {
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
-  const serverPayouts = useAdminPayouts() ?? [];
+  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
   const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
 

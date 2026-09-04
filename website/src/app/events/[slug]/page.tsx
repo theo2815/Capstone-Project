@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, cache } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { SiteHeader } from "@/components/layout/site-header";
@@ -6,6 +6,7 @@ import { fetchEventDetail } from "@/lib/api-events";
 import { fetchEventPhotos } from "@/lib/api-photos";
 import { deriveEventState } from "@/lib/event-catalog";
 import { EventCockpit } from "./event-cockpit";
+import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
 import type { EventDetail } from "@/types/event";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 
@@ -18,21 +19,31 @@ interface EventPageProps {
 // once /events crosses the demo dataset.
 export const dynamic = "force-dynamic";
 
+// generateMetadata and the page body run as separate calls and each needs the
+// detail — without this, every SSR render hit GET /events/{slug} twice.
+// cache() dedupes within one request. Kept local to this server file:
+// api-events.ts is shared client code.
+const getEventDetail = cache(fetchEventDetail);
+
 export async function generateMetadata({
   params,
 }: EventPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const event = await fetchEventDetail(slug);
-  if (!event) return { title: "Event not found | QuickPitik" };
+  const event = await getEventDetail(slug);
+  if (!event) return { title: "Event not found" };
+  const description = `Find your photos from ${event.name}. Search by bib, browse the wall.`;
   return {
-    title: `${event.name} | QuickPitik`,
-    description: `Find your photos from ${event.name}. Search by bib, browse the wall.`,
+    title: event.name,
+    description,
+    openGraph: event.bannerUrl
+      ? { title: event.name, description, images: [event.bannerUrl] }
+      : undefined,
   };
 }
 
 export default async function EventPage({ params }: EventPageProps) {
   const { slug } = await params;
-  const event = await fetchEventDetail(slug);
+  const event = await getEventDetail(slug);
   if (!event) notFound();
 
   // Pre-race-day events stay viewable as a public page but the gallery is
@@ -48,18 +59,20 @@ export default async function EventPage({ params }: EventPageProps) {
     );
   }
 
-  // Initial photo seed for first paint. Browse mode refetches via React Query
-  // when the user enters a bib (Q-011 server-side filter).
+  // Initial photo seed for first paint = page 0 (one Load-more page). The whole
+  // envelope is threaded through so the grid header knows the true server total,
+  // not the seed length. Browse mode pages via React Query from here; a bib
+  // filter (Q-011 server-side) caches and pages independently.
   const initialPhotos = await fetchEventPhotos(slug, {
     offset: 0,
-    limit: PAGE_SIZE.PHOTO_INITIAL * 2,
+    limit: PAGE_SIZE.PHOTO_INCREMENT,
   });
 
   return (
     <main className="bg-bone text-ink min-h-screen">
       <SiteHeader />
       <Suspense fallback={<CockpitFallback />}>
-        <EventCockpit event={event} initialPhotos={initialPhotos.items} />
+        <EventCockpit event={event} initialPhotos={initialPhotos} />
       </Suspense>
     </main>
   );
@@ -97,13 +110,13 @@ function UpcomingEventNotice({ event }: { event: EventDetail }) {
           )}
         </div>
         <div className="mt-10">
-          <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-fresh">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh">
             Opens · <span className="tnum">{dateLabel}</span>
           </p>
-          <h1 className="mt-4 font-display text-3xl md:text-5xl font-medium tracking-tight leading-[1.05] text-ink">
+          <h1 className="mt-4 font-display font-extrabold text-3xl md:text-5xl tracking-tight leading-[1.05] text-ink">
             {event.name}
           </h1>
-          <p className="mt-4 font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+          <p className="mt-4 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
             {cityUpper}
           </p>
           <p className="mt-2 font-sans text-base text-ink-soft max-w-prose">
@@ -114,6 +127,9 @@ function UpcomingEventNotice({ event }: { event: EventDetail }) {
             a four-day window from race day to upload — check back then to
             find your photos.
           </p>
+          <div className="mt-2 max-w-md">
+            <PhotoAlertToggle eventSlug={event.slug} />
+          </div>
         </div>
       </div>
     </section>

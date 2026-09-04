@@ -5,6 +5,7 @@ import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.PaymongoProperties
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.orders.CreateOrderItem
 import com.quickpitik.dto.orders.CreateOrderRequest
@@ -15,13 +16,12 @@ import com.quickpitik.dto.orders.OrderResponse
 import com.quickpitik.dto.orders.OrderResponseItem
 import com.quickpitik.dto.orders.OrderStatusDto
 import com.quickpitik.dto.orders.PaymongoBilling
-import com.quickpitik.dto.orders.RunnerDisputeDto
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionAttributes
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionRequest
 import com.quickpitik.dto.orders.PaymongoCheckoutSessionRequestEnvelope
 import com.quickpitik.dto.orders.PaymongoLineItem
+import com.quickpitik.dto.orders.RunnerDisputeDto
 import com.quickpitik.entity.DownloadGrant
-import com.quickpitik.entity.DownloadGrantId
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Order
@@ -32,6 +32,7 @@ import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.UnauthorizedException
@@ -46,23 +47,20 @@ import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.earnings.TransactionMintingService
 import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
-import java.security.SecureRandom
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Base64
 import java.util.UUID
 
 @Service
-@Transactional
 class OrderService(
     private val orderRepository: OrderRepository,
     private val orderItemRepository: OrderItemRepository,
@@ -74,216 +72,323 @@ class OrderService(
     private val cartItemRepository: CartItemRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
-    private val transactionMintingService: TransactionMintingService,
     private val paymongoClient: PaymongoClient,
     private val paymongoProperties: PaymongoProperties,
     private val disputeRepository: DisputeRepository,
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
+    private val platformProperties: PlatformProperties,
+    private val orderAccessTokenService: OrderAccessTokenService,
+    private val transactionTemplate: TransactionTemplate,
+    private val couponService: CouponService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    /**
-     * POST /api/v1/orders.
-     *
-     * Creates one Order per distinct eventId in the cart (the multi-event
-     * split keeps each Order row single-event for refund attribution and to
-     * match the FE's MockOrder.eventId shape). All rows share the same
-     * idempotency_key, so a network retry of the same POST returns the same
-     * orders + the same PayMongo Checkout URL — never a second charge.
-     *
-     * Flow:
-     *   1. Validate items, email, payment method
-     *   2. Replay-check: same idempotency_key → return existing
-     *   3. Create N Orders in PENDING (one per event), one shareToken per
-     *      guest order so the email link can authenticate
-     *   4. Call PayMongo /v1/checkout_sessions with combined line_items
-     *   5. Persist N Payment rows (status=PENDING) all carrying the cs_id
-     *   6. Clear cart, return redirectUrl so FE can window.location.href to it
-     *
-     * Download grants + earnings rows are minted in PaymongoWebhookService
-     * once PayMongo confirms payment (status flips PENDING → PAID).
-     */
+    /** Reserve locally, call PayMongo without a DB transaction, then finalize locally. */
     fun create(userId: UUID?, request: CreateOrderRequest, idempotencyKey: String): OrderResponse {
-        if (request.items.isEmpty()) {
-            throw ValidationException(
-                code = ErrorCodes.VALIDATION_ERROR,
-                message = "items must not be empty",
-                field = "items",
-            )
-        }
-
+        validateItems(request.items)
         val paymentMethod = PaymentMethod.fromWire(request.paymentMethod)
         val recipientEmail = resolveRecipientEmail(userId, request.recipientEmail)
 
-        // Idempotency: replay returns the existing primary order + recovers the
-        // PayMongo Checkout URL so the FE can resume to the same hosted page.
-        val existing = orderRepository.findByIdempotencyKey(idempotencyKey)
-        if (existing.isNotEmpty()) {
-            val primary = pickPrimary(existing)
-            val resumedUrl = resumeCheckoutUrl(primary)
-            return toOrderResponse(primary, redirectUrl = resumedUrl)
-        }
-
-        val photos = loadAndValidatePhotos(request.items)
-        val groupedByEvent = request.items.groupBy { it.eventId }
-        val eventLookup = eventRepository.findAllById(groupedByEvent.keys).associateBy { it.id }
-        for (eventId in groupedByEvent.keys) {
-            val event = eventLookup[eventId]
-                ?: throw NotFoundException(
-                    code = ErrorCodes.EVENT_NOT_FOUND,
-                    message = "Event not found",
-                )
-            if (event.status == EventStatus.ARCHIVED) {
-                throw ConflictException(
-                    code = ErrorCodes.EVENT_ARCHIVED,
-                    message = "Event ${event.slug} is archived",
-                )
-            }
-        }
-
-        val created = mutableListOf<Order>()
-        try {
-            for ((eventId, items) in groupedByEvent) {
-                val totalPhp = items.fold(BigDecimal.ZERO) { acc, it ->
-                    acc + (photos[it.photoId]?.pricePhp ?: BigDecimal.ZERO)
-                }
-                val order = orderRepository.save(
-                    Order(
-                        userId = userId,
-                        eventId = eventId,
-                        recipientEmail = recipientEmail,
-                        paymentMethodWire = paymentMethod.wire,
-                        status = OrderStatus.PENDING,
-                        totalPhp = totalPhp,
-                        idempotencyKey = idempotencyKey,
-                        // Always minted — runners need it for the bundle-download
-                        // URL (top-level <a> navigations don't carry the JWT, so
-                        // the bundle endpoint authorizes via ?token=). Guests use
-                        // it for everything (status poll, detail, bundle).
-                        shareToken = generateShareToken(),
-                    ),
-                )
-                items.forEach { item ->
-                    val photo = photos.getValue(item.photoId)
-                    orderItemRepository.save(
-                        OrderItem(
-                            id = OrderItemId(orderId = order.id, photoId = item.photoId),
-                            pricePhpAtPurchase = photo.pricePhp,
-                        ),
-                    )
-                }
-                created.add(order)
-            }
+        val reservation = try {
+            transactionTemplate.execute {
+                reserveCheckout(userId, recipientEmail, request, paymentMethod, idempotencyKey)
+            } ?: error("Checkout reservation returned null")
         } catch (ex: DataIntegrityViolationException) {
-            // Concurrent retry hit the unique (idempotency_key, event_id) index.
-            val replay = orderRepository.findByIdempotencyKey(idempotencyKey)
-            if (replay.isNotEmpty()) {
-                val primary = pickPrimary(replay)
-                return toOrderResponse(primary, redirectUrl = resumeCheckoutUrl(primary))
-            }
-            throw ex
+            transactionTemplate.execute {
+                replayAfterConstraintRace(userId, recipientEmail, request, paymentMethod, idempotencyKey)
+            } ?: throw ex
         }
 
-        val primary = pickPrimary(created)
-        val lineItems = buildLineItems(request.items, photos, eventLookup)
-        val description = buildSessionDescription(request.items.size, eventLookup.values.map { it.name })
-        // clientPlatform=="android" routes PayMongo's success/cancel to the
-        // mobile bridge so the user lands back in the app via the
-        // quickpitik:// deep link instead of the website.
+        val primary = pickPrimary(reservation.orders)
+        if (primary.status in SETTLED_ORDER_STATUSES) {
+            return toOrderResponse(primary)
+        }
+        if (primary.status == OrderStatus.EXPIRED) {
+            throw checkoutConflict("This checkout expired. Start again with a new Idempotency-Key.")
+        }
+
+        resumeCheckoutUrl(primary)?.let { return toOrderResponse(primary, redirectUrl = it) }
+
+        // PayMongo forgets idempotency results after 24 hours. Once our
+        // shorter checkout window has elapsed, an unlinked provider outcome
+        // must be reconciled manually rather than risk creating a second,
+        // independently payable session with the same key.
+        val retryDeadline = minOf(
+            primary.createdAt.plus(paymongoProperties.checkoutTtl),
+            primary.createdAt.plusHours(PROVIDER_RETRY_WINDOW_HOURS),
+        )
+        if (retryDeadline.isBefore(OffsetDateTime.now())) {
+            throw checkoutConflict("Payment session outcome is unknown. Contact support before retrying checkout.")
+        }
+
         val isAndroid = request.clientPlatform.equals("android", ignoreCase = true)
-        val successUrl = buildSuccessUrl(primary, isAndroid)
-        val cancelUrlForSession = if (isAndroid) {
-            buildMobileCancelUrl(primary)
-        } else {
-            paymongoProperties.cancelUrl
-        }
-
         val checkout = try {
             paymongoClient.createCheckoutSession(
-                PaymongoCheckoutSessionRequest(
-                    data = PaymongoCheckoutSessionRequestEnvelope(
-                        attributes = PaymongoCheckoutSessionAttributes(
-                            cancelUrl = cancelUrlForSession,
-                            successUrl = successUrl,
-                            lineItems = lineItems,
-                            paymentMethodTypes = paymongoMethodsFor(paymentMethod),
-                            description = description,
-                            billing = PaymongoBilling(email = recipientEmail),
-                            metadata = mapOf(
-                                "idempotencyKey" to idempotencyKey,
-                                "primaryOrderId" to primary.id.toString(),
-                                "orderCount" to created.size.toString(),
-                            ),
-                        ),
-                    ),
-                ),
+                request = buildCheckoutRequest(reservation, paymentMethod, recipientEmail, isAndroid),
+                idempotencyKey = primary.id.toString(),
             )
         } catch (ex: Exception) {
-            log.error("PayMongo Checkout Session creation failed: {}", ex.message, ex)
+            log.error("PayMongo Checkout Session creation failed for order {}: {}", primary.id, ex.message, ex)
             throw ConflictException(
                 code = ErrorCodes.PAYMENT_FAILED,
-                message = "Payment gateway unavailable — try again in a moment.",
+                message = "Payment gateway unavailable - try again in a moment.",
             )
         }
 
-        val csId = checkout.data.id
+        val checkoutSessionId = checkout.data.id
         val checkoutUrl = checkout.data.attributes.checkoutUrl
-        if (csId.isBlank() || checkoutUrl.isBlank()) {
-            log.error("PayMongo returned blank csId or checkoutUrl: {}", checkout)
+        if (checkoutSessionId.isBlank() || checkoutUrl.isBlank()) {
+            log.error("PayMongo returned an invalid Checkout Session for order {}", primary.id)
             throw ConflictException(
                 code = ErrorCodes.PAYMENT_FAILED,
                 message = "Payment gateway returned an invalid response.",
             )
         }
 
-        // N Payment rows all carrying the same cs_id. V17 UNIQUE on
-        // (provider, provider_ref, order_id) keeps webhook replays clean.
-        created.forEach { order ->
-            paymentRepository.save(
-                Payment(
-                    orderId = order.id,
-                    provider = "paymongo",
-                    providerRef = csId,
-                    amountPhp = order.totalPhp,
-                    status = PaymentStatus.PENDING,
-                    paidAt = null,
-                ),
+        try {
+            transactionTemplate.executeWithoutResult {
+                finalizeCheckout(reservation.orders.map { it.id }, checkoutSessionId)
+            }
+        } catch (ex: Exception) {
+            // The provider request is recoverable: metadata points back to the
+            // reserved orders and the stable provider idempotency key returns
+            // the same session on retry. Never release an unknown payable
+            // session into a second checkout.
+            log.error("PayMongo session {} could not be linked locally; retry the same checkout", checkoutSessionId, ex)
+            throw ConflictException(
+                code = ErrorCodes.PAYMENT_FAILED,
+                message = "Payment session could not be saved - retry in a moment.",
             )
         }
-
-        // Cart-clear runs at order creation (PENDING) so the user doesn't see
-        // duplicate items on a return-to-cart bounce. If they cancel on
-        // PayMongo's page they re-add — accepted tradeoff for simpler UX.
-        if (userId != null) {
-            request.items.forEach { item ->
-                runCatching {
-                    cartItemRepository.deleteByUserIdAndPhotoId(userId, item.photoId)
-                }.onFailure { ex ->
-                    log.warn(
-                        "cart-clear failed for user={} photo={}: {}",
-                        userId,
-                        item.photoId,
-                        ex.message,
-                    )
-                }
-            }
-        }
-
+        clearCartBestEffort(userId, request.items)
         return toOrderResponse(primary, redirectUrl = checkoutUrl)
     }
 
-    /**
-     * Public guest-friendly status. Anti-IDOR: missing/mismatched token
-     * surfaces the same NOT_FOUND envelope as a truly nonexistent id, so a
-     * probing attacker can't enumerate order ids from the response.
-     */
+    private fun reserveCheckout(
+        userId: UUID?,
+        recipientEmail: String,
+        request: CreateOrderRequest,
+        paymentMethod: PaymentMethod,
+        idempotencyKey: String,
+    ): CheckoutReservation {
+        val photos = loadAndValidatePhotos(request.items)
+        val events = loadAndValidateEvents(request.items)
+
+        findScopedOrders(userId, recipientEmail, idempotencyKey).takeIf { it.isNotEmpty() }?.let { existing ->
+            val items = validateReplay(existing, request, paymentMethod)
+            return CheckoutReservation(existing, photos, events, items)
+        }
+
+        val photoIds = request.items.map { it.photoId }.toSet()
+        val overlapping = if (userId != null) {
+            orderRepository.findOverlappingForUser(userId, photoIds, ACTIVE_ORDER_STATUSES)
+        } else {
+            orderRepository.findOverlappingForGuest(recipientEmail, photoIds, ACTIVE_ORDER_STATUSES)
+        }
+        if (overlapping.any { it.status == OrderStatus.PAID || it.status == OrderStatus.FULFILLED }) {
+            throw checkoutConflict("One or more photos have already been purchased.")
+        }
+        if (overlapping.isNotEmpty()) {
+            val keys = overlapping.mapNotNull { it.idempotencyKey }.toSet()
+            if (keys.size != 1) {
+                throw checkoutConflict("One or more photos already belong to another active checkout.")
+            }
+            val existing = findScopedOrders(userId, recipientEmail, keys.single())
+            val items = validateReplay(existing, request, paymentMethod)
+            return CheckoutReservation(existing, photos, events, items)
+        }
+
+        // Fresh checkout only — the replay branches above never re-resolve the
+        // coupon, so a code that expired between attempts cannot strand a
+        // retry whose discount is already persisted on the order rows.
+        val coupon = request.couponCode?.let(couponService::reserveForCheckout)
+        val discounts: Map<UUID, BigDecimal> = if (coupon == null) {
+            emptyMap()
+        } else {
+            photos.values
+                .filter { couponService.eligible(it, coupon) }
+                .associate { it.id to couponService.discountFor(it, coupon) }
+        }
+        if (coupon != null && discounts.isEmpty()) {
+            throw ValidationException(
+                message = "${coupon.code} doesn't apply to any photo in this checkout",
+                code = ErrorCodes.COUPON_NOT_APPLICABLE,
+                field = "couponCode",
+            )
+        }
+
+        val expiresAt = OffsetDateTime.now().plus(platformProperties.shareTokenTtl)
+        val savedItems = mutableListOf<OrderItem>()
+        val orders = request.items.groupBy { it.eventId }.map { (eventId, items) ->
+            val appliedCoupon = coupon?.takeIf {
+                items.any { discounts.containsKey(it.photoId) }
+            }
+            val total = items.fold(BigDecimal.ZERO) { sum, item ->
+                sum + photos.getValue(item.photoId).pricePhp - (discounts[item.photoId] ?: BigDecimal.ZERO)
+            }
+            val order = orderRepository.save(
+                Order(
+                    userId = userId,
+                    eventId = eventId,
+                    recipientEmail = recipientEmail,
+                    paymentMethodWire = paymentMethod.wire,
+                    status = OrderStatus.PENDING,
+                    totalPhp = total,
+                    idempotencyKey = idempotencyKey,
+                    couponCode = appliedCoupon?.code,
+                    couponId = appliedCoupon?.id,
+                    legacyShareTokenHash = null,
+                    tokenExpiresAt = expiresAt,
+                ),
+            )
+            items.forEach { item ->
+                savedItems += orderItemRepository.save(
+                    OrderItem(
+                        id = OrderItemId(order.id, item.photoId),
+                        pricePhpAtPurchase = photos.getValue(item.photoId).pricePhp,
+                        discountPhp = discounts[item.photoId] ?: BigDecimal.ZERO,
+                    ),
+                )
+            }
+            paymentRepository.save(
+                Payment(
+                    orderId = order.id,
+                    provider = PAYMONGO,
+                    amountPhp = order.totalPhp,
+                    status = PaymentStatus.PENDING,
+                ),
+            )
+            order
+        }
+        return CheckoutReservation(orders, photos, events, savedItems)
+    }
+
+    private fun replayAfterConstraintRace(
+        userId: UUID?,
+        recipientEmail: String,
+        request: CreateOrderRequest,
+        paymentMethod: PaymentMethod,
+        idempotencyKey: String,
+    ): CheckoutReservation? {
+        val existing = findScopedOrders(userId, recipientEmail, idempotencyKey)
+        if (existing.isEmpty()) return null
+        val items = validateReplay(existing, request, paymentMethod)
+        return CheckoutReservation(
+            existing,
+            loadAndValidatePhotos(request.items),
+            loadAndValidateEvents(request.items),
+            items,
+        )
+    }
+
+    // Returns the persisted items so the caller can charge exactly what was
+    // reserved (price − discount) instead of re-pricing from the photo.
+    private fun validateReplay(
+        orders: List<Order>,
+        request: CreateOrderRequest,
+        paymentMethod: PaymentMethod,
+    ): List<OrderItem> {
+        if (orders.isEmpty()) throw checkoutConflict("Checkout is already in progress.")
+        val existingItems = orderItemRepository.findByIdOrderIdIn(orders.map { it.id })
+        val existingPhotoIds = existingItems.map { it.id.photoId }.toSet()
+        val requestedPhotoIds = request.items.map { it.photoId }.toSet()
+        // Pure string compare — never resolve the coupon on a replay.
+        val requestedCoupon = request.couponCode?.let { CouponService.normalise(it) }
+        val persistedCoupons = orders.mapNotNull { it.couponCode }.toSet()
+        if (existingPhotoIds != requestedPhotoIds ||
+            orders.any { it.paymentMethod != paymentMethod } ||
+            persistedCoupons != requestedCoupon?.let(::setOf).orEmpty()
+        ) {
+            throw checkoutConflict("Idempotency-Key was already used for a different checkout.")
+        }
+        if (orders.any { it.status == OrderStatus.EXPIRED }) {
+            throw checkoutConflict("This checkout expired. Start again with a new Idempotency-Key.")
+        }
+        return existingItems
+    }
+
+    private fun findScopedOrders(userId: UUID?, recipientEmail: String, idempotencyKey: String): List<Order> =
+        if (userId != null) {
+            orderRepository.findByUserIdAndIdempotencyKey(userId, idempotencyKey)
+        } else {
+            orderRepository.findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(
+                recipientEmail,
+                idempotencyKey,
+            )
+        }
+
+    private fun buildCheckoutRequest(
+        reservation: CheckoutReservation,
+        paymentMethod: PaymentMethod,
+        recipientEmail: String,
+        isAndroid: Boolean,
+    ): PaymongoCheckoutSessionRequest {
+        val primary = pickPrimary(reservation.orders)
+        val baseCancelUrl = if (isAndroid) buildMobileCancelUrl(primary) else paymongoProperties.cancelUrl
+        return PaymongoCheckoutSessionRequest(
+            data = PaymongoCheckoutSessionRequestEnvelope(
+                attributes = PaymongoCheckoutSessionAttributes(
+                    cancelUrl = baseCancelUrl,
+                    successUrl = buildSuccessUrl(primary, isAndroid),
+                    lineItems = buildLineItems(reservation.items, reservation.photos, reservation.events),
+                    paymentMethodTypes = paymongoMethodsFor(paymentMethod),
+                    description = buildSessionDescription(
+                        reservation.items.size,
+                        reservation.events.values.map { it.name },
+                    ),
+                    billing = PaymongoBilling(email = recipientEmail),
+                    metadata = mapOf(
+                        "primaryOrderId" to primary.id.toString(),
+                        "orderCount" to reservation.orders.size.toString(),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    private fun finalizeCheckout(
+        orderIds: List<UUID>,
+        checkoutSessionId: String,
+    ) {
+        val payments = paymentRepository.findAllByOrderIdInForUpdate(orderIds)
+        if (payments.size != orderIds.size) error("Checkout payment placeholders are incomplete")
+        payments.forEach { payment ->
+            val existing = payment.providerRef
+            if (existing != null && existing != checkoutSessionId) {
+                throw checkoutConflict("Checkout is already linked to another payment session.")
+            }
+            payment.providerRef = checkoutSessionId
+            paymentRepository.save(payment)
+        }
+    }
+
+    private fun clearCartBestEffort(userId: UUID?, items: List<CreateOrderItem>) {
+        if (userId == null) return
+        items.forEach { item ->
+            runCatching { cartItemRepository.deleteByUserIdAndPhotoId(userId, item.photoId) }
+                .onFailure { ex -> log.warn("Cart clear failed for user={} photo={}: {}", userId, item.photoId, ex.message) }
+        }
+    }
+
     @Transactional(readOnly = true)
     fun statusByIdAndToken(orderId: UUID, token: String?): OrderStatusDto {
         val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
-        if (token.isNullOrBlank() || order.shareToken == null || order.shareToken != token) {
-            throw orderNotFound()
-        }
-        return OrderStatusDto(id = order.id, status = order.status, paidAt = order.paidAt)
+        requireValidReturnToken(order, token)
+        return statusDto(order)
+    }
+
+    @Transactional(readOnly = true)
+    fun statusForUser(userId: UUID, orderId: UUID): OrderStatusDto {
+        val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
+        if (order.userId != userId) throw orderNotFound()
+        return statusDto(order)
+    }
+
+    private fun statusDto(order: Order): OrderStatusDto =
+        OrderStatusDto(id = order.id, status = order.status, paidAt = order.paidAt)
+
+    private fun requireValidReturnToken(order: Order, token: String?) {
+        if (!orderAccessTokenService.isValid(order, token, OrderCapability.RETURN)) throw orderNotFound()
     }
 
     private fun orderNotFound(): NotFoundException =
@@ -296,33 +401,29 @@ class OrderService(
             pageable = OffsetLimitPageable(params),
         )
         if (page.isEmpty) return PaginatedResponse.empty(params)
-        val items = hydrateList(page.content)
-        return PaginatedResponse.of(items, page.totalElements, params)
+        return PaginatedResponse.of(hydrateList(page.content), page.totalElements, params)
     }
 
     @Transactional(readOnly = true)
     fun getDetail(userId: UUID, orderId: UUID): OrderDetailDto {
-        val order = orderRepository.findById(orderId).orElseThrow {
-            NotFoundException(code = ErrorCodes.ORDER_NOT_FOUND, message = "Order not found")
-        }
-        if (order.userId != userId) {
-            // Anti-IDOR — never reveal that the order exists for another user.
-            throw NotFoundException(code = ErrorCodes.ORDER_NOT_FOUND, message = "Order not found")
-        }
+        val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
+        if (order.userId != userId) throw orderNotFound()
+        return hydrateDetail(order)
+    }
+
+    @Transactional(readOnly = true)
+    fun detailByIdAndToken(orderId: UUID, token: String?): OrderDetailDto {
+        val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
+        requireValidReturnToken(order, token)
         return hydrateDetail(order)
     }
 
     private fun resolveRecipientEmail(userId: UUID?, requestEmail: String?): String {
         if (userId != null) {
-            val user = userRepository.findById(userId).orElseThrow {
+            return userRepository.findById(userId).orElseThrow {
                 UnauthorizedException(code = ErrorCodes.UNAUTHORIZED, message = "User not found")
-            }
-            return user.email
+            }.email.trim().lowercase()
         }
-        // M-4 — Bean Validation @Email on the controller DTO covers the canonical
-        // path; this is service-boundary defense-in-depth in case a future
-        // controller path bypasses the annotation. Lowercase + trim before
-        // storing so receipt deduplication doesn't fork on Aa@b.com vs aa@b.com.
         val email = requestEmail?.trim()?.lowercase().orEmpty()
         if (email.isEmpty()) {
             throw ValidationException(
@@ -341,104 +442,130 @@ class OrderService(
         return email
     }
 
+    private fun validateItems(items: List<CreateOrderItem>) {
+        if (items.isEmpty()) {
+            throw ValidationException(
+                message = "items must not be empty",
+                code = ErrorCodes.VALIDATION_ERROR,
+                field = "items",
+            )
+        }
+        if (items.map { it.photoId }.distinct().size != items.size) {
+            throw ValidationException(
+                message = "items must not contain duplicate photos",
+                code = ErrorCodes.VALIDATION_ERROR,
+                field = "items",
+            )
+        }
+    }
+
     private fun loadAndValidatePhotos(items: List<CreateOrderItem>): Map<UUID, Photo> {
-        val photoIds = items.map { it.photoId }.toSet()
-        val photos = photoRepository.findAllById(photoIds).associateBy { it.id }
+        val photoIds = items.map { it.photoId }.distinct().sorted()
+        val photos = photoRepository.findAllByIdForUpdate(photoIds).associateBy { it.id }
         if (photos.size != photoIds.size) {
             throw NotFoundException(
-                code = ErrorCodes.PHOTO_NOT_FOUND,
                 message = "One or more photos not found",
+                code = ErrorCodes.PHOTO_NOT_FOUND,
             )
         }
         items.forEach { item ->
             val photo = photos.getValue(item.photoId)
             if (photo.eventId != item.eventId) {
                 throw ValidationException(
-                    code = ErrorCodes.VALIDATION_ERROR,
                     message = "Photo ${item.photoId} does not belong to event ${item.eventId}",
+                    code = ErrorCodes.VALIDATION_ERROR,
                     field = "items",
                 )
+            }
+            if (photo.status != PhotoStatus.LIVE) {
+                throw checkoutConflict("Only live photos can be purchased.")
+            }
+            if (photo.pricePhp <= BigDecimal.ZERO) {
+                throw checkoutConflict("Paid checkout requires a positive photo price.")
             }
         }
         return photos
     }
 
-    private fun pickPrimary(orders: List<Order>): Order =
-        orders.minBy { it.createdAt }
+    private fun loadAndValidateEvents(items: List<CreateOrderItem>): Map<UUID, Event> {
+        val eventIds = items.map { it.eventId }.toSet()
+        val events = eventRepository.findAllById(eventIds)
+            .filter { it.deletedAt == null }
+            .associateBy { it.id }
+        if (events.size != eventIds.size) {
+            throw NotFoundException(message = "Event not found", code = ErrorCodes.EVENT_NOT_FOUND)
+        }
+        events.values.firstOrNull { it.status == EventStatus.ARCHIVED }?.let { archived ->
+            throw ConflictException(message = "Event ${archived.slug} is archived", code = ErrorCodes.EVENT_ARCHIVED)
+        }
+        return events
+    }
+
+    private fun checkoutConflict(message: String): ConflictException =
+        ConflictException(code = ErrorCodes.CONFLICT, message = message)
+
+    private fun pickPrimary(orders: List<Order>): Order = orders.minBy { it.createdAt }
 
     private fun toOrderResponse(order: Order, redirectUrl: String? = null): OrderResponse {
         val items = orderItemRepository.findByIdOrderId(order.id)
-        val photoIds = items.map { it.id.photoId }
-        val photos = photoRepository.findAllById(photoIds).associateBy { it.id }
+        val photos = photoRepository.findAllById(items.map { it.id.photoId }).associateBy { it.id }
         val grants = downloadGrantRepository.findByIdOrderId(order.id).associateBy { it.id.photoId }
         return OrderResponse(
             id = order.id,
             status = order.status,
             items = items.map { item ->
-                val photo = photos[item.id.photoId]
                 OrderResponseItem(
                     photoId = item.id.photoId,
                     price = item.pricePhpAtPurchase,
-                    downloadUrl = photo?.let { downloadUrlOf(it, grants[item.id.photoId]) },
+                    downloadUrl = photos[item.id.photoId]?.let { downloadUrlOf(it, grants[item.id.photoId]) },
+                    discount = item.discountPhp,
                 )
             },
             totalAmount = order.totalPhp,
             paymentMethod = order.paymentMethodWire,
             createdAt = order.createdAt,
             redirectUrl = redirectUrl,
+            couponCode = order.couponCode,
         )
     }
 
-    private fun generateShareToken(): String {
-        val bytes = ByteArray(24)
-        SecureRandom().nextBytes(bytes)
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
-    }
-
+    // Charged from the persisted order rows, never re-priced from the photo:
+    // Payment.amountPhp, the ledger and PayMongo then share one figure.
     private fun buildLineItems(
-        items: List<CreateOrderItem>,
+        items: List<OrderItem>,
         photos: Map<UUID, Photo>,
         events: Map<UUID, Event>,
     ): List<PaymongoLineItem> = items.map { item ->
-        val photo = photos.getValue(item.photoId)
-        val event = events[item.eventId]
-        val bibLabel = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber
-            ?.let { "BIB $it" } ?: "Untagged"
+        val photo = photos.getValue(item.id.photoId)
+        val bib = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber?.let { "BIB $it" } ?: "Untagged"
         PaymongoLineItem(
-            name = "Race photo · $bibLabel".take(120),
-            amount = photo.pricePhp.multiply(BigDecimal(100)).toLong(),
-            currency = "PHP",
-            quantity = 1,
-            description = event?.name?.take(120),
+            name = "Race photo - $bib".take(120),
+            amount = item.pricePhpAtPurchase.subtract(item.discountPhp).multiply(BigDecimal(100)).toLong(),
+            description = events[photo.eventId]?.name?.take(120),
         )
     }
 
     private fun buildSessionDescription(itemCount: Int, eventNames: List<String>): String {
         val sample = eventNames.firstOrNull() ?: "QuickPitik"
         val more = if (eventNames.size > 1) " +${eventNames.size - 1} more" else ""
-        val photoWord = if (itemCount == 1) "photo" else "photos"
-        return "QuickPitik · $itemCount $photoWord · $sample$more".take(160)
+        val noun = if (itemCount == 1) "photo" else "photos"
+        return "QuickPitik - $itemCount $noun - $sample$more".take(160)
     }
 
-    private fun buildSuccessUrl(order: Order, isAndroid: Boolean = false): String {
+    private fun buildSuccessUrl(order: Order, isAndroid: Boolean): String {
         val base = if (isAndroid) paymongoProperties.mobileSuccessUrl else paymongoProperties.successUrl
-        val sep = if (base.contains("?")) "&" else "?"
-        // Token in the success URL is guest-only so authed runners reach
-        // /orders/return via the JWT-gated /me/orders/{id} detail endpoint
-        // (which keeps cross-user IDOR checks). Bundle URL embeds the token
-        // regardless because the bundle endpoint is token-only.
-        val tokenParam = if (order.userId == null && order.shareToken != null) {
-            "&token=${order.shareToken}"
+        val separator = if (base.contains("?")) "&" else "?"
+        val token = if (order.userId == null) {
+            "&token=${orderAccessTokenService.issue(order, OrderCapability.RETURN)}"
         } else {
             ""
         }
-        return "$base${sep}orderId=${order.id}$tokenParam"
+        return "$base${separator}orderId=${order.id}$token"
     }
 
     private fun buildMobileCancelUrl(order: Order): String {
-        val base = paymongoProperties.mobileCancelUrl
-        val sep = if (base.contains("?")) "&" else "?"
-        return "$base${sep}orderId=${order.id}"
+        val separator = if (paymongoProperties.mobileCancelUrl.contains("?")) "&" else "?"
+        return "${paymongoProperties.mobileCancelUrl}${separator}orderId=${order.id}"
     }
 
     private fun paymongoMethodsFor(method: PaymentMethod): List<String> = when (method) {
@@ -447,38 +574,30 @@ class OrderService(
         PaymentMethod.CARD -> listOf("card")
     }
 
-    // On idempotent replay, recover the PayMongo Checkout URL from the
-    // existing Payment row. Already-paid orders return null (FE skips
-    // redirect and shows success directly). Failures swallowed — the FE
-    // will fall back to "open your orders" messaging.
     private fun resumeCheckoutUrl(order: Order): String? {
-        if (order.status == OrderStatus.PAID || order.status == OrderStatus.FULFILLED) {
-            return null
-        }
+        if (order.status in SETTLED_ORDER_STATUSES || order.status == OrderStatus.EXPIRED) return null
         val payment = paymentRepository.findByOrderId(order.id)
-            .firstOrNull { it.provider == "paymongo" && it.providerRef != null }
+            .firstOrNull { it.provider == PAYMONGO && !it.providerRef.isNullOrBlank() }
             ?: return null
         return runCatching {
-            paymongoClient.retrieveCheckoutSession(payment.providerRef!!)
-                .data.attributes.checkoutUrl.ifBlank { null }
+            val checkout = paymongoClient.retrieveCheckoutSession(payment.providerRef!!)
+            if (checkout.data.attributes.status.equals("expired", ignoreCase = true)) null
+            else checkout.data.attributes.checkoutUrl.ifBlank { null }
         }.getOrNull()
     }
 
     private fun hydrateList(orders: List<Order>): List<OrderListItemDto> {
         if (orders.isEmpty()) return emptyList()
         val orderIds = orders.map { it.id }
-        val itemsByOrder = orderItemRepository.findByIdOrderIdIn(orderIds)
-            .groupBy { it.id.orderId }
-        val events = eventRepository.findAllById(orders.map { it.eventId }.toSet())
-            .associateBy { it.id }
-        val disputesByOrder = hydrateDisputesByOrderId(orderIds)
+        val itemsByOrder = orderItemRepository.findByIdOrderIdIn(orderIds).groupBy { it.id.orderId }
+        val events = eventRepository.findAllById(orders.map { it.eventId }.toSet()).associateBy { it.id }
+        val disputes = hydrateDisputesByOrderId(orderIds)
         return orders.map { order ->
-            val items = itemsByOrder[order.id].orEmpty()
             val event = events[order.eventId]
             OrderListItemDto(
                 id = order.id,
                 eventId = order.eventId,
-                photoIds = items.map { it.id.photoId },
+                photoIds = itemsByOrder[order.id].orEmpty().map { it.id.photoId },
                 total = order.totalPhp,
                 paymentMethod = order.paymentMethodWire,
                 paidAt = order.paidAt,
@@ -487,52 +606,37 @@ class OrderService(
                 eventDate = event?.date,
                 eventState = event?.let { EventDtoMapper.deriveAdminEventState(it) },
                 status = order.status,
-                disputes = disputesByOrder[order.id].orEmpty(),
+                disputes = disputes[order.id].orEmpty(),
+                couponCode = order.couponCode,
+                discountTotal = itemsByOrder[order.id].orEmpty().sumOf { it.discountPhp },
             )
         }
     }
 
-    /**
-     * Batch-hydrate disputes + their admin resolution notes for a page of
-     * orders. Two round-trips total regardless of N:
-     *   1. SELECT * FROM disputes WHERE order_id IN (...)
-     *   2. SELECT * FROM admin_decision_log
-     *      WHERE target_dispute_id IN (...) ORDER BY decided_at DESC
-     *
-     * The decision-log query is ordered DESC and grouped by targetDisputeId
-     * in memory — the first row per disputeId is the most-recent admin
-     * action (resolved / denied / escalated), and its `reason` becomes the
-     * runner-visible resolution note.
-     */
     private fun hydrateDisputesByOrderId(orderIds: Collection<UUID>): Map<UUID, List<RunnerDisputeDto>> {
         if (orderIds.isEmpty()) return emptyMap()
         val disputes = disputeRepository.findByOrderIdIn(orderIds)
         if (disputes.isEmpty()) return emptyMap()
-
-        val disputeIds = disputes.map { it.id }
-        val latestNoteByDisputeId: Map<UUID, String?> =
-            adminDecisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(disputeIds)
-                .groupBy { it.targetDisputeId }
-                .mapNotNull { (k, v) -> if (k == null) null else k to v.first().reason }
-                .toMap()
-
-        return disputes
-            .map { d ->
-                d.orderId to RunnerDisputeDto(
-                    id = d.id,
-                    photoId = d.photoId,
-                    reason = d.reasonWire,
-                    note = d.note,
-                    status = d.statusWire,
-                    resolution = d.resolutionWire,
-                    refundAmount = d.refundAmountPhp,
-                    resolutionNote = latestNoteByDisputeId[d.id],
-                    openedAt = d.openedAt,
-                    resolvedAt = d.resolvedAt,
-                    withdrawnAt = d.withdrawnAt,
-                )
-            }
-            .groupBy({ it.first }, { it.second })
+        val notes = adminDecisionLogRepository
+            .findByTargetDisputeIdInOrderByDecidedAtDesc(disputes.map { it.id })
+            .groupBy { it.targetDisputeId }
+            .mapNotNull { (id, rows) -> id?.let { it to rows.first().reason } }
+            .toMap()
+        return disputes.map { dispute ->
+            dispute.orderId to RunnerDisputeDto(
+                id = dispute.id,
+                photoId = dispute.photoId,
+                reason = dispute.reasonWire,
+                note = dispute.note,
+                status = dispute.statusWire,
+                resolution = dispute.resolutionWire,
+                refundAmount = dispute.refundAmountPhp,
+                resolutionNote = notes[dispute.id],
+                openedAt = dispute.openedAt,
+                resolvedAt = dispute.resolvedAt,
+                withdrawnAt = dispute.withdrawnAt,
+            )
+        }.groupBy({ it.first }, { it.second })
     }
 
     private fun hydrateDetail(order: Order): OrderDetailDto {
@@ -557,69 +661,62 @@ class OrderService(
                     id = item.id.photoId,
                     bib = photo?.bibs?.minByOrNull { it.bibNumber }?.bibNumber,
                     time = photo?.let {
-                        (it.capturedAt ?: it.uploadedAt)
-                            .atZoneSameInstant(DISPLAY_ZONE)
-                            .toLocalTime()
+                        (it.capturedAt ?: it.uploadedAt).atZoneSameInstant(DISPLAY_ZONE).toLocalTime()
                             .format(TIME_FORMATTER)
-                    } ?: "—",
+                    } ?: "-",
                     tone = photo?.tone ?: index,
-                    thumbnailUrl = photo?.let { thumbnailUrlOf(it) },
-                    previewUrl = photo?.let { previewUrlOf(it) },
+                    thumbnailUrl = photo?.let(::thumbnailUrlOf),
+                    previewUrl = photo?.let { previewUrlOf(it, grants[item.id.photoId]) },
                     downloadUrl = photo?.let { downloadUrlOf(it, grants[item.id.photoId]) },
                 )
             },
             downloadBundleUrl = null,
             recipientEmail = order.recipientEmail,
-            shareToken = order.shareToken,
+            shareToken = orderAccessTokenService.issue(order, OrderCapability.BUNDLE),
             disputes = hydrateDisputesByOrderId(listOf(order.id))[order.id].orEmpty(),
+            couponCode = order.couponCode,
+            discountTotal = items.sumOf { it.discountPhp },
         )
     }
 
-    /**
-     * Public guest detail. Same hydration as `/me/orders/{id}` but gated on
-     * the share token instead of JWT. Anti-IDOR: missing/mismatched token
-     * surfaces NOT_FOUND, matching `statusByIdAndToken`.
-     */
-    @Transactional(readOnly = true)
-    fun detailByIdAndToken(orderId: UUID, token: String?): OrderDetailDto {
-        val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
-        if (token.isNullOrBlank() || order.shareToken == null || order.shareToken != token) {
-            throw orderNotFound()
-        }
-        return hydrateDetail(order)
-    }
+    private fun thumbnailUrlOf(photo: Photo): String =
+        storageService.presignedGetUrl(
+            photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key,
+            storageProperties.presignedTtl.thumbnail,
+        )
 
-    private fun thumbnailUrlOf(photo: Photo): String {
-        val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key
-        return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
-    }
-
-    private fun previewUrlOf(photo: Photo): String {
-        // Owned-mode preview = the clean original. OrderDetailDto is only ever
-        // returned to the order's owner (JWT user_id match) or the share-token
-        // holder, so by the time we render `previewUrl` the requester has
-        // already proven ownership. Serving the watermarked variant here was
-        // the G-2 bug — photographer mark + QuickPitik tile were baked into
-        // the JPEG and still visible to paying users. Falls back to the
-        // watermarked variant only when s3_key is somehow missing (defensive;
-        // the column is NOT NULL).
+    private fun previewUrlOf(photo: Photo, grant: DownloadGrant?): String? {
+        if (grant == null || grant.grantedUntil.isBefore(OffsetDateTime.now())) return null
         val key = photo.s3Key.ifBlank { photo.watermarkS3Key ?: photo.thumbnailS3Key.orEmpty() }
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.runnerDownload)
     }
 
     private fun downloadUrlOf(photo: Photo, grant: DownloadGrant?): String? {
-        if (grant == null) return null
-        val now = OffsetDateTime.now()
-        if (grant.grantedUntil.isBefore(now)) return null
-        return storageService.presignedGetUrl(photo.s3Key, storageProperties.presignedTtl.runnerDownload)
+        if (grant == null || grant.grantedUntil.isBefore(OffsetDateTime.now())) return null
+        return storageService.presignedDownloadUrl(
+            photo.s3Key,
+            storageProperties.presignedTtl.runnerDownload,
+            downloadFilenameOf(photo),
+        )
     }
 
+    private fun downloadFilenameOf(photo: Photo): String =
+        com.quickpitik.service.photos.PhotoFilenames.downloadFilenameOf(photo)
+
+    private data class CheckoutReservation(
+        val orders: List<Order>,
+        val photos: Map<UUID, Photo>,
+        val events: Map<UUID, Event>,
+        val items: List<OrderItem>,
+    )
+
     private companion object {
+        const val PAYMONGO = "paymongo"
+        val ACTIVE_ORDER_STATUSES = listOf(OrderStatus.PENDING, OrderStatus.PAID, OrderStatus.FULFILLED)
+        val SETTLED_ORDER_STATUSES = setOf(OrderStatus.PAID, OrderStatus.FULFILLED, OrderStatus.REFUNDED)
         val TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
         val DISPLAY_ZONE: ZoneId = ZoneId.of("Asia/Manila")
-        // Defensive only — the controller DTO already runs Jakarta @Email via
-        // BeanValidation; this regex catches the residual "looks email-shaped"
-        // case if a future caller bypasses the annotated path.
-        val EMAIL_REGEX: Regex = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
+        val EMAIL_REGEX = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
+        const val PROVIDER_RETRY_WINDOW_HOURS = 23L
     }
 }

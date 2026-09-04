@@ -8,6 +8,7 @@ import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.PasswordValidator
 import com.quickpitik.service.RefreshTokenService
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
@@ -75,6 +76,9 @@ class ProfileService(
                 message = "New password must differ from current password",
             )
         }
+        // Deliberately after the current-password check — an unauthenticated
+        // caller learns nothing about our password rules.
+        PasswordValidator.validate(request.newPassword, "newPassword")
         user.passwordHash = passwordEncoder.encode(request.newPassword)
         userRepository.save(user)
         refreshTokenService.revokeAllForUserExcept(userId, request.refreshToken)

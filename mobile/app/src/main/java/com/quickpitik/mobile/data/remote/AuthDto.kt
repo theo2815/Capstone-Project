@@ -27,6 +27,76 @@ data class AuthResponse(
     val user: UserDto
 )
 
+// Body for POST /auth/google. Mirrors backend dto/auth/GoogleLoginRequest.
+// `role` is null on the first attempt (Gson omits null fields); a brand-new
+// Google account gets 422 ROLE_REQUIRED back and re-POSTs the same idToken
+// with the picked role. Existing accounts ignore `role` entirely.
+data class GoogleLoginRequest(
+    val idToken: String,
+    val role: String? = null
+)
+
+// Body for POST /auth/refresh. Mirrors backend dto/auth/RefreshRequest.
+data class RefreshRequest(
+    val refreshToken: String
+)
+
+data class VerifyEmailRequest(
+    val token: String
+)
+
+data class EmailChangeConfirmRequest(
+    val token: String
+)
+
+// Body for POST /auth/logout. Mirrors backend dto/auth/LogoutRequest, whose
+// field is nullable — the endpoint is a no-op rather than an error when the
+// token is absent. Revoking server-side is what stops a signed-out phone's
+// refresh token from staying usable; the local session is cleared regardless.
+data class LogoutRequest(
+    val refreshToken: String?
+)
+
+// Body for POST /auth/forgot-password. Mirrors backend
+// dto/auth/ForgotPasswordRequest. The endpoint is anti-enumeration silent —
+// it answers with the same generic message whether or not the email exists,
+// so the UI must never phrase its success copy as "we found your account".
+data class ForgotPasswordRequest(
+    val email: String
+)
+
+// Body for POST /auth/verify-reset-otp. Mirrors backend
+// dto/auth/VerifyResetOtpRequest. Fails identically for an unknown email and a
+// wrong code (anti-enumeration), so the UI copy must never distinguish them.
+data class VerifyResetOtpRequest(
+    val email: String,
+    val code: String
+)
+
+// The short-lived one-shot continuation token minted by a successful OTP
+// verification — the only credential /auth/reset-password accepts. Held in
+// AuthViewModel memory only, never persisted.
+data class VerifyResetOtpResponse(
+    val resetToken: String
+)
+
+// Body for POST /auth/reset-password. Mirrors backend
+// dto/auth/ResetPasswordRequest, which enforces @Size(min = 8) on newPassword;
+// validatePassword() gates the same rule client-side first. `token` is the
+// continuation from verify-reset-otp — never typed or pasted by the user.
+data class ResetPasswordRequest(
+    val token: String,
+    val newPassword: String
+)
+
+// Both auth-recovery endpoints return Map<String, String> ({"message": "…"}),
+// wrapped by the backend's ResponseEnvelopeAdvice. The screens render their own
+// copy rather than the server string, so this exists to give the envelope a
+// concrete type — not to be displayed.
+data class MessageResponse(
+    val message: String
+)
+
 // Standard Backend Error envelope structure
 data class ApiError(
     val code: String,

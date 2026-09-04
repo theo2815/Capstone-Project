@@ -1,12 +1,17 @@
 package com.quickpitik.mobile.data.repository
 
-import com.quickpitik.mobile.data.remote.*
+import com.quickpitik.mobile.data.remote.EmailChangeRequest
+import com.quickpitik.mobile.data.remote.PasswordChangeRequest
+import com.quickpitik.mobile.data.remote.ProfileUpdateRequest
+import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.SelfieRefDto
+import com.quickpitik.mobile.data.remote.UserDto
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
 class ProfileRepositoryImpl : ProfileRepository {
-    private val api = RetrofitClient.apiService
+    private val api get() = RetrofitClient.apiService
 
     override suspend fun getSelfies(token: String): Result<List<SelfieRefDto>> {
         return try {
@@ -107,14 +112,56 @@ class ProfileRepositoryImpl : ProfileRepository {
     override suspend fun changePassword(
         token: String,
         current: String,
-        new: String
+        new: String,
+        refreshToken: String?
     ): Result<String> {
         return try {
-            val response = api.changePassword("Bearer $token", PasswordChangeRequest(current, new))
+            val response = api.changePassword(
+                "Bearer $token",
+                PasswordChangeRequest(current, new, refreshToken)
+            )
             if (response.success && response.data != null) {
                 Result.success(response.data["message"] ?: "Password changed successfully")
             } else {
                 Result.failure(Exception(response.error ?: "Failed to change password"))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(RetrofitClient.parseError(e)))
+        }
+    }
+
+    override suspend fun deleteAvatar(token: String): Result<UserDto> {
+        return try {
+            val response = api.deleteAvatar("Bearer $token")
+            if (response.success && response.data != null) {
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Failed to remove photo"))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(RetrofitClient.parseError(e)))
+        }
+    }
+
+    override suspend fun requestEmailChange(
+        token: String,
+        newEmail: String,
+        currentPassword: String
+    ): Result<String> {
+        return try {
+            val response = api.requestEmailChange(
+                "Bearer $token",
+                EmailChangeRequest(newEmail, currentPassword)
+            )
+            if (response.success && response.data != null) {
+                // Prefer the server's wording — it is careful to say a link was
+                // sent rather than that the address changed.
+                Result.success(
+                    response.data["message"]
+                        ?: "Check your new inbox for the confirmation link."
+                )
+            } else {
+                Result.failure(Exception(response.error ?: "Failed to request the email change"))
             }
         } catch (e: Exception) {
             Result.failure(Exception(RetrofitClient.parseError(e)))

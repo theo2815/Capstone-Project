@@ -6,8 +6,7 @@ import {
   type Dispute,
 } from "@/lib/admin-disputes";
 import {
-  ADMIN_FLAGS,
-  FLAG_REASON_LABEL,
+  flagReasonLabel,
   type Flag,
 } from "@/lib/admin-flags";
 import {
@@ -16,7 +15,6 @@ import {
   type AdminPayoutCycle,
 } from "@/lib/admin-payouts";
 import { mergeDispute } from "@/store/admin-dispute-store";
-import { mergeFlag } from "@/store/admin-flag-store";
 import { mergePayout } from "@/store/admin-payout-store";
 
 // Phase 5 — admin command palette index. Pure functions only; no React,
@@ -78,7 +76,8 @@ export interface PaletteSnapshots {
    *  overrides + submissions. See lib/admin-users-data.ts. */
   userPool: AdminUserRow[];
   disputeOverrides: Record<string, Partial<Dispute>>;
-  flagOverrides: Record<string, Partial<Flag>>;
+  /** Server rows from useAdminFlags(); empty while loading or gated off. */
+  flags: ReadonlyArray<Flag>;
   payoutOverrides: Record<string, Partial<AdminPayoutCycle>>;
 }
 
@@ -142,7 +141,7 @@ const PAGE_SEEDS: ReadonlyArray<PageSeed> = [
   {
     id: "page:payouts",
     title: "Payouts",
-    subtitle: "Photographer payout cycles",
+    subtitle: "Photographer payout requests",
     route: `${ROUTES.ADMIN_INBOX}?type=payouts`,
     keywords: ["inbox", "approve", "hold", "pay"],
   },
@@ -256,12 +255,9 @@ function buildDisputeEntries(
   });
 }
 
-function buildFlagEntries(
-  flagOverrides: Record<string, Partial<Flag>>,
-): PaletteEntry[] {
-  const merged = ADMIN_FLAGS.map((f) => mergeFlag(f, flagOverrides[f.id]));
-  return merged.map((f) => {
-    const reasonLabel = FLAG_REASON_LABEL[f.reason];
+function buildFlagEntries(flags: ReadonlyArray<Flag>): PaletteEntry[] {
+  return flags.map((f) => {
+    const reasonLabel = flagReasonLabel(f.reason);
     const statusLabel = capitalize(f.status);
     const reporter = f.reportedBy === "system" ? "System" : `@${f.reportedBy}`;
     const subtitle = `${statusLabel} · ${reasonLabel} · ${reporter}`;
@@ -364,7 +360,7 @@ export function buildPaletteIndex(
     ...buildVerificationEntries(snapshots.userPool),
     ...buildDisputeEntries(snapshots.disputeOverrides),
     ...(ADMIN_FLAGS_ENABLED
-      ? buildFlagEntries(snapshots.flagOverrides)
+      ? buildFlagEntries(snapshots.flags)
       : []),
     ...buildPayoutEntries(snapshots.payoutOverrides),
     ...buildPhotographerEntries(snapshots.userPool),

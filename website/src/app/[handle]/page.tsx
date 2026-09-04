@@ -124,7 +124,11 @@ function ProfileLayout({
       ? BRAND_COLOR_HEX[profile.brandColor]
       : null;
   const totals = getProfileTotals(profile);
-  const portfolioEvents = profile.events.filter((e) => e.photoCount > 0);
+  // Unlisted (V46) coverage stays reachable by its share link but never
+  // appears on the portfolio wall.
+  const portfolioEvents = profile.events.filter(
+    (e) => e.photoCount > 0 && e.visibility !== "unlisted",
+  );
 
   return (
     <div className="flex-1">
@@ -141,14 +145,14 @@ function ProfileLayout({
             avatarOverride={null}
           />
           <div className="flex-1 min-w-0 md:pb-2">
-            <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
               Photographer
             </p>
           </div>
         </div>
 
         <div className="mt-6 flex items-baseline gap-3 flex-wrap">
-          <h1 className="font-display text-4xl md:text-5xl font-medium tracking-tight text-ink leading-[1.05]">
+          <h1 className="font-display text-4xl md:text-5xl font-extrabold tracking-tight text-ink leading-[1.05]">
             {profile.displayName}
           </h1>
           {accent && (
@@ -257,7 +261,7 @@ function StatsRow({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
         {label}
       </p>
       <p className="font-display font-medium tracking-tight tnum text-2xl md:text-3xl text-ink mt-2 leading-none">
@@ -355,10 +359,10 @@ function ComingSoonPanel({ displayName }: { displayName: string }) {
   return (
     <section className="max-w-7xl mx-auto w-full px-6 md:px-10 mt-12 md:mt-16 pb-20">
       <div className="border border-dashed border-line rounded-2xl p-10 md:p-16 text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Portfolio
         </p>
-        <p className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink mt-4">
+        <p className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink mt-4">
           Photos coming soon.
         </p>
         <p className="font-sans text-base text-ink-soft mt-3 max-w-md mx-auto">
@@ -376,10 +380,10 @@ function NotFoundBody({ handle }: { handle: string }) {
   return (
     <div className="flex-1 flex items-center justify-center px-6 md:px-10 py-20">
       <div className="text-center max-w-md">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Not found
         </p>
-        <h1 className="font-display text-4xl md:text-5xl font-medium tracking-tight text-ink mt-4">
+        <h1 className="font-display text-4xl md:text-5xl font-extrabold tracking-tight text-ink mt-4">
           No photographer here yet.
         </h1>
         <p className="font-sans text-base text-ink-soft mt-3">

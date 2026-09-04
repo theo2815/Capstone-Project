@@ -6,7 +6,7 @@ import { Slab } from "@/components/profile-shell";
 import { DashboardActionGrid } from "@/components/dashboard/dashboard-action-grid";
 import { SetupJourney } from "@/components/dashboard/setup-journey";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import {
   usePhotographerEvents,
@@ -40,6 +40,14 @@ export default function DashboardOverviewPage() {
   const hasAnyUploads = (events ?? []).some((e) => e.photoCount > 0);
   const isSetupMode = eventsLoaded && (gate.kind !== "ok" || !hasAnyUploads);
 
+  // Neither branch is safe to render before `events` resolves — gating only
+  // one way (PF-8) traded the verified photographer's SetupJourney flash for
+  // a first-timer's action-grid flash. Hold a skeleton until the fork is
+  // decidable so nobody sees the wrong dashboard.
+  if (!eventsLoaded) {
+    return <OverviewSkeleton />;
+  }
+
   if (isSetupMode) {
     return <SetupJourney />;
   }
@@ -50,6 +58,24 @@ export default function DashboardOverviewPage() {
       <BillingGlance />
       <NextUpGlance />
     </>
+  );
+}
+
+// Deliberately neutral: the fork above can resolve to either SetupJourney or
+// the action grid, and both open with a kicker + headline. Anything more
+// specific would make the wrong destination flash in skeleton form instead of
+// in real content — the same bug one layer down.
+function OverviewSkeleton() {
+  return (
+    <section className="pb-12 md:pb-16" aria-busy="true">
+      <Skeleton className="h-3 w-32" />
+      <Skeleton className="h-9 md:h-11 w-72 max-w-full mt-4" />
+      <div className="mt-8 md:mt-10 grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
+        {[0, 1, 2, 3].map((i) => (
+          <TileSkeleton key={i} aspectRatio="h-44 md:h-48" />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -68,7 +94,7 @@ function BillingGlance() {
       trailing={
         <Link
           href={ROUTES.DASHBOARD_BILLING}
-          className="hover:text-ink transition-colors inline-flex items-center gap-1.5 group"
+          className="text-ink hover:text-fresh transition-colors inline-flex items-center gap-1.5 group"
         >
           Open billing
           <span
@@ -124,16 +150,16 @@ function OpenRequestGlance({
 
   return (
     <>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft flex items-center gap-2 flex-wrap">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft flex items-center gap-2 flex-wrap">
         <span>Payout request</span>
         <span className="text-slate-soft">·</span>
         <span className={stageTone[stage]}>{stageLabel[stage]}</span>
       </p>
-      <p className="font-display text-5xl md:text-6xl font-semibold tracking-tight text-ink tnum mt-3 leading-none">
+      <p className="font-display text-5xl md:text-6xl font-extrabold tracking-tight text-ink tnum mt-3 leading-none">
         ₱{request.amount.toLocaleString()}
       </p>
       {stage === "approved" && request.settledAt && (
-        <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate mt-4 tnum">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-4 tnum">
           Approved {formatLongDate(request.settledAt)}
         </p>
       )}
@@ -159,7 +185,7 @@ function AvailableGlance({
   if (!eligible && unpaidBalance === 0) {
     return (
       <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-        <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+        <p className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-ink">
           No earnings yet.
         </p>
         <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
@@ -172,12 +198,12 @@ function AvailableGlance({
 
   return (
     <>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         Available to request
       </p>
       <p
         className={cn(
-          "font-display text-5xl md:text-6xl font-semibold tracking-tight tnum mt-3 leading-none",
+          "font-display text-5xl md:text-6xl font-extrabold tracking-tight tnum mt-3 leading-none",
           eligible ? "text-fresh" : "text-slate",
         )}
       >
@@ -225,7 +251,7 @@ function NextUpGlance() {
       trailing={
         <Link
           href={ROUTES.DASHBOARD_EVENTS}
-          className="hover:text-ink transition-colors inline-flex items-center gap-1.5 group"
+          className="text-ink hover:text-fresh transition-colors inline-flex items-center gap-1.5 group"
         >
           All events
           <span
@@ -248,7 +274,7 @@ function NextUpGlance() {
         </ul>
       ) : upcoming.length === 0 ? (
         <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-          <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+          <p className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-ink">
             No upcoming coverage.
           </p>
           <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
@@ -285,16 +311,16 @@ function FeaturedEventRow({ event }: { event: PhotographerEventSummary }) {
   return (
     <Link
       href={`${ROUTES.UPLOAD}/${event.id}`}
-      className="group block py-5 md:py-6 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+      className="group block py-5 md:py-6 px-3 -mx-3 rounded-lg hover:bg-bone-deep/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
     >
       <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
         <div className="flex-1 min-w-0">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum flex items-center gap-2 flex-wrap">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum flex items-center gap-2 flex-wrap">
             <span>{formatLongDate(event.date, true)}</span>
             <span className="text-slate-soft">·</span>
             <StateChip state={event.state} />
           </p>
-          <h3 className="font-display text-lg md:text-xl font-medium tracking-tight text-ink mt-2 truncate group-hover:text-ink-soft transition-colors">
+          <h3 className="font-display text-lg md:text-xl font-bold tracking-tight text-ink mt-2 truncate group-hover:text-fresh transition-colors">
             {event.name}
           </h3>
         </div>

@@ -95,10 +95,28 @@ Every uploaded image goes through multiple checks before any processing:
 | Check | What It Does | Why |
 |---|---|---|
 | Content-Type header | Must be `image/jpeg`, `image/png`, or `image/webp` | Reject non-image files early |
-| File size | Maximum 10MB | Prevent memory exhaustion |
+| File size | Maximum 25MB (`MAX_FILE_SIZE`) | Prevent memory exhaustion. Matches the Spring backend's multipart ceiling — it forwards ORIGINAL photo bytes for indexing, so a lower bound here would fail photos it had already accepted. |
 | Magic bytes | Opens file with PIL and calls `.verify()` | A file renamed to .jpg is still detected as non-image |
-| Dimensions | Min 32px, Max 4096px per side | Too small = useless. Too large = memory bomb. |
+| Dimensions | Max 12000px per side (`MAX_IMAGE_DIMENSION`); min 32px on the single-image path | Too large = memory bomb. This is a fail-closed guard, not a quality gate — it is sized to pass any real camera (102 MP = 11648×8736), since every path downscales to `MAX_INFERENCE_DIMENSION` anyway. |
+
 | EXIF handling | Pillow applies `ImageOps.exif_transpose` (preserves orientation) then the image is converted to a BGR numpy array which carries no EXIF | Privacy: EXIF metadata (GPS, device info, timestamps) is discarded as soon as the bytes leave Pillow |
+| Total request body | Maximum 2 GB (`MAX_REQUEST_BODY`) | The only bound on a multipart upload *in aggregate*. Per-file limits cannot supply it: the `/stream` endpoints hold every file in memory at once, so 500 files each under `MAX_FILE_SIZE` still sum to 12.5 GB. Sized by the backend's mega drain at its worst case — 50 photos (its `batch.max-size`) × the 25 MB ceiling = 1250 MB. |
+
+**Which paths enforce which check.**
+
+| Path | Size | Dimensions | Content-Type | Magic bytes |
+|---|---|---|---|---|
+| 7 single-image endpoints (`validate_and_decode`) | ✅ | ✅ (+ min 32px) | ✅ | ✅ `.verify()` |
+| 11 batch/mega endpoints (`validate_batch_file`) | ✅ | ✅ | ✅ | ✅ `.verify()` |
+| 2 `/stream` endpoints (`validate_stream_file`) | ✅ | ✅ | ❌ | ❌ |
+
+`validate_stream_file` is deliberately the narrow one. It drops `.verify()` because that walks the whole file while `cv2.imdecode` already fails closed on corrupt bytes, and it drops the Content-Type check because that is the one test that could reject a correct desktop client posting `application/octet-stream`. It keeps size and dimensions — the two `cv2.imdecode` cannot enforce for itself, since unlike Pillow it has no decompression-bomb guard.
+
+A `/stream` rejection is reported as a per-image NDJSON error line, not an HTTP error; the request still returns 200 and the remaining images are still scored.
+
+`MAX_REQUEST_BODY` is enforced by `BodySizeLimitMiddleware` (`src/main.py`) from the `Content-Length` header, before multipart is parsed. A chunked request declares no length and is not caught by it — the per-file layer still applies. Keep the value equal to `client_max_body_size` in `nginx.conf`; `TestBodySizeLimit` both parses that file for the value and hands it to a real `nginx -t` (the value check alone passed for months against a config nginx could not load).
+
+**Memory consequence of the 2 GB ceiling.** The batch/mega paths spill to the blob store, so they hold no more than one file at a time. `/stream` does not — it reads every file into a list before processing, so this ceiling *is* its worst-case resident size. At `WORKERS=2` two saturating requests reach 4 GB of raw bytes against the 8 GB container limit in `docker-compose.prod.yml`. The exposure is theoretical today: the only `/stream` client is the desktop, which downscales to 1280px/q90 before uploading and sends ~49 MB per 200-image chunk. Revisit if a client ever streams originals.
 
 ### Face Enrollment Quality Gate
 
@@ -115,13 +133,14 @@ Bib text is cleaned using a strict character filter (`[A-Za-z0-9\-_]`) that pres
   "success": false,
   "error": {
     "code": "ImageValidationError",
-    "message": "File exceeds 10MB limit"
+    "message": "File exceeds 25MB limit"
   }
 }
 ```
 
 Status codes:
-- 400: Any validation failure (wrong file type, corrupt image, too small, too large). The backing `ImageValidationError` always uses `status_code=400`; there is no separate `413 Payload Too Large` response.
+- 400: Any per-image validation failure (wrong file type, corrupt image, too small, too large). The backing `ImageValidationError` always uses `status_code=400`.
+- 413 `REQUEST_TOO_LARGE`: the whole request body exceeds `MAX_REQUEST_BODY`. This is the one case that is not an `ImageValidationError` — it is refused by middleware before any file is parsed, so it names no filename.
 
 ---
 
@@ -214,7 +233,7 @@ assert hmac.compare_digest(expected, received)
 - [x] API key authentication (SHA-256 hashed, scoped)
 - [x] Rate limiting (token bucket via Redis — enforced on every authenticated endpoint)
 - [x] Per-key concurrent batch job cap (`MAX_ACTIVE_JOBS_PER_KEY`)
-- [x] Input validation (file type, size, dimensions, magic bytes, decompression bomb guard)
+- [x] Input validation (file type, size, dimensions, magic bytes, decompression bomb guard) — single-image and batch/mega paths; **not** the two `/stream` endpoints
 - [x] EXIF rotation applied, EXIF metadata discarded (privacy)
 - [x] No persistent image storage (only embeddings, hashes, and short-lived Celery blob staging)
 - [x] GDPR right-to-erasure endpoint

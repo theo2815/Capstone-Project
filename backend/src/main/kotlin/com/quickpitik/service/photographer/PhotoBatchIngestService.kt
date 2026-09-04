@@ -1,6 +1,7 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.AiProperties
 import com.quickpitik.entity.AiIndexBatch
 import com.quickpitik.entity.AiIndexJob
 import com.quickpitik.entity.BatchStatus
@@ -35,6 +36,7 @@ class PhotoBatchIngestService(
     private val jobRepository: AiIndexJobRepository,
     private val aiApiClient: AiApiClient,
     private val aiApiProperties: AiApiProperties,
+    private val aiProperties: AiProperties,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -160,6 +162,12 @@ class PhotoBatchIngestService(
                 else -> IndexingStatus.PENDING // both jobs failed → re-drain next tick
             }
             photo.indexedAt = if (photo.indexingStatus == IndexingStatus.INDEXED) now else null
+            if (faceOk || bibOk) {
+                // Stamp which provider's ID space the stored results belong to
+                // (V33) — a later app.ai.provider flip makes these rows visibly
+                // stale instead of silently unsearchable.
+                photo.indexedProvider = aiProperties.provider.name.lowercase()
+            }
             if (!faceOk && !bibOk) {
                 // nothing usable was written; drop partials before re-drain/terminal
                 photo.facePersons.clear()

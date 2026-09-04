@@ -26,4 +26,7 @@ data class OrderListItemDto(
     val eventState: String?,
     val status: OrderStatus?,
     val disputes: List<RunnerDisputeDto> = emptyList(),
+    // Photographer coupon (V45) — see OrderDetailDto.
+    val couponCode: String? = null,
+    val discountTotal: BigDecimal = BigDecimal.ZERO,
 )

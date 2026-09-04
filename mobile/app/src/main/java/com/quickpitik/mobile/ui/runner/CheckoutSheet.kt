@@ -1,17 +1,51 @@
 package com.quickpitik.mobile.ui.runner
 
+import android.content.ActivityNotFoundException
+import android.net.Uri
+import androidx.browser.customtabs.CustomTabColorSchemeParams
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalUriHandler
@@ -20,7 +54,27 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.quickpitik.mobile.ui.theme.*
+import com.quickpitik.mobile.ui.auth.validateEmail
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.ErrorRed
+import com.quickpitik.mobile.ui.theme.FieldShape
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.InkSoft
+import com.quickpitik.mobile.ui.theme.Kicker
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.NumeralStyle
+import com.quickpitik.mobile.ui.theme.PrimaryCta
+import com.quickpitik.mobile.ui.theme.QpCard
+import com.quickpitik.mobile.ui.theme.QpCardShape
+import com.quickpitik.mobile.ui.theme.Slate
+import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.SurfaceWhite
+import com.quickpitik.mobile.ui.theme.Typography
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
+internal fun isSafeCheckoutUrl(url: String): Boolean = url.toHttpUrlOrNull()?.isHttps == true
 
 // Mobile mirror of website `CheckoutModal`. Opens from the CartSheet's
 // "Continue to checkout" CTA. Once the BE returns the PayMongo redirect URL
@@ -43,11 +97,12 @@ fun CheckoutSheet(
 
     var emailInput by remember { mutableStateOf(cartViewModel.getLoggedInUserEmail()) }
     var selectedPaymentMethod by remember { mutableStateOf("GCASH") }
-    var cardNumber by remember { mutableStateOf("") }
-    var cardExpiry by remember { mutableStateOf("") }
-    var cardCvv by remember { mutableStateOf("") }
+    // Same gate as the website's checkout identify step (EMAIL_REGEX): the
+    // receipt + download links go to this address, so a typo is a lost order.
+    val emailError = validateEmail(emailInput)
 
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val isLoading = checkoutState is CheckoutState.Loading
@@ -64,14 +119,37 @@ fun CheckoutSheet(
     }
 
     // Auto-launch PayMongo the moment the BE returns the redirect URL — the
-    // user shouldn't have to tap anything. Wrapped in try/catch because
-    // openUri throws IllegalArgumentException if no browser is installed.
+    // user shouldn't have to tap anything. Custom Tabs rather than a plain
+    // ACTION_VIEW (which is what LocalUriHandler fires internally): a bare
+    // ACTION_VIEW can raise an app-chooser in the middle of paying, and the
+    // chosen app may not honour the quickpitik:// return deep link. A Custom
+    // Tab hands off to the user's default browser directly, keeps our theme,
+    // and returns to this Activity — so the ON_RESUME bail-back below still
+    // fires. Falls back to the generic handler on devices with no CCT
+    // provider; both paths are wrapped because either can throw when the
+    // device has no browser at all.
     LaunchedEffect(redirectingSuccess) {
         if (!redirectingSuccess) return@LaunchedEffect
         val url = (checkoutState as? CheckoutState.Success)?.order?.redirectUrl
             ?: return@LaunchedEffect
+        if (!isSafeCheckoutUrl(url)) {
+            cartViewModel.setCheckoutError("Checkout returned an unsafe payment link. Please try again.")
+            return@LaunchedEffect
+        }
         try {
-            uriHandler.openUri(url)
+            try {
+                CustomTabsIntent.Builder()
+                    .setShowTitle(true)
+                    .setDefaultColorSchemeParams(
+                        CustomTabColorSchemeParams.Builder()
+                            .setToolbarColor(Bone.toArgb())
+                            .build()
+                    )
+                    .build()
+                    .launchUrl(context, Uri.parse(url))
+            } catch (e: ActivityNotFoundException) {
+                uriHandler.openUri(url)
+            }
             cartViewModel.markPaymongoLaunched()
         } catch (e: Exception) {
             cartViewModel.setCheckoutError(
@@ -181,6 +259,14 @@ fun CheckoutSheet(
                     shape = FieldShape,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (emailInput.isNotBlank() && emailError != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = emailError,
+                        style = Typography.bodySmall,
+                        color = ErrorRed,
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(20.dp))
                 Kicker("Payment provider")
@@ -200,62 +286,17 @@ fun CheckoutSheet(
                     onSelect = { selectedPaymentMethod = "MAYA" },
                 )
                 Spacer(modifier = Modifier.height(10.dp))
+                // No card fields here, deliberately: PayMongo's hosted checkout
+                // collects the card. Mobile once rendered number/MM-YY/CVV
+                // fields that were captured and never transmitted — dead UI
+                // that implied we take PAN data. The website never collects
+                // card details either.
                 PaymentOptionCard(
                     title = "Credit / debit card",
-                    subtitle = "Visa, Mastercard, JCB, etc.",
+                    subtitle = "Visa, Mastercard, JCB — entered securely on PayMongo",
                     selected = selectedPaymentMethod == "CARD",
                     onSelect = { selectedPaymentMethod = "CARD" },
-                ) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    TextField(
-                        value = cardNumber,
-                        onValueChange = { cardNumber = it },
-                        placeholder = { Text("Card number", color = SlateSoft) },
-                        singleLine = true,
-                        enabled = !isLoading,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Bone,
-                            unfocusedContainerColor = Bone,
-                            focusedIndicatorColor = Fresh,
-                            unfocusedIndicatorColor = Color.Transparent,
-                        ),
-                        shape = FieldShape,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextField(
-                            value = cardExpiry,
-                            onValueChange = { cardExpiry = it },
-                            placeholder = { Text("MM/YY", color = SlateSoft) },
-                            singleLine = true,
-                            enabled = !isLoading,
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Bone,
-                                unfocusedContainerColor = Bone,
-                                focusedIndicatorColor = Fresh,
-                                unfocusedIndicatorColor = Color.Transparent,
-                            ),
-                            shape = FieldShape,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextField(
-                            value = cardCvv,
-                            onValueChange = { cardCvv = it },
-                            placeholder = { Text("CVV", color = SlateSoft) },
-                            singleLine = true,
-                            enabled = !isLoading,
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Bone,
-                                unfocusedContainerColor = Bone,
-                                focusedIndicatorColor = Fresh,
-                                unfocusedIndicatorColor = Color.Transparent,
-                            ),
-                            shape = FieldShape,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                }
+                )
 
                 if (checkoutState is CheckoutState.Error) {
                     Spacer(modifier = Modifier.height(16.dp))
@@ -307,9 +348,7 @@ fun CheckoutSheet(
                         onClick = { cartViewModel.checkout(emailInput, selectedPaymentMethod) },
                         modifier = Modifier.fillMaxWidth(),
                         loading = isLoading,
-                        enabled = emailInput.isNotBlank() &&
-                            (selectedPaymentMethod != "CARD" ||
-                                (cardNumber.isNotBlank() && cardExpiry.isNotBlank() && cardCvv.isNotBlank())),
+                        enabled = emailError == null,
                     )
                 }
             }
@@ -366,7 +405,6 @@ private fun PaymentOptionCard(
     subtitle: String,
     selected: Boolean,
     onSelect: () -> Unit,
-    expandedContent: @Composable (ColumnScope.() -> Unit)? = null,
 ) {
     Card(
         onClick = onSelect,
@@ -387,9 +425,6 @@ private fun PaymentOptionCard(
                     Text(title, style = Typography.titleSmall, color = Ink)
                     Text(subtitle, style = Typography.bodySmall, color = SlateSoft)
                 }
-            }
-            if (selected && expandedContent != null) {
-                expandedContent()
             }
         }
     }

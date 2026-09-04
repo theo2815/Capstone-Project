@@ -1,15 +1,31 @@
 package com.quickpitik.mobile.data.repository
 
-import com.quickpitik.mobile.data.remote.*
+import com.quickpitik.mobile.data.remote.AddCartItemRequest
+import com.quickpitik.mobile.data.remote.CartItemDto
+import com.quickpitik.mobile.data.remote.CreateOrderItem
+import com.quickpitik.mobile.data.remote.CreateOrderRequest
+import com.quickpitik.mobile.data.remote.MergeCartItem
+import com.quickpitik.mobile.data.remote.MergeCartRequest
+import com.quickpitik.mobile.data.remote.OrderDetailDto
+import com.quickpitik.mobile.data.remote.OrderListItemDto
+import com.quickpitik.mobile.data.remote.OrderResponse
+import com.quickpitik.mobile.data.remote.PhotoDto
+import com.quickpitik.mobile.data.remote.RefundRequest
+import com.quickpitik.mobile.data.remote.RefundResponse
+import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.RunnerDisputeDto
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
 class CartRepositoryImpl : CartRepository {
-    private val api = RetrofitClient.apiService
+    private val api get() = RetrofitClient.apiService
     private val _cartItems = MutableStateFlow<List<CartItemDto>>(emptyList())
     override val cartItems: StateFlow<List<CartItemDto>> = _cartItems.asStateFlow()
+
+    // (fingerprint of cart+method+email) -> Idempotency-Key. See checkout().
+    private var idempotency: Pair<String, String>? = null
 
     override suspend fun fetchCart(token: String): Result<List<CartItemDto>> {
         return try {
@@ -161,7 +177,16 @@ class CartRepositoryImpl : CartRepository {
         }
 
         val formattedToken = token?.let { "Bearer $it" }
-        val idempotencyKey = UUID.randomUUID().toString()
+        // One key per (cart, method, email) attempt: the header is the
+        // backend's dedupe handle, so a re-tap after a timeout must RESEND the
+        // same key — the old fresh-UUID-per-call meant a retry could mint a
+        // second order. Changing the method/cart/email is a genuinely new
+        // order and rotates the key, mirroring checkout-modal.tsx (key
+        // regenerated on method change, reused across retries).
+        val fingerprint = currentItems.map { it.photoId }.sorted()
+            .joinToString(",") + "|" + paymentMethod + "|" + (recipientEmail ?: "")
+        val idempotencyKey = idempotency?.takeIf { it.first == fingerprint }?.second
+            ?: UUID.randomUUID().toString().also { idempotency = fingerprint to it }
 
         val request = CreateOrderRequest(
             items = currentItems.map { CreateOrderItem(it.photoId, it.eventId) },
@@ -172,6 +197,9 @@ class CartRepositoryImpl : CartRepository {
         return try {
             val response = api.createOrder(formattedToken, idempotencyKey, request)
             if (response.success && response.data != null) {
+                // Order minted — the key has served its purpose; the next
+                // checkout is a new order.
+                idempotency = null
                 // Match website: cart is cleared on PAID confirmation in
                 // /orders/return, NOT on order creation. Pre-clearing here
                 // strands the local cart empty if the user cancels PayMongo
@@ -181,13 +209,19 @@ class CartRepositoryImpl : CartRepository {
                 Result.failure(Exception(response.error ?: "Checkout failed"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            // parseError surfaces the backend envelope message — order-create
+            // is rate-limited (10/min/IP), so a 429 here must read as the
+            // backend's "slow down" copy, not "HTTP 429" (sibling pattern:
+            // submitRefund / withdrawDispute below).
+            Result.failure(Exception(RetrofitClient.parseError(e)))
         }
     }
 
     override suspend fun getOrders(token: String): Result<List<OrderListItemDto>> {
         return try {
-            val response = api.getOrders("Bearer $token")
+            // Backend MAX_LIMIT is 200 — take it all; there's no paging loop
+            // here, so a smaller limit silently truncates the receipt list.
+            val response = api.getOrders("Bearer $token", limit = 200)
             if (response.success && response.data != null) {
                 Result.success(response.data.items)
             } else {
@@ -210,6 +244,20 @@ class CartRepositoryImpl : CartRepository {
             Result.failure(e)
         }
     }
+
+    override suspend fun getGuestOrderDetail(orderId: String, shareToken: String): Result<OrderDetailDto> {
+        return try {
+            val response = api.getGuestOrderDetail(orderId, shareToken)
+            if (response.success && response.data != null) {
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Failed to load order detail"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
 
     override suspend fun submitRefund(
         token: String,

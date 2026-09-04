@@ -2,11 +2,14 @@ package com.quickpitik.service.profile
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.auth.UserDto
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.awt.RenderingHints
@@ -47,6 +50,29 @@ class AvatarService(
             throw ValidationException(
                 code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
                 message = "avatar must be jpeg, png, or webp",
+                field = "file",
+            )
+        }
+        // Pre-decode guard. The MIME check above does NOT bound the decode:
+        // ImageIO sniffs the real format, so a BMP/TGA sent as image/png passes
+        // it and then expands into a BufferedImage hundreds of times larger than
+        // the upload. Spring's 25 MB multipart cap is far too loose to rely on
+        // here. Mirrors PayoutAccountService.uploadQr's existing 8 MB cap.
+        if (file.size > MAX_AVATAR_BYTES) {
+            throw ApiException(
+                status = HttpStatus.PAYLOAD_TOO_LARGE,
+                code = ErrorCodes.PAYLOAD_TOO_LARGE,
+                message = "Avatar must be ≤ ${MAX_AVATAR_BYTES / (1024 * 1024)} MB",
+                field = "file",
+            )
+        }
+        // Decompression-bomb guard: the byte cap above does not bound the
+        // decoded raster (5 MB of flat color can declare 65500×65500).
+        // Header-only check before centerCropToJpeg's full ImageIO decode.
+        if (ImagePixelGuard.exceedsPixelBudget(file)) {
+            throw ValidationException(
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "Image dimensions exceed the supported maximum.",
                 field = "file",
             )
         }
@@ -109,6 +135,7 @@ class AvatarService(
 
     private companion object {
         const val SIDE = 512
+        const val MAX_AVATAR_BYTES = 5 * 1024 * 1024
         val SUPPORTED_TYPES = setOf("image/jpeg", "image/jpg", "image/png", "image/webp")
     }
 }

@@ -47,7 +47,22 @@ data class PerEventEarningDto(
 // wire form pulled from the entity wire columns.
 data class PhotographerPayoutDto(
     val id: String,
+    // DEPRECATED — a leftover from the scheduled weekly-cycle model that the
+    // request-based flow replaced (PayoutRequestService, 2026-05-19). There are
+    // no weekly cycles any more: a photographer requests a payout whenever their
+    // unpaid balance clears the minimum, so "Week of {weekOf}" mislabels it. Read
+    // `requestedAt` instead.
+    //
+    // Remaining consumer (verified 2026-08-16): the website ADMIN payout queue
+    // only — `payouts-queue.tsx` + `admin-payout-row.tsx` render `weekOf → +6d`.
+    // Mobile parses the field but never renders it (only `OpenRequestBlock`
+    // touches this DTO, reading status/amount/holdReason), so the earlier claim
+    // that "mobile reads it" was wrong. Once the admin queue migrates, this
+    // field can be dropped outright.
     val weekOf: LocalDate,
+    // When the photographer actually asked to be paid. This is the honest label
+    // for a request-based payout and what clients should render.
+    val requestedAt: OffsetDateTime,
     val amount: BigDecimal,
     val status: String,
     val settledAt: OffsetDateTime?,
@@ -62,6 +77,7 @@ data class PhotographerPayoutDto(
 fun PayoutCycle.toDto(): PhotographerPayoutDto = PhotographerPayoutDto(
     id = id,
     weekOf = weekOf,
+    requestedAt = createdAt,
     amount = amountPhp,
     status = statusWire,
     settledAt = settledAt,
@@ -224,17 +240,3 @@ fun buildSequencedCycleId(handle: String?, photographerId: UUID, sequence: Long)
         ?: photographerId.toString().take(8).uppercase()
     return "PAY-$handlePart-${"%03d".format(sequence)}"
 }
-
-// Used by the /me/photographer/payouts/{id} test-seed endpoint signature so a
-// caller can supply explicit fields. Intentionally not exported to the FE
-// since the FE does not generate cycles (admin or cron does).
-data class CreatePayoutCycleRequest(
-    val weekOf: LocalDate,
-    val amountPhp: BigDecimal,
-    val itemCount: Int,
-    val method: String,
-    val status: String? = null,
-    val settledAt: OffsetDateTime? = null,
-    val paymentReference: String? = null,
-    val photographerId: UUID? = null,
-)

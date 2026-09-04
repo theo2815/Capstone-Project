@@ -4,6 +4,7 @@ import {
   VerificationsQueue,
   usePendingVerificationsCount,
 } from "@/components/admin/verifications-queue";
+import { Kicker } from "@/components/ui/kicker";
 
 // Phase 1 admin redesign: /admin/verifications continues to exist as a
 // deep-link / focused-mode route, but the rail surfaces the queue under
@@ -25,10 +26,10 @@ export default function AdminVerificationsPage() {
 function Header({ pendingCount }: { pendingCount: number }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <Kicker as="p">
         Verifications · <span className="tnum">{pendingCount}</span> waiting
-      </p>
-      <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+      </Kicker>
+      <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Verifications.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">

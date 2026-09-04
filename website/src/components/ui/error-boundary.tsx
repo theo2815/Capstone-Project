@@ -1,6 +1,7 @@
 "use client";
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { unstable_rethrow } from "next/navigation";
 import { Kicker } from "@/components/ui/kicker";
 
 // React still requires a class component for componentDidCatch — function
@@ -41,10 +42,16 @@ export class ErrorBoundary extends Component<
   state: ErrorBoundaryState = { error: null };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    // notFound() and redirect() work by throwing. A React boundary catches
+    // every throw, so without this the dashboard layout's boundary swallowed
+    // them and rendered "Something broke on this panel." instead of the 404
+    // — every notFound() under /dashboard/* was silently broken.
+    unstable_rethrow(error);
     return { error };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
+    unstable_rethrow(error);
     // TODO(backend): pipe to Sentry / equivalent once observability lands.
     // Until then, surface to the dev console so the trace isn't swallowed.
     if (process.env.NODE_ENV !== "production") {

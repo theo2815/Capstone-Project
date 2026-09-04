@@ -19,6 +19,13 @@ data class AiApiProperties(
     val backoffBaseMillis: Long = 500L,
     val faceMatchThresholdDefault: Double = 0.6,
     val faceTopKDefault: Int = 5,
+    // Demo safety net for PhotoSearchService.searchByFace. When ON, an ai-api
+    // failure returns the event's WHOLE photo grid instead of an error, so a
+    // walkthrough survives the AI container being stopped. Default OFF because
+    // that response is a lie the runner can't detect: face search exists to
+    // show only *their* photos, and the fallback shows everyone's. Flip with
+    // AI_SEARCH_FALLBACK=true only for a live demo.
+    val searchFallbackOnError: Boolean = false,
     val bibConfidenceThresholdDefault: Double = 0.7,
     // Async indexing reconciliation sweep (PhotoIndexingTrigger.reconcile):
     // how often it runs, and the max attempts before a photo settles as FAILED.

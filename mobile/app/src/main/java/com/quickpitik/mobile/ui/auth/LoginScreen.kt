@@ -1,34 +1,80 @@
 package com.quickpitik.mobile.ui.auth
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.foundation.background
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.animation.core.*
-import com.quickpitik.mobile.ui.theme.*
+import com.quickpitik.mobile.data.local.isPhotographerRole
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.BrandLogo
+import com.quickpitik.mobile.ui.theme.ErrorRed
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.InkSoft
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.Slate
+import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.Typography
+import com.quickpitik.mobile.ui.theme.WarningOrange
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
     viewModel: AuthViewModel,
     onNavigateToRegister: () -> Unit,
-    onLoginSuccess: (isPhotographer: Boolean) -> Unit
+    onNavigateToForgotPassword: () -> Unit,
+    onLoginSuccess: (isPhotographer: Boolean) -> Unit,
+    // Why the user landed here involuntarily (e.g. "Your account has been
+    // suspended…" from a rejected refresh). Null on an ordinary visit.
+    sessionNotice: String? = null,
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -40,7 +86,7 @@ fun LoginScreen(
     LaunchedEffect(authState) {
         if (authState is AuthState.Success) {
             val user = (authState as AuthState.Success).response.user
-            onLoginSuccess(user.role.contains("PHOTO", ignoreCase = true))
+            onLoginSuccess(isPhotographerRole(user.role))
             viewModel.resetState()
         }
     }
@@ -60,36 +106,7 @@ fun LoginScreen(
         ) {
             Spacer(modifier = Modifier.height(40.dp))
 
-            // Logo Row
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(bottom = 24.dp)
-            ) {
-                Box(
-                    modifier = Modifier.size(28.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                        drawCircle(
-                            color = Ink,
-                            radius = size.minDimension / 2f,
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
-                        )
-                        drawCircle(
-                            color = Fresh,
-                            radius = size.minDimension / 5.6f
-                        )
-                    }
-                }
-                Text(
-                    text = "QuickPitik",
-                    style = Typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Ink,
-                    fontSize = 18.sp
-                )
-            }
+            BrandLogo(modifier = Modifier.padding(bottom = 24.dp))
 
             // Eyebrow kicker
             Text(
@@ -99,12 +116,13 @@ fun LoginScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Display Title
+            // Hero title — Anton uppercase (Finish Line). Uppercased in the
+            // literals because HeroText can't carry the two-tone span.
             Text(
                 text = buildAnnotatedString {
-                    append("Welcome\n")
+                    append("WELCOME\n")
                     withStyle(style = SpanStyle(color = Fresh)) {
-                        append("back.")
+                        append("BACK.")
                     }
                 },
                 style = Typography.displayLarge,
@@ -119,6 +137,15 @@ fun LoginScreen(
                 color = InkSoft
             )
             Spacer(modifier = Modifier.height(32.dp))
+
+            // "Continue with Google" + divider — website parity: the block
+            // sits above the email form on /login. Renders nothing when no
+            // client ID is compiled in (see gradle.properties).
+            GoogleSignInRow(
+                enabled = authState !is AuthState.Loading,
+                onIdToken = viewModel::googleLogin,
+                onError = viewModel::showError,
+            )
 
             // Fields
             Column(
@@ -189,11 +216,23 @@ fun LoginScreen(
             }
             Spacer(modifier = Modifier.height(20.dp))
 
+            // Forced-logout explanation (suspension etc.) — shown until the
+            // user signs back in. Distinct tone from a failed attempt below.
+            if (sessionNotice != null && authState !is AuthState.Error) {
+                Text(
+                    text = sessionNotice,
+                    color = WarningOrange,
+                    style = Typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             // Dynamic Error Message Text
             if (authState is AuthState.Error) {
                 Text(
                     text = (authState as AuthState.Error).message,
-                    color = Color.Red,
+                    color = ErrorRed,
                     style = Typography.bodyMedium,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -226,7 +265,29 @@ fun LoginScreen(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Recovery link. Website places this in the same slot — directly
+            // under the submit button, above the "New here?" divider
+            // (components/auth/login-form.tsx). Box gives the text a 48dp
+            // touch target.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable(enabled = authState !is AuthState.Loading) {
+                        viewModel.resetPasswordResetState()
+                        onNavigateToForgotPassword()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "FORGOT PASSWORD?",
+                    style = Typography.labelMedium,
+                    color = Slate
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Bottom Redirect
             Row(
@@ -243,12 +304,29 @@ fun LoginScreen(
                     text = "CREATE ACCOUNT",
                     style = Typography.labelMedium,
                     color = Ink,
-                    modifier = Modifier.clickable { 
+                    modifier = Modifier.clickable {
                         if (authState !is AuthState.Loading) {
                             viewModel.resetState()
                             onNavigateToRegister()
                         }
                     }
+                )
+            }
+
+            // Debug-only backend switcher. Renders nothing in a release build.
+            // Sits last so the editorial top of the screen is untouched, and
+            // lives on Login specifically because that is where every physical-
+            // device test starts — and where no WebSocket is open yet, so a
+            // host change takes effect with no restart. See DevServerRow.
+            Spacer(modifier = Modifier.height(24.dp))
+            DevServerRow()
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Brand-new Google account — role pick before it exists.
+            if (authState is AuthState.GoogleRoleRequired) {
+                GoogleRoleSheet(
+                    onPick = viewModel::completeGoogleSignup,
+                    onDismiss = viewModel::cancelGoogleSignup,
                 )
             }
 
@@ -274,33 +352,9 @@ fun LoginScreen(
                             label = "scale"
                         )
                         
-                        Box(
+                        BrandLogo(
                             modifier = Modifier
-                                .size(80.dp)
-                                .graphicsLayer(scaleX = scale, scaleY = scale),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                                drawCircle(
-                                    color = Ink,
-                                    radius = size.minDimension / 2f,
-                                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4.dp.toPx())
-                                )
-                                drawCircle(
-                                    color = Fresh,
-                                    radius = size.minDimension / 5.6f
-                                )
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(24.dp))
-                        
-                        Text(
-                            text = "QuickPitik",
-                            style = Typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = Ink,
-                            fontSize = 22.sp
+                                .graphicsLayer(scaleX = scale, scaleY = scale)
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(

@@ -1,4 +1,4 @@
-import { api } from "@/lib/api";
+import { api, refreshAccessToken } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/constants";
 import type {
@@ -23,6 +23,60 @@ import type { PaginatedResponse } from "@/types/api";
 export interface PhotographerEventDetail extends PhotographerEventSummary {
   firstUploadAt: string | null;
   lastUploadAt: string | null;
+  // V46 — prefill for the owner's edit form.
+  description: string;
+  organizerName: string;
+  pricePerPhoto: number;
+}
+
+// Photographer-owned events (V46). Multipart like the admin create; text
+// fields ride as form parts, `cover` carries the bytes.
+//   POST   /api/v1/me/photographer/events        → PhotographerEventDetail (pending review)
+//   PATCH  /api/v1/me/photographer/events/{id}   → PhotographerEventDetail
+// On a live event the pricing trio (pricingMode · pricePerPhoto ·
+// watermarkPolicy) becomes an edit request the admin approves; the BE
+// parks it in `pendingChange` and the event keeps its current settings.
+export interface MyEventFields {
+  title?: string;
+  date?: string;
+  location?: string;
+  organizerName?: string;
+  description?: string;
+  visibility?: "public" | "unlisted";
+  pricingMode?: "paid" | "free";
+  pricePerPhoto?: number;
+  watermarkPolicy?: "platform" | "own" | "none";
+  cover?: File | null;
+  withdrawPendingChange?: boolean;
+}
+
+function toEventForm(fields: MyEventFields): FormData {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || value === null || key === "cover") continue;
+    form.append(key, String(value));
+  }
+  if (fields.cover) form.append("cover", fields.cover);
+  return form;
+}
+
+export async function createMyEvent(
+  fields: MyEventFields,
+): Promise<PhotographerEventDetail> {
+  return api.post<PhotographerEventDetail>(
+    "/me/photographer/events",
+    toEventForm(fields),
+  );
+}
+
+export async function updateMyEvent(
+  eventId: string,
+  fields: MyEventFields,
+): Promise<PhotographerEventDetail> {
+  return api.fetch<PhotographerEventDetail>(
+    `/me/photographer/events/${encodeURIComponent(eventId)}`,
+    { method: "PATCH", body: toEventForm(fields) },
+  );
 }
 
 // aiDetectionStatus surfaces partial failure of the best-effort ai-api
@@ -52,15 +106,17 @@ export interface PhotographerEventListArgs {
 
 export async function fetchPhotographerEvents(
   args: PhotographerEventListArgs = {},
-): Promise<PhotographerEventSummary[]> {
+): Promise<PaginatedResponse<PhotographerEventSummary>> {
   const p = new URLSearchParams();
   if (args.withUploads) p.set("withUploads", "true");
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 24));
-  const res = await api.get<PaginatedResponse<PhotographerEventSummary>>(
+  // Default to the BE MAX_LIMIT: dashboard consumers (setup-mode fork,
+  // Next-up glance) derive from this list and omit `limit` — the old 24
+  // default silently truncated what they saw.
+  p.set("limit", String(args.limit ?? 200));
+  return api.get<PaginatedResponse<PhotographerEventSummary>>(
     `/me/photographer/events?${p.toString()}`,
   );
-  return res.items;
 }
 
 export async function fetchPhotographerEventDetail(
@@ -80,15 +136,14 @@ export interface PhotographerEventPhotosArgs {
 export async function fetchPhotographerEventPhotos(
   eventId: string,
   args: PhotographerEventPhotosArgs = {},
-): Promise<PhotographerLibraryPhoto[]> {
+): Promise<PaginatedResponse<PhotographerLibraryPhoto>> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? 120));
   if (args.order) p.set("order", args.order);
-  const res = await api.get<PaginatedResponse<PhotographerLibraryPhoto>>(
+  return api.get<PaginatedResponse<PhotographerLibraryPhoto>>(
     `/me/photographer/events/${encodeURIComponent(eventId)}/photos?${p.toString()}`,
   );
-  return res.items;
 }
 
 export interface PhotographerDownloadResponse {
@@ -117,60 +172,90 @@ export function uploadPhotographerPhoto(
   file: File,
   onProgress?: (event: UploadProgressEvent) => void,
 ): Promise<UploadedPhoto> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const url = `${API_BASE_URL}/me/photographer/events/${encodeURIComponent(eventId)}/photos`;
-    const token = getAccessToken();
+  const url = `${API_BASE_URL}/me/photographer/events/${encodeURIComponent(eventId)}/photos`;
 
-    xhr.open("POST", url);
-    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+  // One attempt = one XHR. A 401 mid-batch is routine, not exceptional:
+  // access tokens live 15 minutes and a big queue at 4-concurrent outlives
+  // that — before this, every file after expiry failed "retryable" while the
+  // manual retry re-sent the same dead token. On the first 401, refresh
+  // through the shared single-flight (same mutex the ApiClient uses, so a
+  // concurrent pre-flight can't double-rotate) and re-send once.
+  const attempt = (
+    token: string | null,
+    retried: boolean,
+  ): Promise<UploadedPhoto> =>
+    new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
 
-    if (onProgress) {
-      xhr.upload.onprogress = (event) => {
-        if (!event.lengthComputable) return;
-        onProgress({
-          loaded: event.loaded,
-          total: event.total,
-          percent: Math.round((event.loaded / event.total) * 100),
-        });
-      };
-    }
+      xhr.open("POST", url);
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      // A stalled connection must settle, not hang — a dead XHR pinned one of
+      // the upload page's 4 concurrency slots forever. Whole-request timer,
+      // sized for an 8 MB original on slow venue Wi-Fi.
+      xhr.timeout = 120_000;
 
-    xhr.onload = () => {
-      try {
-        const body = JSON.parse(xhr.responseText) as
-          | { success: true; data: UploadedPhoto }
-          | {
-              success: false;
-              errors: Array<{ code: string; message: string }>;
-            };
-        if (xhr.status >= 200 && xhr.status < 300 && body.success) {
-          resolve(body.data);
+      if (onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          onProgress({
+            loaded: event.loaded,
+            total: event.total,
+            percent: Math.round((event.loaded / event.total) * 100),
+          });
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status === 401 && !retried) {
+          refreshAccessToken()
+            .then((fresh) =>
+              fresh
+                ? resolve(attempt(fresh, true))
+                : reject(new Error("Session expired. Sign in again to retry.")),
+            )
+            .catch(() =>
+              reject(new Error("Session expired. Sign in again to retry.")),
+            );
           return;
         }
-        const message =
-          !body.success && body.errors[0]?.message
-            ? body.errors[0].message
-            : `Upload failed (${xhr.status})`;
-        // Carry the backend error code so the caller can tell a terminal
-        // duplicate rejection (never retryable) from a transient network glitch.
-        const error = new Error(message) as Error & { code?: string };
-        if (!body.success && body.errors[0]?.code) {
-          error.code = body.errors[0].code;
+        try {
+          const body = JSON.parse(xhr.responseText) as
+            | { success: true; data: UploadedPhoto }
+            | {
+                success: false;
+                errors: Array<{ code: string; message: string }>;
+              };
+          if (xhr.status >= 200 && xhr.status < 300 && body.success) {
+            resolve(body.data);
+            return;
+          }
+          const message =
+            !body.success && body.errors[0]?.message
+              ? body.errors[0].message
+              : `Upload failed (${xhr.status})`;
+          // Carry the backend error code so the caller can tell a terminal
+          // duplicate rejection (never retryable) from a transient network glitch.
+          const error = new Error(message) as Error & { code?: string };
+          if (!body.success && body.errors[0]?.code) {
+            error.code = body.errors[0].code;
+          }
+          reject(error);
+        } catch {
+          reject(new Error(`Upload failed (${xhr.status})`));
         }
-        reject(error);
-      } catch {
-        reject(new Error(`Upload failed (${xhr.status})`));
-      }
-    };
+      };
 
-    xhr.onerror = () => reject(new Error("Upload network error"));
-    xhr.onabort = () => reject(new Error("Upload aborted"));
+      xhr.onerror = () => reject(new Error("Upload network error"));
+      xhr.ontimeout = () =>
+        reject(new Error("Upload timed out. Check your connection and retry."));
+      xhr.onabort = () => reject(new Error("Upload aborted"));
 
-    const fd = new FormData();
-    fd.append("file", file);
-    xhr.send(fd);
-  });
+      const fd = new FormData();
+      fd.append("file", file);
+      xhr.send(fd);
+    });
+
+  return attempt(getAccessToken(), false);
 }
 
 // Pre-flight duplicate check (dedup Phase 2). The upload page hashes each file

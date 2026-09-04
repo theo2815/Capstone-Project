@@ -16,5 +16,6 @@ class PlatformController(
         photoPricePhp = platformProperties.photoPricePhp,
         platformCutRate = platformProperties.platformCutRate,
         photographerKeepRate = platformProperties.photographerKeepRate,
+        couponMaxPercent = platformProperties.couponMaxPercent,
     )
 }

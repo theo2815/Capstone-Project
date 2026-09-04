@@ -33,8 +33,19 @@ class UsbCardBrowseController(
         /** Walking the card; [seen] of [total] handles inspected so far. */
         data class Scanning(val seen: Int, val total: Int) : Progress()
 
-        /** All handles inspected — [photos] are the JPEGs we'd offer for import. */
+        /**
+         * All handles inspected — [photos] are the JPEGs we'd offer for import,
+         * WITHOUT thumbnails yet. The list is usable (select / import) at once.
+         */
         data class Done(val photos: List<CardPhoto>) : Progress()
+
+        /**
+         * Same list with thumbnails filled in so far. Emitted in batches after
+         * [Done] while the session stays open, then once more at the end. A
+         * 200-frame card used to sit behind a ~30 s blank scan because thumbs
+         * were fetched before anything was shown.
+         */
+        data class Thumbnails(val photos: List<CardPhoto>) : Progress()
 
         /** A user-presentable failure message — no raw exception strings. */
         data class Failed(val message: String) : Progress()
@@ -78,26 +89,33 @@ class UsbCardBrowseController(
                 val info = runCatching { session.getObjectInfo(handle) }.getOrNull()
                 // Folders and RAW stay off the list — only JPEGs are uploadable.
                 if (info != null && !info.isAssociation && info.isJpeg) {
-                    // Increment 5 — best-effort thumbnail. Failure on a single
-                    // handle (some bodies don't expose GetThumb for every file)
-                    // is non-fatal; the row falls back to its placeholder tile.
-                    // Doubles per-handle round-trips, intentionally — Increment 1
-                    // measured ~50–100 ms per getObjectInfo on the R6.
-                    val thumb = runCatching { session.getThumb(handle) }
-                        .getOrNull()
-                        ?.takeIf { it.isNotEmpty() }
                     photos.add(
                         CardPhoto(
                             handle = handle,
                             filename = info.filename.ifBlank { defaultName(handle) },
                             sizeBytes = info.compressedSize,
-                            thumbnailBytes = thumb,
                         )
                     )
                 }
                 emit(Progress.Scanning(seen = idx + 1, total = handles.size))
             }
             emit(Progress.Done(photos))
+
+            // Progressive thumbnails (Increment 5, now after the list is shown).
+            // Best-effort per handle — some bodies don't expose GetThumb for
+            // every file; a miss keeps the placeholder tile. Newest-first order
+            // means the frames the photographer actually wants fill in first.
+            val withThumbs = photos.toMutableList()
+            for ((i, photo) in photos.withIndex()) {
+                if (!currentCoroutineContext().isActive) return
+                val thumb = runCatching { session.getThumb(photo.handle) }
+                    .getOrNull()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: continue
+                withThumbs[i] = photo.copy(thumbnailBytes = thumb)
+                if ((i + 1) % THUMB_BATCH == 0) emit(Progress.Thumbnails(withThumbs.toList()))
+            }
+            emit(Progress.Thumbnails(withThumbs.toList()))
         } catch (e: Exception) {
             emit(Progress.Failed(MSG_READ_FAILED))
         } finally {
@@ -127,6 +145,7 @@ class UsbCardBrowseController(
     private fun defaultName(handle: Long): String = "IMG_%08X.jpg".format(handle)
 
     private companion object {
+        const val THUMB_BATCH = 8
         const val MSG_NO_DEVICE =
             "No camera detected. Re-plug the USB cable and allow USB permission, then try again."
         const val MSG_OPEN_FAILED =

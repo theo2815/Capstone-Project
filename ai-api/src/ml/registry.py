@@ -60,6 +60,17 @@ class ModelRegistry:
         required = {"blur", "face", "bib_ocr"}
         return all(self.is_loaded(name) for name in required)
 
+    def status(self) -> dict[str, bool]:
+        """Per-model load state, for the readiness payload.
+
+        all_loaded() deliberately ignores the two optional models, so a
+        container missing blur_classifier or bib_detector reports ready while
+        every /blur/classify* route fails. This does not change that verdict —
+        it just stops the absence being invisible. Exposed as a method so the
+        API layer never reaches into _models.
+        """
+        return {name: model is not None for name, model in self._models.items()}
+
     async def unload_all(self) -> None:
         """Release model memory and GPU/ONNX resources during graceful shutdown."""
         logger.info("Unloading ML models...")

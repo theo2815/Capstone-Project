@@ -53,8 +53,18 @@ def _make_blank_jpeg(width: int = 256, height: int = 256) -> bytes:
 
 
 def _make_png_bytes(width: int = 256, height: int = 256) -> bytes:
-    """Create a PNG image."""
-    arr = np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
+    """Create a plain PNG image.
+
+    Deliberately NOT random noise. This fixture only exists to prove the PNG
+    content type is accepted, but /bibs/recognize falls back to full-image OCR
+    when the detector finds no bib — and PaddleOCR's text-detection stage
+    proposes a huge number of candidate regions on uniform noise, pushing a
+    single request past the 60s TimeoutMiddleware (measured ~20-30s on noise vs
+    ~9s on a plain image, with oneDNN disabled per recognizer.py). A flat image
+    exercises the same code path without turning a content-type test into an
+    OCR stress test.
+    """
+    arr = np.full((height, width, 3), 200, dtype=np.uint8)
     pil_img = Image.fromarray(arr)
     buf = io.BytesIO()
     pil_img.save(buf, format="PNG")

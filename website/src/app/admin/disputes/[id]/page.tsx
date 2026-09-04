@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { Slab } from "@/components/profile-shell";
+import { Kicker } from "@/components/ui/kicker";
 import { useAdminDisputeView } from "@/lib/admin-dispute-view";
 import { AdminDisputeActionAside } from "@/components/admin/admin-dispute-action-aside";
 import { AdminDisputeActivityList } from "@/components/admin/admin-dispute-activity-list";
@@ -84,7 +85,7 @@ export default function AdminDisputeDetailPage() {
 
           <Slab id="claim" number="01" title="Claim" caption="Runner's case">
             <div className="space-y-3">
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
                 Reason: {DISPUTE_REASON_LABEL[dispute.reason]}
               </p>
               <p className="font-sans text-sm md:text-base text-ink-soft whitespace-pre-line">
@@ -148,7 +149,7 @@ export default function AdminDisputeDetailPage() {
           <Slab id="parties" number="04" title="Parties" caption="Both sides">
             <div className="space-y-4">
               <div className="rounded-2xl border border-line bg-bone p-5">
-                <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+                <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
                   Runner
                 </p>
                 <p className="font-display text-lg text-ink mt-2">
@@ -156,13 +157,13 @@ export default function AdminDisputeDetailPage() {
                 </p>
               </div>
               <div className="rounded-2xl border border-line bg-bone p-5">
-                <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+                <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
                   Photographer
                 </p>
                 <p className="font-display text-lg text-ink mt-2">
                   {photographerName}
                 </p>
-                <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mt-1">
+                <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-1">
                   @{dispute.photographerHandle}
                 </p>
               </div>
@@ -195,7 +196,7 @@ export default function AdminDisputeDetailPage() {
 
 function BackLink() {
   return (
-    <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] mb-6">
+    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] mb-6">
       <Link
         href={ROUTES.ADMIN_DISPUTES}
         className="text-slate hover:text-ink transition-colors"
@@ -236,15 +237,15 @@ function Hero({
       />
       <div className="mt-6 md:mt-8 flex items-start justify-between gap-6 flex-wrap">
         <div className="min-w-0">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+          <Kicker as="p">
             Dispute · <span className="tnum">{disputeId}</span>
-          </p>
-          <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+          </Kicker>
+          <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
             @{runnerHandle}
             <span className="text-slate-soft"> vs </span>
             @{photographerHandle}
           </h1>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-3 tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3 tnum">
             {eventName}
             <span className="text-slate-soft"> · </span>
             {formatPrice(amountDisputed)}
@@ -272,13 +273,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         {label}
       </dt>
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink tnum"
+            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >
@@ -300,7 +301,7 @@ function ResolutionNote({
   if (!resolution) return null;
   return (
     <div className="rounded-xl border border-line bg-bone-deep p-4 mb-4">
-      <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         Closed before live decision logging started
       </p>
       <p className="font-sans text-sm text-ink-soft mt-2">

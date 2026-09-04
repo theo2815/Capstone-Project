@@ -32,9 +32,14 @@ export function useAdminQueueRealtime(enabled: boolean): void {
       status === "healthy" ? HEALTHY_INTERVAL_MS : DEGRADED_INTERVAL_MS;
 
     const tick = () => {
-      queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+      // A backgrounded admin tab has nobody looking at it — skip the pull
+      // (the users-store refetch below is a direct fetch, not observer-aware,
+      // so without this a hidden tab pulled the 200-row list every 30 s).
+      // The next visible tick catches up.
+      if (document.hidden) return;
       queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "payouts"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
       useAdminUsersServerStore.getState().invalidate();
       void useAdminUsersServerStore.getState().refetch();

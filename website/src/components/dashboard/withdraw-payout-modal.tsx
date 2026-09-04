@@ -68,7 +68,7 @@ export function WithdrawPayoutModal({
           <p className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink tnum mt-2">
             ₱{openRequest.amount.toLocaleString()}
           </p>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mt-2">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-2">
             {openRequest.id}
           </p>
         </div>
@@ -95,7 +95,7 @@ export function WithdrawPayoutModal({
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed transition-colors px-4 py-2"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink disabled:opacity-50 disabled:cursor-not-allowed transition-colors px-4 py-2"
           >
             Cancel
           </button>
@@ -103,7 +103,7 @@ export function WithdrawPayoutModal({
             type="button"
             onClick={handleSubmit}
             disabled={submitting}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-error border border-error hover:bg-error hover:text-bone disabled:opacity-40 disabled:cursor-not-allowed transition-colors rounded-full px-5 py-2"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-error border border-error hover:bg-error hover:text-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors rounded-full px-5 py-2"
           >
             {submitting ? "Withdrawing…" : "Withdraw request"}
           </button>

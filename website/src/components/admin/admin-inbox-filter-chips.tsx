@@ -5,12 +5,14 @@ import { cn } from "@/lib/utils";
 
 export type InboxQueueType =
   | "verifications"
+  | "events"
   | "disputes"
   | "flags"
   | "payouts";
 
 const INBOX_QUEUE_TYPES_ALL: readonly InboxQueueType[] = [
   "verifications",
+  "events",
   "disputes",
   "flags",
   "payouts",
@@ -23,6 +25,7 @@ export const INBOX_QUEUE_TYPES: readonly InboxQueueType[] = ADMIN_FLAGS_ENABLED
 
 const LABEL: Record<InboxQueueType, string> = {
   verifications: "Verifications",
+  events: "Event requests",
   disputes: "Disputes",
   flags: "Flags",
   payouts: "Payouts",
@@ -58,7 +61,7 @@ export function AdminInboxFilterChips({
             aria-selected={active}
             onClick={() => onChange(type)}
             className={cn(
-              "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full px-4 py-2 transition-colors",
+              "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 transition-colors",
               active
                 ? "bg-ink text-bone border border-ink"
                 : "bg-bone text-slate border border-line hover:text-ink hover:border-ink",

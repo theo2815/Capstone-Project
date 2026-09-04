@@ -1,5 +1,6 @@
 package com.quickpitik.controller
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.dto.orders.PaymongoWebhookEvent
 import com.quickpitik.security.PaymongoSignatureVerifier
 import com.quickpitik.service.orders.PaymongoWebhookService
@@ -26,13 +27,14 @@ import org.springframework.web.bind.annotation.RestController
 class PaymongoWebhookController(
     private val verifier: PaymongoSignatureVerifier,
     private val service: PaymongoWebhookService,
+    private val objectMapper: ObjectMapper,
 ) {
     @PostMapping("/paymongo")
     fun handle(
         request: HttpServletRequest,
-        @RequestBody body: PaymongoWebhookEvent,
+        @RequestBody rawBody: String,
     ): Map<String, Any?> {
         verifier.verify(request)
-        return service.handle(body)
+        return service.handle(objectMapper.readValue(rawBody, PaymongoWebhookEvent::class.java))
     }
 }

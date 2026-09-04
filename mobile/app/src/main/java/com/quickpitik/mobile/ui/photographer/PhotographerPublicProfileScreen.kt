@@ -1,19 +1,44 @@
 package com.quickpitik.mobile.ui.photographer
 
-import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,34 +54,63 @@ import com.quickpitik.mobile.data.remote.CoverSourceDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotographerEventCoverageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
-import com.quickpitik.mobile.ui.theme.*
+import com.quickpitik.mobile.ui.runner.CartViewModel
+import com.quickpitik.mobile.ui.runner.PhotoPreview
+import com.quickpitik.mobile.ui.runner.rememberIsTrueRunner
+import com.quickpitik.mobile.ui.runner.toPreviewData
+import com.quickpitik.mobile.ui.theme.ArrowLabel
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.SecureScreen
+import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.BrandLogo
+import com.quickpitik.mobile.ui.theme.ErrorRed
+import com.quickpitik.mobile.ui.theme.FieldShape
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.GhostCta
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.InkSoft
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.Slate
+import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.StatNumber
+import com.quickpitik.mobile.ui.theme.Typography
+import com.quickpitik.mobile.ui.theme.WatermarkInk
+import android.graphics.Color as AndroidColor
 
 // Mobile mirror of website /{handle} (public photographer profile) and
-// /{handle}/events/[slug] (per-event public gallery). Reached via "Preview
-// public profile" in the photographer Overview tab — the only handle the app
-// knows without a backend change is the logged-in photographer's own.
+// /{handle}/events/[slug] (per-event public gallery). Two entry points:
+//   • the photographer's own "Preview public profile" (Overview tab), which
+//     passes the handle off their brand settings — null until verification;
+//   • a runner tapping the photographer byline in the photo lightbox, which
+//     routes here with the handle off PhotoDto (2026-08-15).
+// [handle] is therefore a parameter rather than something read off the
+// logged-in photographer — a runner has no brand settings to read.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhotographerPublicProfileScreen(
-    viewModel: PhotographerDashboardViewModel,
-    onBack: () -> Unit
+    handle: String?,
+    viewModel: PublicPhotographerViewModel,
+    onBack: () -> Unit,
+    cartViewModel: CartViewModel? = null,
+    isBrandSettingsLoading: Boolean = false,
+    brandSettingsError: String? = null,
 ) {
-    val brand by viewModel.brandSettings.collectAsState()
     val profileState by viewModel.publicProfileState.collectAsState()
-    val handle = brand?.handle?.takeIf { it.isNotBlank() }
+    val resolvedHandle = handle?.takeIf { it.isNotBlank() }
     var selectedEventSlug by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(handle) {
-        if (handle == null) viewModel.fetchSettings() else viewModel.fetchPublicProfile(handle)
+    LaunchedEffect(resolvedHandle) {
+        if (resolvedHandle != null) viewModel.fetchPublicProfile(resolvedHandle)
     }
 
     val gallerySlug = selectedEventSlug
-    if (handle != null && gallerySlug != null) {
+    if (resolvedHandle != null && gallerySlug != null) {
         ProfileEventGalleryView(
             viewModel = viewModel,
-            handle = handle,
+            handle = resolvedHandle,
             slug = gallerySlug,
-            onBack = { selectedEventSlug = null }
+            onBack = { selectedEventSlug = null },
+            cartViewModel = cartViewModel,
         )
         return
     }
@@ -73,19 +127,28 @@ fun PhotographerPublicProfileScreen(
             BackRow(label = "BACK", onBack = onBack)
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (handle == null) {
+            // Only reachable from the photographer's own preview: the runner
+            // byline is a tap target only when the handle is non-null, so a
+            // runner can never land here handle-less.
+            if (resolvedHandle == null && isBrandSettingsLoading) {
+                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Fresh)
+                }
+            } else if (resolvedHandle == null && brandSettingsError != null) {
+                // Fetch failed — don't claim the handle is missing when we
+                // simply couldn't load it.
+                EmptyStateCard(brandSettingsError)
+            } else if (resolvedHandle == null) {
                 EmptyStateCard("Set your public handle in the Settings tab to preview your profile.")
-                return@Column
-            }
-
-            when (val state = profileState) {
+            } else {
+                when (val state = profileState) {
                 is PublicProfileState.Loading -> {
                     Box(modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = Fresh)
                     }
                 }
                 is PublicProfileState.Error -> {
-                    EmptyStateCard(state.message, onRetry = { viewModel.fetchPublicProfile(handle) })
+                    EmptyStateCard(state.message, onRetry = { viewModel.fetchPublicProfile(resolvedHandle) })
                 }
                 is PublicProfileState.Success -> {
                     val profile = state.profile
@@ -103,6 +166,25 @@ fun PhotographerPublicProfileScreen(
                     if (!profile.bio.isNullOrBlank()) {
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(profile.bio, style = Typography.bodyMedium, color = InkSoft)
+                    }
+
+                    // Stat row — web public-profile parity (Events / Photos /
+                    // On QuickPitik; deliberately NO sales figure on a public
+                    // surface).
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+                        StatNumber(
+                            value = "${profile.events.size}",
+                            label = "Events",
+                        )
+                        StatNumber(
+                            value = "%,d".format(profile.events.sumOf { it.photoCount }),
+                            label = "Photos",
+                        )
+                        StatNumber(
+                            value = profile.memberSince ?: "2026",
+                            label = "On QuickPitik",
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(24.dp))
@@ -124,6 +206,7 @@ fun PhotographerPublicProfileScreen(
             }
         }
     }
+}
 }
 
 @Composable
@@ -153,7 +236,7 @@ private fun CoverBanner(cover: CoverSourceDto?, brandColor: String?, displayName
             }
         }
         // Scrim for legible name
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f)))
+        Box(modifier = Modifier.fillMaxSize().background(WatermarkInk))
         Text(
             text = displayName ?: "Photographer",
             color = Color.White,
@@ -191,8 +274,10 @@ private fun EventCoverageCard(coverage: PhotographerEventCoverageDto, onClick: (
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
+        // No sales figure on a PUBLIC surface (web deliberately hides it —
+        // this page is what runners see, including via the lightbox byline).
         Text(
-            text = "${coverage.photoCount} photos  ·  ${coverage.salesCount} sold",
+            text = "${coverage.photoCount} photos",
             style = Typography.bodySmall,
             color = SlateSoft
         )
@@ -204,15 +289,32 @@ private fun EventCoverageCard(coverage: PhotographerEventCoverageDto, onClick: (
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ProfileEventGalleryView(
-    viewModel: PhotographerDashboardViewModel,
+    viewModel: PublicPhotographerViewModel,
     handle: String,
     slug: String,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    cartViewModel: CartViewModel? = null,
 ) {
-    val photosState by viewModel.profileEventPhotosState.collectAsState()
-    var selectedPhoto by remember { mutableStateOf<PhotoDto?>(null) }
+    // Runner context (cart present) = unpurchased previews → block screenshots.
+    // The photographer's own profile preview (no cart) stays unrestricted.
+    if (cartViewModel != null) SecureScreen()
 
-    LaunchedEffect(slug) { viewModel.fetchProfileEventPhotos(handle, slug) }
+    val photosState by viewModel.profileEventPhotosState.collectAsState()
+    val eventDetail by viewModel.galleryEventDetail.collectAsState()
+    var selectedPhoto by remember { mutableStateOf<PhotoDto?>(null) }
+    var bibFilter by rememberSaveable { mutableStateOf("") }
+    var visiblePhotoLimit by rememberSaveable(slug) { mutableStateOf(20) }
+
+    LaunchedEffect(slug) {
+        viewModel.fetchProfileEventPhotos(handle, slug)
+        // Real event name + the event id add-to-cart needs — the coverage row
+        // only carries the slug.
+        viewModel.fetchGalleryEventDetail(slug)
+    }
+
+    // Commerce needs a true-runner session, a cart, and the event id.
+    val commerce = cartViewModel != null && rememberIsTrueRunner() && eventDetail != null
+    val cartItems = cartViewModel?.cartItems?.collectAsState()?.value.orEmpty()
 
     Surface(modifier = Modifier.fillMaxSize(), color = Bone) {
         Column(
@@ -225,8 +327,35 @@ private fun ProfileEventGalleryView(
         ) {
             BackRow(label = "BACK TO PROFILE", onBack = onBack)
             Spacer(modifier = Modifier.height(16.dp))
-            Text(formatSlug(slug), style = Typography.titleLarge, fontWeight = FontWeight.Bold, color = Ink)
+            Text(
+                text = eventDetail?.name ?: formatSlug(slug),
+                style = Typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = Ink,
+            )
             Text("@$handle", style = Typography.bodyMedium, color = SlateSoft)
+            Spacer(modifier = Modifier.height(12.dp))
+            // Client-side bib filter — web /{handle}/events/[slug] parity
+            // (that page also filters the loaded set client-side).
+            TextField(
+                value = bibFilter,
+                onValueChange = {
+                    bibFilter = it
+                    visiblePhotoLimit = 20
+                },
+                placeholder = { Text("Filter by bib number…", color = SlateSoft) },
+                singleLine = true,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = BoneDeep,
+                    unfocusedContainerColor = BoneDeep,
+                    focusedIndicatorColor = Fresh,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    focusedTextColor = Ink,
+                    unfocusedTextColor = InkSoft,
+                ),
+                shape = FieldShape,
+                modifier = Modifier.fillMaxWidth(),
+            )
             Spacer(modifier = Modifier.height(20.dp))
 
             when (val state = photosState) {
@@ -241,12 +370,23 @@ private fun ProfileEventGalleryView(
                     }
                 }
                 is ProfileEventPhotosState.Success -> {
-                    if (state.photos.isEmpty()) {
+                    val visiblePhotos = remember(state.photos, bibFilter) {
+                        val q = bibFilter.trim()
+                        if (q.isEmpty()) state.photos
+                        else state.photos.filter { it.bib?.contains(q, ignoreCase = true) == true }
+                    }
+                    if (visiblePhotos.isEmpty()) {
                         Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
-                            Text("No photos in this gallery yet.", color = SlateSoft, textAlign = TextAlign.Center, style = Typography.bodyMedium)
+                            Text(
+                                text = if (bibFilter.isBlank()) "No photos in this gallery yet."
+                                else "No photos for bib ${bibFilter.trim()} in this gallery.",
+                                color = SlateSoft,
+                                textAlign = TextAlign.Center,
+                                style = Typography.bodyMedium,
+                            )
                         }
                     } else {
-                        state.photos.chunked(2).forEach { rowPhotos ->
+                        visiblePhotos.take(visiblePhotoLimit).chunked(2).forEach { rowPhotos ->
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 rowPhotos.forEach { photo ->
                                     Box(
@@ -267,18 +407,6 @@ private fun ProfileEventGalleryView(
                                                 modifier = Modifier.fillMaxSize()
                                             )
                                         }
-                                        Box(
-                                            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.04f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = "QUICKPITIK\nPREVIEW",
-                                                color = Color.White.copy(alpha = 0.35f),
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                textAlign = TextAlign.Center
-                                            )
-                                        }
                                     }
                                 }
                                 if (rowPhotos.size == 1) {
@@ -287,59 +415,86 @@ private fun ProfileEventGalleryView(
                             }
                             Spacer(modifier = Modifier.height(12.dp))
                         }
+                        if (visiblePhotoLimit < visiblePhotos.size) {
+                            GhostCta(
+                                text = "Load more",
+                                onClick = { visiblePhotoLimit += 20 },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                 }
             }
         }
     }
 
+    // The shared runner lightbox replaces the old 220dp AlertDialog "Price:
+    // ₱X / CLOSE" preview — with a pager, the photographer credit suppressed
+    // (we're on their page), and, for a true runner with the event id loaded,
+    // the full Add-to-cart / Buy-now flow. This is the web's transactional
+    // /{handle}/events/[slug] gallery, not just a viewer.
     val preview = selectedPhoto
-    if (preview != null) {
-        AlertDialog(
-            onDismissRequest = { selectedPhoto = null },
-            title = { Text("Photo", fontWeight = FontWeight.Bold, color = Ink) },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(BoneDeep),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val url = resolveProfileImageUrl(preview.imageUrl)
-                        if (url != null) {
-                            AsyncImage(model = url, contentDescription = "Preview", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                        }
+    val allPhotos = (photosState as? ProfileEventPhotosState.Success)?.photos.orEmpty()
+    if (preview != null && allPhotos.isNotEmpty()) {
+        val previewPhotos = allPhotos.map { it.toPreviewData(eventDetail?.name ?: formatSlug(slug)) }
+        val currentIndex = previewPhotos.indexOfFirst { it.id == preview.id }
+        if (currentIndex >= 0) {
+            PhotoPreview(
+                photos = previewPhotos,
+                currentIndex = currentIndex,
+                commerceEnabled = commerce,
+                mode = if (cartViewModel == null) com.quickpitik.mobile.ui.runner.PhotoPreviewMode.OwnerReview else com.quickpitik.mobile.ui.runner.PhotoPreviewMode.Browse,
+                isInCart = { data -> cartItems.any { it.photoId == data.id } },
+                onToggleCart = onToggleCart@{ data ->
+                    val cart = cartViewModel ?: return@onToggleCart
+                    val detail = eventDetail ?: return@onToggleCart
+                    val photo = allPhotos.firstOrNull { it.id == data.id } ?: return@onToggleCart
+                    if (cartItems.any { it.photoId == data.id }) {
+                        cart.removeFromCart(data.id)
+                    } else {
+                        cart.addToCart(photo, detail.id, detail.slug, detail.name)
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(String.format("Price: ₱%,.2f", preview.price), style = Typography.bodyMedium, color = Ink)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { selectedPhoto = null }) {
-                    Text("CLOSE", color = Ink, fontWeight = FontWeight.Bold)
-                }
-            },
-            containerColor = Bone,
-            shape = RoundedCornerShape(16.dp)
-        )
+                },
+                onBuyNow = onBuyNow@{ data ->
+                    val cart = cartViewModel ?: return@onBuyNow
+                    val detail = eventDetail ?: return@onBuyNow
+                    val photo = allPhotos.firstOrNull { it.id == data.id } ?: return@onBuyNow
+                    if (cartItems.any { it.photoId == data.id }) {
+                        cart.openCheckoutSheet()
+                    } else {
+                        cart.triggerExpressCheckout()
+                        cart.addToCart(photo, detail.id, detail.slug, detail.name)
+                    }
+                    selectedPhoto = null
+                },
+                onClose = { selectedPhoto = null },
+                onIndexChange = { newIndex ->
+                    allPhotos.getOrNull(newIndex)?.let { selectedPhoto = it }
+                },
+            )
+        }
     }
 }
 
 @Composable
 private fun BackRow(label: String, onBack: () -> Unit) {
     Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable { onBack() }
-            .padding(vertical = 6.dp, horizontal = 2.dp),
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Slate)
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(label, style = Typography.labelMedium, color = Slate, fontWeight = FontWeight.Bold)
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onBack() }
+                .padding(vertical = 6.dp, horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Slate)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(label, style = Typography.labelMedium, color = Slate, fontWeight = FontWeight.Bold)
+        }
+        BrandLogo(compact = true)
     }
 }
 
@@ -380,10 +535,5 @@ private fun parseHex(hex: String?): Color? {
     }
 }
 
-private fun resolveProfileImageUrl(url: String?): String? {
-    if (url.isNullOrBlank()) return null
-    // M-2 (2026-05-27 PM): host derived from RetrofitClient.BASE_URL.
-    if (url.startsWith("/")) return "${RetrofitClient.backendOrigin}$url"
-    return url.replace("localhost", RetrofitClient.backendHost)
-        .replace("127.0.0.1", RetrofitClient.backendHost)
-}
+private fun resolveProfileImageUrl(url: String?): String? =
+    RetrofitClient.resolveImageUrl(url?.takeIf { it.isNotBlank() })

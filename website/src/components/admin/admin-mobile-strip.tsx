@@ -50,9 +50,9 @@ const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED
   ? ADMIN_ROUTES_ALL
   : ADMIN_ROUTES_ALL.filter((r) => r.href !== ROUTES.ADMIN_FLAGS);
 
-// Mobile-only chip strip for /admin/*. Mirrors `<DashboardMobileStrip>`:
-// sticky wrapper lives in <AdminShell> so the strip pins under SiteHeader
-// alongside <DesktopNudge>. Renders nothing ≥ md (parent has `md:hidden`).
+// Mobile-only chip strip for /admin/*. The sticky wrapper lives in
+// <AdminShell> so the strip pins under SiteHeader. Renders nothing ≥ md
+// (parent has `md:hidden`).
 export function AdminMobileStrip() {
   const pathname = usePathname();
   const attention = useAdminAttentionTarget();
@@ -71,7 +71,7 @@ export function AdminMobileStrip() {
                   href={route.href}
                   aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "inline-flex items-center gap-2 px-3 py-1.5 rounded-full border font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors",
+                    "inline-flex items-center gap-2 px-3 py-1.5 rounded-full border font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors",
                     isActive
                       ? "border-ink text-ink bg-ink/5"
                       : "border-line text-slate hover:text-ink",

@@ -32,6 +32,20 @@ class SavedEventsViewModel(application: Application) : AndroidViewModel(applicat
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message
 
+    // Set alongside an unsave message so the snackbar can offer Undo (web
+    // parity: the unsave toast carries an Undo action). (id, name).
+    private val _undoCandidate = MutableStateFlow<Pair<String, String>?>(null)
+    val undoCandidate: StateFlow<Pair<String, String>?> = _undoCandidate
+
+    fun undoUnsave(eventId: String, eventName: String) {
+        val token = sessionManager.getAccessToken() ?: return
+        viewModelScope.launch {
+            repository.saveById(token, eventId)
+                .onSuccess { _message.value = "Restored $eventName." }
+                .onFailure { _message.value = it.message ?: "Couldn't restore that event." }
+        }
+    }
+
     fun refresh() {
         val token = sessionManager.getAccessToken() ?: return
         viewModelScope.launch { repository.refresh(token) }
@@ -48,7 +62,10 @@ class SavedEventsViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             if (wasSaved) {
                 repository.unsave(token, event.id)
-                    .onSuccess { _message.value = "Removed ${event.name} from saved." }
+                    .onSuccess {
+                        _undoCandidate.value = event.id to event.name
+                        _message.value = "Removed ${event.name} from saved."
+                    }
                     .onFailure { _message.value = it.message ?: "Couldn't update saved events." }
             } else {
                 repository.save(token, event)
@@ -63,12 +80,16 @@ class SavedEventsViewModel(application: Application) : AndroidViewModel(applicat
         val token = sessionManager.getAccessToken() ?: return
         viewModelScope.launch {
             repository.unsave(token, eventId)
-                .onSuccess { _message.value = "Removed $eventName from saved." }
+                .onSuccess {
+                    _undoCandidate.value = eventId to eventName
+                    _message.value = "Removed $eventName from saved."
+                }
                 .onFailure { _message.value = it.message ?: "Couldn't update saved events." }
         }
     }
 
     fun clearMessage() {
         _message.value = null
+        _undoCandidate.value = null
     }
 }

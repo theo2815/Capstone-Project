@@ -23,6 +23,14 @@ class JwtTokenProvider(private val props: JwtProperties) {
             .subject(user.id.toString())
             .claim("email", user.email)
             .claim("role", user.role.name)
+            // Backstop, not the lockout mechanism. Both mint paths (login and
+            // refresh) already refuse a suspended user, so today this is always
+            // false at issue time; it exists so any future mint path that forgets
+            // to check still produces a token JwtAuthenticationFilter rejects.
+            // Real lockout = revoke-all-refresh-tokens on suspend + the refresh
+            // gate, bounded by the 15-min access-token TTL. Closing that window
+            // entirely would need a per-request DB read, which isn't worth it.
+            .claim("suspended", user.suspendedAt != null)
             .issuedAt(Date.from(now))
             .expiration(Date.from(expiry))
             .signWith(key)

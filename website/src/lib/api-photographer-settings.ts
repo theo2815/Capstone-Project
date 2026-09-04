@@ -39,6 +39,9 @@ import type {
 //
 // ─── Verification submit ──────────────────────────────────────────────────
 //   POST   /api/v1/me/photographer/verification                     → { status }
+//
+// ─── Event coupons ─────────────────────────────────────────────────────────
+// Event coupon CRUD is event-scoped in api-coupons.ts.
 
 // ───────────────────────────────────────────── Regions reference
 
@@ -125,6 +128,8 @@ export async function postCover(file: File): Promise<MediaUploadResponse> {
 export async function postWatermark(file: File): Promise<MediaUploadResponse> {
   return postMultipart("/me/photographer/watermark", file);
 }
+
+// ───────────────────────────────────────────── Coupon (V45)
 
 // ───────────────────────────────────────────── Socials CRUD
 

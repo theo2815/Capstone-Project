@@ -5,6 +5,7 @@ import {
   useOpenDisputesCount,
   useRefundedThisWeekTotal,
 } from "@/components/admin/disputes-queue";
+import { Kicker } from "@/components/ui/kicker";
 import { formatPrice } from "@/lib/utils";
 
 // Phase 2 admin redesign — /admin/disputes is now the focus-mode route
@@ -32,12 +33,12 @@ function Header({
 }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <Kicker as="p">
         Disputes · <span className="tnum">{openCount}</span> open ·{" "}
         <span className="tnum">{formatPrice(refundedThisWeek)}</span> refunded
         this week
-      </p>
-      <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+      </Kicker>
+      <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Disputes.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">

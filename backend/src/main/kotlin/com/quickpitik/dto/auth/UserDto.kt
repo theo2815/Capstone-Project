@@ -15,5 +15,9 @@ data class UserDto(
     val name: String,
     val role: Role,
     val avatarUrl: String? = null,
+    // Advisory (V30). Additive and non-breaking — an extra key is ignored by
+    // the website's TypeScript types and by mobile's Retrofit converter alike.
+    // No client reads it yet; nothing on the server gates on it either.
+    val emailVerified: Boolean = false,
     val createdAt: OffsetDateTime,
 )

@@ -1,13 +1,16 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { ROUTES } from "@/lib/constants";
-import { ApiError } from "@/lib/api";
 import { isSafeRedirect, roleHome } from "@/lib/redirect";
-import { validateEmail, validatePassword } from "@/lib/auth-validation";
+import {
+  splitApiFieldErrors,
+  validateEmail,
+  validatePassword,
+} from "@/lib/auth-validation";
 import {
   AuthDivider,
   GoogleButton,
@@ -19,6 +22,10 @@ interface FieldErrors {
   email?: string | null;
   password?: string | null;
 }
+
+// Backend field name → the local state key that has an input to render under.
+// Allow-list: a BE field absent here falls through to the submit-level slot.
+const BE_FIELDS = { email: "email", password: "password" } as const;
 
 export function LoginForm() {
   const router = useRouter();
@@ -36,6 +43,12 @@ export function LoginForm() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Guards double-submit. Deliberately NOT `isLoading`: setIsLoading only
+  // lands on the next render, so a held Enter — several submit events before a
+  // paint — reads it as false every time. Measured on /forgot-password: five
+  // submits in one tick sent five requests behind a state guard, one behind
+  // this ref, which flips synchronously.
+  const submitting = useRef(false);
 
   function clearFieldError(field: keyof FieldErrors) {
     if (errors[field] || submitError) {
@@ -46,6 +59,7 @@ export function LoginForm() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submitting.current) return;
     const next: FieldErrors = {
       email: validateEmail(email),
       password: validatePassword(password),
@@ -54,26 +68,31 @@ export function LoginForm() {
     setSubmitError(null);
     if (next.email || next.password) return;
 
+    submitting.current = true;
     setIsLoading(true);
     try {
       const user = await login({ email: email.trim(), password });
       router.push(preservedRedirect ?? roleHome(user.role));
     } catch (err) {
-      setSubmitError(
-        err instanceof ApiError ? err.message : "Login failed. Please try again.",
-      );
+      // Per-field BE validation goes under its input; anything field-less
+      // (INVALID_CREDENTIALS, ACCOUNT_SUSPENDED) stays in the submit slot.
+      const { fields, message } = splitApiFieldErrors(err, BE_FIELDS);
+      const handled = message !== null || Object.keys(fields).length > 0;
+      setErrors(fields);
+      setSubmitError(handled ? message : "Login failed. Please try again.");
     } finally {
+      submitting.current = false;
       setIsLoading(false);
     }
   }
 
   return (
     <form onSubmit={handleSubmit} noValidate className="stagger-children space-y-7">
-      <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
         Log in
       </p>
 
-      <h1 className="font-display text-5xl md:text-6xl font-medium tracking-tight leading-[1.0]">
+      <h1 className="font-hero text-5xl md:text-6xl">
         Welcome
         <br />
         <span className="text-fresh">back.</span>
@@ -94,7 +113,7 @@ export function LoginForm() {
         <FieldBlock>
           <label
             htmlFor="email"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="kicker"
           >
             Email
           </label>
@@ -118,7 +137,7 @@ export function LoginForm() {
         <FieldBlock>
           <label
             htmlFor="password"
-            className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate"
+            className="kicker"
           >
             Password
           </label>
@@ -150,7 +169,7 @@ export function LoginForm() {
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? "Logging in…" : "Log in →"}
         </button>
@@ -158,7 +177,7 @@ export function LoginForm() {
         <div className="text-center">
           <Link
             href={ROUTES.FORGOT_PASSWORD}
-            className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
           >
             Forgot password?
           </Link>
@@ -166,7 +185,7 @@ export function LoginForm() {
       </div>
 
       <div className="border-t border-line pt-6">
-        <p className="text-center font-mono uppercase tracking-[0.2em] text-[10px] text-slate">
+        <p className="text-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
           New here?{" "}
           <Link
             href={

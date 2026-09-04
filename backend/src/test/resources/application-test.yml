@@ -1,0 +1,50 @@
+# Profile for the Testcontainers integration tests (PostgresIntegrationTest).
+# The datasource is injected at runtime by @DynamicPropertySource; everything
+# here exists to keep a full @SpringBootTest context from reaching outside the
+# JVM or doing background work while assertions run.
+
+spring:
+  jpa:
+    hibernate:
+      # Same as production. This is doing real work: with Flyway owning the
+      # schema, `validate` turns every context load into an assertion that the
+      # entities and the migrations still agree.
+      ddl-auto: validate
+  flyway:
+    enabled: true
+
+# Nothing here disables @EnableScheduling, and nothing needs to: all four
+# scheduled jobs return immediately under this config. PhotoIndexingTrigger
+# .reconcile and PhotoOrphanReaper.reap both gate on `ai-api.enabled`, and
+# PhotoBatchIndexingScheduler's drain + poll both gate on indexing-mode=batch,
+# which stays `per_photo`. (An earlier attempt set the scheduler pool to 0 —
+# Spring rejects that outright: 'poolSize' must be 1 or higher.)
+app:
+  ai-api:
+    # No ai-api in CI. Off, every server-side call short-circuits — see the
+    # master-switch ADR (2026-05-18).
+    enabled: false
+    webhook:
+      enabled: false
+  storage:
+    # Never touch S3 from a test. LocalFs writes under build/.
+    backend: LOCAL
+    local-root: build/test-storage
+  rate-limit:
+    # NoopRateLimiter, so a test that logs in five times isn't throttled by the
+    # per-IP bucket instead of by the lockout it is actually asserting on.
+    enabled: false
+  admin:
+    bootstrap-email: admin@quickpitik.test
+    bootstrap-password: bootstrap-admin-integration-pw
+  auth:
+    lockout:
+      max-attempts: 5
+      duration: PT15M
+
+logging:
+  level:
+    # Flyway's plan is worth seeing when a migration test fails.
+    org.flywaydb: INFO
+    com.quickpitik: INFO
+    org.hibernate.SQL: WARN

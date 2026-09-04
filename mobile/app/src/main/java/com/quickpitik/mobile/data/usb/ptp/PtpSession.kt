@@ -8,6 +8,7 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
+import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -182,6 +183,24 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
     fun getObject(handle: Long): ByteArray = dataInCommand(Ptp.OP_GET_OBJECT, handle.toInt())
 
     /**
+     * Streaming twin of [getObject] — writes the JPEG straight into [sink]
+     * instead of returning it. Returns the number of payload bytes written.
+     *
+     * The buffered variants above build the whole file in a doubling
+     * ByteArrayOutputStream and then copy it again to strip the header, so a
+     * 25 MB frame costs ~3× its size in transient heap, once per photo, in a
+     * tight loop. Bulk pulls go through here; every small op (ObjectInfo,
+     * Thumb, StorageIDs, GetEvent) stays on the buffered path where the copy
+     * is free and the code is camera-verified.
+     */
+    fun getObjectTo(handle: Long, sink: OutputStream): Long =
+        dataInCommandTo(Ptp.OP_GET_OBJECT, sink, handle.toInt())
+
+    /** Streaming twin of [eosGetObject] — see [getObjectTo]. */
+    fun eosGetObjectTo(handle: Long, sink: OutputStream): Long =
+        dataInCommandTo(Ptp.OP_EOS_GET_OBJECT, sink, handle.toInt())
+
+    /**
      * Download the camera-rendered thumbnail JPEG for [handle]. Size is camera-
      * defined (typically 160x120 / 240x160) so this comes back in a single
      * data phase and is fast enough to fetch for every visible row during the
@@ -300,6 +319,63 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
     }
 
     /**
+     * Streaming twin of [dataInCommand]: sends [op], then writes the device→host
+     * data phase straight into [sink]. Returns the payload bytes written — 0
+     * when the device skipped the data phase and answered with a response.
+     *
+     * The framing rules below are deliberately a COPY of [readContainer]'s, not
+     * a shared refactor. Those rules (short-packet termination, Canon's
+     * 0xFFFFFFFF unknown-length phase) were established against real hardware,
+     * and every small op still depends on them — they must keep running on
+     * byte-for-byte the same code while this path is unverified on a camera.
+     * If streaming misbehaves on the R6, reverting is a one-line change at the
+     * two bulk-pull call sites, not a transport rollback.
+     */
+    private fun dataInCommandTo(op: Int, sink: OutputStream, vararg params: Int): Long {
+        sendCommand(op, *params)
+
+        val first = ByteArray(READ_CHUNK)
+        val n = connection.bulkTransfer(bulkIn, first, first.size, TIMEOUT_MS)
+        // Stricter than readContainer's `n < 4`: this path has to parse the
+        // whole header before it can decide what to do with the bytes.
+        if (n < CONTAINER_HEADER) {
+            throw PtpException("op 0x%04X short/failed read (%d bytes)".format(op, n))
+        }
+
+        if (containerType(first) != Ptp.TYPE_DATA) {
+            val rc = responseCode(first)
+            if (rc != Ptp.RC_OK) throw PtpException("op 0x%04X resp 0x%04X (no data)".format(op, rc))
+            return 0L
+        }
+
+        val declared = ByteBuffer.wrap(first, 0, 4).order(ByteOrder.LITTLE_ENDIAN).int
+        val lengthKnown = declared in CONTAINER_HEADER..MAX_CONTAINER
+        // `total` counts CONTAINER bytes (header included) so the termination
+        // test matches readContainer's exactly; `written` is what the caller got.
+        var total = n
+        sink.write(first, CONTAINER_HEADER, n - CONTAINER_HEADER)
+        var written = (n - CONTAINER_HEADER).toLong()
+
+        // readContainer stops here iff the first read was short AND nothing more
+        // is declared; the negation is the condition to keep reading.
+        if (n == first.size || (lengthKnown && total < declared)) {
+            val more = ByteArray(READ_CHUNK)
+            while (true) {
+                if (lengthKnown && total >= declared) break
+                val m = connection.bulkTransfer(bulkIn, more, more.size, TIMEOUT_MS)
+                if (m <= 0) break
+                sink.write(more, 0, m)
+                total += m
+                written += m
+                if (!lengthKnown && m < more.size) break // short packet ends the phase
+            }
+        }
+
+        checkOk(readContainer(), "op 0x%04X".format(op))
+        return written
+    }
+
+    /**
      * Read one full PTP container. PTP ends a data phase either by reaching the
      * length declared in the 12-byte header OR via a short/zero USB packet. We
      * honour both: small responses (DeviceInfo, GetEvent) finish on the first
@@ -342,6 +418,23 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
      */
     private fun clearHalt(ep: UsbEndpoint) {
         runCatching { connection.controlTransfer(0x02, 1, 0, ep.address, null, 0, 1000) }
+    }
+
+    /**
+     * USB Still Image Capture class "Device Reset Request" (bmRequestType 0x21 =
+     * host→device, class, recipient interface; bRequest 0x66) followed by a
+     * halt-clear on both bulk pipes. This is what libgphoto2 sends when a body
+     * stops answering. Device-observed 2026-09-02 on the R6: after an unclean
+     * drop, or straight after a card import, OpenSession returned OK but the
+     * next command got no reply and every later bulk-OUT timed out until the
+     * cable was pulled — a camera-side PTP stall that only a reset clears.
+     * Best-effort; the caller retries the open afterwards.
+     */
+    fun resetDevice() {
+        runCatching { connection.controlTransfer(0x21, 0x66, 0, iface.id, null, 0, 2000) }
+        clearHalt(bulkOut)
+        clearHalt(bulkIn)
+        sessionOpen = false
     }
 
     private fun containerType(c: ByteArray): Int =

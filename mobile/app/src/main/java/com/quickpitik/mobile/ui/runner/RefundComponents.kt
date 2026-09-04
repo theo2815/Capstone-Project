@@ -2,12 +2,44 @@ package com.quickpitik.mobile.ui.runner
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -19,8 +51,24 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.OrderDetailDto
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.RunnerDisputeDto
-import com.quickpitik.mobile.ui.theme.*
+import com.quickpitik.mobile.ui.theme.BadgeShape
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.ErrorRed
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.InkSoft
+import com.quickpitik.mobile.ui.theme.Kicker
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.PrimaryCta
+import com.quickpitik.mobile.ui.theme.QpCardShape
+import com.quickpitik.mobile.ui.theme.Slate
+import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.SuccessGreen
+import com.quickpitik.mobile.ui.theme.Typography
+import java.util.Locale
 
 // ── Refund domain helpers (port of website src/lib/refund-helpers.ts) ────────
 
@@ -36,6 +84,78 @@ val REFUND_REASONS: List<Pair<String, String>> = listOf(
 fun refundReasonLabel(code: String): String =
     REFUND_REASONS.firstOrNull { it.first == code }?.second ?: code
 
+// ── Refund policy copy (verbatim port of website src/lib/refund-policy.ts) ───
+// One source of truth for the words. Surfaced pre-purchase from the event
+// cockpit; the website also reuses it inside the request modal.
+
+private const val REFUND_PROCESSING_DAYS = 3
+private const val REFUND_ELIGIBILITY_DAYS = 30
+
+val REFUND_POLICY_BULLETS: List<Pair<String, String>> = listOf(
+    "Eligibility" to
+        "Request a refund within $REFUND_ELIGIBILITY_DAYS days of your purchase. After that the order is final.",
+    "Accepted reasons" to
+        "Wrong runner in the photo, photo quality too low to use, order paid but never delivered, or you were charged twice for the same order. Anything else, pick Other and tell us what happened.",
+    "Review time" to
+        "We review every request within $REFUND_PROCESSING_DAYS business days. You'll see the status update on this receipt — no email needed.",
+    "Where the money goes" to
+        "Approved refunds return to your original payment method. GCash and Maya land within 24 hours; cards take 5–7 business days depending on the bank.",
+    "What we don't refund" to
+        "Photos you've already downloaded and kept past the eligibility window, change-of-mind after 30 days, or photos that match your bib and selfie correctly.",
+)
+
+// Read-only policy disclosure — port of the website's RefundModal mode="policy",
+// reached from the "Refund Policy →" kicker on the event cockpit. Numbered
+// rules with a left hairline, matching web's border-l list.
+@Composable
+fun RefundPolicyDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Bone,
+        title = {
+            Text(
+                text = "Refund policy",
+                color = Ink,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
+                REFUND_POLICY_BULLETS.forEachIndexed { index, (kicker, body) ->
+                    Row(modifier = Modifier.padding(bottom = 20.dp)) {
+                        // Left hairline rule, web's `border-l border-line pl-4`.
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .fillMaxHeight()
+                                .background(Line),
+                        )
+                        Column(modifier = Modifier.padding(start = 16.dp)) {
+                            Kicker(
+                                text = "${(index + 1).toString().padStart(2, '0')} · $kicker",
+                                color = Slate,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = body,
+                                color = InkSoft,
+                                style = Typography.bodyMedium,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "GOT IT", color = Ink, style = Typography.labelMedium)
+            }
+        },
+    )
+}
+
 // Photo IDs the runner can still dispute. Excludes any photo already attached to
 // an open / escalated / resolved dispute. Denied + withdrawn leave it eligible.
 fun disputablePhotoIds(order: OrderDetailDto): List<String> {
@@ -46,21 +166,87 @@ fun disputablePhotoIds(order: OrderDetailDto): List<String> {
     return order.photoIds.filter { it !in blocked }
 }
 
-// Rollup mirrors website getOrderRefundStatus.kind: none|pending|partial|approved|rejected.
-fun orderRefundKind(order: OrderDetailDto): String {
-    val visible = order.disputes.filter { it.status != "withdrawn" }
-    if (visible.isEmpty()) return "none"
-    val photoCount = order.photoIds.size
-    val pending = visible.count { it.status == "open" || it.status == "escalated" }
-    val approved = visible.count { it.status == "resolved" && it.refundAmount != null }
-    val rejected = visible.count { it.status == "denied" }
-    return when {
-        pending > 0 -> if (visible.size < photoCount) "partial" else "pending"
-        approved > 0 && rejected == 0 -> "approved"
-        rejected > 0 && approved == 0 -> "rejected"
+// Full port of website getOrderRefundStatus — kind plus the counts/amount/note
+// the chip needs. Takes the raw pieces rather than an order type so it serves
+// both OrderListItemDto (list rows) and OrderDetailDto (expanded receipt).
+data class RefundRollup(
+    val kind: String,          // none | pending | partial | approved | rejected
+    val refundAmount: Double,
+    val pendingCount: Int,
+    val approvedCount: Int,
+    val rejectedCount: Int,
+    val rejectedNote: String?,
+    val totalDisputed: Int,
+)
+
+fun computeRefundRollup(photoCount: Int, disputes: List<RunnerDisputeDto>): RefundRollup {
+    val visible = disputes.filter { it.status != "withdrawn" }
+    val pending = visible.filter { it.status == "open" || it.status == "escalated" }
+    val approved = visible.filter { it.status == "resolved" && it.refundAmount != null }
+    val rejected = visible.filter { it.status == "denied" }
+    val kind = when {
+        visible.isEmpty() -> "none"
+        pending.isNotEmpty() -> if (visible.size < photoCount) "partial" else "pending"
+        approved.isNotEmpty() && rejected.isEmpty() -> "approved"
+        rejected.isNotEmpty() && approved.isEmpty() -> "rejected"
         else -> "partial"
     }
+    return RefundRollup(
+        kind = kind,
+        refundAmount = approved.sumOf { it.refundAmount ?: 0.0 },
+        pendingCount = pending.size,
+        approvedCount = approved.size,
+        rejectedCount = rejected.size,
+        // Prefer admin's resolution note over the runner's own submission note —
+        // when the chip says "declined" the runner cares why admin said no.
+        rejectedNote = rejected.firstOrNull()?.let { it.resolutionNote ?: it.note },
+        totalDisputed = visible.size,
+    )
 }
+
+// Rollup mirrors website getOrderRefundStatus.kind: none|pending|partial|approved|rejected.
+fun orderRefundKind(order: OrderDetailDto): String =
+    computeRefundRollup(order.photoIds.size, order.disputes).kind
+
+// Refund-state chip for an order row. Renders nothing when there's no dispute,
+// so an ordinary receipt stays clean. Port of the website's order-row status
+// line: "Refund pending · N of M" / "in review" / "approved · ₱x" / "declined"
+// with the admin's note underneath.
+@Composable
+fun RefundStatusChip(rollup: RefundRollup, photoCount: Int) {
+    if (rollup.kind == "none") return
+
+    // Slate for pending/in-review — web RefundStatusChip parity (its
+    // pending/partial dot is slate; amber was mobile-only drift that made a
+    // routine open request read as a warning).
+    val (tone, label) = when (rollup.kind) {
+        "pending" -> Slate to "Refund pending · ${rollup.totalDisputed} of $photoCount"
+        "partial" -> Slate to "Refund in review · ${rollup.totalDisputed} of $photoCount"
+        "approved" -> Fresh to "Refund approved · ₱${formatPeso(rollup.refundAmount)}"
+        "rejected" -> ErrorRed to "Refund declined"
+        else -> Slate to "Refund updated"
+    }
+
+    Column(modifier = Modifier.padding(top = 8.dp)) {
+        Box(
+            modifier = Modifier
+                .clip(BadgeShape)
+                .background(tone.copy(alpha = 0.12f))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        ) {
+            Text(text = label, color = tone, style = Typography.labelMedium)
+        }
+        rollup.rejectedNote?.takeIf { it.isNotBlank() }?.let { note ->
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(text = note, color = SlateSoft, style = Typography.bodySmall)
+        }
+    }
+}
+
+// Whole-peso formatting with thousands separators, matching the website's
+// toLocaleString with no decimals on order totals.
+private fun formatPeso(amount: Double): String =
+    String.format(Locale.US, "%,.0f", amount)
 
 // Can submit a new request once the order has no disputes, or every dispute was
 // denied — and at least one photo is still eligible.
@@ -116,6 +302,7 @@ fun RefundActionsRow(
     val canRequest = canRequestRefund(order)
     val kind = orderRefundKind(order)
     val cancellable = cancellableDispute(order)
+    var showCancelConfirm by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (canRequest) {
@@ -139,7 +326,11 @@ fun RefundActionsRow(
 
         if (cancellable != null) {
             TextButton(
-                onClick = { onCancel(cancellable.id) },
+                // Confirm first — withdrawing is destructive (the dispute row is
+                // hard-deleted) and the button sits directly under the request
+                // CTA, so a mis-tap is easy. Mirrors the website's
+                // confirm({danger:true}) in handleCancelRequest.
+                onClick = { showCancelConfirm = true },
                 enabled = !submitting,
                 colors = ButtonDefaults.textButtonColors(contentColor = Slate),
                 modifier = Modifier.fillMaxWidth()
@@ -150,6 +341,35 @@ fun RefundActionsRow(
                 )
             }
         }
+    }
+
+    if (showCancelConfirm && cancellable != null) {
+        AlertDialog(
+            onDismissRequest = { showCancelConfirm = false },
+            containerColor = Bone,
+            title = {
+                Text(text = "Cancel refund request?", color = Ink, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    text = "You can submit a new request for these photos later if you change your mind.",
+                    color = Slate,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCancelConfirm = false
+                    onCancel(cancellable.id)
+                }) {
+                    Text(text = "CANCEL REQUEST", color = ErrorRed, style = Typography.labelMedium)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelConfirm = false }) {
+                    Text(text = "KEEP REQUEST", color = Ink, style = Typography.labelMedium)
+                }
+            },
+        )
     }
 }
 
@@ -384,7 +604,7 @@ fun RefundRequestDialog(
                                         ) {
                                             if (photo.thumbnailUrl != null) {
                                                 AsyncImage(
-                                                    model = photo.thumbnailUrl,
+                                                    model = RetrofitClient.resolveImageUrl(photo.thumbnailUrl),
                                                     contentDescription = null,
                                                     modifier = Modifier.fillMaxSize()
                                                 )
@@ -484,6 +704,37 @@ fun RefundRequestDialog(
 
                 // Sticky footer actions
                 Divider(color = Line)
+                // Collapsible refund policy — web refund-modal parity (its
+                // <details> block). The full-dialog version stays reachable
+                // from the event page; this keeps the terms one tap away at
+                // the moment of asking.
+                var policyExpanded by remember { mutableStateOf(false) }
+                Column(modifier = Modifier.padding(horizontal = 24.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clickable { policyExpanded = !policyExpanded }
+                            .padding(vertical = 6.dp),
+                    ) {
+                        Kicker(
+                            text = if (policyExpanded) "Hide refund policy" else "Read our refund policy",
+                            color = Slate,
+                        )
+                    }
+                    if (policyExpanded) {
+                        REFUND_POLICY_BULLETS.forEach { (kicker, body) ->
+                            Column(modifier = Modifier.padding(bottom = 10.dp)) {
+                                Kicker(text = kicker, color = SlateSoft)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = body,
+                                    style = Typography.bodySmall,
+                                    color = Slate,
+                                )
+                            }
+                        }
+                    }
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

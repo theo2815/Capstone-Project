@@ -34,7 +34,7 @@ export function RailTipPortal({
       }}
       className="border border-line rounded-2xl bg-bone shadow-lg p-4"
     >
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft tnum">
+      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft tnum">
         {guide.number} · {guide.label}
       </p>
       <p className="font-sans text-sm text-ink-soft leading-relaxed mt-2">

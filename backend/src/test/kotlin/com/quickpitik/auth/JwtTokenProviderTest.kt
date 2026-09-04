@@ -8,6 +8,7 @@ import io.jsonwebtoken.JwtException
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.time.Duration
+import java.time.OffsetDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -31,9 +32,21 @@ class JwtTokenProviderTest {
         assertEquals(user.id.toString(), claims.subject)
         assertEquals("test@example.com", claims["email"])
         assertEquals("RUNNER", claims["role"])
+        assertEquals(false, claims["suspended"])
         assertNotNull(claims.issuedAt)
         assertNotNull(claims.expiration)
         assertTrue(claims.expiration.after(claims.issuedAt))
+    }
+
+    // Backstop claim: both mint paths refuse a suspended user today, so this
+    // only fires if a future mint path forgets. JwtAuthenticationFilter reads it.
+    @Test
+    fun `suspended user's token carries the suspended claim`() {
+        val user = newUser().apply { suspendedAt = OffsetDateTime.now() }
+
+        val claims = provider.parse(provider.createAccessToken(user))
+
+        assertEquals(true, claims["suspended"])
     }
 
     @Test

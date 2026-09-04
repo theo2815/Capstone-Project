@@ -19,7 +19,7 @@ export function AdminStatusPill({
   return (
     <span
       className={cn(
-        "inline-flex items-center font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full border px-3 py-0.5",
+        "inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border px-3 py-0.5",
         TONE_CLASS[tone],
         className,
       )}

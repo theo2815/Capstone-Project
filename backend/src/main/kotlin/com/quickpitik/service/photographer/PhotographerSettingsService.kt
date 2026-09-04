@@ -22,8 +22,10 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.AdminInboxEvent
+import org.hibernate.exception.ConstraintViolationException
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -176,7 +178,36 @@ class PhotographerSettingsService(
             )
         }
         settings.handle = normalized
-        return photographerSettingsRepository.save(settings)
+        // saveAndFlush (not save) so the UNIQUE on photographer_settings.handle
+        // fires HERE instead of at commit — otherwise a concurrent claim of the
+        // same handle escapes this method and lands in GlobalExceptionHandler's
+        // generic branch as a 500. The findByHandleIgnoreCase check above is the
+        // fast path; the index is the authoritative race-safe gate. Handles are
+        // normalised to lowercase before BOTH the check and the save, so the
+        // plain UNIQUE is sufficient — no functional LOWER(handle) index needed.
+        return try {
+            photographerSettingsRepository.saveAndFlush(settings)
+        } catch (ex: DataIntegrityViolationException) {
+            // Narrowed the same way PhotoUploadService translates its dedup index:
+            // walk the cause chain to Hibernate's ConstraintViolationException and
+            // rethrow if it positively names a constraint OTHER than the handle
+            // unique, so a future constraint can never be mislabeled "handle
+            // taken". A null/unknown name keeps the handle-collision reading —
+            // the only unique this update can violate today.
+            val violated = generateSequence(ex.cause) { it.cause }
+                .filterIsInstance<ConstraintViolationException>()
+                .firstOrNull()
+                ?.constraintName
+            if (violated != null && !violated.equals(HANDLE_CONSTRAINT, ignoreCase = true)) {
+                throw ex
+            }
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.HANDLE_TAKEN,
+                message = "That handle is already in use.",
+                field = "handle",
+            )
+        }
     }
 
     // ─── Region ───────────────────────────────────────────────────────────
@@ -214,6 +245,7 @@ class PhotographerSettingsService(
                 field = "file",
             )
         }
+        validateSize(bytes, MAX_COVER_BYTES)
         val processed = scaleToLongEdgeJpeg(bytes, MAX_COVER_LONG_EDGE)
             ?: throw ValidationException(
                 code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
@@ -252,6 +284,7 @@ class PhotographerSettingsService(
                 field = "file",
             )
         }
+        validateSize(bytes, MAX_WATERMARK_BYTES)
         // Preserve PNG when the photographer uploads PNG — watermarks are
         // almost always transparent-background logos, so re-encoding to JPEG
         // would replace transparency with a solid white rectangle. PNG keeps
@@ -437,6 +470,22 @@ class PhotographerSettingsService(
         return mime
     }
 
+    // Pre-decode guard. The MIME allow-list above does NOT bound the decode:
+    // ImageIO sniffs the real format, so a BMP/TGA sent as image/png passes the
+    // Content-Type check and then expands into a BufferedImage hundreds of times
+    // larger than the upload. Cap the bytes before scaleToLongEdge* touches them.
+    // Mirrors PayoutAccountService.uploadQr's existing 8 MB cap.
+    private fun validateSize(bytes: ByteArray, maxBytes: Int) {
+        if (bytes.size > maxBytes) {
+            throw ApiException(
+                status = HttpStatus.PAYLOAD_TOO_LARGE,
+                code = ErrorCodes.PAYLOAD_TOO_LARGE,
+                message = "Upload must be ≤ ${maxBytes / (1024 * 1024)} MB",
+                field = "file",
+            )
+        }
+    }
+
     // Returns null when ImageIO can't decode the bytes (lying Content-Type).
     private fun scaleToLongEdgeJpeg(input: ByteArray, maxLongEdge: Int): ByteArray? =
         scaleToLongEdge(input, maxLongEdge, transparent = false, encoderFormat = "jpeg")
@@ -495,5 +544,10 @@ class PhotographerSettingsService(
         val HANDLE_REGEX = Regex("^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])?$")
         const val MAX_COVER_LONG_EDGE = 1920
         const val MAX_WATERMARK_LONG_EDGE = 1024
+        const val MAX_COVER_BYTES = 10 * 1024 * 1024
+        const val MAX_WATERMARK_BYTES = 10 * 1024 * 1024
+        // Postgres auto-names the UNIQUE on photographer_settings.handle
+        // (V7__photographer_coverage.sql:8) as <table>_<column>_key.
+        const val HANDLE_CONSTRAINT = "photographer_settings_handle_key"
     }
 }

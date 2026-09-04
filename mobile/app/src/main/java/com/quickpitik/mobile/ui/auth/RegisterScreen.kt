@@ -1,28 +1,71 @@
 package com.quickpitik.mobile.ui.auth
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.foundation.background
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.animation.core.*
-import com.quickpitik.mobile.ui.theme.*
+import com.quickpitik.mobile.data.local.isPhotographerRole
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.BrandLogo
+import com.quickpitik.mobile.ui.theme.ErrorRed
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.InkSoft
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.Slate
+import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.Typography
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,7 +77,10 @@ fun RegisterScreen(
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
+    var validationError by remember { mutableStateOf<String?>(null) }
     var isPhotographer by remember { mutableStateOf(false) }
 
     val authState by viewModel.authState.collectAsState()
@@ -43,7 +89,7 @@ fun RegisterScreen(
     LaunchedEffect(authState) {
         if (authState is AuthState.Success) {
             val user = (authState as AuthState.Success).response.user
-            onRegisterSuccess(user.role.contains("PHOTO", ignoreCase = true))
+            onRegisterSuccess(isPhotographerRole(user.role))
             viewModel.resetState()
         }
     }
@@ -63,36 +109,7 @@ fun RegisterScreen(
         ) {
             Spacer(modifier = Modifier.height(40.dp))
 
-            // Logo Row
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(bottom = 24.dp)
-            ) {
-                Box(
-                    modifier = Modifier.size(28.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                        drawCircle(
-                            color = Ink,
-                            radius = size.minDimension / 2f,
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
-                        )
-                        drawCircle(
-                            color = Fresh,
-                            radius = size.minDimension / 5.6f
-                        )
-                    }
-                }
-                Text(
-                    text = "QuickPitik",
-                    style = Typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Ink,
-                    fontSize = 18.sp
-                )
-            }
+            BrandLogo(modifier = Modifier.padding(bottom = 24.dp))
 
             // Eyebrow kicker
             Text(
@@ -102,18 +119,30 @@ fun RegisterScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Display Title
+            // Hero title — Anton uppercase (Finish Line). Uppercased in the
+            // literals because HeroText can't carry the two-tone span.
             Text(
                 text = buildAnnotatedString {
-                    append("Join\n")
+                    append("JOIN\n")
                     withStyle(style = SpanStyle(color = Fresh)) {
-                        append("QuickPitik.")
+                        append("QUICKPITIK.")
                     }
                 },
                 style = Typography.displayLarge,
                 color = Ink
             )
             Spacer(modifier = Modifier.height(24.dp))
+
+            // "Continue with Google" + divider — website parity: the block
+            // sits above the role pivot on /register. A brand-new Google
+            // account picks its role in the sheet below, not from the cards —
+            // the toggle's default must never silently decide a permanent
+            // choice. Renders nothing when no client ID is compiled in.
+            GoogleSignInRow(
+                enabled = authState !is AuthState.Loading,
+                onIdToken = viewModel::googleLogin,
+                onError = viewModel::showError,
+            )
 
             // Role selection buttons
             Text(
@@ -274,7 +303,10 @@ fun RegisterScreen(
                     )
                     TextField(
                         value = password,
-                        onValueChange = { password = it },
+                        onValueChange = { 
+                            password = it 
+                            if (validationError != null) validationError = null
+                        },
                         enabled = authState !is AuthState.Loading,
                         placeholder = { Text("••••••••", color = SlateSoft) },
                         singleLine = true,
@@ -301,14 +333,55 @@ fun RegisterScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
+
+                // Re-enter Password Input
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "RE-ENTER PASSWORD",
+                        style = Typography.labelMedium,
+                        color = Slate
+                    )
+                    TextField(
+                        value = confirmPassword,
+                        onValueChange = { 
+                            confirmPassword = it 
+                            if (validationError != null) validationError = null
+                        },
+                        enabled = authState !is AuthState.Loading,
+                        placeholder = { Text("••••••••", color = SlateSoft) },
+                        singleLine = true,
+                        visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            Text(
+                                text = if (confirmPasswordVisible) "HIDE" else "SHOW",
+                                color = Slate,
+                                style = Typography.labelMedium,
+                                modifier = Modifier
+                                    .clickable { confirmPasswordVisible = !confirmPasswordVisible }
+                                    .padding(end = 12.dp)
+                            )
+                        },
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Fresh,
+                            unfocusedIndicatorColor = Line,
+                            focusedTextColor = Ink,
+                            unfocusedTextColor = InkSoft
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Dynamic Error Message Text
-            if (authState is AuthState.Error) {
+            // Dynamic Error Message Text (Client validation or Server Error)
+            val displayedError = validationError ?: (authState as? AuthState.Error)?.message
+            if (displayedError != null) {
                 Text(
-                    text = (authState as AuthState.Error).message,
-                    color = Color.Red,
+                    text = displayedError,
+                    color = ErrorRed,
                     style = Typography.bodyMedium,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -317,7 +390,25 @@ fun RegisterScreen(
 
             // CTA Button
             Button(
-                onClick = { viewModel.register(name.trim(), email.trim(), password, isPhotographer) },
+                onClick = {
+                    // Shared validators, not inline rules: the hand-rolled
+                    // `length < 8` check silently accepted a >72-byte password
+                    // that bcrypt truncates — the reset screen enforced the
+                    // ceiling while register didn't. One rulebook for both.
+                    val emailProblem = validateEmail(email)
+                    val passwordProblem = validateNewPassword(password)
+                    when {
+                        emailProblem != null -> validationError = emailProblem
+                        passwordProblem != null -> validationError = passwordProblem
+                        password != confirmPassword -> {
+                            validationError = "Passwords do not match"
+                        }
+                        else -> {
+                            validationError = null
+                            viewModel.register(name.trim(), email.trim(), password, isPhotographer)
+                        }
+                    }
+                },
                 enabled = authState !is AuthState.Loading,
                 shape = RoundedCornerShape(percent = 100),
                 colors = ButtonDefaults.buttonColors(
@@ -392,33 +483,9 @@ fun RegisterScreen(
                         label = "scale"
                     )
                     
-                    Box(
+                    BrandLogo(
                         modifier = Modifier
-                            .size(80.dp)
-                            .graphicsLayer(scaleX = scale, scaleY = scale),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                            drawCircle(
-                                color = Ink,
-                                radius = size.minDimension / 2f,
-                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4.dp.toPx())
-                            )
-                            drawCircle(
-                                color = Fresh,
-                                radius = size.minDimension / 5.6f
-                            )
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(24.dp))
-                    
-                    Text(
-                        text = "QuickPitik",
-                        style = Typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Ink,
-                        fontSize = 22.sp
+                            .graphicsLayer(scaleX = scale, scaleY = scale)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -427,6 +494,14 @@ fun RegisterScreen(
                         color = SlateSoft
                     )
                 }
+            }
+
+            // Brand-new Google account — role pick before it exists.
+            if (authState is AuthState.GoogleRoleRequired) {
+                GoogleRoleSheet(
+                    onPick = viewModel::completeGoogleSignup,
+                    onDismiss = viewModel::cancelGoogleSignup,
+                )
             }
         }
     }

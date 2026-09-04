@@ -27,7 +27,7 @@ export function AdminSalesLeaderboard() {
       <Column
         title="Top photographers"
         caption="By gross merchandise volume"
-        emptyCopy="No cycles yet — once payouts land, the highest-earning brands surface here."
+        emptyCopy="No payouts yet — once payouts land, the highest-earning brands surface here."
         rows={photographers}
         renderRow={(p, rank) => (
           <PhotographerRow key={p.photographerId} rank={rank} row={p} />
@@ -96,17 +96,17 @@ function PhotographerRow({
         className="group flex items-baseline justify-between gap-4 py-4 md:py-5 transition-colors"
       >
         <div className="flex items-baseline gap-4 min-w-0">
-          <span className="font-mono tnum text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft shrink-0">
+          <span className="font-mono tnum text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft shrink-0">
             {rank.toString().padStart(2, "0")}
           </span>
           <div className="min-w-0">
             <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
               {label}
             </p>
-            <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft tnum mt-1">
+            <Kicker as="p" tone="soft" tnum className="mt-1">
               {row.photosSold.toLocaleString()} photos · {row.cycles}{" "}
-              {row.cycles === 1 ? "cycle" : "cycles"}
-            </p>
+              {row.cycles === 1 ? "payout" : "payouts"}
+            </Kicker>
           </div>
         </div>
         <p className="font-mono tnum font-medium text-ink text-base md:text-lg shrink-0">
@@ -126,7 +126,7 @@ function EventRow({ rank, row }: { rank: number; row: SalesEventRow }) {
         className="group flex items-baseline justify-between gap-4 py-4 md:py-5 transition-colors"
       >
         <div className="flex items-baseline gap-4 min-w-0">
-          <span className="font-mono tnum text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft shrink-0">
+          <span className="font-mono tnum text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft shrink-0">
             {rank.toString().padStart(2, "0")}
           </span>
           <div className="min-w-0">
@@ -134,13 +134,13 @@ function EventRow({ rank, row }: { rank: number; row: SalesEventRow }) {
               <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
                 {row.name}
               </p>
-              <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft border border-line rounded-full px-2 py-0.5">
+              <Kicker tone="soft" className="border border-line rounded-full px-2 py-0.5">
                 Implied
-              </span>
+              </Kicker>
             </div>
-            <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft tnum mt-1">
+            <Kicker as="p" tone="soft" tnum className="mt-1">
               {formatLongDate(row.date, true)} · {row.photoCount.toLocaleString()} photos
-            </p>
+            </Kicker>
           </div>
         </div>
         <p className="font-mono tnum font-medium text-ink text-base md:text-lg shrink-0">

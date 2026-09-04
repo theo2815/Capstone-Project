@@ -3,20 +3,13 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useScrollLock } from "@/lib/scroll-lock";
-import {
-  PHOTO_PRICE_PHP,
-  PER_PHOTO_PLATFORM_CUT,
-  PER_PHOTO_PHOTOGRAPHER_KEEP,
-} from "@/lib/platform-economics";
+import { usePlatformFees } from "@/hooks/use-photographer-data";
 
 // Platform cut explainer. Triggered from the lifetime ₱ slab on
-// /dashboard/earnings. Numbers come from `lib/platform-economics.ts` so the
-// admin sales page and this modal stay in lockstep until backend Phase F
-// replaces the constants with a `/api/platform/fees` payload.
+// /dashboard/earnings. Numbers come from GET /platform/fees (fallback: the
+// constants in lib/platform-economics.ts, which mirror the backend defaults)
+// — so a server-side price or cut change reaches this modal without a deploy.
 
-const PRICE = PHOTO_PRICE_PHP;
-const CUT_AMOUNT = PER_PHOTO_PLATFORM_CUT;
-const KEEP_AMOUNT = PER_PHOTO_PHOTOGRAPHER_KEEP;
 const SCALE_TIERS = [15, 30, 50, 100] as const;
 
 interface PlatformCutModalProps {
@@ -25,6 +18,7 @@ interface PlatformCutModalProps {
 }
 
 export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
+  const fees = usePlatformFees();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -46,6 +40,12 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
 
   if (!mounted || !isOpen) return null;
 
+  const price = fees.photoPricePhp;
+  const cutAmount = price * fees.platformCutRate;
+  const keepAmount = price * fees.photographerKeepRate;
+  const cutPct = Math.round(fees.platformCutRate * 100);
+  const keepPct = Math.round(fees.photographerKeepRate * 100);
+
   const content = (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center p-4 md:p-6"
@@ -64,13 +64,13 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
         style={{ animation: "fade-up 0.25s ease-out both" }}
       >
         <div className="sticky top-0 z-10 flex items-baseline justify-between gap-6 px-6 md:px-8 pt-6 md:pt-8 pb-4 bg-bone border-b border-line">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
             Platform cut
           </p>
           <button
             type="button"
             onClick={onClose}
-            className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-ink transition-colors"
             aria-label="Close"
           >
             Close ×
@@ -87,34 +87,38 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
             </h2>
             <p className="font-sans text-sm md:text-base text-slate mt-3 max-w-md">
               QuickPitik keeps{" "}
-              <span className="font-mono tnum text-ink">25%</span> of every
-              photo sale. You keep the other{" "}
-              <span className="font-mono tnum text-ink">75%</span>, paid out
-              weekly.
+              <span className="font-mono tnum text-ink">{cutPct}%</span> of
+              every photo sale. You keep the other{" "}
+              <span className="font-mono tnum text-ink">{keepPct}%</span>, paid
+              out weekly.
+            </p>
+            <p className="font-sans text-sm md:text-base text-slate mt-3 max-w-md">
+              A coupon you create comes out of your share only; the platform
+              cut on that sale is unchanged.
             </p>
           </div>
 
           <section aria-labelledby="per-photo-heading">
             <p
               id="per-photo-heading"
-              className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
+              className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft"
             >
-              One ₱{PRICE} photo
+              One ₱{price} photo
             </p>
             <ul className="mt-4 border-y border-line divide-y divide-line">
               <BreakdownRow
                 label="Sale price"
-                value={`₱${PRICE.toFixed(2)}`}
+                value={`₱${price.toFixed(2)}`}
                 tone="ink"
               />
               <BreakdownRow
-                label="Platform cut (25%)"
-                value={`−₱${CUT_AMOUNT.toFixed(2)}`}
+                label={`Platform cut (${cutPct}%)`}
+                value={`−₱${cutAmount.toFixed(2)}`}
                 tone="slate"
               />
               <BreakdownRow
-                label="You keep (75%)"
-                value={`₱${KEEP_AMOUNT.toFixed(2)}`}
+                label={`You keep (${keepPct}%)`}
+                value={`₱${keepAmount.toFixed(2)}`}
                 tone="fresh"
                 emphasized
               />
@@ -124,13 +128,13 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
           <section aria-labelledby="scale-heading">
             <p
               id="scale-heading"
-              className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
+              className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft"
             >
               At your pace
             </p>
             <ul className="mt-4 border-y border-line divide-y divide-line">
               {SCALE_TIERS.map((sold) => {
-                const kept = sold * KEEP_AMOUNT;
+                const kept = sold * keepAmount;
                 return (
                   <li
                     key={sold}
@@ -150,17 +154,17 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
                 );
               })}
             </ul>
-            <p className="mt-3 font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft">
-              Based on ₱{PRICE} per photo · weekly payout
+            <p className="mt-3 font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
+              Based on ₱{price} per photo · weekly payout
             </p>
           </section>
 
           <section aria-labelledby="covers-heading">
             <p
               id="covers-heading"
-              className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft"
+              className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft"
             >
-              What the 25% covers
+              What the {cutPct}% covers
             </p>
             <ul className="mt-4 space-y-3">
               <CoverRow>Photo hosting and bandwidth</CoverRow>

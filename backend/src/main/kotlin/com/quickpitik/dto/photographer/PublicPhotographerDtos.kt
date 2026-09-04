@@ -16,6 +16,10 @@ data class PhotographerEventCoverageDto(
     val state: String,
     val photoCount: Int,
     val salesCount: Int,
+    // V46: the portfolio hides UNLISTED cards; the share page still resolves
+    // coverage from this list, which is why they are carried, not filtered.
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
 )
 
 // Mirrors website/src/lib/photographer-registry.ts PhotographerProfile.

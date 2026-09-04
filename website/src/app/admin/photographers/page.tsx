@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Kicker } from "@/components/ui/kicker";
 import { AdminPhotographerCard } from "@/components/admin/admin-photographer-card";
 import { type AdminUserRow } from "@/lib/admin-user-registry";
 import { useAdminUsersData } from "@/lib/admin-users-data";
@@ -150,7 +151,7 @@ export default function AdminPhotographersPage() {
           className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
         />
         {query.trim().length > 0 && (
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-3 tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3 tnum">
             {filtered.length} match{filtered.length === 1 ? "" : "es"}
           </p>
         )}
@@ -224,11 +225,11 @@ export default function AdminPhotographersPage() {
 function Header({ total, pending }: { total: number; pending: number }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <Kicker as="p">
         Photographers · <span className="tnum">{total}</span> on platform ·{" "}
         <span className="tnum">{pending}</span> pending
-      </p>
-      <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+      </Kicker>
+      <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Photographers.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">

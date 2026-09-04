@@ -1,6 +1,13 @@
 "use client";
 
 import { formatPrice } from "@/lib/utils";
+import { Kicker } from "@/components/ui/kicker";
+import {
+  BTN_DANGER,
+  BTN_GHOST,
+  BTN_PRIMARY,
+  BTN_SIZE,
+} from "@/components/ui/button-styles";
 
 interface AdminPayoutBulkBarProps {
   count: number;
@@ -35,14 +42,14 @@ export function AdminPayoutBulkBar({
     >
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="min-w-0">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+          <Kicker as="p">
             <span className="tnum">{count}</span> selected
             <span className="text-slate-soft"> · </span>
             <span className="text-ink tnum">{formatPrice(totalAmount)}</span>{" "}
             total
-          </p>
+          </Kicker>
           {approveDisabled && approveDisabledReason && (
-            <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-amber-700 mt-1.5">
+            <p className="font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-amber-700 mt-1.5">
               {approveDisabledReason}
             </p>
           )}
@@ -52,21 +59,21 @@ export function AdminPayoutBulkBar({
             type="button"
             onClick={onApprove}
             disabled={approveDisabled}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] bg-fresh text-bone hover:bg-fresh-deep transition-colors rounded-full px-4 py-2 disabled:opacity-40 disabled:hover:bg-fresh"
+            className={`${BTN_PRIMARY} ${BTN_SIZE.sm} disabled:hover:bg-fresh`}
           >
             Approve {count}
           </button>
           <button
             type="button"
             onClick={onHold}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-2"
+            className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
           >
             Hold {count}…
           </button>
           <button
             type="button"
             onClick={onClear}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-3 py-2"
+            className={`${BTN_GHOST} ${BTN_SIZE.sm} px-3`}
           >
             Clear
           </button>

@@ -8,16 +8,20 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,14 +36,18 @@ import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.runner.EventState
 import com.quickpitik.mobile.ui.runner.deriveEventState
+import com.quickpitik.mobile.ui.runner.eventDateLabel
 import com.quickpitik.mobile.ui.runner.extractCity
 import com.quickpitik.mobile.ui.theme.*
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 private enum class StatusFilter(val label: String, val tone: StatusTone) {
     LIVE("Live", StatusTone.Approved),
-    UPCOMING("Upcoming", StatusTone.Warning),
+    // Neutral, not amber — a routine future event isn't a caution state (the
+    // website renders UPCOMING as plain slate).
+    UPCOMING("Upcoming", StatusTone.Neutral),
     COMPLETED("Completed", StatusTone.Neutral),
 }
 
@@ -51,6 +59,7 @@ private fun PhotographerEventSummaryDto.filterBucket(today: LocalDate = LocalDat
     }
 
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun PhotographerEventsScreen(
     viewModel: PhotographerDashboardViewModel,
     modifier: Modifier = Modifier,
@@ -58,9 +67,38 @@ fun PhotographerEventsScreen(
     onSyncEvent: (PhotographerEventSummaryDto) -> Unit = {},
 ) {
     val eventsState by viewModel.eventsState.collectAsState()
+    val publicEventsState by viewModel.publicEventsState.collectAsState()
     val activeEvent by viewModel.activeEvent.collectAsState()
+    val verificationState by viewModel.verificationState.collectAsState()
+    val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase()
+    // null = status not loaded yet or fetch failed. Never block on unknown; the backend enforces.
+    val isApproved = currentStatus == null || currentStatus == "approved"
+    val isPending = currentStatus == "pending"
+    var showSetupAlert by remember { mutableStateOf(false) }
+    var alertIsPending by remember { mutableStateOf(false) }
     val today = remember { LocalDate.now() }
 
+    val guardAction: (() -> Unit) -> Unit = { action ->
+        if (!isApproved) {
+            alertIsPending = isPending
+            showSetupAlert = true
+        } else {
+            action()
+        }
+    }
+
+    if (showSetupAlert) {
+        StudioSetupRequiredDialog(
+            isPending = alertIsPending,
+            onDismiss = { showSetupAlert = false },
+        )
+    }
+
+    // No mount-time fetch: with the tabs as NavHost routes this composable
+    // recomposes on every tab visit AND on state restoration, so a
+    // LaunchedEffect(Unit) here would double the refetch MainActivity's
+    // studioNavigate already fires on the explicit tap (which is the one
+    // deliberate-refresh trigger — see its comment).
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -71,44 +109,77 @@ fun PhotographerEventsScreen(
         Kicker(text = "Covered events", color = Slate)
         Spacer(modifier = Modifier.height(16.dp))
 
-        when (val state = eventsState) {
-            is EventsState.Loading -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Slate, strokeWidth = 2.dp)
-                }
+        val coveredEvents = (eventsState as? EventsState.Success)?.events.orEmpty()
+        val publicEvents = (publicEventsState as? EventsState.Success)?.events.orEmpty()
+        val all = remember(coveredEvents, publicEvents) {
+            (coveredEvents + publicEvents).distinctBy { it.id }
+        }
+
+        val isLoading = (eventsState is EventsState.Loading || publicEventsState is EventsState.Loading) && all.isEmpty()
+        val isError = eventsState is EventsState.Error && publicEventsState is EventsState.Error && all.isEmpty()
+
+        if (isLoading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Slate, strokeWidth = 2.dp)
             }
-            is EventsState.Error -> {
-                ErrorView(
-                    message = state.message,
-                    onRetry = { viewModel.fetchEvents() },
+        } else if (isError) {
+            val errorMsg = (eventsState as? EventsState.Error)?.message
+                ?: (publicEventsState as? EventsState.Error)?.message
+                ?: "Failed to load events."
+            ErrorView(
+                message = errorMsg,
+                onRetry = {
+                    viewModel.fetchEvents()
+                    viewModel.fetchPublicEvents()
+                },
+            )
+        } else {
+            // Name filter — web EventFilterBar parity (its date dropdown is
+            // covered by the status chips below; the search is what's needed
+            // to find one event in a long roster).
+            var nameQuery by rememberSaveable { mutableStateOf("") }
+            TextField(
+                value = nameQuery,
+                onValueChange = { nameQuery = it },
+                placeholder = { Text("Search events by name…", color = SlateSoft) },
+                singleLine = true,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = BoneDeep,
+                    unfocusedContainerColor = BoneDeep,
+                    focusedIndicatorColor = Fresh,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    focusedTextColor = Ink,
+                    unfocusedTextColor = InkSoft,
+                ),
+                shape = FieldShape,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            val filteredAll = remember(all, nameQuery) {
+                val q = nameQuery.trim()
+                if (q.isEmpty()) all
+                else all.filter { it.name.contains(q, ignoreCase = true) }
+            }
+            val buckets = remember(filteredAll, today) { filteredAll.groupBy { it.filterBucket(today) } }
+            val liveCount = buckets[StatusFilter.LIVE]?.size ?: 0
+            val upcomingCount = buckets[StatusFilter.UPCOMING]?.size ?: 0
+            val completedCount = buckets[StatusFilter.COMPLETED]?.size ?: 0
+
+            var selectedFilter by remember(liveCount, upcomingCount, completedCount) {
+                mutableStateOf(
+                    when {
+                        liveCount > 0 -> StatusFilter.LIVE
+                        upcomingCount > 0 -> StatusFilter.UPCOMING
+                        else -> StatusFilter.COMPLETED
+                    }
                 )
             }
-            is EventsState.Success -> {
-                // Drop the active-event injection from the prior pass — the picker
-                // owns "what's active." This screen is about the photographer's
-                // covered set, plus their upcoming roster.
-                val all = state.events
-                val buckets = remember(all) { all.groupBy { it.filterBucket(today) } }
-                val liveCount = buckets[StatusFilter.LIVE]?.size ?: 0
-                val upcomingCount = buckets[StatusFilter.UPCOMING]?.size ?: 0
-                val completedCount = buckets[StatusFilter.COMPLETED]?.size ?: 0
 
-                // Smart default: pick the bucket where the photographer's attention
-                // most likely belongs — LIVE > UPCOMING > COMPLETED.
-                var selectedFilter by remember(liveCount, upcomingCount, completedCount) {
-                    mutableStateOf(
-                        when {
-                            liveCount > 0 -> StatusFilter.LIVE
-                            upcomingCount > 0 -> StatusFilter.UPCOMING
-                            else -> StatusFilter.COMPLETED
-                        }
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                     StatusFilterChip(
                         label = StatusFilter.LIVE.label,
                         count = liveCount,
@@ -154,8 +225,25 @@ fun PhotographerEventsScreen(
                         },
                     )
                 } else {
-                    LazyColumn(
+                    // Pull-to-refresh (Mobile Design skill) — same refetch as
+                    // the tab tap; spinner settles when both Jobs complete.
+                    var eventsRefreshing by remember { mutableStateOf(false) }
+                    val refreshScope = rememberCoroutineScope()
+                    PullToRefreshBox(
+                        isRefreshing = eventsRefreshing,
+                        onRefresh = {
+                            eventsRefreshing = true
+                            refreshScope.launch {
+                                val a = viewModel.fetchEvents()
+                                val b = viewModel.fetchPublicEvents()
+                                a.join(); b.join()
+                                eventsRefreshing = false
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth().weight(1f),
+                    ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         contentPadding = PaddingValues(bottom = 24.dp),
                     ) {
@@ -168,8 +256,8 @@ fun PhotographerEventsScreen(
                                 EventState.LIVE -> LiveEventCard(
                                     event = event,
                                     isActive = activeEvent?.id == event.id,
-                                    onSync = { onSyncEvent(event) },
-                                    onOpenShare = { onOpenShare(event) },
+                                    onSync = { guardAction { onSyncEvent(event) } },
+                                    onOpenShare = { guardAction { onOpenShare(event) } },
                                 )
                                 EventState.UPCOMING -> UpcomingEventCard(
                                     event = event,
@@ -177,11 +265,11 @@ fun PhotographerEventsScreen(
                                 )
                                 EventState.OPEN, EventState.PAST -> CompletedEventCard(
                                     event = event,
-                                    onOpenShare = { onOpenShare(event) },
+                                    onOpenShare = { guardAction { onOpenShare(event) } },
                                 )
                             }
                         }
-                    }
+                }
                 }
             }
         }
@@ -358,7 +446,7 @@ private fun UpcomingEventCard(
             EventCoverThumbnail(url = event.bannerUrl)
             Column(modifier = Modifier.weight(1f)) {
                 val city = extractCity(event.location).uppercase().ifBlank { "CEBU" }
-                Kicker(text = "${event.date} · $city", color = Slate)
+                Kicker(text = "${eventDateLabel(event.date)} · $city", color = Slate)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = event.name,
@@ -367,12 +455,21 @@ private fun UpcomingEventCard(
                     fontWeight = FontWeight.SemiBold,
                     lineHeight = 20.sp,
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = formatOpensIn(event.date, today),
-                    color = SlateSoft,
-                    style = Typography.bodySmall,
-                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    StatusChip(
+                        text = "OPENS ON ${eventDateLabel(event.date)}",
+                        tone = StatusTone.Neutral
+                    )
+                    Text(
+                        text = "· ${formatOpensIn(event.date, today)}",
+                        color = SlateSoft,
+                        style = Typography.bodySmall,
+                    )
+                }
             }
         }
     }
@@ -394,7 +491,7 @@ private fun CompletedEventCard(
             EventCoverThumbnail(url = event.bannerUrl)
             Column(modifier = Modifier.weight(1f)) {
                 val city = extractCity(event.location).uppercase().ifBlank { "CEBU" }
-                Kicker(text = "${event.date} · $city", color = Slate)
+                Kicker(text = "${eventDateLabel(event.date)} · $city", color = Slate)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = event.name,
@@ -404,17 +501,23 @@ private fun CompletedEventCard(
                     lineHeight = 20.sp,
                     maxLines = 2,
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "₱%,.0f · %d sold".format(event.revenueKept, event.salesCount),
-                    color = Slate,
-                    style = Typography.bodySmall,
-                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    StatusChip(text = "COMPLETED", tone = StatusTone.Neutral)
+                    Text(
+                        text = if (event.photoCount > 0) "· ${event.photoCount} photos · %d sold".format(event.salesCount) else "· Event ended",
+                        color = Slate,
+                        style = Typography.bodySmall,
+                    )
+                }
             }
             Icon(
                 imageVector = Icons.Default.KeyboardArrowRight,
-                contentDescription = null,
-                tint = SlateSoft,
+                contentDescription = "View gallery",
+                tint = Ink,
                 modifier = Modifier.size(20.dp),
             )
         }
@@ -452,22 +555,52 @@ private fun EventCoverThumbnail(url: String?, size: Int = 72) {
 private fun EmptyEventsCard(message: String) {
     Surface(
         shape = QpCardShape,
-        color = Color.Transparent,
+        color = BoneDeep,
         border = BorderStroke(1.dp, Line),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 32.dp),
+                .padding(horizontal = 24.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text(
-                text = message,
-                color = SlateSoft,
-                style = Typography.bodyMedium,
-                textAlign = TextAlign.Center,
-            )
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(Bone)
+                    .border(1.dp, Line, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.List,
+                    contentDescription = null,
+                    tint = Fresh,
+                    modifier = Modifier.size(26.dp),
+                )
+            }
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = "No events in this view",
+                    style = Typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    text = message,
+                    color = Slate,
+                    style = Typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+            }
         }
     }
 }
@@ -482,12 +615,5 @@ private fun formatOpensIn(date: String, today: LocalDate): String {
     }
 }
 
-private fun resolveImageUrl(url: String?): String? {
-    if (url == null || url.trim().isEmpty()) return null
-    // M-2 (2026-05-27 PM): host derived from RetrofitClient.BASE_URL.
-    if (url.startsWith("/")) {
-        return "${RetrofitClient.backendOrigin}$url"
-    }
-    return url.replace("localhost", RetrofitClient.backendHost)
-        .replace("127.0.0.1", RetrofitClient.backendHost)
-}
+private fun resolveImageUrl(url: String?): String? =
+    RetrofitClient.resolveImageUrl(url?.takeIf { it.isNotBlank() })

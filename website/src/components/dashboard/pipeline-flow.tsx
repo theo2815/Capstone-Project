@@ -53,7 +53,7 @@ function Node({ node }: { node: PipelineNode }) {
         )}
         <p
           className={cn(
-            "font-mono uppercase tracking-[0.3em] text-[10px]",
+            "font-mono uppercase tracking-[0.14em] text-[10px]",
             node.active ? "text-ink" : "text-slate",
           )}
         >

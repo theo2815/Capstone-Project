@@ -118,7 +118,7 @@ function Header({ totalSales }: { totalSales: number }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
       <Kicker tone="soft">Sales · Revenue intelligence</Kicker>
-      <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+      <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         The money.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
@@ -159,7 +159,7 @@ function RefundPulseSummary() {
 
       <Link
         href={ROUTES.ADMIN_DISPUTES}
-        className="inline-flex items-center gap-2 self-start font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink hover:text-fresh transition-colors"
+        className="inline-flex items-center gap-2 self-start font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors"
       >
         Open disputes queue →
       </Link>
@@ -179,9 +179,9 @@ function PulseRow({
   return (
     <li className="py-4 md:py-5 flex items-baseline justify-between gap-4">
       <div>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <Kicker as="p" tone="soft">
           {label}
-        </p>
+        </Kicker>
         <p className="font-sans text-sm text-ink-soft mt-1">{caption}</p>
       </div>
       <p className="font-mono tnum font-medium text-ink text-base md:text-lg shrink-0">

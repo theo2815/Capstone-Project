@@ -12,9 +12,14 @@ import {
 import { EventTile } from "@/components/events/event-tile";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useCanUpload } from "@/hooks/use-can-upload";
+import { usePhotographerEvents } from "@/hooks/use-photographer-data";
 import { usePublicEvents } from "@/hooks/use-public-events";
 import { useEventCatalog } from "@/lib/event-catalog";
 import { PAGE_SIZE } from "@/lib/pagination-config";
+import {
+  isOwnedEventLive,
+  summaryToListEvent,
+} from "@/lib/photographer-events";
 
 // Stable empty-array reference so useEventCatalog's memo doesn't churn while
 // the public events list is loading.
@@ -69,6 +74,14 @@ export default function UploadPickerPage() {
   const canUpload = gate.kind === "ok";
   const liveEvents = usePublicEvents();
   const catalog = useEventCatalog(liveEvents ?? EMPTY_SEED);
+  // Photographer-owned events (V46) that are approved — the owner uploads
+  // on any date, so they sit above the date-gated public sections. Unlisted
+  // ones never reach the public catalog; this is their only way in.
+  const mine = usePhotographerEvents();
+  const owned = useMemo(
+    () => (mine ?? []).filter(isOwnedEventLive).map(summaryToListEvent),
+    [mine],
+  );
 
   const [date, setDate] = useState<EventDateKey>("any");
   const [query, setQuery] = useState("");
@@ -99,33 +112,48 @@ export default function UploadPickerPage() {
 
   // Catalog itself is empty — no events to upload to at all. Skip the filter
   // bar (filtering nothing yields nothing) and show the wider PickerEmpty.
-  if (catalog.length === 0) {
+  if (catalog.length === 0 && owned.length === 0) {
     return <PickerEmpty />;
   }
 
   return (
     <>
-      <EventFilterBar
-        date={date}
-        onDateChange={setDate}
-        query={query}
-        onQueryChange={setQuery}
-        dateAriaLabel="Filter upload picker by date"
-        searchAriaLabel="Search events to upload to"
-      />
+      {owned.length > 0 && (
+        <UploadSection
+          id="mine"
+          number="01"
+          title="Your events"
+          caption="Approved · upload any time, no race-day window"
+          items={owned}
+          canUpload={canUpload}
+          bypassWindow
+        />
+      )}
+
+      {catalog.length > 0 && (
+        <EventFilterBar
+          date={date}
+          onDateChange={setDate}
+          query={query}
+          onQueryChange={setQuery}
+          dateAriaLabel="Filter upload picker by date"
+          searchAriaLabel="Search events to upload to"
+        />
+      )}
 
       {visibleSections.length === 0 ? (
         isFiltered ? (
           <EventFilterEmpty onClear={clearFilters} />
-        ) : (
+        ) : owned.length > 0 ? null : (
           <PickerEmpty />
         )
       ) : (
-        visibleSections.map((section) => (
+        visibleSections.map((section, i) => (
           <UploadSection
             key={section.id}
             id={section.id}
-            number={section.number}
+            // Slab numbers stay contiguous when "Your events" leads.
+            number={String(i + (owned.length > 0 ? 2 : 1)).padStart(2, "0")}
             title={section.title}
             caption={section.caption}
             items={section.items}
@@ -144,6 +172,7 @@ function UploadSection({
   caption,
   items,
   canUpload,
+  bypassWindow = false,
 }: {
   id: string;
   number: string;
@@ -151,6 +180,7 @@ function UploadSection({
   caption: string;
   items: ReadonlyArray<ListEvent>;
   canUpload: boolean;
+  bypassWindow?: boolean;
 }) {
   const noun = items.length === 1 ? "race" : "races";
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EVENT_GRID_INITIAL);
@@ -172,6 +202,7 @@ function UploadSection({
             event={event}
             index={i}
             canUpload={canUpload}
+            bypassWindow={bypassWindow}
           />
         ))}
       </div>

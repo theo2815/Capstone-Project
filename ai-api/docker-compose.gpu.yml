@@ -1,10 +1,16 @@
-# GPU override for production. Use with:
-#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+# GPU overlay for the production stack. Use with:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.gpu.yml up -d
+#
+# It must be layered on docker-compose.prod.yml, NOT docker-compose.yml — that
+# one is the dev stack (Dockerfile.dev, DEBUG=true, auth bypassed). It also has
+# to name the same services the prod stack defines: this file used to override
+# `celery-worker`, which exists only in the dev compose, so against prod it
+# silently added a fifth stray worker and left the four real ones on CPU.
+#
+# `dockerfile: Dockerfile` is not repeated here — the prod stack already builds
+# from it, and restating it is one more thing that can drift.
 services:
   ai-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
     environment:
       - USE_GPU=true
     deploy:
@@ -15,10 +21,9 @@ services:
               count: 1
               capabilities: [gpu]
 
-  celery-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
+  # Blur classification is the ONNX batching path — the dynamic-axis re-export
+  # pays off here rather than on CPU, where it measured only ~1.06x.
+  celery-blur:
     environment:
       - USE_GPU=true
     deploy:
@@ -28,3 +33,28 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+  celery-face:
+    environment:
+      - USE_GPU=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  celery-bib:
+    environment:
+      - USE_GPU=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # celery-default runs webhook + maintenance tasks only and loads no models
+  # (WORKER_QUEUES=default), so it is deliberately left on CPU.

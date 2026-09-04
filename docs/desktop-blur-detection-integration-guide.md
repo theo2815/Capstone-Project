@@ -122,7 +122,7 @@ POST /api/v1/blur/detect
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `file` | file | yes | -- | Image file (JPEG, PNG, WebP) up to 10 MB |
+| `file` | file | yes | -- | Image file (JPEG, PNG, WebP) up to 25 MB (`MAX_FILE_SIZE`, raised 2026-08-14) |
 | `threshold` | float | no | `100.0` | Blur threshold (1.0 - 10000.0). Lower = stricter |
 | `include_metrics` | bool | no | `true` | Include Laplacian variance and FFT metrics |
 
@@ -173,7 +173,7 @@ POST /api/v1/blur/classify
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `file` | file | yes | -- | Image file (JPEG, PNG, WebP) up to 10 MB |
+| `file` | file | yes | -- | Image file (JPEG, PNG, WebP) up to 25 MB (`MAX_FILE_SIZE`, raised 2026-08-14) |
 | `blur_type` | string | no | -- | Target a specific blur type (see below) |
 
 #### Mode A: Full Classification (no `blur_type` param)
@@ -261,7 +261,7 @@ POST /api/v1/blur/classify/batch   (CNN classifier, also accepts blur_type param
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `files` | file[] | yes | Up to 20 images per batch (configurable via `MAX_BATCH_SIZE`) |
+| `files` | file[] | yes | Up to `MAX_BATCH_SIZE` images per batch (default 50) |
 
 **Response** (HTTP 202):
 
@@ -295,6 +295,63 @@ When `completed`, the `data.result` field contains an array of per-image results
 
 ---
 
+### 3.4 Streaming Batch (Synchronous) — the path the desktop actually uses
+
+**This is the primary desktop path** and has been since 2026-06-03. It needs no Celery
+worker, no job row, and no polling: results stream back as NDJSON while the server
+works, one JSON object per line.
+
+```
+POST /api/v1/blur/detect/stream     (Laplacian, fast gate)
+POST /api/v1/blur/classify/stream   (CNN classifier, also accepts blur_type)
+```
+
+**Request** (multipart/form-data): `files` — up to 500 images per request
+(`STREAM_BATCH_MAX_SIZE` / `STREAM_CLASSIFY_MAX_SIZE`). Over the cap returns
+`400 BATCH_TOO_LARGE`.
+
+**Response**: `200` with `Content-Type: application/x-ndjson` and an
+`X-Total-Images` header. One line per image, then a final summary line:
+
+```
+{"index":0,"filename":"IMG_001.jpg","predicted_class":"sharp","confidence":0.97,"probabilities":{...}}
+{"index":1,"filename":"IMG_002.jpg","predicted_class":"motion_blurred","confidence":0.88,"probabilities":{...}}
+{"_summary":true,"total":2,"processing_time_ms":412.7}
+```
+
+Client rules that matter:
+
+- **Match results by `filename`, not arrival order.** `/detect/stream` completes
+  images as they finish, so lines arrive out of order. (`/classify/stream` emits in
+  sub-batch order, but do not depend on that.)
+- **Treat a missing `_summary` line as a failed run.** The HTTP status is sent
+  before processing begins, so a mid-stream server failure cannot become an error
+  code — it shows up as a short body. The summary line is the completion signal.
+- **A per-image `{"index":…,"filename":…,"error":…}` line is normal** for an
+  undecodable file; keep reading, the rest of the batch is unaffected.
+- For 5k–10k images, send several concurrent requests of 200–500 each rather than
+  one giant request.
+
+**Limits on the stream path** (added 2026-08-14 — it previously validated nothing):
+
+- **Per file**, `MAX_FILE_SIZE` (25 MB) and `MAX_IMAGE_DIMENSION` (12000 px longest
+  edge). Both are sized to pass any real camera, so a normal frame is never
+  refused. A file that breaks either gets a per-image `error` line at its own
+  index — the request still returns 200 and every other image is still scored.
+  Content-Type is *not* checked on this path, so posting
+  `application/octet-stream` is fine.
+- **Per request**, `MAX_REQUEST_BODY` (2 GB total) — refused with `413` before any
+  file is read. Not a practical constraint on this path: the desktop resizes to
+  1280 px / q90 before uploading, which measures ~253 KB per image (p90 412 KB),
+  so a full 200-image chunk is ~49 MB and even a 500-image one is ~127 MB. The
+  ceiling is sized for the Spring backend's mega drain, which posts *original*
+  bytes; it is not sized for this path.
+
+Both `/blur/classify` and `/blur/classify/stream` decode to
+`BLUR_CLASSIFY_DECODE_DIM` (640) internally and score identically.
+
+---
+
 ## 4. Desktop App Integration Recommendations
 
 ### Suggested workflow for the desktop app
@@ -313,16 +370,20 @@ When `completed`, the `data.result` field contains an array of per-image results
 
 This two-step approach saves time: the fast Laplacian gate filters out sharp images cheaply, and only blurry images go through the heavier CNN classifier.
 
-### For bulk uploads (20+ photos)
-
-Use the batch endpoints instead to avoid per-request overhead:
+### For bulk culling (20+ photos) — use the streaming endpoints
 
 ```
-1. POST /blur/detect/batch with up to 20 files
-2. Poll GET /jobs/{job_id} until completed
-3. For images flagged as blurry, POST /blur/classify/batch
-4. Poll again for classification results
+1. POST /blur/classify/stream with 200-500 files
+2. Read NDJSON lines as they arrive; map each to its photo by `filename`
+3. Stop when the {"_summary":true,...} line arrives — no summary means the run failed
+4. Repeat with the next chunk (several requests can be in flight at once)
 ```
+
+Prefer this over the async `/batch` + poll flow for culling work. It needs no
+Celery worker, gives incremental progress you can drive a progress bar from, and
+avoids the job-row round trips. The async `/batch` and `/mega` endpoints remain
+available and are the right choice when the client cannot hold a connection open
+for the duration of the run — a queued job survives a disconnect, a stream does not.
 
 ### API key storage
 
@@ -338,7 +399,8 @@ Use the batch endpoints instead to avoid per-request overhead:
 | `202` | Batch accepted -- poll the `poll_url` |
 | `401` | Invalid key -- prompt user to re-enter |
 | `403` | Scope issue -- key needs `blur:read` |
-| `413` | File too large -- max 10 MB per image |
+| `400` | Validation failure on a single-image endpoint -- file over 25 MB (`MAX_FILE_SIZE`), over 12000 px (`MAX_IMAGE_DIMENSION`), wrong type, or corrupt. On `/stream` the same failures arrive as a per-image `error` line instead, with the request still `200`. |
+| `413` | Whole request body over 2 GB (`MAX_REQUEST_BODY`) -- send fewer files per request. Not per-image: no file has been read yet, so the response names no filename. Unreachable from this client at the resized upload size. |
 | `429` | Rate limited -- wait for `Retry-After` seconds, then retry |
 | `503` | Model not loaded -- blur classifier may not be deployed yet, fall back to `/blur/detect` |
 
@@ -359,11 +421,16 @@ The minimum confidence floor is configurable server-side (`BLUR_DETECTION_MIN_CO
 | Base URL | `http://localhost:8000/api/v1` |
 | Auth header | `X-API-Key: sk_test_...` |
 | Required scope | `blur:read` |
-| Max file size | 10 MB |
-| Max batch size | 20 images |
+| Max file size | 25 MB (`MAX_FILE_SIZE`) |
+| Max image dimension | 12000 px longest edge (`MAX_IMAGE_DIMENSION`) |
+| Max total request body | 2 GB (`MAX_REQUEST_BODY`) -- ~49 MB for a 200-image resized chunk |
+| Max async batch size | 50 images (`MAX_BATCH_SIZE`) |
+| Max stream batch size | 500 images (`STREAM_*_MAX_SIZE`), subject to the 2 GB body limit |
 | Supported formats | JPEG, PNG, WebP |
 | Fast check | `POST /blur/detect` |
 | CNN classify | `POST /blur/classify` |
+| **Stream detect (primary)** | `POST /blur/detect/stream` |
+| **Stream classify (primary)** | `POST /blur/classify/stream` |
 | Batch detect | `POST /blur/detect/batch` |
 | Batch classify | `POST /blur/classify/batch` |
 | Poll job | `GET /jobs/{job_id}` |

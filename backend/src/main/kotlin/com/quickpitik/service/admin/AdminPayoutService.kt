@@ -19,6 +19,8 @@ import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.entity.PayoutMethod
 import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.entity.PhotographerSettings
+import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -337,6 +339,24 @@ class AdminPayoutService(
      * cycle's payout method is the photographer's primary account method, or
      * GCASH as a safe default when no account is set — the admin still sees
      * an empty payoutAccount snapshot in the queue and can hold for setup.
+     *
+     * **Known race, accepted (documented 2026-08-16).** The aggregate below and
+     * the per-row upsert are two statements, so a refund committing between
+     * them lands in neither: the summed amount is already stale and the cycle
+     * is written from it, with nothing recording the discrepancy.
+     *
+     * Left as-is deliberately. This path is an optional backfill superseded by
+     * the request-based flow (`PayoutRequestService`, 2026-05-19) — the normal
+     * way a cycle is created is a photographer asking for one, which reads the
+     * balance inside a single transaction. Raising this method to SERIALIZABLE
+     * (or locking the transaction window) would add contention to the whole
+     * payout path to protect a route that runs rarely and by hand.
+     *
+     * The mitigation is operational, not structural: re-running for the same
+     * week refreshes any still-pending_review row in place, so a mis-summed
+     * cycle self-corrects on the next run as long as no admin has decided it
+     * yet. If this path ever becomes automatic (a cron), revisit — an
+     * unattended generator has no human to notice the discrepancy.
      */
     fun generateForWeek(weekOf: LocalDate): GenerateCyclesResultDto {
         if (weekOf.dayOfWeek != java.time.DayOfWeek.MONDAY) {
@@ -444,14 +464,34 @@ class AdminPayoutService(
 
     private fun hydrateMany(cycles: List<PayoutCycle>): List<AdminPayoutCycleDto> {
         if (cycles.isEmpty()) return emptyList()
-        return cycles.map { hydrateOne(it) }
+        // Batch-prefetch the page's users / settings / payout accounts in three
+        // IN round-trips instead of 3–4 queries per row (same shape as
+        // OrderService.hydrateList). hydrateOne's defaults keep the single-row
+        // approve/hold/pay paths working unchanged.
+        val photographerIds = cycles.mapTo(mutableSetOf()) { it.photographerId }
+        val usersById = userRepository.findAllById(photographerIds).associateBy { it.id }
+        val settingsById = photographerSettingsRepository.findAllById(photographerIds).associateBy { it.userId }
+        val accountsByUser = payoutAccountRepository
+            .findAllByUserIdInOrderByCreatedAtAsc(photographerIds)
+            .groupBy { it.userId }
+        return cycles.map { cycle ->
+            val candidates = accountsByUser[cycle.photographerId].orEmpty()
+            hydrateOne(
+                cycle,
+                user = usersById[cycle.photographerId],
+                settings = settingsById[cycle.photographerId],
+                account = candidates.firstOrNull { it.isPrimary } ?: candidates.firstOrNull(),
+            )
+        }
     }
 
-    internal fun hydrateOne(cycle: PayoutCycle): AdminPayoutCycleDto {
-        val user = userRepository.findById(cycle.photographerId).orElse(null)
-        val settings = photographerSettingsRepository.findById(cycle.photographerId).orElse(null)
-        val account = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(cycle.photographerId)
-            ?: payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(cycle.photographerId).firstOrNull()
+    internal fun hydrateOne(
+        cycle: PayoutCycle,
+        user: User? = userRepository.findById(cycle.photographerId).orElse(null),
+        settings: PhotographerSettings? = photographerSettingsRepository.findById(cycle.photographerId).orElse(null),
+        account: PayoutAccount? = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(cycle.photographerId)
+            ?: payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(cycle.photographerId).firstOrNull(),
+    ): AdminPayoutCycleDto {
         return AdminPayoutCycleDto(
             id = cycle.id,
             photographerId = cycle.photographerId,

@@ -10,14 +10,40 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,13 +56,33 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.quickpitik.mobile.data.download.PhotoDownloader
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.runner.PhotoPreview
 import com.quickpitik.mobile.ui.runner.PhotoPreviewData
 import com.quickpitik.mobile.ui.runner.PhotoPreviewMode
-import com.quickpitik.mobile.ui.theme.*
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.BrandLogo
+import com.quickpitik.mobile.ui.theme.ErrorView
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.GhostCta
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.InkSoft
+import com.quickpitik.mobile.ui.theme.Kicker
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.PillShape
+import com.quickpitik.mobile.ui.theme.PrimaryCta
+import com.quickpitik.mobile.ui.theme.QpCard
+import com.quickpitik.mobile.ui.theme.QpCardShape
+import com.quickpitik.mobile.ui.theme.Slate
+import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.StatNumber
+import com.quickpitik.mobile.ui.theme.TileShape
+import com.quickpitik.mobile.ui.theme.Typography
+import kotlinx.coroutines.launch
 import java.net.URLEncoder
 
 private fun PhotographerLibraryPhotoDto.toOwnerPreviewData(eventName: String?): PhotoPreviewData =
@@ -64,10 +110,18 @@ fun PhotographerEventShareScreen(
     val brand by viewModel.brandSettings.collectAsState()
     val photosState by viewModel.sharePhotosState.collectAsState()
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
+    var visiblePhotoLimit by rememberSaveable(event.id) { mutableStateOf(20) }
+    val scope = rememberCoroutineScope()
+    // Guards the lightbox download: the presigned-URL fetch plus the save is a
+    // multi-second round trip, and repeat taps would queue duplicate saves.
+    var downloading by remember { mutableStateOf(false) }
 
     LaunchedEffect(event.id) {
         viewModel.fetchSharePhotos(event.id)
-        viewModel.fetchSettings()
+        // The handle is read from the shared brandSettings flow, hydrated by
+        // the VM's init + Settings refreshes; re-fetch only the one payload this
+        // screen needs if it never loaded.
+        if (viewModel.brandSettings.value == null) viewModel.fetchBrandSettings()
     }
 
     val handle = brand?.handle?.takeIf { it.isNotBlank() } ?: "your-handle"
@@ -83,17 +137,24 @@ fun PhotographerEventShareScreen(
                 .navigationBarsPadding()
                 .padding(20.dp)
         ) {
-            // Back
+            // Back + brand
             Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { onBack() }
-                    .padding(vertical = 6.dp, horizontal = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Slate)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("BACK TO EVENTS", style = Typography.labelMedium, color = Slate, fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier
+                        .clip(TileShape)
+                        .clickable { onBack() }
+                        .padding(vertical = 6.dp, horizontal = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Slate)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("BACK TO EVENTS", style = Typography.labelMedium, color = Slate, fontWeight = FontWeight.Bold)
+                }
+                BrandLogo(compact = true)
             }
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -107,7 +168,7 @@ fun PhotographerEventShareScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(180.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                        .clip(QpCardShape)
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -123,22 +184,18 @@ fun PhotographerEventShareScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // Share band
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(BoneDeep)
-                    .border(BorderStroke(1.dp, Line), RoundedCornerShape(16.dp))
-                    .padding(20.dp)
+            QpCard(
+                modifier = Modifier.fillMaxWidth(),
+                padding = 20.dp
             ) {
-                Text("PUBLIC GALLERY", style = Typography.labelSmall, color = Slate)
+                Kicker("Public gallery")
                 Spacer(modifier = Modifier.height(12.dp))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(100))
+                        .clip(PillShape)
                         .background(Bone)
-                        .border(BorderStroke(1.dp, Line), RoundedCornerShape(100))
+                        .border(BorderStroke(1.dp, Line), PillShape)
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
                     Text(
@@ -151,42 +208,35 @@ fun PhotographerEventShareScreen(
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(
+                    PrimaryCta(
+                        text = "Copy link",
                         onClick = {
                             copyLink(context, fullUrl)
                             Toast.makeText(context, "Link copied.", Toast.LENGTH_SHORT).show()
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Fresh, contentColor = Bone),
-                        shape = RoundedCornerShape(100),
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text("COPY LINK", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                    OutlinedButton(
+                    )
+                    GhostCta(
+                        text = "Share",
                         onClick = { shareNative(context, event.name, fullUrl) },
-                        border = BorderStroke(1.dp, Ink),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
-                        shape = RoundedCornerShape(100),
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text("SHARE", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
+                    )
                 }
                 Spacer(modifier = Modifier.height(18.dp))
-                Text("SHARE TO YOUR FOLLOWERS", style = Typography.labelSmall, color = SlateSoft)
+                Kicker("Share to your followers", color = SlateSoft)
                 Spacer(modifier = Modifier.height(10.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ShareChip(label = "Facebook", dotColor = Color(0xFF1877F2)) {
+                    ShareChip(label = "Facebook", dotColor = FacebookBlue) {
                         openUrl(context, "https://www.facebook.com/sharer/sharer.php?u=${enc(fullUrl)}")
                     }
-                    ShareChip(label = "Instagram", dotColor = Color(0xFFE4405F)) {
+                    ShareChip(label = "Instagram", dotColor = InstagramPink) {
                         copyLink(context, fullUrl)
                         Toast.makeText(context, "Link copied. Paste into your IG bio or story.", Toast.LENGTH_LONG).show()
                     }
-                    ShareChip(label = "X", dotColor = Color(0xFF000000)) {
+                    ShareChip(label = "X", dotColor = XBlack) {
                         openUrl(context, "https://twitter.com/intent/tweet?url=${enc(fullUrl)}&text=${enc("Photos from ${event.name}")}")
                     }
-                    ShareChip(label = "Threads", dotColor = Color(0xFF444444)) {
+                    ShareChip(label = "Threads", dotColor = ThreadsGray) {
                         openUrl(context, "https://www.threads.net/intent/post?text=${enc("Photos from ${event.name} — $displayUrl")}")
                     }
                 }
@@ -198,9 +248,9 @@ fun PhotographerEventShareScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                ShareStat(value = "${event.photoCount}", label = "PHOTOS")
-                ShareStat(value = "${event.salesCount}", label = "SOLD")
-                ShareStat(value = "₱%,.0f".format(event.revenueKept), label = "KEPT", valueColor = Fresh)
+                StatNumber(value = "${event.photoCount}", label = "Photos")
+                StatNumber(value = "${event.salesCount}", label = "Sold")
+                StatNumber(value = "₱%,.0f".format(event.revenueKept), label = "Kept", valueColor = Fresh)
             }
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -210,7 +260,7 @@ fun PhotographerEventShareScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("UPLOADED PHOTOS", style = Typography.labelMedium, color = Slate)
+                Kicker("Uploaded photos")
             }
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -221,9 +271,12 @@ fun PhotographerEventShareScreen(
                     }
                 }
                 is SharePhotosState.Error -> {
-                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
-                        Text(state.message, color = ErrorRed, textAlign = TextAlign.Center, style = Typography.bodyMedium)
-                    }
+                    ErrorView(
+                        message = state.message,
+                        title = "Couldn't load your uploads",
+                        onRetry = { viewModel.fetchSharePhotos(event.id) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
                 is SharePhotosState.Success -> {
                     if (state.photos.isEmpty()) {
@@ -236,7 +289,7 @@ fun PhotographerEventShareScreen(
                             )
                         }
                     } else {
-                        state.photos.chunked(2).forEachIndexed { rowIdx, rowPhotos ->
+                        state.photos.take(visiblePhotoLimit).chunked(2).forEachIndexed { rowIdx, rowPhotos ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -254,6 +307,13 @@ fun PhotographerEventShareScreen(
                                 }
                             }
                             Spacer(modifier = Modifier.height(12.dp))
+                        }
+                        if (visiblePhotoLimit < state.photos.size) {
+                            GhostCta(
+                                text = "Load more",
+                                onClick = { visiblePhotoLimit += 20 },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
                         }
                     }
                 }
@@ -277,6 +337,33 @@ fun PhotographerEventShareScreen(
             currentIndex = safeIdx,
             onClose = { selectedIndex = null },
             onIndexChange = { selectedIndex = it },
+            // Two hops, because the library listing only carries the
+            // watermarked thumbnail: resolve the presigned original, then hand
+            // it to the same saver the runner order screens use.
+            onDownload = { photo ->
+                if (!downloading) {
+                    downloading = true
+                    scope.launch {
+                        val result = viewModel.resolvePhotoDownloadUrl(photo.id)
+                        val message = result.fold(
+                            onSuccess = { url ->
+                                // PhotoPreviewData carries no bib, but the DTO
+                                // list behind it does — look it up so the saved
+                                // file is bib-tagged like the website's.
+                                val bib = current.photos.firstOrNull { it.id == photo.id }?.bib
+                                val filename = PhotoDownloader.buildFilename(photo.id, bib)
+                                when (val saved = PhotoDownloader.saveToGallery(context, url, filename)) {
+                                    is PhotoDownloader.Result.Saved -> "Saved ${saved.displayName} to your gallery."
+                                    is PhotoDownloader.Result.Failed -> saved.message
+                                }
+                            },
+                            onFailure = { it.message ?: "Couldn't get the download link." },
+                        )
+                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                        downloading = false
+                    }
+                }
+            },
             mode = PhotoPreviewMode.OwnerReview,
         )
     }
@@ -291,7 +378,7 @@ private fun SharePhotoTile(
     Box(
         modifier = modifier
             .aspectRatio(0.85f)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(QpCardShape)
             .background(BoneDeep)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
@@ -310,7 +397,7 @@ private fun SharePhotoTile(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
-                    .clip(RoundedCornerShape(100))
+                    .clip(PillShape)
                     .background(Ink.copy(alpha = 0.55f))
                     .padding(horizontal = 8.dp, vertical = 3.dp)
             ) {
@@ -321,30 +408,28 @@ private fun SharePhotoTile(
 }
 
 @Composable
-private fun ShareStat(value: String, label: String, valueColor: Color = Ink) {
-    Column {
-        Text(value, color = valueColor, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(label, color = SlateSoft, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-    }
-}
-
-@Composable
 private fun ShareChip(label: String, dotColor: Color, onClick: () -> Unit) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(100))
+            .clip(PillShape)
             .background(Bone)
-            .border(BorderStroke(1.dp, Line), RoundedCornerShape(100))
+            .border(BorderStroke(1.dp, Line), PillShape)
             .clickable { onClick() }
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Box(modifier = Modifier.size(8.dp).clip(RoundedCornerShape(100)).background(dotColor))
+        Box(modifier = Modifier.size(8.dp).clip(PillShape).background(dotColor))
         Text(label, style = Typography.bodyMedium, color = Ink, fontWeight = FontWeight.Medium)
     }
 }
+
+// Platform brand colors for the share-chip dots — external identities, not
+// theme tokens, but named so they don't read as stray magic hexes.
+private val FacebookBlue = Color(0xFF1877F2)
+private val InstagramPink = Color(0xFFE4405F)
+private val XBlack = Color(0xFF000000)
+private val ThreadsGray = Color(0xFF444444)
 
 private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
 
@@ -366,10 +451,5 @@ private fun openUrl(context: Context, url: String) {
     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
 }
 
-private fun resolveShareImageUrl(url: String?): String? {
-    if (url.isNullOrBlank()) return null
-    // M-2 (2026-05-27 PM): host derived from RetrofitClient.BASE_URL.
-    if (url.startsWith("/")) return "${RetrofitClient.backendOrigin}$url"
-    return url.replace("localhost", RetrofitClient.backendHost)
-        .replace("127.0.0.1", RetrofitClient.backendHost)
-}
+private fun resolveShareImageUrl(url: String?): String? =
+    RetrofitClient.resolveImageUrl(url?.takeIf { it.isNotBlank() })

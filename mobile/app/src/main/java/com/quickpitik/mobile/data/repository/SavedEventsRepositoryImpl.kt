@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.time.OffsetDateTime
 
 class SavedEventsRepositoryImpl : SavedEventsRepository {
-    private val api = RetrofitClient.apiService
+    private val api get() = RetrofitClient.apiService
     private val _saved = MutableStateFlow<List<SavedEventSummaryDto>>(emptyList())
     override val savedEvents: StateFlow<List<SavedEventSummaryDto>> = _saved.asStateFlow()
 
@@ -58,6 +58,22 @@ class SavedEventsRepositoryImpl : SavedEventsRepository {
             }
         } catch (e: Exception) {
             _saved.value = original
+            Result.failure(Exception(RetrofitClient.parseError(e)))
+        }
+    }
+
+    override suspend fun saveById(token: String, eventId: String): Result<SavedEventSummaryDto> {
+        return try {
+            val response = api.saveEvent("Bearer $token", SaveEventRequest(eventId))
+            if (response.success && response.data != null) {
+                if (_saved.value.none { it.id == eventId }) {
+                    _saved.value = _saved.value + response.data
+                }
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Failed to save event"))
+            }
+        } catch (e: Exception) {
             Result.failure(Exception(RetrofitClient.parseError(e)))
         }
     }

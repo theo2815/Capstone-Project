@@ -61,7 +61,6 @@ export function AdminPayoutRow({
   onHold,
   onMarkPaid,
 }: AdminPayoutRowProps) {
-  const weekEnd = addDays(cycle.weekOf, 6);
   const subjectLabel = cycle.brandName ?? cycle.photographerName;
 
   function handleArticleKeyDown(e: React.KeyboardEvent<HTMLElement>) {
@@ -79,16 +78,18 @@ export function AdminPayoutRow({
       onClick={onActivate}
       onKeyDown={handleArticleKeyDown}
       aria-label={`${subjectLabel}${
-        selectionActive ? " — toggle selection" : " — open cycle"
+        selectionActive ? " — toggle selection" : " — open payout"
       }`}
-      className={`group rounded-2xl border bg-bone p-5 md:p-6 transition-colors cursor-pointer ${
-        selected ? "border-ink" : "border-line hover:border-ink"
+      className={`group rounded-2xl border p-5 md:p-6 transition-colors cursor-pointer ${
+        selected
+          ? "border-ink bg-fresh-tint/30"
+          : "border-line bg-bone hover:border-ink"
       } ${focused ? "ring-2 ring-ink ring-offset-2 ring-offset-bone" : ""}`}
     >
       <div className="flex items-start gap-4 flex-wrap md:flex-nowrap">
         <input
           type="checkbox"
-          aria-label={`Select cycle ${cycle.id}`}
+          aria-label={`Select payout ${cycle.id}`}
           checked={selected}
           onChange={onToggleSelect}
           onClick={(e) => e.stopPropagation()}
@@ -100,29 +101,30 @@ export function AdminPayoutRow({
               {subjectLabel}
             </h3>
             {cycle.handle && (
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
                 @{cycle.handle}
               </p>
             )}
           </div>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-2 tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2 tnum">
             {cycle.id}
             <span className="text-slate-soft"> · </span>
-            {formatLongDate(cycle.weekOf, true)} →{" "}
-            {formatLongDate(weekEnd, true)}
+            {/* Request time, matching the photographer's own view — see the
+                note on PayoutSubtitle in payouts-queue.tsx. */}
+            {formatLongDate(cycle.submittedAt)}
             <span className="text-slate-soft"> · </span>
             {cycle.itemCount} {cycle.itemCount === 1 ? "sale" : "sales"}
           </p>
           {cycle.status === "held" && cycle.holdReason && (
             <p className="font-sans text-sm text-slate mt-2">
-              <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft mr-2">
+              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mr-2">
                 Hold:
               </span>
               {cycle.holdReason}
             </p>
           )}
           {cycle.status === "paid" && cycle.paymentReference && (
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mt-2 tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-2 tnum">
               Ref: {cycle.paymentReference}
               {cycle.paidAt && (
                 <>
@@ -141,7 +143,7 @@ export function AdminPayoutRow({
           <p className="font-display text-lg text-ink tnum">
             {formatPrice(cycle.amount)}
           </p>
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
             {payoutMethodLabel(cycle.method)}
           </p>
         </div>
@@ -151,7 +153,7 @@ export function AdminPayoutRow({
             e.stopPropagation();
             onOpenDrawer();
           }}
-          aria-label={`Open cycle ${cycle.id}`}
+          aria-label={`Open payout ${cycle.id}`}
           className="shrink-0 size-8 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
         >
           <span aria-hidden="true" className="text-lg leading-none">
@@ -197,7 +199,7 @@ function RowActions({
         <button
           type="button"
           onClick={onApprove}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-1.5"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-1.5"
         >
           Approve
         </button>
@@ -206,7 +208,7 @@ function RowActions({
         <button
           type="button"
           onClick={onMarkPaid}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-1.5"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-1.5"
         >
           Mark paid…
         </button>
@@ -215,17 +217,11 @@ function RowActions({
         <button
           type="button"
           onClick={onHold}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-3 py-1.5"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-1.5"
         >
           Hold…
         </button>
       )}
     </div>
   );
-}
-
-function addDays(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
 }

@@ -8,16 +8,25 @@ import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
 import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
+import com.quickpitik.dto.photos.PhotographerRef
 import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.IndexingStatus
+import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.service.ai.AiApiClient
+import com.quickpitik.repository.PhotographerSettingsRepository
+import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.service.events.EventInputs
+import com.quickpitik.service.photographer.PricingTrio
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -34,16 +43,31 @@ class AdminEventService(
     private val adminDecisionLogService: AdminDecisionLogService,
     private val eventDtoMapper: EventDtoMapper,
     private val eventCoverService: EventCoverService,
-    private val aiApiClient: AiApiClient,
+    private val aiApiClient: FaceBibProvider,
     private val aiApiProperties: AiApiProperties,
+    private val photographerSettingsRepository: PhotographerSettingsRepository,
+    private val userRepository: UserRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     @Transactional(readOnly = true)
     fun list(
         stateFilter: String?,
+        review: String?,
         params: PaginationParams,
     ): PaginatedResponse<AdminListEventDto> {
+        if (review.equals("queue", ignoreCase = true)) {
+            // Photographer-owned events awaiting a decision (V46): initial
+            // submissions + pricing-change requests, oldest first. Small by
+            // nature, so paginated in memory like the state filter below.
+            val rows = eventRepository.findByReviewStatusInAndDeletedAtIsNullOrderByCreatedAtAsc(
+                listOf(EventReviewStatus.PENDING, EventReviewStatus.CHANGE_PENDING),
+            )
+            val owners = resolveOwners(rows)
+            val items = rows.drop(params.offset).take(params.limit)
+                .map { eventDtoMapper.toAdminListDto(it, owners[it.createdBy]) }
+            return PaginatedResponse.of(items, rows.size.toLong(), params)
+        }
         val pageable = OffsetLimitPageable(params)
         val page = eventRepository.pageForAdmin(
             search = "",
@@ -51,13 +75,154 @@ class AdminEventService(
             dateTo = LocalDate.of(9999, 12, 31),
             pageable = pageable,
         )
+        val owners = resolveOwners(page.content)
         val items = page.content
-            .map { eventDtoMapper.toAdminListDto(it) }
+            .map { eventDtoMapper.toAdminListDto(it, owners[it.createdBy]) }
             .let { rows ->
                 if (stateFilter.isNullOrBlank()) rows
                 else rows.filter { it.state == stateFilter.trim().lowercase() }
             }
         return PaginatedResponse.of(items, page.totalElements, params)
+    }
+
+    // ── Photographer-owned event review (V46) ────────────────────────────
+    // One approve + one reject serve both queue states: a submission
+    // (PENDING, DRAFT) goes live; a pricing-change request (CHANGE_PENDING on
+    // a LIVE event) is applied — and only here — or dropped.
+
+    fun approve(adminId: UUID, eventId: UUID): AdminListEventDto {
+        val event = loadForReview(eventId)
+        when (event.reviewStatus) {
+            EventReviewStatus.PENDING -> {
+                event.status = EventStatus.ACTIVE
+                markReviewed(event, adminId, EventReviewStatus.APPROVED)
+                val decision = adminDecisionLogService.logEventDecision(
+                    adminId = adminId,
+                    targetEventId = event.id,
+                    decision = "event_approved",
+                )
+                notifyOwner(
+                    event,
+                    PhotographerMessageKind.EVENT_APPROVED,
+                    "Your event ${event.name} is approved. Uploads are open.",
+                    adminId,
+                    decision.id,
+                )
+            }
+            EventReviewStatus.CHANGE_PENDING -> {
+                val change = PricingTrio.fromJson(event.pendingChange.orEmpty())
+                val priceChanged = change.pricePerPhoto.compareTo(event.pricePerPhoto) != 0
+                val policyChanged = change.watermarkPolicy != event.watermarkPolicy
+                change.applyTo(event)
+                if (priceChanged) photoRepository.updatePriceByEventId(event.id, change.pricePerPhoto)
+                // A different mark makes every LIVE preview stale — send them
+                // back through the watermark sweep under the new policy.
+                if (policyChanged) photoRepository.resetForRewatermark(event.id)
+                event.pendingChange = null
+                markReviewed(event, adminId, EventReviewStatus.APPROVED)
+                val decision = adminDecisionLogService.logEventDecision(
+                    adminId = adminId,
+                    targetEventId = event.id,
+                    decision = "event_change_approved",
+                    meta = change.toJson(),
+                )
+                notifyOwner(
+                    event,
+                    PhotographerMessageKind.EVENT_CHANGE_APPROVED,
+                    "Your change to ${event.name} is live: ${describe(change)}.",
+                    adminId,
+                    decision.id,
+                )
+            }
+            else -> throw ConflictException(code = ErrorCodes.CONFLICT, message = "This event is not awaiting review.")
+        }
+        eventRepository.save(event)
+        return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
+    }
+
+    fun reject(adminId: UUID, eventId: UUID, reason: String): AdminListEventDto {
+        val event = loadForReview(eventId)
+        val note = reason.trim().take(500)
+        when (event.reviewStatus) {
+            EventReviewStatus.PENDING -> {
+                markReviewed(event, adminId, EventReviewStatus.REJECTED)
+                event.reviewNote = note
+                val decision = adminDecisionLogService.logEventDecision(
+                    adminId = adminId,
+                    targetEventId = event.id,
+                    decision = "event_rejected",
+                    reason = note,
+                )
+                notifyOwner(
+                    event,
+                    PhotographerMessageKind.EVENT_REJECTED,
+                    "Your event ${event.name} wasn't approved. Reason: $note",
+                    adminId,
+                    decision.id,
+                )
+            }
+            EventReviewStatus.CHANGE_PENDING -> {
+                // The live trio was never touched — just drop the request.
+                event.pendingChange = null
+                markReviewed(event, adminId, EventReviewStatus.APPROVED)
+                event.reviewNote = note
+                val decision = adminDecisionLogService.logEventDecision(
+                    adminId = adminId,
+                    targetEventId = event.id,
+                    decision = "event_change_rejected",
+                    reason = note,
+                )
+                notifyOwner(
+                    event,
+                    PhotographerMessageKind.EVENT_CHANGE_REJECTED,
+                    "Your change to ${event.name} wasn't approved. Reason: $note",
+                    adminId,
+                    decision.id,
+                )
+            }
+            else -> throw ConflictException(code = ErrorCodes.CONFLICT, message = "This event is not awaiting review.")
+        }
+        eventRepository.save(event)
+        return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
+    }
+
+    // Locked read: a second admin deciding the same row waits here and then
+    // hits the 409 above instead of double-logging + double-notifying.
+    private fun loadForReview(eventId: UUID): Event =
+        eventRepository.findByIdForReview(eventId)?.takeIf { it.deletedAt == null }
+            ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+
+    private fun markReviewed(event: Event, adminId: UUID, status: EventReviewStatus) {
+        event.reviewStatus = status
+        event.reviewedAt = OffsetDateTime.now()
+        event.reviewedBy = adminId
+    }
+
+    private fun notifyOwner(event: Event, kind: PhotographerMessageKind, body: String, adminId: UUID, decisionId: UUID) {
+        val owner = event.createdBy ?: return
+        adminDecisionLogService.pushMessage(
+            photographerId = owner,
+            kind = kind,
+            body = body,
+            sourceAdminId = adminId,
+            sourceDecisionId = decisionId,
+        )
+    }
+
+    private fun describe(change: PricingTrio): String = when (change.pricingMode) {
+        com.quickpitik.entity.EventPricingMode.FREE ->
+            "free, ${if (change.watermarkPolicy == com.quickpitik.entity.WatermarkPolicy.NONE) "no watermark" else "your logo"}"
+        com.quickpitik.entity.EventPricingMode.PAID -> "paid at PHP ${change.pricePerPhoto.toPlainString()}"
+    }
+
+    // Owner attribution for the admin list, two IN queries per page — same
+    // batch shape as PhotoService.resolvePhotographers.
+    private fun resolveOwners(events: List<Event>): Map<UUID?, PhotographerRef> {
+        val ids = events.mapNotNullTo(mutableSetOf()) { it.createdBy }
+        if (ids.isEmpty()) return emptyMap()
+        val handles = photographerSettingsRepository.findAllById(ids).associate { it.userId to it.handle }
+        val names = userRepository.findAllById(ids).associate { it.id to it.name }
+        return ids.associateWith { PhotographerRef(handle = handles[it], name = names[it]) }
     }
 
     fun create(
@@ -78,12 +243,11 @@ class AdminEventService(
                 name = req.title.trim(),
                 date = date,
                 location = req.location.trim(),
-                bannerUrl = null,
                 photoCount = 0,
                 participantCount = 0,
                 status = EventStatus.ACTIVE,
-                description = "",
-                organizerName = "",
+                description = req.description?.trim().orEmpty(),
+                organizerName = req.organizerName?.trim().orEmpty(),
                 pricePerPhoto = price,
                 createdAt = OffsetDateTime.now(),
                 updatedAt = OffsetDateTime.now(),
@@ -150,15 +314,43 @@ class AdminEventService(
                 event.location = newLocation
             }
         }
+        // Organizer + race-day notes feed the runner-facing "About this race"
+        // strip. Same null/blank-means-no-change contract as title/location.
+        req.organizerName?.takeIf { it.isNotBlank() }?.let {
+            val newOrganizer = it.trim()
+            if (event.organizerName != newOrganizer) {
+                changes["organizerName"] = mapOf("from" to event.organizerName, "to" to newOrganizer)
+                before["organizerName"] = event.organizerName
+                after["organizerName"] = newOrganizer
+                event.organizerName = newOrganizer
+            }
+        }
+        req.description?.takeIf { it.isNotBlank() }?.let {
+            val newDescription = it.trim()
+            if (event.description != newDescription) {
+                changes["description"] = mapOf("from" to event.description, "to" to newDescription)
+                before["description"] = event.description
+                after["description"] = newDescription
+                event.description = newDescription
+            }
+        }
         // Price-per-photo override propagates to every photo already uploaded
         // under this event so runner-facing galleries pick up the new price
         // on next paint. `compareTo` (not `!=`) because BigDecimal equality
         // also weighs scale — 125 vs 125.00 would otherwise look like a
-        // change. Cart drift is surfaced to runners at checkout via the
-        // existing CART_ITEM_PRICE_CHANGED flow; we deliberately do not
-        // mutate cart_items.price_php_at_add.
+        // change. Existing carts need no fix-up: CartService renders the live
+        // photos.price_php, which is also what OrderService.create charges.
         req.pricePerPhoto?.let { rawPrice ->
             val newPrice = validatedPrice(rawPrice)
+            // A FREE photographer event (V46) has no price; the trio only
+            // changes through an approved pricing request.
+            if (event.isFree && newPrice.signum() != 0) {
+                throw ValidationException(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "This is a free event — approve a pricing change from the event requests queue instead.",
+                    field = "pricePerPhoto",
+                )
+            }
             if (event.pricePerPhoto.compareTo(newPrice) != 0) {
                 val oldPriceStr = event.pricePerPhoto.toPlainString()
                 val newPriceStr = newPrice.toPlainString()
@@ -236,14 +428,26 @@ class AdminEventService(
         return AdminEventDeleteResponseDto(removed = true)
     }
 
-    private fun parseDate(raw: String): LocalDate =
-        runCatching { LocalDate.parse(raw.trim()) }.getOrElse {
-            throw ValidationException(
-                code = ErrorCodes.VALIDATION_ERROR,
-                message = "date must be ISO yyyy-MM-dd",
-                field = "date",
-            )
+    // Re-drives AI indexing for an event's photos by resetting them to PENDING
+    // with a fresh attempt budget; the reconcile sweep picks them up within a
+    // minute. Default scope = FAILED + PARTIAL (outage recovery — the
+    // 2026-08-25 incident needed manual SQL for exactly this). all=true also
+    // requeues INDEXED + SKIPPED: for provider flips (the V33 indexed_provider
+    // stamp marks stale rows) and for photos uploaded while AI was disabled.
+    fun reindexPhotos(adminId: UUID, eventId: UUID, all: Boolean): Int {
+        val event = eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
+            ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+        val statuses = if (all) {
+            listOf(IndexingStatus.FAILED, IndexingStatus.PARTIAL, IndexingStatus.INDEXED, IndexingStatus.SKIPPED)
+        } else {
+            listOf(IndexingStatus.FAILED, IndexingStatus.PARTIAL)
         }
+        val requeued = photoRepository.requeueIndexing(eventId, statuses)
+        log.info("Admin {} requeued {} photo(s) for indexing on event {} (all={})", adminId, requeued, event.id, all)
+        return requeued
+    }
+
+    private fun parseDate(raw: String): LocalDate = EventInputs.parseDate(raw)
 
     // Admin-set per-photo price must be a non-negative peso amount. We
     // strip trailing zeros and clamp to scale 2 so the audit log entries
@@ -259,17 +463,6 @@ class AdminEventService(
         return raw.setScale(2, java.math.RoundingMode.HALF_UP)
     }
 
-    private fun slugify(title: String): String {
-        val base = title.trim().lowercase()
-            .replace(Regex("[^a-z0-9\\s-]"), "")
-            .replace(Regex("\\s+"), "-")
-            .replace(Regex("-+"), "-")
-            .trim('-')
-            .ifBlank { "event" }
-        // Append a short uniqueness suffix so two events with the same
-        // title don't collide on the unique index. Keeps slugs human-
-        // readable while sidestepping the `slug` UNIQUE constraint.
-        val suffix = UUID.randomUUID().toString().take(6)
-        return "$base-$suffix"
-    }
+    // Shared with the photographer create path (V46) — see EventInputs.
+    private fun slugify(title: String): String = EventInputs.slugify(title)
 }

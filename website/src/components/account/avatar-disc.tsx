@@ -29,7 +29,7 @@ const SIZE_CLASS: Record<AvatarSize, string> = {
 
 const TONE_CLASS: Record<AvatarTone, string> = {
   ink: "bg-ink text-bone",
-  fresh: "bg-fresh text-bone",
+  fresh: "bg-fresh text-surface",
 };
 
 export function AvatarDisc({

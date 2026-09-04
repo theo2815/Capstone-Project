@@ -3,7 +3,11 @@
 import { useEffect, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
-import { buildLoginRedirect, roleHome } from "@/lib/redirect";
+import {
+  buildLoginRedirect,
+  currentUrlForRedirect,
+  roleHome,
+} from "@/lib/redirect";
 import { Spinner } from "@/components/ui/spinner";
 import type { Role } from "@/types/user";
 
@@ -23,11 +27,7 @@ export function ProtectedRoute({
     if (isLoading) return;
 
     if (!isAuthenticated) {
-      const currentUrl =
-        typeof window !== "undefined"
-          ? window.location.pathname + window.location.search
-          : "";
-      router.replace(buildLoginRedirect(currentUrl));
+      router.replace(buildLoginRedirect(currentUrlForRedirect()));
       return;
     }
 

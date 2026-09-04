@@ -1,7 +1,8 @@
 "use client";
 
+import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { SiteHeader } from "@/components/layout/site-header";
@@ -13,14 +14,11 @@ import {
   buildOrderBundleUrl,
   fetchOrderDetail,
   fetchGuestOrderDetail,
+  fetchOrderStatus,
   type OrderDetail,
 } from "@/lib/api-orders";
-import type { OrderPhotoDetail } from "@/types/order";
+import type { OrderPhotoDetail, OrderStatus } from "@/types/order";
 import { ROUTES } from "@/lib/constants";
-import {
-  appendDownloadDisposition,
-  buildPhotoDownloadFilename,
-} from "@/lib/download-helpers";
 import { cn } from "@/lib/utils";
 
 // /orders/return — landing page PayMongo redirects to after hosted checkout.
@@ -38,7 +36,14 @@ export default function OrdersReturnPage() {
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col">
       <SiteHeader />
-      <ReturnBody />
+      {/* `ReturnBody` reads `?orderId=` + `?token=` via useSearchParams(). Without
+          this boundary Next bails out of static prerender for the whole route and
+          `next build` fails — the same reason /verify-email wraps its form. The
+          fallback is the polling state at attempt 0 because that is what the page
+          renders the instant the params resolve on the happy path. */}
+      <Suspense fallback={<PollingState attempt={0} />}>
+        <ReturnBody />
+      </Suspense>
     </main>
   );
 }
@@ -67,17 +72,32 @@ function ReturnBody() {
       attempts += 1;
       setAttempt(attempts);
       try {
-        const d = await loadDetail(orderId, token, isAuthenticated);
+        // Guests poll the status-only endpoint: the full detail response
+        // mints a fresh presigned URL per photo on every call — pure waste
+        // ×30 polls — so the receipt hydrates once, on the paid flip. Authed
+        // runners (no ?token=) have no status-only route; they keep polling
+        // /me/orders/{id} (rate-limit-exempt) directly.
+        let d: OrderDetail | null = null;
+        let status: OrderStatus | null = null;
+        if (token) {
+          status = (await fetchOrderStatus(orderId, token)).status;
+          if (cancelled) return;
+          if (status === "PAID" || status === "FULFILLED") {
+            d = await fetchGuestOrderDetail(orderId, token);
+          }
+        } else if (isAuthenticated) {
+          d = await fetchOrderDetail(orderId);
+          status = d?.status ?? null;
+        }
         if (cancelled) return;
-        if (d && (d.status === "PAID" || d.status === "FULFILLED")) {
+        if (d && (status === "PAID" || status === "FULFILLED")) {
           clearCart();
           queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
-          queryClient.invalidateQueries({ queryKey: ["me", "saved-events"] });
           setDetail(d);
           setPollState("paid");
           return;
         }
-        if (d?.status === "REFUNDED") {
+        if (status === "REFUNDED") {
           setPollState("failed");
           return;
         }
@@ -112,16 +132,6 @@ function ReturnBody() {
   if (pollState === "timeout")
     return <TimeoutState orderId={orderId} token={token} />;
   return <PollingState attempt={attempt} />;
-}
-
-async function loadDetail(
-  orderId: string,
-  token: string | null,
-  isAuthenticated: boolean,
-): Promise<OrderDetail | null> {
-  if (token) return fetchGuestOrderDetail(orderId, token);
-  if (isAuthenticated) return fetchOrderDetail(orderId);
-  return null;
 }
 
 /* ─────────────── PAID — editorial receipt ─────────────── */
@@ -227,7 +237,7 @@ function PaidState({
             <Kicker as="p" tone="active" className="mb-3">
               ── Payment received
             </Kicker>
-            <h1 className="font-display text-4xl md:text-5xl lg:text-6xl font-medium tracking-tight leading-[0.95] text-ink mb-5">
+            <h1 className="font-hero text-ink text-5xl md:text-6xl lg:text-7xl mb-5">
               All yours.
             </h1>
             <p className="font-sans text-base md:text-lg text-ink-soft leading-relaxed max-w-md mb-9">
@@ -243,6 +253,14 @@ function PaidState({
             <div className="border-t border-line py-5 space-y-3">
               <ReceiptRow label="Ref" value={reference} mono tnum />
               <ReceiptRow label="Paid" value={paidAt} mono />
+              {detail.couponCode && (detail.discountTotal ?? 0) > 0 && (
+                <ReceiptRow
+                  label="Coupon"
+                  value={`${detail.couponCode} · −₱${(detail.discountTotal ?? 0).toLocaleString()}`}
+                  mono
+                  tnum
+                />
+              )}
               {recipientEmail && (
                 <ReceiptRow label="To" value={recipientEmail} />
               )}
@@ -267,7 +285,7 @@ function PaidState({
               {hasAccount && (
                 <Link
                   href={ROUTES.ORDERS}
-                  className="inline-flex w-full sm:w-auto items-center justify-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+                  className="inline-flex w-full sm:w-auto items-center justify-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
                 >
                   View your orders →
                 </Link>
@@ -276,7 +294,7 @@ function PaidState({
               <Link
                 href={ROUTES.EVENTS}
                 className={cn(
-                  "inline-flex w-full sm:w-auto items-center justify-center px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+                  "inline-flex w-full sm:w-auto items-center justify-center px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
                   hasAccount
                     ? "border border-line hover:bg-bone-deep text-ink"
                     : "bg-ink hover:bg-ink-soft text-bone",
@@ -307,10 +325,9 @@ function PhotoCard({
   index: number;
   variant: PhotoCardVariant;
 }) {
-  const filename = buildPhotoDownloadFilename(photo);
-  const downloadUrl = photo.downloadUrl
-    ? appendDownloadDisposition(photo.downloadUrl, filename)
-    : null;
+  // Disposition + filename are baked into the signed downloadUrl by the
+  // backend (appending params client-side breaks the SigV4 signature on R2).
+  const downloadUrl = photo.downloadUrl ?? null;
   const label = photo.bib ? `BIB ${photo.bib}` : "Untagged";
   const previewSrc = photo.previewUrl || photo.thumbnailUrl;
 
@@ -322,11 +339,11 @@ function PhotoCard({
           <img
             src={previewSrc}
             alt={photo.bib ? `Race photo ${photo.bib}` : "Untagged race photo"}
-            className="absolute inset-0 w-full h-full object-cover"
-            draggable={false}
+            className={`absolute inset-0 w-full h-full object-cover ${PROTECTED_IMG_CLASS}`}
+            {...PROTECTED_IMG_PROPS}
           />
         ) : (
-          <span className="absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.3em] text-[10px] text-bone/40 -rotate-[18deg]">
+          <span className="absolute inset-0 flex items-center justify-center font-mono uppercase tracking-[0.14em] text-[10px] text-bone/40 -rotate-[18deg]">
             QuickPitik
           </span>
         )}
@@ -342,12 +359,12 @@ function PhotoCard({
       {downloadUrl ? (
         <a
           href={downloadUrl}
-          download={filename}
+          download
           className={cn(
-            "group inline-flex w-full items-center justify-center gap-2 px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+            "group inline-flex w-full items-center justify-center gap-2 px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
             variant === "primary"
-              ? "bg-fresh hover:bg-fresh-deep text-bone"
-              : "border border-ink text-ink hover:bg-ink hover:text-bone",
+              ? "bg-fresh hover:bg-fresh-deep text-surface"
+              : "border border-ink text-ink hover:bg-ink hover:text-surface",
           )}
         >
           <span
@@ -361,7 +378,7 @@ function PhotoCard({
       ) : (
         <button
           disabled
-          className="inline-flex w-full items-center justify-center gap-2 bg-bone-deep text-slate-soft px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] cursor-not-allowed"
+          className="inline-flex w-full items-center justify-center gap-2 bg-bone-deep text-slate-soft px-6 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] cursor-not-allowed"
         >
           Preparing · {label}
         </button>
@@ -387,7 +404,7 @@ function DownloadAllButton({
       disabled={isPreparing}
       aria-live="polite"
       className={cn(
-        "group inline-flex w-full items-center justify-center gap-2.5 bg-fresh hover:bg-fresh-deep text-bone px-7 py-4 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+        "group inline-flex w-full items-center justify-center gap-2.5 bg-fresh hover:bg-fresh-deep text-surface px-7 py-4 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
         isPreparing && "opacity-90 cursor-wait hover:bg-fresh",
       )}
     >
@@ -469,7 +486,7 @@ function UpsellCard({ recipientEmail }: { recipientEmail: string }) {
       </p>
       <Link
         href={`${ROUTES.REGISTER}${prefill}`}
-        className="inline-flex items-center font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-fresh hover:text-fresh-deep transition-colors"
+        className="inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh hover:text-fresh-deep transition-colors"
       >
         Create account →
       </Link>
@@ -490,7 +507,7 @@ function PollingState({ attempt }: { attempt: number }) {
         <Kicker as="p" className="mb-3">
           Confirming · attempt {attempt}
         </Kicker>
-        <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-tight mb-4">
+        <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-tight mb-4">
           Sealing your photos.
         </h1>
         <p className="font-sans text-base text-ink-soft">
@@ -515,7 +532,7 @@ function TimeoutState({
         <Kicker as="p" className="mb-3">
           Still processing
         </Kicker>
-        <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-tight mb-4">
+        <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-tight mb-4">
           Your bank is taking a moment.
         </h1>
         <p className="font-sans text-base text-ink-soft mb-8">
@@ -526,11 +543,11 @@ function TimeoutState({
         <button
           type="button"
           onClick={() => window.location.reload()}
-          className="inline-flex items-center border border-line hover:bg-bone-deep text-ink px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+          className="inline-flex items-center border border-line hover:bg-bone-deep text-ink px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
         >
           Check again ↻
         </button>
-        <p className="mt-6 font-mono uppercase tracking-[0.25em] text-[11px] text-slate-soft">
+        <p className="mt-6 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Reference ·{" "}
           <span className="text-ink tnum">{orderId.slice(0, 8).toUpperCase()}</span>
           {token ? " · Guest link" : ""}
@@ -547,7 +564,7 @@ function FailedState() {
         <Kicker as="p" className="mb-3">
           Something went sideways
         </Kicker>
-        <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-tight mb-4">
+        <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-tight mb-4">
           We couldn&rsquo;t confirm this order.
         </h1>
         <p className="font-sans text-base text-ink-soft mb-8">
@@ -556,7 +573,7 @@ function FailedState() {
         </p>
         <Link
           href={ROUTES.EVENTS}
-          className="inline-flex items-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+          className="inline-flex items-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
         >
           Browse events →
         </Link>
@@ -569,7 +586,7 @@ function MissingOrder() {
   return (
     <div className="flex-1 flex items-center justify-center px-6 md:px-10 py-16">
       <div className="max-w-md w-full text-center">
-        <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-tight mb-4">
+        <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-tight mb-4">
           Nothing to see here.
         </h1>
         <p className="font-sans text-base text-ink-soft mb-8">
@@ -578,7 +595,7 @@ function MissingOrder() {
         </p>
         <Link
           href={ROUTES.EVENTS}
-          className="inline-flex items-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+          className="inline-flex items-center bg-ink hover:bg-ink-soft text-bone px-7 py-3.5 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
         >
           Browse events →
         </Link>

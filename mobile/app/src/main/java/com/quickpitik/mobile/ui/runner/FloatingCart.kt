@@ -6,12 +6,25 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Icon
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,7 +42,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
-import com.quickpitik.mobile.ui.theme.*
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.NumeralStyle
+import com.quickpitik.mobile.ui.theme.PillShape
+import com.quickpitik.mobile.ui.theme.Typography
 
 // Global floating-cart overlay — the mobile mirror of website FloatingCart.
 // Mounted once at the root of MainActivity above the NavHost. Hides on auth
@@ -41,6 +59,10 @@ fun FloatingCart(
     cartViewModel: CartViewModel,
     onAfterCheckoutSuccess: () -> Unit,
 ) {
+    // The cart is RUNNER-role-gated server-side. A photographer never gets a
+    // pill or the sheets — including in runner view (ViewMode) — matching the
+    // website, which leaves the cart absent for switched photographers.
+    if (!rememberIsTrueRunner()) return
     val items by cartViewModel.cartItems.collectAsState()
     val total by cartViewModel.cartTotal.collectAsState()
     val cartOpen by cartViewModel.cartSheetOpen.collectAsState()
@@ -74,8 +96,17 @@ fun FloatingCart(
         if (cartOpen || checkoutOpen) minimized = false
     }
 
-    val hiddenRoute = route == "login" || route == "register"
-    val showPill = itemCount > 0 && !hiddenRoute
+    // Inverted to an ALLOWLIST of runner marketplace surfaces. The old
+    // blocklist (auth routes only) let the pill float over the photographer
+    // studio — CartViewModel.init merges the cart for any signed-in user, so a
+    // photographer with stale cart rows got a green cart over their dashboard.
+    // The website's HIDDEN_ROUTES blocklist works there because its cart is
+    // runner-scoped by layout; here the allowlist is the equivalent.
+    val allowedRoute = route in setOf(
+        "events", "gallery", "profile", "settings",
+        "orders?orderId={orderId}",
+    )
+    val showPill = itemCount > 0 && allowedRoute
 
     if (showPill) {
         // No padding on the parent — pill applies its own inset (so it sits
@@ -135,7 +166,7 @@ fun FloatingCart(
                             color = Color.White.copy(alpha = 0.75f),
                         )
                         Text(
-                            text = "₱${"%,d".format(total.toInt())}",
+                            text = "₱${"%,.2f".format(total)}",
                             style = NumeralStyle.copy(fontSize = 13.sp),
                             color = Color.White,
                         )
@@ -253,6 +284,27 @@ fun FloatingCart(
                 cartViewModel.closeCheckoutSheet()
                 onAfterCheckoutSuccess()
             },
+        )
+    }
+
+    // Cart-mutation outcome snackbar — hosted HERE (the one overlay mounted on
+    // every runner route) so a failed add/remove from any screen's tile is
+    // announced instead of the optimistic state silently snapping back.
+    // Rendered regardless of the pill: a failed remove can leave the cart
+    // optimistically empty, hiding the pill at the exact moment the message
+    // matters.
+    val cartMessage by cartViewModel.cartMessage.collectAsState()
+    val messageHost = remember { SnackbarHostState() }
+    LaunchedEffect(cartMessage) {
+        cartMessage?.let { msg ->
+            messageHost.showSnackbar(msg)
+            cartViewModel.clearCartMessage()
+        }
+    }
+    Box(modifier = Modifier.fillMaxSize().navigationBarsPadding()) {
+        SnackbarHost(
+            hostState = messageHost,
+            modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
 }

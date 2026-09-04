@@ -8,6 +8,7 @@ export interface EventPhotosQuery {
   bib?: string;
   offset?: number;
   limit?: number;
+  snapshotAt?: string;
 }
 
 export interface EventPhotosResult {
@@ -15,6 +16,7 @@ export interface EventPhotosResult {
   total: number;
   offset: number;
   limit: number;
+  snapshotAt?: string;
 }
 
 export async function fetchEventPhotos(
@@ -28,6 +30,7 @@ export async function fetchEventPhotos(
   if (query.bib) params.set("bib", query.bib);
   params.set("offset", String(offset));
   params.set("limit", String(limit));
+  if (query.snapshotAt) params.set("snapshotAt", query.snapshotAt);
   const res = await api.get<PaginatedResponse<Photo>>(
     `/events/${encodeURIComponent(slug)}/photos?${params.toString()}`,
   );
@@ -36,6 +39,8 @@ export async function fetchEventPhotos(
 
 export interface SearchByFaceArgs {
   selfieId?: string;
+  /** Match with every selfie in the signed-in runner's library (union). */
+  allSelfies?: boolean;
   selfieFile?: File;
   offset?: number;
   limit?: number;
@@ -56,8 +61,11 @@ export async function searchEventByFace(
     form.append("limit", String(limit));
     return api.post<PaginatedResponse<Photo>>(path, form);
   }
+  if (args.allSelfies) {
+    return api.post<PaginatedResponse<Photo>>(path, { allSelfies: true, offset, limit });
+  }
   if (!args.selfieId) {
-    throw new Error("searchEventByFace requires selfieId or selfieFile");
+    throw new Error("searchEventByFace requires selfieId, allSelfies, or selfieFile");
   }
   return api.post<PaginatedResponse<Photo>>(path, {
     selfieId: args.selfieId,

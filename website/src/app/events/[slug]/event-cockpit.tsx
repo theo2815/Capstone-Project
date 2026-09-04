@@ -4,12 +4,14 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
 import Link from "next/link";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
+import { cn, triggerDownload } from "@/lib/utils";
 import type { EventDetail } from "@/types/event";
 import { type MockPhoto } from "@/types/photo";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
@@ -25,19 +27,25 @@ import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { RefundModal } from "@/components/orders/refund-modal";
 import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
 import { useEventPhotos } from "@/hooks/use-event-photos";
 import { useEventLivePhotos } from "@/hooks/use-event-live-photos";
-import type { EventPhotosResult } from "@/lib/api-photos";
+import { searchEventByFace, type EventPhotosResult } from "@/lib/api-photos";
 import { deriveEventState } from "@/lib/event-catalog";
 import { PAGE_SIZE } from "@/lib/pagination-config";
+import { useAuthStore } from "@/store/auth-store";
+import { useSelfiesList } from "@/hooks/use-selfies";
+import { ApiError, formatRetryWait } from "@/lib/api";
+import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
+import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
 
 type Mode = "cockpit" | "browse";
 
 interface Props {
   event: EventDetail;
-  initialPhotos: MockPhoto[];
+  initialPhotos: EventPhotosResult;
 }
 
 export function EventCockpit({ event, initialPhotos }: Props) {
@@ -46,20 +54,32 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   });
   const [browseFlag] = useUrlState<string>("browse", "");
   const [faceFlag] = useUrlState<string>("face", "");
+  const [mineFlag] = useUrlState<string>("mine", "");
   const setUrlBatch = useUrlStateBatch();
 
   const isFaceMode = faceFlag === "1";
+  const isMine = mineFlag === "1";
   const mode: Mode =
     bibFilter || browseFlag === "1" || isFaceMode ? "browse" : "cockpit";
 
   const [panelMode, setPanelMode] = useState<SearchPanelMode>("bib");
   const [bibInput, setBibInput] = useState(bibFilter);
 
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const accountRole = useAuthStore((s) => s.user?.role ?? null);
+  const { selfies, isLoading: selfiesLoading } = useSelfiesList();
+  const primarySelfieId = useMemo(
+    () => selfies.find((s) => s.isPrimary)?.id ?? selfies[0]?.id ?? null,
+    [selfies],
+  );
+  const [myPhotosLoading, setMyPhotosLoading] = useState(false);
+  const [myPhotosError, setMyPhotosError] = useState<string | null>(null);
+
   // Q-011: bib-keyed cache. Active in cockpit (no filter) and bib-mode browse.
   const bibPhotos = useEventPhotos({
     slug: event.slug,
     bib: bibFilter || undefined,
-    initialItems: initialPhotos,
+    initialPage: initialPhotos,
     enabled: !isFaceMode,
   });
 
@@ -80,9 +100,14 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const visiblePhotos = isFaceMode
     ? faceSearchResult?.items ?? []
     : bibPhotos.photos;
+  // Face search is one-shot local state (Step 2 turns it into a real infinite
+  // query); render all its matches at once and read `total` from what's loaded
+  // so Load-more shows the terminal kicker instead of a dead button.
   const visibleTotal = isFaceMode
-    ? faceSearchResult?.total ?? 0
+    ? faceSearchResult?.items.length ?? 0
     : bibPhotos.total;
+  const onLoadMore = isFaceMode ? () => {} : bibPhotos.fetchNextPage;
+  const isLoadingMore = isFaceMode ? false : bibPhotos.isFetchingNextPage;
 
   const submitBib = (raw: string) => {
     const clean = raw.trim().toUpperCase();
@@ -112,10 +137,70 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const handleFaceSearchSuccess = useCallback(
     (result: EventPhotosResult) => {
       setFaceSearchResult(result);
-      setUrlBatch({ face: "1", browse: "1", bib: null });
+      setUrlBatch({ face: "1", browse: "1", bib: null, mine: null });
     },
     [setUrlBatch],
   );
+
+  // Runs the stored-selfie face search and drops into face mode — powers both
+  // the "My photos" control and the ?mine=1 email deep-link. Reuses the same
+  // one-shot search-by-face the selfie panel uses; the backend scopes matches to
+  // the caller's own selfie, so a runner only ever sees their own photos.
+  const runMyPhotos = useCallback(async () => {
+    if (!primarySelfieId) return;
+    setMyPhotosError(null);
+    setMyPhotosLoading(true);
+    try {
+      const selfieId = isMine
+        ? (await fetchPhotoAlertStatus(event.slug)).selfieId ?? primarySelfieId
+        : primarySelfieId;
+      const result = await searchEventByFace(event.slug, {
+        selfieId,
+      });
+      handleFaceSearchSuccess(result);
+    } catch (err) {
+      setMyPhotosError(myPhotosErrorMessage(err));
+      // Drop the deep-link flag so a failed auto-fire doesn't retry on refresh.
+      setUrlBatch({ mine: null });
+    } finally {
+      setMyPhotosLoading(false);
+    }
+  }, [primarySelfieId, isMine, event.slug, handleFaceSearchSuccess, setUrlBatch]);
+
+  // Auto-fire once when a runner arrives from the "your photos are ready" email
+  // (/events/{slug}?mine=1). Waits for the selfie library to load so
+  // primarySelfieId is known; a signed-out or selfie-less runner falls through
+  // to the cockpit, which prompts sign-in / add-a-selfie.
+  const mineFiredRef = useRef(false);
+  useEffect(() => {
+    if (
+      isMine &&
+      isAuthenticated &&
+      accountRole === "RUNNER" &&
+      primarySelfieId &&
+      !mineFiredRef.current &&
+      !myPhotosLoading
+    ) {
+      mineFiredRef.current = true;
+      void runMyPhotos();
+    }
+  }, [isMine, isAuthenticated, accountRole, primarySelfieId, myPhotosLoading, runMyPhotos]);
+
+  // Email-link landing gate: hold a loading state while the auto-fire resolves
+  // so the runner doesn't flash the cockpit or the full wall before their
+  // matches. Ends when a guest/selfie-less case is known (falls to cockpit) or
+  // the search resolves (handleFaceSearchSuccess clears ?mine).
+  const mineResolving =
+    isMine &&
+    isAuthenticated &&
+    accountRole === "RUNNER" &&
+    faceSearchResult === null &&
+    myPhotosError === null &&
+    (selfiesLoading || myPhotosLoading || primarySelfieId !== null);
+
+  if (mineResolving) {
+    return <MyPhotosGate eventName={event.name} />;
+  }
 
   if (mode === "browse") {
     return (
@@ -123,8 +208,15 @@ export function EventCockpit({ event, initialPhotos }: Props) {
         event={event}
         photos={visiblePhotos}
         total={visibleTotal}
+        onLoadMore={onLoadMore}
+        isLoadingMore={isLoadingMore}
+        isLoadingPhotos={isFaceMode ? false : bibPhotos.isLoading}
         bibFilter={bibFilter}
         isFaceMode={isFaceMode}
+        canShowMyPhotos={isAuthenticated && !!primarySelfieId}
+        myPhotosLoading={myPhotosLoading}
+        myPhotosError={myPhotosError}
+        onShowMyPhotos={runMyPhotos}
         onBackToCockpit={switchToCockpit}
         onSubmitBib={submitBib}
         onClearBib={clearBib}
@@ -134,10 +226,18 @@ export function EventCockpit({ event, initialPhotos }: Props) {
     );
   }
 
+  // No photos yet: there is nothing to search, so the bib/selfie cockpit is
+  // replaced by a "get notified" prompt. Browse-all stays reachable (its own
+  // friendly empty state lives in BrowseMode).
+  if (event.photoCount === 0) {
+    return <EmptyCockpit event={event} onBrowseAll={switchToBrowse} />;
+  }
+
   return (
     <CockpitMode
       event={event}
       photoCount={event.photoCount}
+      mosaicPhotos={initialPhotos.items}
       bibInput={bibInput}
       onBibChange={setBibInput}
       onSubmit={submitBib}
@@ -154,6 +254,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
 function CockpitMode({
   event,
   photoCount,
+  mosaicPhotos,
   bibInput,
   onBibChange,
   onSubmit,
@@ -164,6 +265,7 @@ function CockpitMode({
 }: {
   event: EventDetail;
   photoCount: number;
+  mosaicPhotos: MockPhoto[];
   bibInput: string;
   onBibChange: (v: string) => void;
   onSubmit: (v: string) => void;
@@ -179,50 +281,21 @@ function CockpitMode({
 
   return (
     <>
-      <div className="bg-bone">
-        <div className="max-w-7xl mx-auto px-6 md:px-10 pt-5 md:pt-6 flex items-center justify-between gap-4">
-          <Kicker
-            as={Link}
-            href="/events"
-            className="group inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
-          >
-            <span
-              aria-hidden="true"
-              className="transition-transform group-hover:-translate-x-0.5"
-            >
-              ←
-            </span>
-            <span>Back to events</span>
-          </Kicker>
-          <SaveButton
-            eventId={event.id}
-            event={{
-              id: event.id,
-              slug: event.slug,
-              name: event.name,
-              date: event.date,
-              state: deriveEventState(event.date),
-              bannerUrl: event.bannerUrl ?? null,
-              location: event.location,
-            }}
-            variant="inline"
-          />
-        </div>
-      </div>
+      <CockpitTopBar event={event} />
 
       <section className="relative bg-bone overflow-hidden">
-        <DimWall />
+        <DimWall photos={mosaicPhotos} />
 
         <div className="relative px-6 md:px-10 py-16 md:py-24 min-h-[78vh] flex flex-col items-center justify-center">
           <div className="w-full max-w-md">
             <div
-              className="rounded-2xl bg-bone border border-line shadow-[0_24px_60px_-20px_rgba(17,17,17,0.18)] p-8 md:p-10"
+              className="rounded-2xl bg-surface border border-line shadow-[var(--shadow-lift)] p-8 md:p-10"
               style={{ animation: "fade-up 0.7s 0.05s both", opacity: 0 }}
             >
               <Kicker as="p" className="mb-5">
                 {event.name}
               </Kicker>
-              <h1 className="font-display text-4xl md:text-5xl font-medium tracking-tight leading-[0.95]">
+              <h1 className="font-hero text-ink text-5xl md:text-6xl">
                 Find your
                 <br />
                 <span className="text-fresh">photos.</span>
@@ -245,6 +318,8 @@ function CockpitMode({
                 />
               )}
             </div>
+
+            <PhotoAlertToggle eventSlug={event.slug} />
           </div>
 
           <Kicker
@@ -268,28 +343,172 @@ function CockpitMode({
   );
 }
 
-function DimWall() {
-  const TILES = 80;
+// Backdrop behind the cockpit card: a clean, evenly-spaced tile grid — the same
+// tidy layout whether or not the event has photos. When it does, each tile holds
+// a real event photo, softened (faded + light blur over a bone base) so the grid
+// reads as a calm, smooth texture with clear gaps between tiles rather than a
+// packed photo wall. A bottom gradient fades it into the page so the "Browse all
+// photos" link and the About strip below stay clean. No photos yet → faint tiles.
+function DimWall({ photos }: { photos?: MockPhoto[] }) {
+  // 28 tiles → 4 rows of 7 on large screens (grid-cols-7). Shared by the photo
+  // grid and the faint-tile placeholder so both render the identical layout;
+  // the bottom (4th) row lands in the gradient's fade zone and fades out.
+  const TILES = 28;
+  const pics = (photos ?? []).filter((p) => p.imageUrl);
+  const hasPics = pics.length > 0;
   return (
     <div
       aria-hidden="true"
       className="absolute inset-0 pointer-events-none select-none overflow-hidden"
       style={{ animation: "fade-in 0.9s 0.1s both" }}
     >
-      <div className="absolute inset-0 grid gap-2 p-3 md:gap-3 md:p-6 grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 content-start">
+      {/* inset-x-0 top-0 (NOT inset-0): the grid must size to its content so
+          each row is the tile's natural aspect-ratio height with a real 32px
+          gap. Pinning bottom-0 too made this a fixed-height grid, which
+          squeezed the rows shorter than the tiles and overlapped them. The
+          grid now overflows downward and the parent's overflow-hidden clips it,
+          which is what leaves the 4th row half-shown + fading at the bottom. */}
+      <div className="absolute inset-x-0 top-0 grid gap-5 p-4 md:gap-8 md:p-8 grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-7 content-start">
         {Array.from({ length: TILES }).map((_, i) => {
+          const pic = hasPics ? pics[i % pics.length] : null;
+          if (pic) {
+            return (
+              <div
+                key={i}
+                className="rounded-2xl overflow-hidden bg-bone-deep aspect-[3/4]"
+              >
+                {/* scale-110: the blur fades the image's flush edges toward
+                    transparent; zooming slightly pushes those faded edges past
+                    the tile's overflow-hidden clip so every tile keeps a crisp
+                    boundary and the gaps between tiles read clearly. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={pic.imageUrl ?? undefined}
+                  alt=""
+                  aria-hidden="true"
+                  loading="lazy"
+                  className="w-full h-full object-cover opacity-[0.55] blur-[1.5px] scale-110"
+                />
+              </div>
+            );
+          }
           const op = 0.05 + ((i * 17) % 11) * 0.009;
           return (
             <div
               key={i}
-              className="rounded-xl bg-ink aspect-[3/4]"
+              className="rounded-2xl bg-ink aspect-[3/4]"
               style={{ opacity: op }}
             />
           );
         })}
       </div>
-      <div className="absolute inset-0 bg-gradient-to-b from-bone/0 via-bone/55 via-[55%] to-bone pointer-events-none" />
+      <div
+        className={cn(
+          "absolute inset-0 bg-gradient-to-b to-bone pointer-events-none",
+          hasPics
+            ? "from-bone/0 via-bone/10 via-[62%]"
+            : "from-bone/0 via-bone/55 via-[55%]",
+        )}
+      />
     </div>
+  );
+}
+
+// Shared cockpit top bar (back-to-events + save). Used by both the search
+// cockpit and the no-photos EmptyCockpit so the two never drift.
+function CockpitTopBar({ event }: { event: EventDetail }) {
+  return (
+    <div className="bg-bone">
+      <div className="max-w-7xl mx-auto px-6 md:px-10 pt-5 md:pt-6 flex items-center justify-between gap-4">
+        <Kicker
+          as={Link}
+          href="/events"
+          className="group inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        >
+          <span
+            aria-hidden="true"
+            className="transition-transform group-hover:-translate-x-0.5"
+          >
+            ←
+          </span>
+          <span>Back to events</span>
+        </Kicker>
+        <SaveButton
+          eventId={event.id}
+          event={{
+            id: event.id,
+            slug: event.slug,
+            name: event.name,
+            date: event.date,
+            state: deriveEventState(event.date),
+            bannerUrl: event.bannerUrl ?? null,
+            location: event.location,
+          }}
+          variant="inline"
+        />
+      </div>
+    </div>
+  );
+}
+
+// No-photos cockpit: the event has zero photos, so there is nothing to search.
+// Mirrors CockpitMode's frame (top bar, centered card, browse-all link, About
+// strip) but swaps the bib/selfie panel for a "get notified" prompt.
+function EmptyCockpit({
+  event,
+  onBrowseAll,
+}: {
+  event: EventDetail;
+  onBrowseAll: () => void;
+}) {
+  return (
+    <>
+      <CockpitTopBar event={event} />
+
+      <section className="relative bg-bone overflow-hidden">
+        <DimWall />
+
+        <div className="relative px-6 md:px-10 py-16 md:py-24 min-h-[78vh] flex flex-col items-center justify-center">
+          <div className="w-full max-w-md">
+            <div
+              className="rounded-2xl bg-surface border border-line shadow-[var(--shadow-lift)] p-8 md:p-10"
+              style={{ animation: "fade-up 0.7s 0.05s both", opacity: 0 }}
+            >
+              <Kicker as="p" className="mb-5">
+                {event.name}
+              </Kicker>
+              <h1 className="font-hero text-ink text-4xl md:text-5xl">
+                Photos aren&apos;t
+                <br />
+                <span className="text-fresh">ready yet.</span>
+              </h1>
+              <p className="mt-5 font-sans text-base text-ink-soft leading-relaxed">
+                Photographers have a few days from race day to upload. Get
+                notified the moment your shots land.
+              </p>
+            </div>
+
+            <PhotoAlertToggle eventSlug={event.slug} />
+          </div>
+
+          <Kicker
+            as="button"
+            type="button"
+            onClick={onBrowseAll}
+            size="md"
+            className="mt-10 md:mt-14 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-4 focus-visible:ring-offset-bone"
+            style={{ animation: "fade-in 0.6s 0.55s both", opacity: 0 }}
+          >
+            Browse all photos
+            <span aria-hidden="true">↓</span>
+          </Kicker>
+        </div>
+      </section>
+
+      <AboutStrip event={event} />
+
+      <Footer />
+    </>
   );
 }
 
@@ -304,7 +523,7 @@ function AboutStrip({ event }: { event: EventDetail }) {
           <Kicker as="p" className="mb-4">
             About this race
           </Kicker>
-          <h2 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-tight text-ink">
+          <h2 className="font-display font-extrabold text-3xl md:text-4xl tracking-tight leading-tight text-ink">
             Race day notes.
           </h2>
           <div className="mt-6 space-y-2">
@@ -312,15 +531,16 @@ function AboutStrip({ event }: { event: EventDetail }) {
             <Kicker as="p" tone="soft">
               <span className="tnum">{dateLong}</span> · {event.location}
             </Kicker>
+            {/* No runner count: `participantCount` is a reserved wire field the
+                BE always sends as 0 (there is no participants table — it's a
+                placeholder for roadmap participant management), so rendering it
+                told every visitor this race had "0 runners". Restore the stat
+                when the feature lands, not before. */}
             <Kicker as="p" tone="soft">
               <span className="tnum">
                 {event.photoCount.toLocaleString()}
               </span>{" "}
-              photos ·{" "}
-              <span className="tnum">
-                {event.participantCount.toLocaleString()}
-              </span>{" "}
-              runners
+              photos
             </Kicker>
           </div>
         </div>
@@ -345,24 +565,47 @@ function AboutStrip({ event }: { event: EventDetail }) {
             <Kicker as="p" className="mb-3">
               Pricing
             </Kicker>
-            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-              <span className="font-display text-5xl md:text-6xl font-medium text-fresh tracking-tight tnum">
-                ₱{event.pricePerPhoto}
-              </span>
-              <Kicker>per photo</Kicker>
-              {event.bundlePrice && event.bundleSize && (
-                <>
-                  <span className="text-slate-soft">·</span>
-                  <Kicker className="text-ink">
-                    or <span className="tnum">₱{event.bundlePrice}</span> for{" "}
-                    <span className="tnum">{event.bundleSize}</span>
+            {event.pricingMode === "free" ? (
+              // Photographer-owned free event (V46): no checkout anywhere on
+              // this page, so the pricing block names the giver instead.
+              <>
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+                  <span className="font-display text-5xl md:text-6xl font-extrabold text-fresh tracking-tight">
+                    Free
+                  </span>
+                  <Kicker>
+                    courtesy of{" "}
+                    {event.photographerHandle
+                      ? `@${event.photographerHandle}`
+                      : "the photographer"}
                   </Kicker>
-                </>
-              )}
-            </div>
-            <p className="mt-3 font-sans text-sm text-slate-soft max-w-md">
-              Watermarked previews are free. Pay once, download forever.
-            </p>
+                </div>
+                <p className="mt-3 font-sans text-sm text-slate-soft max-w-md">
+                  Every photo downloads in full — no watermark, no checkout.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+                  <span className="font-display text-5xl md:text-6xl font-extrabold text-fresh tracking-tight tnum">
+                    ₱{event.pricePerPhoto}
+                  </span>
+                  <Kicker>per photo</Kicker>
+                  {event.bundlePrice && event.bundleSize && (
+                    <>
+                      <span className="text-slate-soft">·</span>
+                      <Kicker className="text-ink">
+                        or <span className="tnum">₱{event.bundlePrice}</span> for{" "}
+                        <span className="tnum">{event.bundleSize}</span>
+                      </Kicker>
+                    </>
+                  )}
+                </div>
+                <p className="mt-3 font-sans text-sm text-slate-soft max-w-md">
+                  Watermarked previews are free. Pay once, download forever.
+                </p>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -376,8 +619,15 @@ function BrowseMode({
   event,
   photos,
   total,
+  onLoadMore,
+  isLoadingMore,
+  isLoadingPhotos,
   bibFilter,
   isFaceMode,
+  canShowMyPhotos,
+  myPhotosLoading,
+  myPhotosError,
+  onShowMyPhotos,
   onBackToCockpit,
   onSubmitBib,
   onClearBib,
@@ -387,8 +637,15 @@ function BrowseMode({
   event: EventDetail;
   photos: MockPhoto[];
   total: number;
+  onLoadMore: () => void;
+  isLoadingMore: boolean;
+  isLoadingPhotos: boolean;
   bibFilter: string;
   isFaceMode: boolean;
+  canShowMyPhotos: boolean;
+  myPhotosLoading: boolean;
+  myPhotosError: string | null;
+  onShowMyPhotos: () => void;
   onBackToCockpit: () => void;
   onSubmitBib: (b: string) => void;
   onClearBib: () => void;
@@ -397,12 +654,12 @@ function BrowseMode({
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PHOTO_INITIAL);
   const [isPolicyOpen, setIsPolicyOpen] = useState(false);
 
   const isBibFilter = bibFilter.trim().length > 0;
   const isAnyFilter = isBibFilter || isFaceMode;
-  // Photos are already server-filtered by bib (Q-011) or face (Q-005/006).
+  // Server-filtered by bib (Q-011) or face (Q-005/006) and server-paginated —
+  // `photos` is the flattened set loaded so far; Load-more fetches the next page.
   const visible = photos;
 
   // Q-002: live WebSocket prepend for live-state events. Hook is a no-op
@@ -415,24 +672,16 @@ function BrowseMode({
   });
 
   useEffect(() => {
-    setLoadedCount(PAGE_SIZE.PHOTO_INITIAL);
-  }, [bibFilter, isFaceMode]);
-
-  const visibleSlice = useMemo(
-    () => visible.slice(0, loadedCount),
-    [visible, loadedCount],
-  );
-
-  useEffect(() => {
-    if (previewIndex !== null && previewIndex >= visibleSlice.length) {
-      setPreviewIndex(visibleSlice.length === 0 ? null : visibleSlice.length - 1);
+    if (previewIndex !== null && previewIndex >= visible.length) {
+      setPreviewIndex(visible.length === 0 ? null : visible.length - 1);
     }
-  }, [visibleSlice.length, previewIndex]);
+  }, [visible.length, previewIndex]);
 
   const totalPrice = visible.reduce((sum, p) => sum + p.price, 0);
-  const showBuyAll = isAnyFilter && visible.length > 0;
+  const showBuyAll =
+    isAnyFilter && visible.length > 0 && event.pricingMode !== "free";
   const previewPhoto =
-    previewIndex !== null ? visibleSlice[previewIndex] ?? null : null;
+    previewIndex !== null ? visible[previewIndex] ?? null : null;
 
   const headerKicker = isBibFilter
     ? `${event.name} · BIB ${bibFilter}`
@@ -461,10 +710,14 @@ function BrowseMode({
           <Kicker as="p" className="mb-4">
             {headerKicker}
           </Kicker>
-          <h2 className="font-display text-4xl md:text-6xl font-medium tracking-tight leading-[0.95] text-ink">
+          <h2 className="font-hero text-ink text-4xl md:text-6xl">
             {isAnyFilter ? (
               visible.length === 0 ? (
-                "No matches yet."
+                isLoadingPhotos ? (
+                  "Searching…"
+                ) : (
+                  "No matches yet."
+                )
               ) : (
                 <>
                   We found{" "}
@@ -476,13 +729,13 @@ function BrowseMode({
                       opacity: 0,
                     }}
                   >
-                    {visible.length}
+                    {total}
                   </span>{" "}
                   {isFaceMode
-                    ? visible.length === 1
+                    ? total === 1
                       ? "match"
                       : "matches"
-                    : visible.length === 1
+                    : total === 1
                       ? "photo"
                       : "photos"}
                   .
@@ -515,18 +768,17 @@ function BrowseMode({
         </div>
       </header>
 
-      <div className="sticky top-[3.75rem] z-20 bg-bone/90 backdrop-blur-md border-y border-line">
+      <div className="sticky top-[var(--site-header-h)] z-20 bg-bone/90 backdrop-blur-md border-y border-line">
         <div className="max-w-7xl mx-auto px-6 md:px-10 py-3 flex items-center gap-3">
-          <Kicker
-            as="button"
+          <button
             type="button"
             onClick={() => setSearchOpen(true)}
             aria-haspopup="dialog"
-            className="flex-1 min-w-0 inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full border border-line bg-bone-deep/60 hover:bg-bone-deep hover:border-slate transition-colors text-left text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            className="flex-1 min-w-0 inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full border border-line-strong bg-surface shadow-[var(--shadow-card)] hover:border-ink transition-colors text-left font-sans text-sm font-medium text-slate hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             <svg
               viewBox="0 0 16 16"
-              className="size-3.5 text-slate shrink-0"
+              className="size-4 text-slate shrink-0"
               fill="none"
               aria-hidden="true"
             >
@@ -538,34 +790,44 @@ function BrowseMode({
                 strokeLinecap="round"
               />
             </svg>
-            <span className="truncate">
+            <span className={cn("truncate", isAnyFilter && "text-ink font-bold")}>
               {isBibFilter
                 ? `Search · ${bibFilter}`
                 : isFaceMode
                   ? "Search · selfie"
                   : "Find your photos"}
             </span>
-          </Kicker>
+          </button>
           {isBibFilter ? (
-            <Kicker
-              as="button"
+            <button
               type="button"
               onClick={onClearBib}
-              className="shrink-0 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+              className="shrink-0 inline-flex items-center gap-2 rounded-full border border-line px-3.5 py-2 font-sans text-sm font-medium text-ink hover:border-ink hover:bg-bone-deep transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
             >
               <span>Clear filter</span>
               <span aria-hidden="true">✕</span>
-            </Kicker>
+            </button>
           ) : isFaceMode ? (
-            <Kicker
-              as="button"
+            <button
               type="button"
               onClick={onClearFace}
-              className="shrink-0 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+              className="shrink-0 inline-flex items-center gap-2 rounded-full border border-line px-3.5 py-2 font-sans text-sm font-medium text-ink hover:border-ink hover:bg-bone-deep transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
             >
               <span>Clear filter</span>
               <span aria-hidden="true">✕</span>
-            </Kicker>
+            </button>
+          ) : canShowMyPhotos ? (
+            <button
+              type="button"
+              onClick={onShowMyPhotos}
+              disabled={myPhotosLoading}
+              className="shrink-0 inline-flex items-center gap-2 rounded-full border border-ink px-3.5 py-2.5 font-sans text-sm font-medium text-ink hover:bg-ink hover:text-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            >
+              <FaceGlyph />
+              <span className="whitespace-nowrap">
+                {myPhotosLoading ? "Finding…" : "My photos"}
+              </span>
+            </button>
           ) : (
             <Kicker tone="soft" className="shrink-0 hidden sm:inline">
               <span className="tnum text-ink">{total || visible.length}</span>{" "}
@@ -573,13 +835,20 @@ function BrowseMode({
             </Kicker>
           )}
         </div>
+        {myPhotosError && (
+          <div className="max-w-7xl mx-auto px-6 md:px-10 pb-3">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-error">
+              {myPhotosError}
+            </p>
+          </div>
+        )}
         {liveState === "live" && (live.newCount > 0 || live.reconnectFailed) && (
           <div className="max-w-7xl mx-auto px-6 md:px-10 pb-3">
             {live.reconnectFailed ? (
               <button
                 type="button"
                 onClick={live.refresh}
-                className="font-mono uppercase tracking-[0.25em] text-[10px] text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
+                className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
               >
                 Connection lost · Refresh ↻
               </button>
@@ -587,12 +856,12 @@ function BrowseMode({
               <button
                 type="button"
                 onClick={() => {
-                  live.resetNewCount();
+                  live.refresh();
                   if (typeof window !== "undefined") {
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }
                 }}
-                className="font-mono uppercase tracking-[0.25em] text-[10px] text-fresh hover:text-fresh-deep"
+                className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh hover:text-fresh-deep underline decoration-fresh/40 underline-offset-4 hover:decoration-fresh-deep"
               >
                 <span className="tnum">{live.newCount}</span> new photo
                 {live.newCount === 1 ? "" : "s"} · jump to top ↑
@@ -603,15 +872,30 @@ function BrowseMode({
       </div>
 
       <div className="flex-1 flex flex-col">
-        {isBibFilter && visible.length === 0 ? (
+        {isBibFilter && visible.length === 0 && isLoadingPhotos ? (
+          // Bib queries cache under their own key with no SSR seed, so the
+          // first page loads client-side — don't flash "No matches yet"
+          // while the search is still in flight.
+          <div className="px-6 md:px-10 py-10 md:py-14 pb-20" aria-busy="true">
+            <div className="max-w-7xl mx-auto">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
+                {Array.from({ length: 4 }, (_, i) => (
+                  <Skeleton key={i} className="h-full w-full rounded-xl" />
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : isBibFilter && visible.length === 0 ? (
           <BibEmptyResult event={event} bib={bibFilter} onClear={onClearBib} />
         ) : isFaceMode && visible.length === 0 ? (
           <FaceEmptyResult onClear={onClearFace} />
+        ) : !isAnyFilter && visible.length === 0 && !isLoadingPhotos ? (
+          <GalleryEmptyResult eventSlug={event.slug} />
         ) : (
           <div className="px-6 md:px-10 py-10 md:py-14 pb-20">
             <div className="max-w-7xl mx-auto">
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
-                {visibleSlice.map((p, i) => (
+                {visible.map((p, i) => (
                   <PhotoMosaicTile
                     key={p.id}
                     event={event}
@@ -622,12 +906,11 @@ function BrowseMode({
                 ))}
               </div>
               <LoadMoreButton
-                shown={visibleSlice.length}
-                total={Math.min(visible.length, total || visible.length)}
+                shown={visible.length}
+                total={total}
                 increment={PAGE_SIZE.PHOTO_INCREMENT}
-                onLoadMore={() =>
-                  setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT)
-                }
+                onLoadMore={onLoadMore}
+                isLoading={isLoadingMore}
                 countSuffix={
                   isBibFilter
                     ? `· BIB ${bibFilter}`
@@ -636,11 +919,6 @@ function BrowseMode({
                       : undefined
                 }
               />
-              {!isBibFilter && !isFaceMode && total > visible.length && (
-                <p className="mt-4 text-center font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
-                  Showing first <span className="tnum text-ink">{visible.length}</span> of <span className="tnum text-ink">{total}</span> · search by bib or selfie to find yours
-                </p>
-              )}
             </div>
           </div>
         )}
@@ -671,7 +949,7 @@ function BrowseMode({
           event={event}
           photo={previewPhoto}
           index={previewIndex}
-          total={visibleSlice.length}
+          total={visible.length}
           onClose={() => setPreviewIndex(null)}
           onPrev={
             previewIndex > 0
@@ -679,7 +957,7 @@ function BrowseMode({
               : undefined
           }
           onNext={
-            previewIndex < visibleSlice.length - 1
+            previewIndex < visible.length - 1
               ? () => setPreviewIndex(previewIndex + 1)
               : undefined
           }
@@ -691,6 +969,30 @@ function BrowseMode({
   );
 }
 
+// Browse-all with zero photos: nothing to skim, so explain the timeline and
+// offer the notify opt-in (same control as the cockpit).
+function GalleryEmptyResult({ eventSlug }: { eventSlug: string }) {
+  return (
+    <section className="px-6 md:px-10 py-16 md:py-24 bg-bone min-h-[40vh] flex items-center">
+      <div className="max-w-md mx-auto w-full">
+        <div className="text-center">
+          <Kicker as="p" className="mb-3">
+            No photos yet
+          </Kicker>
+          <p className="font-display font-extrabold text-3xl md:text-4xl text-ink tracking-tight">
+            Race photos aren&apos;t available yet.
+          </p>
+          <p className="font-sans text-base md:text-lg text-ink-soft mt-4">
+            Photographers upload within a few days of race day. Get notified the
+            moment your photos land.
+          </p>
+        </div>
+        <PhotoAlertToggle eventSlug={eventSlug} />
+      </div>
+    </section>
+  );
+}
+
 function FaceEmptyResult({ onClear }: { onClear: () => void }) {
   return (
     <section className="px-6 md:px-10 py-16 md:py-24 bg-bone min-h-[40vh] flex items-center">
@@ -698,7 +1000,7 @@ function FaceEmptyResult({ onClear }: { onClear: () => void }) {
         <Kicker as="p" className="mb-3">
           No matches yet
         </Kicker>
-        <p className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight">
+        <p className="font-display font-extrabold text-3xl md:text-4xl text-ink tracking-tight">
           We didn&apos;t find your face.
         </p>
         <p className="font-sans text-base md:text-lg text-ink-soft mt-4">
@@ -708,7 +1010,7 @@ function FaceEmptyResult({ onClear }: { onClear: () => void }) {
         <button
           type="button"
           onClick={onClear}
-          className="mt-7 inline-flex items-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[12px] transition-colors"
+          className="mt-7 inline-flex items-center gap-2 bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors"
         >
           Browse the wall →
         </button>
@@ -742,6 +1044,31 @@ function PhotoPreviewMount({
   const openCart = useUiStore((s) => s.openCart);
   const openCheckout = useUiStore((s) => s.openCheckout);
   const startExpressCheckout = useUiStore((s) => s.startExpressCheckout);
+
+  // Free event (V46): no cart, no checkout — the original is anyone's, so
+  // the lightbox is the owned-mode card with a Download CTA.
+  if (photo.free && photo.downloadUrl) {
+    const downloadUrl = photo.downloadUrl;
+    return (
+      <PhotoPreviewCard
+        mode="owned"
+        photo={photo}
+        eventName={event.name}
+        eventDate={event.date}
+        index={index + 1}
+        total={total}
+        onClose={onClose}
+        onPrev={onPrev}
+        onNext={onNext}
+        footnote={
+          event.photographerHandle
+            ? `Free from @${event.photographerHandle}`
+            : "Free from the photographer"
+        }
+        onDownload={() => triggerDownload(downloadUrl)}
+      />
+    );
+  }
 
   const handleToggle = () => {
     if (inCart) {
@@ -793,6 +1120,7 @@ function PhotoPreviewMount({
     <PhotoPreviewCard
       photo={photo}
       eventName={event.name}
+      eventDate={event.date}
       index={index + 1}
       total={total}
       inCart={inCart}
@@ -830,4 +1158,61 @@ function formatLongDate(iso: string) {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function myPhotosErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const code = err.errors[0]?.code;
+    if (code === "AI_API_UNAVAILABLE") {
+      return "Photo matching is offline right now. Try again in a few minutes.";
+    }
+    if (code === "LOW_CONFIDENCE") {
+      return "We couldn't find you in this event yet. Try again as more photos land.";
+    }
+    // Face + bib search share a 30-per-15-min bucket; the header says exactly
+    // how long the wait is, so say it instead of the generic "slow down".
+    if (err.status === 429 && err.retryAfterSeconds != null) {
+      return `Too many searches. Try again in about ${formatRetryWait(err.retryAfterSeconds)}.`;
+    }
+    return err.message || "Couldn't load your photos right now.";
+  }
+  return "Couldn't load your photos right now. Try again.";
+}
+
+// Loading gate shown while a ?mine=1 email deep-link resolves the runner's
+// matches, so they never flash the cockpit or the full wall first.
+function MyPhotosGate({ eventName }: { eventName: string }) {
+  return (
+    <section className="bg-bone min-h-[70vh] flex items-center justify-center px-6">
+      <div className="text-center">
+        <Kicker as="p" className="mb-3">
+          {eventName}
+        </Kicker>
+        <p className="font-display font-extrabold text-3xl md:text-4xl text-ink tracking-tight">
+          Finding your photos…
+        </p>
+        <p className="mt-3 font-sans text-base text-slate">
+          Matching your selfie against this event.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function FaceGlyph() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="size-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="5.5" r="2.75" />
+      <path d="M3 13.5c0-2.4 2.2-4 5-4s5 1.6 5 4" />
+    </svg>
+  );
 }

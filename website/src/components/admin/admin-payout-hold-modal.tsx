@@ -20,15 +20,15 @@ interface AdminPayoutHoldModalProps {
 }
 
 const HOLD_REASONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: "chargeback_review", label: "Chargeback rate elevated this cycle" },
-  { value: "dispute_pending", label: "Active disputes referencing this cycle" },
+  { value: "chargeback_review", label: "Chargeback rate elevated this period" },
+  { value: "dispute_pending", label: "Active disputes referencing this payout" },
   { value: "compliance_review", label: "Compliance review requested" },
   { value: "method_mismatch", label: "Payout method on file doesn't match record" },
   { value: "manual_check", label: "Manual review pending payments lead" },
   { value: "other", label: "Other (see note)" },
 ];
 
-// Hold-cycle modal — used both for single-row and bulk hold actions.
+// Hold-payout modal — used both for single-row and bulk hold actions.
 // Same shape as suspend/reject — radio + 280-char note composed into the
 // reason string passed to useAdminPayoutStore.hold or .bulkHold.
 export function AdminPayoutHoldModal({
@@ -44,7 +44,7 @@ export function AdminPayoutHoldModal({
   const [note, setNote] = useState("");
 
   const isBulk = payoutIds.length > 1;
-  const titleSuffix = isBulk ? `${payoutIds.length} cycles` : payoutIds[0] ?? "";
+  const titleSuffix = isBulk ? `${payoutIds.length} payouts` : payoutIds[0] ?? "";
 
   function handleSubmit() {
     const label =
@@ -81,7 +81,7 @@ export function AdminPayoutHoldModal({
           </>
         )
       }
-      submitLabel={`Hold ${isBulk ? `${payoutIds.length} cycles` : "cycle"}`}
+      submitLabel={`Hold ${isBulk ? `${payoutIds.length} payouts` : "payout"}`}
     >
       <AdminFormSection label="Reason">
         <AdminRadioGroup

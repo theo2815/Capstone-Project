@@ -44,11 +44,39 @@ class User(
     @Column(name = "avatar_s3_key", length = 512)
     var avatarS3Key: String? = null,
 
+    // Google account link (V38). NULL for password-only accounts; set on the
+    // first Google sign-in — either at account creation or when a verified
+    // Google email auto-links to an existing row. See GoogleAuthService.
+    @Column(name = "google_sub", length = 255, unique = true)
+    var googleSub: String? = null,
+
+    // When the address on this row was proven reachable (V30). Advisory —
+    // nothing gates on it. NULL means "never confirmed", which is the honest
+    // reading for every account that predates the flow.
+    @Column(name = "email_verified_at")
+    var emailVerifiedAt: OffsetDateTime? = null,
+
     @Column(name = "suspended_at")
     var suspendedAt: OffsetDateTime? = null,
 
     @Column(name = "suspension_reason", length = 500)
     var suspensionReason: String? = null,
+
+    // Consecutive failed logins since the last success (V29). Reset to 0 both
+    // on a successful login and at the moment a lock is applied — the lock
+    // itself is the state that matters from then on. Only LoginAttemptService
+    // writes these two; see it for why that has to be a separate bean.
+    @Column(name = "failed_login_attempts", nullable = false)
+    var failedLoginAttempts: Int = 0,
+
+    // When the streak's most recent failure landed (V34). NFR-S-14 counts
+    // "5 failures within 15 min" — a failure older than the window restarts
+    // the streak at 1 instead of extending it.
+    @Column(name = "last_failed_login_at")
+    var lastFailedLoginAt: OffsetDateTime? = null,
+
+    @Column(name = "locked_until")
+    var lockedUntil: OffsetDateTime? = null,
 
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),

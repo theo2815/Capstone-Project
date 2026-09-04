@@ -32,14 +32,29 @@ data class AdminListEventDto(
     val organizerName: String,
     val categories: List<String>,
     val adminOverrides: List<Map<String, Any?>> = emptyList(),
+    // Photographer-owned events (V46). createdBy* null = admin event.
+    val createdByHandle: String? = null,
+    val createdByName: String? = null,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val reviewStatus: String = "approved",
+    val reviewNote: String? = null,
+    val pendingChange: Map<String, Any?>? = null,
+)
+
+// POST /admin/events/{id}/reject — the reason reaches the photographer's inbox.
+data class RejectEventRequest(
+    @field:NotBlank
+    @field:Size(max = 500)
+    val reason: String,
 )
 
 // POST /admin/events is now multipart — the controller pulls title/date/
 // location/pricePerPhoto off the multipart request and builds this DTO
 // before handing to the service. The cover image arrives as a separate
 // file part (handled by AdminEventsController + EventCoverService) so the
-// row's `cover_s3_key` is set after the event is persisted; `bannerUrl`
-// here stays for legacy callers that pre-set a remote URL.
+// row's `cover_s3_key` is set after the event is persisted.
 data class CreateAdminEventRequest(
     @field:NotBlank
     @field:Size(max = 200)
@@ -50,22 +65,36 @@ data class CreateAdminEventRequest(
     @field:Size(max = 200)
     val location: String,
     val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
-    val bannerUrl: String? = null,
+    // Organizer name + race-day notes shown in the runner-facing "About this
+    // race" strip. Optional at create — blank leaves the entity defaults ("").
+    @field:Size(max = 120)
+    val organizerName: String? = null,
+    @field:Size(max = 600)
+    val description: String? = null,
 )
 
-// PATCH /admin/events/{id} — body { title?, date?, location?, pricePerPhoto? }.
-// Per Q-A3 these are the only admin-editable fields; status and slug stay
+// PATCH /admin/events/{id} — body { title?, date?, location?, pricePerPhoto?,
+// organizerName?, description? }. Admin-editable fields; status and slug stay
 // fixed (slug to keep public URLs stable, status to keep state machines
 // out of the admin surface). When `pricePerPhoto` changes, AdminEventService
 // also re-prices existing `photos.price_php` rows under the same event so the
 // new price takes effect across runner-facing galleries and carts.
+// organizerName + description feed the runner-facing "About this race" strip.
 data class UpdateAdminEventRequest(
     val title: String? = null,
     val date: String? = null,
     val location: String? = null,
     val pricePerPhoto: BigDecimal? = null,
+    @field:Size(max = 120)
+    val organizerName: String? = null,
+    @field:Size(max = 600)
+    val description: String? = null,
 )
 
 data class AdminEventDeleteResponseDto(
     val removed: Boolean,
+)
+
+data class AdminReindexResponseDto(
+    val requeued: Int,
 )

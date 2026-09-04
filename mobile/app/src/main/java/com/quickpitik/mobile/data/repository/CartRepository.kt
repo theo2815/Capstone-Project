@@ -1,6 +1,12 @@
 package com.quickpitik.mobile.data.repository
 
-import com.quickpitik.mobile.data.remote.*
+import com.quickpitik.mobile.data.remote.CartItemDto
+import com.quickpitik.mobile.data.remote.OrderDetailDto
+import com.quickpitik.mobile.data.remote.OrderListItemDto
+import com.quickpitik.mobile.data.remote.OrderResponse
+import com.quickpitik.mobile.data.remote.PhotoDto
+import com.quickpitik.mobile.data.remote.RefundResponse
+import com.quickpitik.mobile.data.remote.RunnerDisputeDto
 import kotlinx.coroutines.flow.StateFlow
 
 interface CartRepository {
@@ -20,6 +26,8 @@ interface CartRepository {
     
     suspend fun getOrders(token: String): Result<List<OrderListItemDto>>
     suspend fun getOrderDetail(token: String, orderId: String): Result<OrderDetailDto>
+    suspend fun getGuestOrderDetail(orderId: String, shareToken: String): Result<OrderDetailDto>
+
     suspend fun submitRefund(
         token: String,
         orderId: String,

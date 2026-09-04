@@ -4,9 +4,15 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.quickpitik.mobile.data.local.SessionManager
-import com.quickpitik.mobile.data.remote.*
+import com.quickpitik.mobile.data.local.isPhotographerRole
+import com.quickpitik.mobile.data.remote.CartItemDto
+import com.quickpitik.mobile.data.remote.OrderDetailDto
+import com.quickpitik.mobile.data.remote.OrderListItemDto
+import com.quickpitik.mobile.data.remote.OrderResponse
+import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.repository.CartRepository
 import com.quickpitik.mobile.data.repository.CartRepositoryImpl
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -107,10 +113,12 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        // Initial sync if logged in
+        // Initial sync if logged in. Skipped for a PHOTOGRAPHER token — the
+        // cart endpoints are RUNNER-role-gated, so the merge was one doomed
+        // 403 per app start (and the cart UI is hidden for them anyway).
         viewModelScope.launch {
             val token = sessionManager.getAccessToken()
-            if (token != null) {
+            if (token != null && !isPhotographerRole(sessionManager.getUserRole())) {
                 repository.mergeCart(token)
             }
         }
@@ -123,10 +131,21 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // One-shot user-facing outcome of a cart mutation. The repository reverts
+    // an optimistic add/remove when the server refuses — without this the
+    // revert was completely silent and the tile just snapped back.
+    private val _cartMessage = MutableStateFlow<String?>(null)
+    val cartMessage: StateFlow<String?> = _cartMessage
+    fun clearCartMessage() { _cartMessage.value = null }
+
     fun addToCart(photoDto: PhotoDto, eventId: String, eventSlug: String, eventName: String) {
         viewModelScope.launch {
             val token = sessionManager.getAccessToken()
             repository.addToCart(token, photoDto, eventId, eventSlug, eventName)
+                .onFailure {
+                    _cartMessage.value = it.localizedMessage
+                        ?: "Couldn't add that photo to your cart. Try again."
+                }
         }
     }
 
@@ -134,6 +153,10 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val token = sessionManager.getAccessToken()
             repository.removeFromCart(token, photoId)
+                .onFailure {
+                    _cartMessage.value = it.localizedMessage
+                        ?: "Couldn't remove that photo. Try again."
+                }
         }
     }
 
@@ -173,20 +196,32 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     fun triggerExpressCheckout() { _expressCheckoutPending.value = true }
     fun clearExpressCheckout() { _expressCheckoutPending.value = false }
 
-    fun fetchOrders() {
+    // Returns the Job so pull-to-refresh can join() it and settle its spinner
+    // when the fetch actually finishes.
+    fun fetchOrders(): Job = viewModelScope.launch {
         val token = sessionManager.getAccessToken()
         if (token == null) {
             _ordersState.value = OrdersState.Error("Please log in to view order history.")
-            return
+            return@launch
         }
-
-        viewModelScope.launch {
-            _ordersState.value = OrdersState.Loading
+        run {
+            // Only show the spinner on first load — a refetch (closing an
+            // order detail, pull-to-refresh) keeps the list on screen instead
+            // of flashing back to a full-screen loading state.
+            if (_ordersState.value !is OrdersState.Success) {
+                _ordersState.value = OrdersState.Loading
+            }
             val result = repository.getOrders(token)
             result.onSuccess { orders ->
                 _ordersState.value = OrdersState.Success(orders)
             }.onFailure { exception ->
-                _ordersState.value = OrdersState.Error(exception.localizedMessage ?: "Failed to retrieve orders.")
+                // A failed background refresh keeps the orders already on
+                // screen; only a first load surfaces the error state.
+                if (_ordersState.value !is OrdersState.Success) {
+                    _ordersState.value = OrdersState.Error(
+                        exception.localizedMessage ?: "Failed to retrieve orders."
+                    )
+                }
             }
         }
     }
@@ -285,9 +320,9 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     // OrdersReturnPage. Stops on PAID / FULFILLED (success) or REFUNDED
     // (terminal failure). On success the local cart is cleared so the floating
     // pill empties before the user comes back to /events.
-    fun pollOrderReturn(orderId: String) {
+    fun pollOrderReturn(orderId: String, shareToken: String? = null) {
         val token = sessionManager.getAccessToken()
-        if (token == null) {
+        if (token == null && shareToken.isNullOrBlank()) {
             _orderReturnState.value = OrderReturnState.Failed("Please log in to view this order.")
             return
         }
@@ -296,7 +331,12 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
             while (attempts < POLL_MAX_ATTEMPTS) {
                 attempts++
                 _orderReturnState.value = OrderReturnState.Polling(attempts)
-                val result = repository.getOrderDetail(token, orderId)
+                val result = if (!shareToken.isNullOrBlank()) {
+                    repository.getGuestOrderDetail(orderId, shareToken)
+                } else {
+                    repository.getOrderDetail(token!!, orderId)
+                }
+
                 result.onSuccess { order ->
                     when (order.status?.uppercase()) {
                         "PAID", "FULFILLED" -> {

@@ -10,6 +10,9 @@ import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
+import com.quickpitik.entity.WatermarkPolicy
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
@@ -17,6 +20,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.hibernate.exception.ConstraintViolationException
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -24,6 +28,9 @@ import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.SimpleTransactionStatus
+import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.multipart.MultipartFile
 import java.math.BigDecimal
 import java.sql.SQLException
@@ -47,7 +54,6 @@ class PhotoUploadServiceTest {
     private lateinit var eventRepository: EventRepository
     private lateinit var photographerSettingsRepository: PhotographerSettingsRepository
     private lateinit var userRepository: UserRepository
-    private lateinit var watermarkService: WatermarkService
     private lateinit var eventPublisher: ApplicationEventPublisher
     private val storageProperties = StorageProperties()
 
@@ -72,7 +78,6 @@ class PhotoUploadServiceTest {
         eventRepository = Mockito.mock(EventRepository::class.java)
         photographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
         userRepository = Mockito.mock(UserRepository::class.java)
-        watermarkService = Mockito.mock(WatermarkService::class.java)
         eventPublisher = Mockito.mock(ApplicationEventPublisher::class.java)
     }
 
@@ -85,8 +90,17 @@ class PhotoUploadServiceTest {
         photographerSettingsRepository,
         userRepository,
         aiApiProperties,
-        watermarkService,
         eventPublisher,
+        // Real template over a stubbed manager: execute { } runs the callback
+        // inline (and rethrows), keeping these unit tests transaction-free. The
+        // getTransaction stub matters — a raw mock returns a null status, which
+        // trips the Kotlin lambda's non-null parameter check.
+        TransactionTemplate(
+            Mockito.mock(PlatformTransactionManager::class.java).also {
+                Mockito.`when`(it.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
+            },
+        ),
+        SimpleMeterRegistry(),
     )
 
     private fun event(id: UUID = eventId, name: String = "Cebu Marathon 2026"): Event =
@@ -143,6 +157,11 @@ class PhotoUploadServiceTest {
         Mockito.`when`(userRepository.findById(photographerId)).thenReturn(Optional.of(photographer()))
         Mockito.`when`(photographerSettingsRepository.findById(photographerId))
             .thenReturn(Optional.of(approvedSettings()))
+        // The thumbnail presign now runs BEFORE the persist block (it needs no
+        // transaction), so every test that reaches the storage path needs it
+        // stubbed — an unstubbed mock returns null and trips the Kotlin
+        // non-null check at the persist lambda. Individual tests may re-stub.
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
     }
 
     @Test
@@ -185,12 +204,62 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `direct upload begin falls back to multipart when storage cannot presign PUTs`() {
+        stubValidationsPass()
+        Mockito.`when`(storageService.supportsDirectUpload).thenReturn(false)
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
+            .thenReturn(null)
+
+        val res = service(AiApiProperties(enabled = false))
+            .beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", 1_000)
+
+        assertEquals("multipart", res.mode)
+        Mockito.verify(storageService, Mockito.never()).presignedPutUrl(anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `direct upload begin issues a presigned PUT and commit persists the row`() {
+        stubValidationsPass()
+        Mockito.`when`(storageService.supportsDirectUpload).thenReturn(true)
+        Mockito.`when`(storageService.presignedPutUrl(anyArg(), anyArg(), anyArg())).thenReturn("https://put")
+        Mockito.`when`(storageService.exists(anyArg())).thenReturn(true)
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
+            .thenReturn(null)
+        val svc = service(AiApiProperties(enabled = false))
+
+        val begin = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", 1_000)
+        assertEquals("direct", begin.mode)
+        assertEquals("https://put", begin.uploadUrl)
+        assertEquals("events/$eventId/photos/${begin.photoId}/original.jpg", begin.key)
+
+        val dto = svc.commitDirectUpload(photographerId, eventId, begin.photoId!!, begin.key!!, helloSha256)
+
+        val captor = ArgumentCaptor.forClass(Photo::class.java)
+        Mockito.verify(photoRepository).saveAndFlush(capture(captor))
+        assertEquals(helloSha256, captor.value.contentHash)
+        assertEquals(begin.key, captor.value.s3Key)
+        assertEquals("processing", dto.status)
+        // The bytes never touched this server: no storage PUT in either step.
+        Mockito.verify(storageService, Mockito.never()).put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
+        Mockito.verify(eventPublisher).publishEvent(anyArg<PhotoUploadedForWatermark>())
+    }
+
+    @Test
+    fun `direct upload commit refuses a key that was not issued for the photo`() {
+        stubValidationsPass()
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false))
+                .commitDirectUpload(photographerId, eventId, UUID.randomUUID(), "events/other/original.jpg", helloSha256)
+        }
+        assertEquals(ErrorCodes.UPLOAD_KEY_MISMATCH, ex.code)
+        Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
+    }
+
+    @Test
     fun `first-time upload computes and stores the content hash`() {
         stubValidationsPass()
         Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
             .thenReturn(null)
-        Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(byteArrayOf(9))
-        Mockito.`when`(watermarkService.processThumbnail(anyArg(), anyArg())).thenReturn(byteArrayOf(1, 2, 3))
         Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
 
         val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
@@ -198,11 +267,17 @@ class PhotoUploadServiceTest {
         val captor = ArgumentCaptor.forClass(Photo::class.java)
         Mockito.verify(photoRepository).saveAndFlush(capture(captor))
         assertEquals(helloSha256, captor.value.contentHash)
-        assertEquals("live", dto.status)
-        // Upload proceeded (didn't short-circuit): it writes the original + the
-        // watermarked variant, so put() is invoked for both.
-        Mockito.verify(storageService, Mockito.atLeastOnce())
+        // Async watermark (2026-08-28): the row is inserted PROCESSING with no
+        // watermark keys — PhotoWatermarkService flips it LIVE off-request.
+        assertEquals(PhotoStatus.PROCESSING, captor.value.status)
+        assertEquals(null, captor.value.thumbnailS3Key)
+        assertEquals("processing", dto.status)
+        // Exactly ONE storage write in-request: the original. The watermark PUT
+        // moved to the async pipeline.
+        Mockito.verify(storageService, Mockito.times(1))
             .put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
+        // The watermark job is queued for AFTER_COMMIT dispatch.
+        Mockito.verify(eventPublisher).publishEvent(anyArg<PhotoUploadedForWatermark>())
     }
 
     @Test
@@ -234,6 +309,92 @@ class PhotoUploadServiceTest {
         assertEquals("new", byHash[newHash]?.status)
     }
 
+    // ── Photographer-owned events (V46) ──────────────────────────────────
+    // The owner is not bound to the race-day window (they set the date), but a
+    // pending event takes nothing and nobody else may upload into their event.
+    // A NONE watermark policy is the one case that needs no logo at all.
+
+    private fun ownedEvent(
+        date: LocalDate,
+        status: EventStatus = EventStatus.ACTIVE,
+        policy: WatermarkPolicy = WatermarkPolicy.PLATFORM,
+        owner: UUID = photographerId,
+    ): Event = Event(
+        id = eventId,
+        slug = "e-$eventId",
+        name = "Own Run",
+        date = date,
+        location = "Cebu",
+        status = status,
+        pricePerPhoto = BigDecimal.ZERO,
+        createdBy = owner,
+        watermarkPolicy = policy,
+    )
+
+    private fun stubOwnedUpload(event: Event, settings: PhotographerSettings = approvedSettings()) {
+        Mockito.`when`(eventRepository.findById(eventId)).thenReturn(Optional.of(event))
+        Mockito.`when`(userRepository.findById(photographerId)).thenReturn(Optional.of(photographer()))
+        Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.of(settings))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+    }
+
+    @Test
+    fun `the owner may upload to their live event outside the race-day window`() {
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")).minusDays(30)))
+
+        val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        assertEquals("processing", dto.status)
+        Mockito.verify(photoRepository).saveAndFlush(anyArg<Photo>())
+    }
+
+    @Test
+    fun `another photographer cannot upload into an owned event`() {
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")), owner = UUID.randomUUID()))
+
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+        assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, ex.code)
+        Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
+    }
+
+    @Test
+    fun `an owned event still awaiting review takes no uploads`() {
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")), status = EventStatus.DRAFT))
+
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+        assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, ex.code)
+    }
+
+    @Test
+    fun `a no-watermark event needs no logo`() {
+        stubOwnedUpload(
+            ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")), policy = WatermarkPolicy.NONE),
+            settings = PhotographerSettings(userId = photographerId, watermarkS3Key = null, verificationStatus = VerificationStatus.APPROVED),
+        )
+
+        val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        assertEquals("processing", dto.status)
+    }
+
+    @Test
+    fun `a platform-marked event without a logo is still refused`() {
+        stubOwnedUpload(
+            ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila"))),
+            settings = PhotographerSettings(userId = photographerId, watermarkS3Key = null, verificationStatus = VerificationStatus.APPROVED),
+        )
+
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+        assertEquals(ErrorCodes.WATERMARK_MISSING, ex.code)
+    }
+
     // The race-safe backstop: when a concurrent identical-bytes upload slips past
     // the pre-check and the (photographer_id, content_hash) unique index trips on
     // saveAndFlush, the violation is translated to a terminal duplicate conflict
@@ -245,8 +406,6 @@ class PhotoUploadServiceTest {
         stubValidationsPass()
         Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
             .thenReturn(null)
-        Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(byteArrayOf(9))
-        Mockito.`when`(watermarkService.processThumbnail(anyArg(), anyArg())).thenReturn(byteArrayOf(1, 2, 3))
         Mockito.`when`(photoRepository.saveAndFlush(anyArg<Photo>()))
             .thenThrow(dataIntegrityViolation("uq_photos_photographer_content_hash"))
 
@@ -263,8 +422,6 @@ class PhotoUploadServiceTest {
         stubValidationsPass()
         Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
             .thenReturn(null)
-        Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(byteArrayOf(9))
-        Mockito.`when`(watermarkService.processThumbnail(anyArg(), anyArg())).thenReturn(byteArrayOf(1, 2, 3))
         Mockito.`when`(photoRepository.saveAndFlush(anyArg<Photo>()))
             .thenThrow(dataIntegrityViolation("fk_photos_some_other_constraint"))
 
@@ -272,6 +429,11 @@ class PhotoUploadServiceTest {
             service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
         }
     }
+
+    // The truncated-image case (ImageIO IOException on decode) moved with the
+    // watermark work into the async pipeline — see PhotoWatermarkServiceTest's
+    // semantic-failure test. In-request, undecodable-but-header-valid bytes now
+    // upload 200 and settle via the processing_attempts budget.
 
     // A Spring DataIntegrityViolationException wrapping a Hibernate
     // ConstraintViolationException that names the given constraint — the shape a

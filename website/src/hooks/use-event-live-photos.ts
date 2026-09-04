@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { buildWsUrl } from "@/lib/ws-url";
 import { getAccessToken } from "@/lib/auth";
-import type { EventPhotosResult, Photo } from "@/lib/api-photos";
+import type { Photo } from "@/lib/api-photos";
 
 interface PhotoPublishedMessage {
   type: "photo.published";
@@ -22,7 +22,6 @@ interface UseEventLivePhotosArgs {
 interface UseEventLivePhotosResult {
   isConnected: boolean;
   newCount: number;
-  resetNewCount: () => void;
   reconnectFailed: boolean;
   refresh: () => void;
 }
@@ -43,6 +42,7 @@ export function useEventLivePhotos(
   const wsRef = useRef<WebSocket | null>(null);
   const failedAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seenPhotoIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     if (!args.enabled) return;
@@ -57,6 +57,16 @@ export function useEventLivePhotos(
 
     function connect() {
       if (cancelled) return;
+      // Bearer JWT carried via Sec-WebSocket-Protocol per Q-002. Backend
+      // reads the first protocol value as the access token.
+      const token = getAccessToken();
+      // `EventPhotoHandshakeInterceptor.beforeHandshake` returns false when no
+      // token is present, so a tokenless socket can only fail the upgrade. The
+      // browser reports that as a 1006 close with no `onopen`, which walks the
+      // retry ladder and lands every signed-out visitor on a live event at the
+      // false "Connection lost · Refresh" banner. Don't open what will be
+      // refused — guests simply get no live push (tracked in backend/tasks.md).
+      if (!token) return;
       // BE registers the handler at /ws/events/*/photos — NOT under the REST
       // /api/v1 prefix. buildWsUrl strips API_BASE_URL's path component before
       // appending the WS path; matches use-admin-notifications-ws + use-
@@ -64,10 +74,7 @@ export function useEventLivePhotos(
       const url = buildWsUrl(
         `/ws/events/${encodeURIComponent(args.eventId)}/photos`,
       );
-      const token = getAccessToken();
-      // Bearer JWT carried via Sec-WebSocket-Protocol per Q-002. Backend
-      // reads the first protocol value as the access token.
-      const ws = token ? new WebSocket(url, [token]) : new WebSocket(url);
+      const ws = new WebSocket(url, [token]);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -81,20 +88,11 @@ export function useEventLivePhotos(
         try {
           const data = JSON.parse(event.data) as PhotoPublishedMessage;
           if (data.type !== "photo.published") return;
-          // Idempotent prepend to every cache slot for this event/bib.
-          // Server may push duplicates — guard by id.
-          qc.setQueriesData<EventPhotosResult>(
-            { queryKey: ["events", args.slug, "photos"] },
-            (prev) => {
-              if (!prev) return prev;
-              if (prev.items.some((p) => p.id === data.photo.id)) return prev;
-              return {
-                ...prev,
-                items: [data.photo, ...prev.items],
-                total: prev.total + 1,
-              };
-            },
-          );
+          // Keep the current snapshot stable. The badge lets the visitor pull
+          // a fresh, diversity-ranked first page without live arrivals jumping
+          // ahead of photographers who have not been represented yet.
+          if (seenPhotoIdsRef.current.has(data.photo.id)) return;
+          seenPhotoIdsRef.current.add(data.photo.id);
           setNewCount((c) => c + 1);
         } catch {
           // Silently drop malformed pushes.
@@ -135,9 +133,9 @@ export function useEventLivePhotos(
   return {
     isConnected,
     newCount,
-    resetNewCount: () => setNewCount(0),
     reconnectFailed,
     refresh: () => {
+      seenPhotoIdsRef.current.clear();
       qc.invalidateQueries({ queryKey: ["events", args.slug, "photos"] });
       setReconnectFailed(false);
       failedAttemptsRef.current = 0;

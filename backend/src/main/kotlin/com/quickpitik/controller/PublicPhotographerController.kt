@@ -8,6 +8,7 @@ import com.quickpitik.service.photographer.PublicPhotographerService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
+import com.quickpitik.service.ratelimit.clientIp
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -53,13 +54,4 @@ class PublicPhotographerController(
         )
     }
 
-    // X-Forwarded-For wins when present (rendered behind a load balancer); use
-    // the first hop and fall back to the direct remote address for local dev.
-    private fun clientIp(request: HttpServletRequest): String {
-        val forwarded = request.getHeader("X-Forwarded-For")
-        if (!forwarded.isNullOrBlank()) {
-            return forwarded.split(",").first().trim()
-        }
-        return request.remoteAddr ?: "unknown"
-    }
 }

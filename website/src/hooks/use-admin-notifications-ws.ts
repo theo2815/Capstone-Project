@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/auth";
 import { buildWsUrl } from "@/lib/ws-url";
 import { useAdminUsersServerStore } from "@/lib/admin-users-data";
@@ -15,6 +16,10 @@ import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 //     next read. Active subscribers already re-read via the useEffect
 //     keyed on `fetchedAt`, so this lands without page interaction.
 //
+//   - event_submitted       → invalidate ["admin","events"] + ["admin","kpis"]
+//   - event_change_requested  so the V46 event requests queue and its counts
+//                             refresh without a reload.
+//
 //   - dispute_filed         → no-op for now. The admin dispute store is
 //   - payout_report_filed     mock-fed in v1; Phase G migrates them onto
 //                             real BE fetchers and at that point this hook
@@ -28,13 +33,19 @@ import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 const MAX_BACKOFF_MS = 30_000;
 
 interface AdminInboxFrame {
-  type: "verification_submitted" | "dispute_filed" | "payout_report_filed";
+  type:
+    | "verification_submitted"
+    | "dispute_filed"
+    | "payout_report_filed"
+    | "event_submitted"
+    | "event_change_requested";
   entityId: string;
   actorId: string;
   occurredAt: string;
 }
 
 export function useAdminNotificationsWs(enabled: boolean): void {
+  const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptsRef = useRef(0);
@@ -79,17 +90,27 @@ export function useAdminNotificationsWs(enabled: boolean): void {
               useAdminUsersServerStore.getState().invalidate();
               void useAdminUsersServerStore.getState().refetch();
               break;
+            case "event_submitted":
+            case "event_change_requested":
+              void queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
+              void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
+              break;
             case "dispute_filed":
             case "payout_report_filed":
               // TODO(Phase G): invalidate admin-dispute-store /
               // admin-payout-report-store once they migrate off mocks.
-              console.info(
-                `[admin/ws] ${data.type} entity=${data.entityId} actor=${data.actorId}`,
-              );
+              if (process.env.NODE_ENV !== "production") {
+                console.info(
+                  `[admin/ws] ${data.type} entity=${data.entityId} actor=${data.actorId}`,
+                );
+              }
               break;
             default:
-              // Unknown type — log and drop.
-              console.warn("[admin/ws] unknown frame", data);
+              // Unknown type — log and drop (dev only — entity/actor ids
+              // don't belong in a production console).
+              if (process.env.NODE_ENV !== "production") {
+                console.warn("[admin/ws] unknown frame", data);
+              }
           }
         } catch {
           // Silently drop malformed frames.
@@ -128,5 +149,5 @@ export function useAdminNotificationsWs(enabled: boolean): void {
       // new WS connects.
       useAdminWsStatusStore.getState().setStatus("degraded");
     };
-  }, [enabled]);
+  }, [enabled, queryClient]);
 }

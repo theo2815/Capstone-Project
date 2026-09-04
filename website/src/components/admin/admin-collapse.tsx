@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState, type ReactNode } from "react";
+import { Kicker } from "@/components/ui/kicker";
 
 // Local collapse primitives used by /admin/photographers/[handle] and the
 // inbox verifications drawer so admin can scan a long review surface
@@ -9,7 +10,7 @@ import { useId, useState, type ReactNode } from "react";
 // the admin still gets at-a-glance state without expanding.
 
 const TOGGLE_CLS =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate group-hover:text-ink transition-colors tnum shrink-0";
+  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate group-hover:text-ink transition-colors tnum shrink-0";
 
 interface CollapsibleReviewSlabProps {
   id?: string;
@@ -55,21 +56,21 @@ export function CollapsibleReviewSlab({
         }`}
       >
         <div className="flex items-baseline gap-4 min-w-0">
-          <span className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[12px] tracking-[0.15em] text-slate-soft tnum">
+          <span className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.15em] text-slate-soft tnum">
             {number}
           </span>
-          <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink shrink-0">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink shrink-0">
             {title}
           </p>
           {caption && (
-            <p className="hidden md:block font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft truncate">
+            <p className="hidden md:block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft truncate">
               {caption}
             </p>
           )}
         </div>
         <div className="flex items-baseline gap-3 md:gap-4 shrink-0">
           {trailing && (
-            <div className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+            <div className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
               {trailing}
             </div>
           )}
@@ -112,9 +113,9 @@ export function CollapsibleReviewSection({
           open ? "mb-3" : ""
         }`}
       >
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <Kicker as="p" tone="soft">
           {kicker}
-        </p>
+        </Kicker>
         <span aria-hidden className={TOGGLE_CLS}>
           {open ? "Hide ↑" : "Show ↓"}
         </span>

@@ -7,6 +7,7 @@ import com.quickpitik.dto.cart.MergeCartRequest
 import com.quickpitik.dto.cart.RemovedResponse
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.cart.CartService
+import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
@@ -17,8 +18,11 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
 
+// Runner-only surface. PHOTOGRAPHER/ADMIN previously had full write access
+// here because SecurityConfig only requires authenticated() on /me/**.
 @RestController
 @RequestMapping("/api/v1/me/cart")
+@PreAuthorize("hasRole('RUNNER')")
 class CartController(
     private val cartService: CartService,
 ) {

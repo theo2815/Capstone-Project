@@ -126,7 +126,7 @@ function buildSteps(
 function SetupHero({ current, total }: { current: number; total: number }) {
   return (
     <div>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum">
+      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate tnum">
         Welcome · Step {current} of {total}
       </p>
       <h1 className="font-display text-3xl md:text-5xl font-medium tracking-tight text-ink mt-4 leading-[1.05]">
@@ -216,7 +216,7 @@ function SetupStepRow({ step }: { step: SetupStep }) {
         <div className="flex items-center justify-between md:flex-col md:items-start md:justify-start md:w-28 md:shrink-0 md:gap-3">
           <span
             className={
-              "font-mono uppercase tracking-[0.3em] text-[10px] tnum " +
+              "font-mono uppercase tracking-[0.14em] text-[10px] tnum " +
               numberClass
             }
           >
@@ -244,7 +244,7 @@ function SetupStepRow({ step }: { step: SetupStep }) {
           {hint && (
             <p
               className={
-                "font-mono uppercase tracking-[0.25em] text-[10px] mt-4 tnum " +
+                "font-mono uppercase tracking-[0.14em] text-[10px] mt-4 tnum " +
                 hintClass
               }
             >
@@ -254,7 +254,7 @@ function SetupStepRow({ step }: { step: SetupStep }) {
           {cta && (
             <Link
               href={cta.href}
-              className="mt-5 inline-flex items-center gap-2 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors"
+              className="mt-5 inline-flex items-center gap-2 font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors"
             >
               {cta.label}
               <span aria-hidden="true">→</span>
@@ -269,7 +269,7 @@ function SetupStepRow({ step }: { step: SetupStep }) {
 function StatusChip({ status }: { status: StepStatus }) {
   if (status === "active") {
     return (
-      <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-ink inline-flex items-center gap-1.5">
+      <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-ink inline-flex items-center gap-1.5">
         <span
           aria-hidden="true"
           className="size-1.5 rounded-full bg-fresh breathe"
@@ -280,14 +280,14 @@ function StatusChip({ status }: { status: StepStatus }) {
   }
   if (status === "done") {
     return (
-      <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate inline-flex items-center gap-1.5">
+      <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate inline-flex items-center gap-1.5">
         <span aria-hidden="true">✓</span>
         Done
       </span>
     );
   }
   return (
-    <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft inline-flex items-center gap-1.5">
+    <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft inline-flex items-center gap-1.5">
       <span
         aria-hidden="true"
         className="size-1.5 rounded-full border border-line bg-bone"
@@ -339,7 +339,7 @@ function SectionsAtAGlance() {
     <section aria-labelledby="sections-at-a-glance-title">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate tnum">
             Your sidebar · Six sections
           </p>
           <h2
@@ -354,7 +354,7 @@ function SectionsAtAGlance() {
           onClick={toggle}
           aria-expanded={!collapsed}
           aria-controls={bodyId}
-          className="shrink-0 mt-1 font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-ink transition-colors inline-flex items-center gap-1.5 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+          className="shrink-0 mt-1 font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-ink transition-colors inline-flex items-center gap-1.5 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
         >
           <span>{collapsed ? "Show tip" : "Hide tip"}</span>
           <span aria-hidden="true">{collapsed ? "+" : "−"}</span>
@@ -373,7 +373,7 @@ function SectionsAtAGlance() {
                 key={s.number}
                 className="border border-line rounded-2xl p-6 md:p-7 bg-bone"
               >
-                <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft tnum">
+                <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft tnum">
                   {s.number}
                 </p>
                 <h3 className="font-display text-lg md:text-xl font-medium tracking-tight text-ink mt-3">
@@ -392,7 +392,7 @@ function SectionsAtAGlance() {
 function ComingUpPreview() {
   return (
     <div className="border border-dashed border-line rounded-2xl p-8 md:p-10">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum">
+      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate tnum">
         Coming up · Once you&apos;re live
       </p>
       <h2 className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink mt-3">
@@ -422,7 +422,7 @@ function PreviewStat({
 }) {
   return (
     <li>
-      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft tnum">
+      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft tnum">
         {label}
       </p>
       <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-slate-soft tnum mt-2">

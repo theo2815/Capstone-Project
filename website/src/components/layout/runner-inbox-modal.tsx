@@ -32,11 +32,12 @@ const KIND_TONE: Record<RunnerMessageKind, string> = {
 
 export function RunnerInboxModal({ isOpen, onClose }: RunnerInboxModalProps) {
   const router = useRouter();
-  const { messages, markRead, markAllRead, remove } =
+  const { messages, total, hasMore, loadMore, markRead, markAllRead, remove } =
     useMyRunnerMessages(isOpen);
   const { confirm } = useConfirmation();
 
   const unreadCount = getRunnerUnreadCount(messages);
+  const totalLabel = total ?? messages.length;
 
   async function handleRemove(message: RunnerMessage) {
     const ok = await confirm({
@@ -68,14 +69,14 @@ export function RunnerInboxModal({ isOpen, onClose }: RunnerInboxModalProps) {
       <div className="flex items-baseline justify-between mb-5">
         <Kicker as="p" tone="soft" tnum>
           {unreadCount > 0
-            ? `${unreadCount} unread · ${messages.length} total`
-            : `${messages.length} total`}
+            ? `${unreadCount} unread · ${totalLabel} total`
+            : `${totalLabel} total`}
         </Kicker>
         {unreadCount > 0 && (
           <button
             type="button"
             onClick={() => void markAllRead()}
-            className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
           >
             Mark all read
           </button>
@@ -87,23 +88,36 @@ export function RunnerInboxModal({ isOpen, onClose }: RunnerInboxModalProps) {
           No messages yet. Updates on your refund requests will land here.
         </p>
       ) : (
-        <ul className="max-h-[60vh] overflow-y-auto -mx-2 divide-y divide-line">
-          {messages.map((m) => (
-            <InboxRow
-              key={m.id}
-              message={m}
-              onClick={() => handleRowClick(m)}
-              onRemove={() => handleRemove(m)}
-            />
-          ))}
-        </ul>
+        <div className="max-h-[60vh] overflow-y-auto -mx-2">
+          <ul className="divide-y divide-line">
+            {messages.map((m) => (
+              <InboxRow
+                key={m.id}
+                message={m}
+                onClick={() => handleRowClick(m)}
+                onRemove={() => handleRemove(m)}
+              />
+            ))}
+          </ul>
+          {hasMore && (
+            <div className="mt-3 flex justify-center">
+              <button
+                type="button"
+                onClick={() => void loadMore()}
+                className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+              >
+                Load older
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       <div className="mt-6 flex justify-end">
         <button
           type="button"
           onClick={onClose}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
         >
           Close
         </button>
@@ -179,7 +193,7 @@ function InboxRow({ message, onClick, onRemove }: InboxRowProps) {
             onRemove();
           }}
           aria-label="Remove notification"
-          className="font-mono uppercase tracking-[0.22em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft hover:text-error transition-colors"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft hover:text-error transition-colors"
         >
           Remove
         </button>

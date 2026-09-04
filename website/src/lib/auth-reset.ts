@@ -5,7 +5,6 @@ import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useUserMediaStore } from "@/store/user-media-store";
 import { useAdminDisputeStore } from "@/store/admin-dispute-store";
 import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
-import { useAdminFlagStore } from "@/store/admin-flag-store";
 import { useAdminLegendStore } from "@/store/admin-legend-store";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { useAdminPayoutStore } from "@/store/admin-payout-store";
@@ -14,6 +13,9 @@ import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 import { useAdminUsersServerStore } from "@/lib/admin-users-data";
 import { useMyPhotographerMessagesStore } from "@/lib/me-photographer-messages-data";
+import { useMyRunnerMessagesStore } from "@/lib/me-runner-messages-data";
+import { resetPhotographerHydrationGuard } from "@/hooks/use-photographer-settings-hydration";
+import { useViewModeStore } from "@/store/view-mode-store";
 
 // Reset every Zustand store that carries user-scoped data + clears the
 // underlying localStorage slot each one persists into. Call this on every
@@ -41,12 +43,23 @@ export function resetUserScopedStores(): void {
   useCartStore.getState().setSyncEnabled(false);
   useSavedEventsStore.getState().setSyncEnabled(false);
 
+  // View mode is a client-only photographer/runner toggle — always reset to
+  // photographer so a fresh login never auto-exposes the runner interface.
+  useViewModeStore.getState().reset();
+
   usePhotographerSettingsStore.getState().reset();
+  // The hydration guard lives at module level (it must survive DashboardShell
+  // remounts) — re-arm it here so the next account hydrates fresh.
+  resetPhotographerHydrationGuard();
   // PF-9 (2026-05-27): the photographer-messages inbox cache survived logout
   // — next photographer login saw stale messages + unread badge from the
   // previous account until the first refetch. Same class as the 9 admin-store
   // leaks closed 2026-05-27 (see admin-flow audit P0).
   useMyPhotographerMessagesStore.getState().reset();
+  // Same leak, runner side (2026-08-28 audit): PF-9 closed the photographer
+  // inbox only — the runner inbox store kept the previous account's messages
+  // and unread badge until the first refetch.
+  useMyRunnerMessagesStore.getState().reset();
   useUserMediaStore.getState().clear();
   useOrdersStore.getState().clear();
   useCartStore.getState().clear();
@@ -59,11 +72,34 @@ export function resetUserScopedStores(): void {
   useAdminPayoutStore.getState().clear();
   useAdminPayoutReportStore.getState().clear();
   useAdminDisputeStore.getState().clear();
-  useAdminFlagStore.getState().clear();
   useAdminEventOverridesStore.getState().clear();
   useAdminUsersServerStore.getState().clear();
   useAdminPaletteStore.getState().setOpen(false);
   useAdminPaletteStore.getState().clearRecents();
   useAdminLegendStore.getState().setOpen(false);
   useAdminWsStatusStore.getState().setStatus("degraded");
+}
+
+// The guest buffer is the one thing the wipe above must not eat.
+//
+// resetUserScopedStores() runs inside useAuth.login/register, BEFORE
+// <AuthHydrator> reads the cart and saved-event ids for the guest→authed merge
+// (Q-003). So the merge was handed `[]` on every login: a guest who filled a
+// cart, hit Checkout, and signed in to pay arrived at an empty checkout, and a
+// guest's bookmarks never reached /me/saved-events/merge at all.
+//
+// Capture before the wipe, restore after it, then let the merge run. Safe
+// because every other teardown wipes too — logout (useAuth.logout) and the
+// revoked-session path in <AuthHydrator> — so whatever survives in these two
+// stores at login time is the guest's own, not a previous user's residue.
+// That invariant is why this can be a straight restore instead of scoping the
+// persist keys by userId.
+export function captureGuestBuffer(): () => void {
+  const items = useCartStore.getState().items;
+  const ids = useSavedEventsStore.getState().ids;
+
+  return () => {
+    if (items.length > 0) useCartStore.getState().setItems(items);
+    if (ids.length > 0) useSavedEventsStore.getState().setIds(ids);
+  };
 }

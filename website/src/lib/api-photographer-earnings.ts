@@ -30,6 +30,12 @@ import type { PaginatedResponse } from "@/types/api";
 //   POST /api/v1/me/photographer/payouts/request         → PhotographerPayout
 //   POST /api/v1/me/photographer/payouts/{id}/withdraw   → 204 (no body)
 
+// Backend's MAX_LIMIT for paginated endpoints. These surfaces pre-fetch a
+// full page and chunk through it client-side, so this doubles as the ceiling
+// on how many rows a photographer can actually reach. Exported so the UI can
+// tell "you have exactly 200" apart from "you have more than we fetched".
+export const BE_MAX_LIMIT = 200;
+
 // ───────────────────────────────────────────── Earnings overview
 
 export async function fetchPhotographerEarnings(): Promise<
@@ -52,35 +58,37 @@ export interface PerEventEarningsArgs {
   limit?: number;
 }
 
+// Returns the whole envelope, not just `items`. The UI needs `total` to tell
+// "exactly 200 events" from "200 of 350" — dropping it forced the load-more
+// terminal label to hedge with "the 200 most recent".
 export async function fetchPerEventEarnings(
   args: PerEventEarningsArgs = {},
-): Promise<PerEventEarning[]> {
+): Promise<PaginatedResponse<PerEventEarning>> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
   // Pre-fetch up to BE MAX_LIMIT so the Hybrid Load-More UI has rows to chunk
   // through client-side. A bare default of 8 made the slab terminal at "All 8
   // loaded" before the first Load More click.
-  p.set("limit", String(args.limit ?? 200));
-  const res = await api.get<PaginatedResponse<PerEventEarning>>(
+  p.set("limit", String(args.limit ?? BE_MAX_LIMIT));
+  return api.get<PaginatedResponse<PerEventEarning>>(
     `/me/photographer/earnings/per-event?${p.toString()}`,
   );
-  return res.items;
 }
 
 // ───────────────────────────────────────────── Payouts
 
+// Envelope, not just `items` — same reason as fetchPerEventEarnings above.
 export async function fetchPhotographerPayouts(
   args: { offset?: number; limit?: number } = {},
-): Promise<PhotographerPayout[]> {
+): Promise<PaginatedResponse<PhotographerPayout>> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
-  // Pre-fetch up to BE MAX_LIMIT so the Recent-cycles list has rows to chunk
+  // Pre-fetch up to BE MAX_LIMIT so the Recent-payouts list has rows to chunk
   // through client-side (PAGE_SIZE.PAYOUT_INCREMENT at a time).
-  p.set("limit", String(args.limit ?? 200));
-  const res = await api.get<PaginatedResponse<PhotographerPayout>>(
+  p.set("limit", String(args.limit ?? BE_MAX_LIMIT));
+  return api.get<PaginatedResponse<PhotographerPayout>>(
     `/me/photographer/payouts?${p.toString()}`,
   );
-  return res.items;
 }
 
 export interface SubmitPayoutReportArgs {
@@ -166,7 +174,7 @@ export async function fetchPhotographerTransactions(
   // click. A bare default of 25 forced the slab to "All 25 loaded" before
   // the first Load More appeared. Photographers with >200 sales would need
   // true infinite-query — out of scope for capstone.
-  const limit = args.limit ?? 200;
+  const limit = args.limit ?? BE_MAX_LIMIT;
 
   const p = new URLSearchParams();
   p.set("offset", String(offset));

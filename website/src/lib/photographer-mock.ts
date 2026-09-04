@@ -39,6 +39,23 @@ export interface PhotographerPipeline {
 
 export type EventState = "live" | "upcoming" | "open" | "past";
 
+// V46 review lifecycle of a photographer-owned event. `change_pending` = the
+// event is live on its current pricing while an edit request waits.
+export type EventReviewStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "change_pending";
+
+// The parked edit request (events.pending_change). pricePerPhoto is the
+// BE's plain-string decimal.
+export interface PendingPricingChange {
+  pricingMode: "paid" | "free";
+  pricePerPhoto: string;
+  watermarkPolicy: "platform" | "own" | "none";
+  requestedAt: string;
+}
+
 export interface PhotographerEventSummary {
   id: string;
   slug: string;
@@ -56,6 +73,16 @@ export interface PhotographerEventSummary {
   photoCount: number;
   /** Number of distinct sales (one buyer can buy multiple photos = 1 sale). */
   salesCount: number;
+  // Photographer-owned events (V46). `ownedByMe` = the caller created it;
+  // the review lifecycle + pricing trio are wire-lowercase. Optional so the
+  // mock seeds stay valid — absent reads as an approved, paid admin event.
+  ownedByMe?: boolean;
+  visibility?: "public" | "unlisted";
+  pricingMode?: "paid" | "free";
+  watermarkPolicy?: "platform" | "own" | "none";
+  reviewStatus?: EventReviewStatus;
+  reviewNote?: string | null;
+  pendingChange?: PendingPricingChange | null;
   /** ₱ kept by the photographer for this event (post-platform-cut). */
   revenueKept: number;
 }
@@ -208,8 +235,17 @@ export type PayoutStatus = "paid" | "pending" | "scheduled" | "held";
 
 export interface PhotographerPayout {
   id: string;
-  /** ISO Monday of the cycle this payout covers. */
+  /** @deprecated ISO Monday, an artifact of the scheduled-weekly model that
+   *  the request-based flow replaced on 2026-05-19. There are no weekly cycles
+   *  any more, so "Week of {weekOf}" mislabels a payout — render `requestedAt`.
+   *
+   *  The BE keeps populating it for THIS app's admin payout queue, which is the
+   *  last consumer. The previous note here blamed mobile; that was wrong —
+   *  mobile parses the field but never renders it (verified 2026-08-16). */
   weekOf: string;
+  /** ISO timestamp of when the photographer asked to be paid. The honest label
+   *  for a request-based payout. */
+  requestedAt: string;
   amount: number;
   status: PayoutStatus;
   /** ISO timestamp when the payout was settled (paid) or admin approved it.

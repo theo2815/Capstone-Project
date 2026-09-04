@@ -101,8 +101,10 @@ def blur_classify_batch(
     # Process in sub-batches to bound memory at O(sub_batch) instead of O(total).
     for chunk_start in range(0, total, sub_batch):
         chunk_paths = image_paths[chunk_start:chunk_start + sub_batch]
-        # Parallel decode: overlaps disk I/O with CPU decompression
-        decoded = decode_images_from_paths(chunk_paths, max_dim=640)
+        # Parallel decode: overlaps disk I/O with CPU decompression. Same
+        # BLUR_CLASSIFY_DECODE_DIM as /blur/classify/stream — the value is
+        # accuracy-relevant, so the two classify paths must not drift apart.
+        decoded = decode_images_from_paths(chunk_paths, max_dim=settings.BLUR_CLASSIFY_DECODE_DIM)
         chunk_images: list = []
         chunk_indices: list[int] = []
 
@@ -123,7 +125,14 @@ def blur_classify_batch(
                         continue
                     if blur_type is not None:
                         blur_type_probability = classification["probabilities"].get(blur_type, 0.0)
-                        detected = classification["predicted_class"] == blur_type
+                        # Same min-confidence floor as BlurClassifier.detect_blur_type
+                        # and /blur/classify/stream — without it the async path
+                        # reports `detected` for a photo the sync endpoints do not.
+                        detected = (
+                            classification["predicted_class"] == blur_type
+                            and classification["confidence"]
+                            >= classifier.min_detection_confidence
+                        )
                         results[img_i] = {
                             "index": img_i,
                             "detected": detected,

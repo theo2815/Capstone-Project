@@ -12,8 +12,8 @@ QuickPitik is a **multi-product platform** that serves three client applications
 | Product | Platform | Features Used |
 |---------|----------|---------------|
 | QuickPitik Desktop | Electron (already built) | Blur detection + classification |
-| QuickPitik Web | Next.js (Vercel) | Blur + Face search + Bib recognition |
-| QuickPitik Mobile | Kotlin (Android first, iOS planned) | Blur + Face search + Bib recognition |
+| QuickPitik Web | Next.js (Vercel) | Face search + Bib recognition (no blur — rule 6) |
+| QuickPitik Mobile | Kotlin (Android first, iOS planned) | Face search + Bib recognition (no blur — rule 6) |
 
 Each product has its **own backend**. All backends share a **single ai-api instance** for ML inference.
 
@@ -115,8 +115,7 @@ This is the single source of truth for what each layer owns. If a concern is not
 | User authentication | Web/mobile login, roles (admin, photographer, runner/participant) |
 | Event management | Admin creates public event galleries, configures settings per event |
 | Participant management | Import participant lists (name, bib number, category) |
-| Photo upload + storage | Receive photos from photographers, store in cloud |
-| Blur quality gate | Call ai-api blur detect/classify, reject or flag blurry photos |
+| Photo upload + storage | Receive photos from photographers, store in cloud. **No blur gate** — photographers cull in BatchMyPhotos before uploading (rule 6) |
 | Face enrollment | On event setup, call ai-api to enroll participant face photos, **always pass `event_id`** |
 | Face search | On photo upload, call ai-api face search to auto-tag participants in photos, **always pass `event_id`** |
 | Bib recognition | On photo upload, call ai-api bib OCR, then match bib text to participant list |
@@ -137,9 +136,10 @@ Each backend gets its own API key with appropriate scopes. ai-api isolates data 
 
 | Backend | API Key Scopes | Rate Tier |
 |---------|--------------|-----------|
-| Desktop Backend | `blur:read`, `jobs:read` (+ `webhooks:*` if using webhook callbacks) | Internal (1000 req/min) |
-| Web/Mobile Backend | `blur:read`, `faces:read`, `faces:write`, `faces:delete`, `bibs:read`, `jobs:read`, `webhooks:read`, `webhooks:write` — or a single `*` super-scope | Internal (1000 req/min) |
+| Desktop Backend | `blur:read`, `jobs:read` (+ `webhooks:*` if using webhook callbacks) | `pro` (300/min) — canonical in `docs/api-keys.md` |
+| Web/Mobile Backend | `faces:read`, `faces:write`, `faces:delete`, `bibs:read`, `jobs:read`, `webhooks:read`, `webhooks:write` — or a single `*` super-scope | Internal (1000 req/min) |
 
+- **No `blur:read` for the Web/Mobile Backend.** Blur is desktop-only (root rule 6) — photographers cull in BatchMyPhotos before uploading, so the web and mobile upload paths never call a blur endpoint. Matches `integration-contracts.md`.
 - **Never expose ai-api keys to client apps.** Clients talk to their own backend only.
 - Each API key creates an isolated data space in ai-api (separate face embeddings, separate job history).
 - If multiple environments exist (staging, production), use separate API keys per environment.
@@ -176,6 +176,32 @@ Web/Mobile Backend                          ai-api
        │◄─────────────────────────────────────│
 ```
 
+### Enforcement (fail-closed, both directions)
+
+`event_id` is **required** by ai-api on every enroll and every search — the
+request is rejected with `422` before any DB work, rather than trusting each
+caller to remember it:
+
+| Surface | Required since |
+|---|---|
+| `/faces/search` · `/search/batch` · `/search/mega` (`operation=search`) | 2026-06-02 |
+| `/faces/enroll/mega` | 2026-06-02 |
+| `/faces/enroll` · `/enroll/batch` | 2026-08-14 |
+
+`/faces/detect` and `/faces/compare` are unrestricted: neither reads or writes
+stored embeddings, so there is no scope to cross.
+
+The two directions fail differently. An unscoped **search** would match across
+every event for the API key — a leak. An unscoped **enroll** produced the quieter
+problem: the embedding was stored with `event_id = NULL`, which no search can
+return (they all require a scope, and `NULL` matches none of them) and which
+`DELETE /faces/persons?event_id=` cannot erase — an invisible, permanently
+un-erasable orphan. Enroll was the last fail-open surface; it is closed now.
+
+When an enroll supplies `person_id`, the person is fetched scoped by
+`api_key_id` **and** `event_id`. An existence-only lookup would let one tenant
+attach faces to another tenant's person.
+
 Desktop Backend does not use face search, so event isolation does not apply to it.
 
 ---
@@ -211,8 +237,8 @@ ai-api always returns raw confidence scores. Each backend decides what to do wit
 
 | Feature | ai-api returns | Backend applies |
 |---------|---------------|-----------------|
-| Blur detect | `confidence: 0.85, is_blurry: false` | Desktop: show to user as quality score. Web: auto-reject if `is_blurry = true`. |
-| Blur classify | `predicted_class: "motion_blurred", confidence: 0.72` | Desktop: tag photo with blur type. Web: reject if blur confidence > event threshold. |
+| Blur detect | `confidence: 0.85, is_blurry: false` | Desktop only: show to user as a quality score. Web/mobile do not call blur (rule 6). |
+| Blur classify | `predicted_class: "motion_blurred", confidence: 0.72` | Desktop only: tag/cull the photo by blur type. Web/mobile do not call blur (rule 6). |
 | Face search | `similarity: 0.65` | Web: show match only if similarity >= event's face threshold (e.g., 0.6) |
 | Bib OCR | `bib_number: "1023", confidence: 0.45` | Web: discard if confidence < event's bib threshold (e.g., 0.7) |
 
@@ -220,6 +246,29 @@ This means:
 - ai-api never discards results based on business-level thresholds
 - Each backend configures thresholds per event or per user preference
 - The same ai-api response can be interpreted differently by desktop vs web
+
+### Where the shipped defaults live
+
+The numbers above are not illustrative — they are the values in production, owned
+by the backend under `app.ai-api` in `backend/src/main/resources/application.yml`
+and typed in `AiApiProperties.kt`:
+
+| Property | Default | Applied in |
+|---|---|---|
+| `face-match-threshold-default` | `0.6` | `PhotoSearchService.searchByFace` (passed to ai-api as `threshold`) |
+| `face-top-k-default` | `5` | same |
+| `bib-confidence-threshold-default` | `0.7` | `PhotoIndexingService.recognizeBibs` — detections below it are never persisted |
+
+ai-api holds no counterpart to these. `FACE_SIMILARITY_THRESHOLD` (0.4) in
+`src/config.py` is only the floor for `/faces/compare` and the default when a
+caller omits `threshold`; it is deliberately looser than the backend's 0.6 so the
+backend, not ai-api, makes the product call.
+
+**Per-event-type recommended defaults** (road race vs trail vs night run) are
+deliberately not specified here. Picking them without measured data from real
+events would be guesswork dressed as a spec — the tuning belongs after the first
+events run, using their match rates. Until then, one default per feature applies
+to every event and the per-event override exists for when it doesn't.
 
 ---
 
@@ -277,7 +326,7 @@ This means:
 
 ```
 localhost:3000  ← Desktop Backend
-localhost:4000  ← Web/Mobile Backend (Spring Boot)
+localhost:8080  ← Web/Mobile Backend (Spring Boot)
 localhost:8000  ← ai-api (FastAPI)
 localhost:5432  ← PostgreSQL
 localhost:6379  ← Redis
@@ -294,7 +343,7 @@ localhost:6379  ← Redis
 | Participants | Web/Mobile Backend | Web/Mobile DB (AWS RDS) | Web/Mobile Backend |
 | Photos (files) | Backends | AWS S3 | Backends |
 | Face embeddings | ai-api | PostgreSQL + pgvector (AWS RDS) | ai-api |
-| Blur scores | ai-api (computed) | Backend DBs (persisted) | Backends |
+| Blur scores | ai-api (computed) | Desktop DB (persisted) | Desktop Backend |
 | Bib OCR text | ai-api (computed) | Backend DBs (persisted) | Web/Mobile Backend |
 | Batch jobs | ai-api | ai-api PostgreSQL + Redis | ai-api → webhook → Backends |
 | API keys | ai-api admin | ai-api PostgreSQL | Backends (as credentials) |

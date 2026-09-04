@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,20 +35,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.toUpperCase
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.quickpitik.mobile.R
 
-// ── Quiet Studio shared primitives ──────────────────────────────────────────
+// ── Finish Line shared primitives ───────────────────────────────────────────
 // Encode the website's hard rules ONCE so screens stop hand-rolling styles:
-//   • mono UPPERCASE kickers   • single-accent (Fresh) pill CTAs
+//   • mono UPPERCASE kickers   • single-accent (Fresh #1B7A46) pill CTAs
+//   • Anton UPPERCASE heroes (HeroText — the ONLY non-kicker uppercase)
 //   • ghost (ink-outline) CTAs • 16dp Bone-deep cards • tabular stat numerals
-// All reference the `Typography`/token vals directly (not MaterialTheme.*) so
-// they stay font- and color-correct even inside a nested MaterialTheme override.
+// New depth tokens FreshTint / Pine / LineStrong are available for washes and
+// stronger borders. All reference the `Typography`/token vals directly (not
+// MaterialTheme.*) so they stay font- and color-correct even inside a nested
+// MaterialTheme override.
 
 /** Pill radius for CTAs/chips (website `rounded-full`). */
 val PillShape = RoundedCornerShape(100)
@@ -55,7 +65,64 @@ val PillShape = RoundedCornerShape(100)
 /** Card radius (website `rounded-2xl` = 16px). */
 val QpCardShape = RoundedCornerShape(16.dp)
 
-/** Mono, UPPERCASE eyebrow. Rule: kickers are the only uppercase text. */
+/** Official camera-mark + wordmark lockup from the shared QuickPitik asset. */
+@Composable
+fun BrandLogo(
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    contentDescription: String? = "QuickPitik",
+) {
+    Image(
+        painter = painterResource(R.drawable.quickpitik_logo),
+        contentDescription = contentDescription,
+        contentScale = ContentScale.Fit,
+        modifier = modifier
+            .width(if (compact) 112.dp else 144.dp)
+            .height(if (compact) 28.dp else 36.dp),
+    )
+}
+
+/**
+ * Anton hero headline — the website's `.font-hero` (Finish Line). UPPERCASES
+ * internally because Compose has no text-transform; this and Kicker are the
+ * only uppercase text. Marketing/auth/discovery surfaces only — Anton never
+ * appears in the studio (website rule: no Anton in dashboards). Anton is
+ * single-weight; displayLarge already pins FontWeight.Normal.
+ */
+@Composable
+fun HeroText(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Ink,
+) {
+    Text(
+        text = text.uppercase(),
+        style = Typography.displayLarge,
+        color = color,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Annotated variant for a hero line that colours one span (the website's
+ * `We found <span class="text-fresh">12</span> photos.`). Uppercased with
+ * the spans preserved.
+ */
+@Composable
+fun HeroText(
+    text: AnnotatedString,
+    modifier: Modifier = Modifier,
+    color: Color = Ink,
+) {
+    Text(
+        text = text.toUpperCase(),
+        style = Typography.displayLarge,
+        color = color,
+        modifier = modifier,
+    )
+}
+
+/** Mono, UPPERCASE eyebrow. Kickers + HeroText are the only uppercase text. */
 @Composable
 fun Kicker(
     text: String,
@@ -84,7 +151,16 @@ private fun CtaContent(text: String, style: TextStyle) {
     val hasArrow = trimmed.endsWith("→")
     val label = if (hasArrow) trimmed.removeSuffix("→").trimEnd() else text
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = style, fontWeight = FontWeight.SemiBold)
+        // Single line, ellipsize — a CTA in a narrow weight() column must never
+        // wrap to two lines (it gets cramped in the fixed 48dp height). This one
+        // guard covers every PrimaryCta / GhostCta app-wide.
+        Text(
+            label,
+            style = style,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         if (hasArrow) {
             Spacer(Modifier.width(6.dp))
             Icon(
@@ -303,7 +379,13 @@ fun StatusChip(
         StatusTone.Danger -> ErrorRed
         StatusTone.Neutral -> Slate
     }
-    val bg = if (tone == StatusTone.Neutral) Line else fg.copy(alpha = 0.10f)
+    // Approved uses the Finish Line green wash token (the website's exact
+    // chip background) instead of a computed alpha of the darker green.
+    val bg = when (tone) {
+        StatusTone.Neutral -> Line
+        StatusTone.Approved -> FreshTint
+        else -> fg.copy(alpha = 0.10f)
+    }
     Row(
         modifier = modifier
             .background(bg, BadgeShape)

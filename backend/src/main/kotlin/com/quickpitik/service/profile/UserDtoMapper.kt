@@ -26,6 +26,7 @@ class UserDtoMapper(
         name = user.name,
         role = user.role,
         avatarUrl = resolveAvatarUrl(user),
+        emailVerified = user.emailVerifiedAt != null,
         createdAt = user.createdAt,
     )
 

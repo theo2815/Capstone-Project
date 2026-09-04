@@ -1,6 +1,7 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.AiProperties
 import com.quickpitik.dto.ai.BibDetection
 import com.quickpitik.dto.ai.BibsRecognizeResult
 import com.quickpitik.dto.ai.FacesEnrollResult
@@ -12,11 +13,15 @@ import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.PhotoIndexedEvent
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.SimpleTransactionStatus
+import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.util.Optional
 import java.util.UUID
@@ -41,13 +46,25 @@ class PhotoIndexingServiceTest {
 
     private fun props(enabled: Boolean = true) = AiApiProperties(enabled = enabled)
 
+    // Real template over a stubbed manager: execute { } runs the callback inline
+    // (and rethrows), so the unit tests stay transaction-free. getTransaction
+    // must return a real status — a raw mock's null trips the Kotlin lambda's
+    // non-null parameter check.
+    private fun template() = TransactionTemplate(
+        Mockito.mock(PlatformTransactionManager::class.java).also {
+            Mockito.`when`(it.getTransaction(Mockito.any())).thenReturn(SimpleTransactionStatus())
+        },
+    )
+
     @BeforeEach
     fun setUp() {
         photoRepo = Mockito.mock(PhotoRepository::class.java)
         storage = Mockito.mock(StorageService::class.java)
         aiClient = Mockito.mock(AiApiClient::class.java)
         publisher = Mockito.mock(ApplicationEventPublisher::class.java)
-        service = PhotoIndexingService(photoRepo, storage, aiClient, props(), publisher)
+        service = PhotoIndexingService(
+            photoRepo, storage, aiClient, props(), AiProperties(), publisher, template(), SimpleMeterRegistry(),
+        )
     }
 
     private fun photo(status: IndexingStatus = IndexingStatus.PENDING): Photo =
@@ -84,6 +101,8 @@ class PhotoIndexingServiceTest {
         assertEquals(setOf("person-1"), p.facePersons.map { it.aiPersonId }.toSet())
         assertEquals(setOf("1234"), p.bibs.map { it.bibNumber }.toSet())
         assertTrue(p.indexedAt != null)
+        // V33 provider stamp — which ID space the stored person id belongs to.
+        assertEquals("ai_api", p.indexedProvider)
         Mockito.verify(publisher).publishEvent(Mockito.any(PhotoIndexedEvent::class.java))
     }
 
@@ -133,7 +152,10 @@ class PhotoIndexingServiceTest {
     }
 
     @Test
-    fun `both halves fail - FAILED, no notification`() {
+    fun `both halves transport-fail - back to PENDING, attempt not consumed`() {
+        // Provider fully unreachable (both calls die retryably): the photo must
+        // NOT burn an attempt — a ~5-min outage used to exhaust the 5-attempt
+        // budget and strand photos terminally FAILED (2026-08-25 incident).
         val p = photo()
         expectPhoto(p)
         Mockito.`when`(
@@ -144,7 +166,25 @@ class PhotoIndexingServiceTest {
 
         service.index(p.id)
 
+        assertEquals(IndexingStatus.PENDING, p.indexingStatus)
+        assertEquals(0, p.indexingAttempts)
+        Mockito.verify(publisher, Mockito.never()).publishEvent(Mockito.any(PhotoIndexedEvent::class.java))
+    }
+
+    @Test
+    fun `both halves fail non-retryably - FAILED, attempt consumed, no notification`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(
+            aiClient.facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId),
+        ).thenThrow(AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, null, "bad image"))
+        Mockito.`when`(aiClient.bibsRecognize(jpegBytes, "image/jpeg", "${p.id}.jpg"))
+            .thenThrow(AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, null, "bad image"))
+
+        service.index(p.id)
+
         assertEquals(IndexingStatus.FAILED, p.indexingStatus)
+        assertEquals(1, p.indexingAttempts)
         Mockito.verify(publisher, Mockito.never()).publishEvent(Mockito.any(PhotoIndexedEvent::class.java))
     }
 
@@ -165,7 +205,9 @@ class PhotoIndexingServiceTest {
     fun `ai-api disabled - SKIPPED, no calls`() {
         val p = photo()
         Mockito.`when`(photoRepo.findById(p.id)).thenReturn(Optional.of(p))
-        val disabled = PhotoIndexingService(photoRepo, storage, aiClient, props(enabled = false), publisher)
+        val disabled = PhotoIndexingService(
+            photoRepo, storage, aiClient, props(enabled = false), AiProperties(), publisher, template(), SimpleMeterRegistry(),
+        )
 
         disabled.index(p.id)
 

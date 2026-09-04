@@ -36,6 +36,16 @@ class EventController(
         val statuses = parseStatusList(status)
         val from = parseDate(dateFrom, "dateFrom")
         val to = parseDate(dateTo, "dateTo")
+        // EventRepository.search filters `date >= :dateFrom AND date <= :dateTo`,
+        // so a reversed range matches nothing and the caller gets an empty page
+        // that looks like "no events" rather than "your filter is backwards".
+        if (from != null && to != null && from.isAfter(to)) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "dateTo must not be earlier than dateFrom",
+                field = "dateTo",
+            )
+        }
         return eventService.list(statuses, search, city, from, to, pagination)
     }
 

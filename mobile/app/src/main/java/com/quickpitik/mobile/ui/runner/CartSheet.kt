@@ -2,7 +2,20 @@ package com.quickpitik.mobile.ui.runner
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -29,12 +42,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.quickpitik.mobile.ui.theme.*
+import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.ErrorRed
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.Kicker
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.NumeralStyle
+import com.quickpitik.mobile.ui.theme.PrimaryCta
+import com.quickpitik.mobile.ui.theme.QpHaptic
+import com.quickpitik.mobile.ui.theme.Slate
+import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.TileShape
+import com.quickpitik.mobile.ui.theme.Typography
+import com.quickpitik.mobile.ui.theme.rememberQpHaptic
 
 // Mobile mirror of website `CartModal`. Opens as a full-height
 // ModalBottomSheet from the FloatingCart pill. Mirrors the website's header
@@ -288,7 +314,7 @@ private fun CartSheetRow(
         ) {
             if (item.thumbnailUrl != null) {
                 AsyncImage(
-                    model = item.thumbnailUrl,
+                    model = RetrofitClient.resolveImageUrl(item.thumbnailUrl),
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -310,6 +336,16 @@ private fun CartSheetRow(
                 style = Typography.titleMedium,
                 color = Ink,
                 maxLines = 2,
+            )
+            // Bib + time — web cart-modal parity ("Untagged" when no bib).
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = buildString {
+                    append(item.bib?.takeIf { it.isNotBlank() }?.let { "Bib $it" } ?: "Untagged")
+                    item.time?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                },
+                style = NumeralStyle.copy(fontSize = 11.sp),
+                color = SlateSoft,
             )
         }
         Column(horizontalAlignment = Alignment.End) {

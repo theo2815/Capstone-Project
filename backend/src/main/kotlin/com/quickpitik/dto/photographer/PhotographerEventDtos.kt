@@ -5,8 +5,10 @@ import com.quickpitik.entity.EventPhotographer
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotEmpty
 import jakarta.validation.constraints.Pattern
+import jakarta.validation.constraints.Positive
 import jakarta.validation.constraints.Size
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -30,6 +32,15 @@ data class PhotographerEventSummaryDto(
     val photoCount: Int,
     val salesCount: Int,
     val revenueKept: BigDecimal,
+    // Photographer-owned events (V46). ownedByMe = the caller created it;
+    // the rest are wire-lowercase enums. Defaults keep older clients safe.
+    val ownedByMe: Boolean = false,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val reviewStatus: String = "approved",
+    val reviewNote: String? = null,
+    val pendingChange: Map<String, Any?>? = null,
 )
 
 // Mirrors website/src/lib/api-photographer.ts PhotographerEventDetail
@@ -47,6 +58,56 @@ data class PhotographerEventDetailDto(
     val revenueKept: BigDecimal,
     val firstUploadAt: OffsetDateTime?,
     val lastUploadAt: OffsetDateTime?,
+    val ownedByMe: Boolean = false,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val reviewStatus: String = "approved",
+    val reviewNote: String? = null,
+    val pendingChange: Map<String, Any?>? = null,
+    val description: String = "",
+    val organizerName: String = "",
+    val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
+)
+
+// POST /me/photographer/events (multipart text fields, parsed by the
+// controller like the admin create). pricingMode paid|free; a paid event
+// needs pricePerPhoto > 0; a free one may pick watermarkPolicy own|none.
+data class CreateMyEventRequest(
+    @field:NotBlank
+    @field:Size(max = 200)
+    val title: String,
+    @field:NotBlank
+    val date: String,
+    @field:NotBlank
+    @field:Size(max = 200)
+    val location: String,
+    @field:Size(max = 120)
+    val organizerName: String? = null,
+    @field:Size(max = 600)
+    val description: String? = null,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val pricePerPhoto: BigDecimal? = null,
+    val watermarkPolicy: String? = null,
+)
+
+// PATCH /me/photographer/events/{id}. Null/blank = no change. Pricing
+// fields on a live event become an edit request (see
+// PhotographerOwnedEventService.update); withdrawPendingChange drops it.
+data class UpdateMyEventRequest(
+    val title: String? = null,
+    val date: String? = null,
+    val location: String? = null,
+    @field:Size(max = 120)
+    val organizerName: String? = null,
+    @field:Size(max = 600)
+    val description: String? = null,
+    val visibility: String? = null,
+    val pricingMode: String? = null,
+    val pricePerPhoto: BigDecimal? = null,
+    val watermarkPolicy: String? = null,
+    val withdrawPendingChange: Boolean = false,
 )
 
 // Mirrors website/src/lib/photographer-mock.ts PhotographerLibraryPhoto.
@@ -147,6 +208,7 @@ fun summaryDto(
     event: Event,
     ep: EventPhotographer,
     bannerUrl: String?,
+    viewerId: UUID? = null,
 ): PhotographerEventSummaryDto =
     PhotographerEventSummaryDto(
         id = event.id,
@@ -159,12 +221,20 @@ fun summaryDto(
         photoCount = ep.photoCount,
         salesCount = ep.salesCount,
         revenueKept = ep.revenueKeptPhp,
+        ownedByMe = event.createdBy != null && event.createdBy == viewerId,
+        visibility = event.visibility.wire,
+        pricingMode = event.pricingMode.wire,
+        watermarkPolicy = event.watermarkPolicy.wire,
+        reviewStatus = event.reviewStatus.wire,
+        reviewNote = event.reviewNote,
+        pendingChange = event.pendingChange,
     )
 
 fun detailDto(
     event: Event,
     ep: EventPhotographer,
     bannerUrl: String?,
+    viewerId: UUID? = null,
 ): PhotographerEventDetailDto =
     PhotographerEventDetailDto(
         id = event.id,
@@ -179,6 +249,16 @@ fun detailDto(
         revenueKept = ep.revenueKeptPhp,
         firstUploadAt = ep.firstUploadAt,
         lastUploadAt = ep.lastUploadAt,
+        ownedByMe = event.createdBy != null && event.createdBy == viewerId,
+        visibility = event.visibility.wire,
+        pricingMode = event.pricingMode.wire,
+        watermarkPolicy = event.watermarkPolicy.wire,
+        reviewStatus = event.reviewStatus.wire,
+        reviewNote = event.reviewNote,
+        pendingChange = event.pendingChange,
+        description = event.description,
+        organizerName = event.organizerName,
+        pricePerPhoto = event.pricePerPhoto,
     )
 
 fun Photo.toLibraryDto(
@@ -202,3 +282,38 @@ fun Photo.toLibraryDto(
         span = span.wire,
         thumbnailUrl = thumbnailUrlResolver(this),
     )
+
+// ── Direct-to-storage upload (2026-09-02) ─────────────────────────────────
+// Two-step alternative to the multipart POST for S3/R2 deployments: the client
+// asks for a presigned PUT (begin), streams the original straight to storage,
+// then commits. Bytes never cross the backend. `mode` tells the client what to
+// do: "direct" (PUT to uploadUrl, then commit), "multipart" (this deployment
+// stores on local disk — use the classic endpoint), or "existing" (these bytes
+// are already in this event — nothing to upload; `existing` is the photo).
+data class DirectUploadBeginRequest(
+    @field:Pattern(regexp = "^[0-9a-fA-F]{64}\$", message = "contentHash must be a 64-character hex SHA-256.")
+    val contentHash: String,
+    @field:NotBlank
+    val contentType: String,
+    @field:Positive
+    val sizeBytes: Long,
+)
+
+data class DirectUploadBeginResponse(
+    val mode: String,
+    val photoId: UUID? = null,
+    val key: String? = null,
+    val uploadUrl: String? = null,
+    val expiresInSeconds: Long? = null,
+    val existing: UploadedPhotoDto? = null,
+)
+
+data class DirectUploadCommitRequest(
+    val photoId: UUID,
+    @field:NotBlank
+    val key: String,
+    @field:Pattern(regexp = "^[0-9a-fA-F]{64}\$", message = "contentHash must be a 64-character hex SHA-256.")
+    val contentHash: String,
+    @field:NotBlank
+    val contentType: String,
+)

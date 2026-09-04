@@ -14,8 +14,11 @@ ai-api/
 ├── Dockerfile.dev              # Development image (with hot-reload).
 ├── docker-compose.yml          # 4 services: ai-api, celery-worker, db (pg+pgvector),
 │                               # redis. Default dev config.
-├── docker-compose.prod.yml     # Production overrides.
-├── docker-compose.gpu.yml      # GPU overlay (NVIDIA runtime + USE_GPU=true).
+├── docker-compose.prod.yml     # Complete standalone PRODUCTION stack — api, 4 per-queue
+│                               # celery workers, db, redis, nginx, certbot. Not an
+│                               # overlay on docker-compose.yml (that one is dev-only).
+├── docker-compose.gpu.yml      # GPU overlay (NVIDIA reservation + USE_GPU=true).
+│                               # Layer on docker-compose.prod.yml.
 ├── nginx.conf                  # Sample nginx reverse-proxy config.
 ├── .dockerignore
 │
@@ -235,7 +238,9 @@ ai-api/
 │       ├── image_utils.py      # validate_and_decode (single image), validate_batch_file,
 │       │                       # downscale_for_inference, get_image_dimensions.
 │       │                       # Content-type allowlist, magic-byte check via PIL,
-│       │                       # EXIF rotation, dimension limits (32–4096 px).
+│       │                       # EXIF rotation, dimension limits. Both validators
+│       │                       # share MAX_IMAGE_DIMENSION so single and batch
+│       │                       # paths cannot drift; min 32 px is single-only.
 │       ├── blob_store.py       # store_batch, load_blob, cleanup_batch,
 │       │                       # cleanup_stale_blobs. Atomic write (tmp→rename),
 │       │                       # parallel writes for batch uploads.

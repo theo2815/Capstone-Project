@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { fetchVerificationStatus } from "@/lib/api-photographer-settings";
 import { useAuthStore } from "@/store/auth-store";
 import {
@@ -36,7 +36,14 @@ export function usePhotographerVerificationSync(): void {
 
   const isPhotographer = sessionUser?.role === "PHOTOGRAPHER";
 
+  // visibilitychange + focus both fire on an ordinary tab return, ms apart —
+  // the two listeners exist to also cover alt-tab (focus without a visibility
+  // flip). Join the in-flight sync instead of issuing a second GET.
+  const inFlightRef = useRef(false);
+
   const syncOnce = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     try {
       const response = await fetchVerificationStatus();
       const state = usePhotographerSettingsStore.getState();
@@ -65,6 +72,8 @@ export function usePhotographerVerificationSync(): void {
       // Network blip or 401-after-logout. Stay on cached state and try
       // again on the next trigger — no toast, this is a background sync.
       console.warn("[photographer/verification] sync failed", err);
+    } finally {
+      inFlightRef.current = false;
     }
   }, [setStatus, setSuspension]);
 

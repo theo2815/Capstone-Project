@@ -10,6 +10,7 @@ import com.quickpitik.dto.photographer.PhotographerEventCoverageDto
 import com.quickpitik.dto.photographer.PhotographerProfileDto
 import com.quickpitik.dto.photographer.deriveEventState
 import com.quickpitik.dto.photos.PhotoDto
+import com.quickpitik.dto.photos.PhotographerRef
 import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.Photo
@@ -21,6 +22,9 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.orders.CouponService
+import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.format.DateTimeFormatter
@@ -36,6 +40,7 @@ class PublicPhotographerService(
     private val photoRepository: PhotoRepository,
     private val storageProperties: StorageProperties,
     private val storageService: com.quickpitik.service.storage.StorageService,
+    private val couponService: CouponService,
 ) {
     fun getProfile(handle: String): PhotographerProfileDto {
         val normalized = handle.trim().lowercase()
@@ -55,8 +60,14 @@ class PublicPhotographerService(
             throw NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photographer not found")
         }
 
+        // Bounded: this is an UNAUTHENTICATED route and the coverage list was
+        // the last unbounded query on one. 200 events ≈ four years of weekly
+        // races — a cap, not a pagination contract (wire shape unchanged).
         val coverage = eventPhotographerRepository
-            .findAllByIdPhotographerId(settings.userId)
+            .findAllByIdPhotographerId(
+                settings.userId,
+                PageRequest.of(0, MAX_PUBLIC_EVENTS, Sort.by(Sort.Direction.DESC, "lastUploadAt")),
+            )
             .filter { it.photoCount > 0 }
         val eventsById = if (coverage.isEmpty()) {
             emptyMap()
@@ -73,6 +84,8 @@ class PublicPhotographerService(
                 state = deriveEventState(event),
                 photoCount = ep.photoCount,
                 salesCount = ep.salesCount,
+                visibility = event.visibility.wire,
+                pricingMode = event.pricingMode.wire,
             )
         }
 
@@ -124,8 +137,35 @@ class PublicPhotographerService(
             ),
         )
         if (page.isEmpty) return PaginatedResponse.empty(pagination)
+        // Every photo on this page belongs to the photographer resolved above,
+        // so attribution is a constant — no per-page lookup like PhotoService
+        // needs for a mixed event grid.
+        val photographer = PhotographerRef(handle = settings.handle, name = user.name)
+        val coupon = couponService.activeFor(event.id, setOf(settings.userId))[settings.userId]
+        // Free event (V46): originals are anyone's — mirror PhotoService.
+        val free = event.isFree
+        val ttl = storageProperties.presignedTtl.runnerDownload
         return PaginatedResponse(
-            items = page.content.map { it.toDto(::resolveWatermarkedUrl) },
+            items = page.content.map {
+                it.toDto(
+                    thumbnailUrlResolver = ::resolveWatermarkedUrl,
+                    cleanUrlResolver = { photo -> if (free) storageService.presignedGetUrl(photo.s3Key, ttl) else null },
+                    photographerResolver = { photographer },
+                    couponResolver = { photo -> couponService.quoteFor(photo, coupon) },
+                    downloadUrlResolver = { photo ->
+                        if (free) {
+                            storageService.presignedDownloadUrl(
+                                photo.s3Key,
+                                ttl,
+                                com.quickpitik.service.photos.PhotoFilenames.downloadFilenameOf(photo),
+                            )
+                        } else {
+                            null
+                        }
+                    },
+                    free = free,
+                )
+            },
             total = page.totalElements,
             offset = pagination.offset,
             limit = pagination.limit,
@@ -152,5 +192,11 @@ class PublicPhotographerService(
         // last to the source key.
         val key = photo.watermarkS3Key ?: photo.thumbnailS3Key ?: photo.s3Key
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
+    }
+
+    private companion object {
+        // Newest-coverage cap for the unauthenticated profile — ~4 years of
+        // weekly races. A bound, not pagination: the wire shape is unchanged.
+        const val MAX_PUBLIC_EVENTS = 200
     }
 }

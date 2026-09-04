@@ -32,7 +32,9 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         pageable: Pageable,
     ): Page<EventPhotographer>
 
-    fun findAllByIdPhotographerId(photographerId: UUID): List<EventPhotographer>
+    // Pageable-bounded: the sole caller is the UNAUTHENTICATED public profile,
+    // which caps at its own MAX_PUBLIC_EVENTS (newest coverage first).
+    fun findAllByIdPhotographerId(photographerId: UUID, pageable: Pageable): List<EventPhotographer>
 
     // Per-event earnings list — filters out events with no revenue so the FE
     // tile doesn't show ₱0 rows (matches the mock filter
@@ -67,7 +69,9 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
                    AS implied_cut,
                COALESCE(-SUM(CASE WHEN t.is_refund = true  THEN t.amount_kept_php ELSE 0 END), 0)
                    AS refunds,
-               COUNT(*) FILTER (WHERE t.is_refund = false) AS sales_count
+               COUNT(*) FILTER (WHERE t.is_refund = false) AS sales_count,
+               COALESCE(SUM(CASE WHEN t.is_refund = false THEN t.discount_php ELSE 0 END), 0)
+                   AS discounts
         FROM transactions t
         GROUP BY t.event_id
         """,

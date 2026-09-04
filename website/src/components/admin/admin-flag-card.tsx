@@ -4,16 +4,25 @@ import { useState } from "react";
 import {
   type Flag,
   type FlagStatus,
-  FLAG_REASON_LABEL,
+  canDismiss,
+  canEscalate,
+  canHide,
+  flagEventName,
+  flagReasonLabel,
 } from "@/lib/admin-flags";
-import { useAdminFlagStore } from "@/store/admin-flag-store";
+import { useFlagActions } from "@/hooks/use-admin-data";
 import { useToast } from "@/hooks/use-toast";
-import { getEventById } from "@/lib/event-catalog";
 import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
 import { AdminStatusPill, type AdminStatusPillTone } from "./admin-status-pill";
 import { AdminFlagHideModal } from "./admin-flag-hide-modal";
 import { AdminEscalateModal } from "./admin-escalate-modal";
 import { formatLongDate } from "@/lib/format";
+import {
+  BTN_DANGER,
+  BTN_GHOST,
+  BTN_SECONDARY,
+  BTN_SIZE,
+} from "@/components/ui/button-styles";
 
 interface AdminFlagCardProps {
   flag: Flag;
@@ -31,8 +40,15 @@ interface AdminFlagCardProps {
   focused?: boolean;
 }
 
+const DONE_LABEL = {
+  hide: "Hidden",
+  dismiss: "Dismissed",
+  escalate: "Escalated",
+} as const;
+
 const STATUS_LABEL: Record<FlagStatus, string> = {
   open: "Open",
+  resolved: "Resolved",
   hidden: "Hidden",
   dismissed: "Dismissed",
   escalated: "Escalated",
@@ -42,6 +58,8 @@ function statusTone(status: FlagStatus): AdminStatusPillTone {
   switch (status) {
     case "open":
       return "amber";
+    case "resolved":
+      return "fresh";
     case "hidden":
       return "ink";
     case "dismissed":
@@ -58,33 +76,42 @@ export function AdminFlagCard({
   focused = false,
 }: AdminFlagCardProps) {
   const { showToast } = useToast();
-  const hide = useAdminFlagStore((s) => s.hide);
-  const dismiss = useAdminFlagStore((s) => s.dismiss);
-  const escalate = useAdminFlagStore((s) => s.escalate);
+  const { hide, dismiss, escalate } = useFlagActions();
 
   const [hideOpen, setHideOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
   const [confirmDismiss, setConfirmDismiss] = useState(false);
 
-  const event = getEventById(flag.eventId);
-  const eventName = event?.name ?? `Event ${flag.eventId}`;
+  const eventName = flagEventName(flag);
   const cover = syntheticCoverGradient(flag.id);
   const isOpen = flag.status === "open";
+  const actionable = canDismiss(flag);
 
+  async function run(
+    verb: "hide" | "dismiss" | "escalate",
+    action: Promise<void>,
+  ) {
+    try {
+      await action;
+      showToast({ kind: "info", message: `${DONE_LABEL[verb]} · ${flag.id}` });
+    } catch {
+      showToast({
+        kind: "error",
+        message: `Could not ${verb} ${flag.id} — nothing changed. Try again.`,
+      });
+    }
+  }
   function handleHide(reason: string | null) {
-    hide(flag.id, reason);
     setHideOpen(false);
-    showToast({ kind: "info", message: `Hidden · ${flag.id}` });
+    void run("hide", hide(flag.id, reason));
   }
   function handleDismiss() {
-    dismiss(flag.id);
     setConfirmDismiss(false);
-    showToast({ kind: "info", message: `Dismissed · ${flag.id}` });
+    void run("dismiss", dismiss(flag.id));
   }
   function handleEscalate(note: string | null) {
-    escalate(flag.id, note);
     setEscalateOpen(false);
-    showToast({ kind: "info", message: `Escalated · ${flag.id}` });
+    void run("escalate", escalate(flag.id, note));
   }
 
   function handleArticleClick() {
@@ -114,21 +141,33 @@ export function AdminFlagCard({
           : ""
       } ${focused ? "ring-2 ring-ink ring-offset-2 ring-offset-bone" : ""}`}
     >
-      <div
-        className="aspect-[3/2] border-b border-line"
-        style={{
-          background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
-        }}
-        aria-label={flag.photoSnapshot.alt}
-      />
+      {flag.photoSnapshot.thumbnailUrl ? (
+        <div className="aspect-[3/2] border-b border-line overflow-hidden bg-bone-deep relative">
+          <img
+            src={flag.photoSnapshot.thumbnailUrl}
+            alt={flag.photoSnapshot.alt}
+            loading="lazy"
+            decoding="async"
+            className="w-full h-full object-cover"
+          />
+        </div>
+      ) : (
+        <div
+          className="aspect-[3/2] border-b border-line"
+          style={{
+            background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
+          }}
+          aria-label={flag.photoSnapshot.alt}
+        />
+      )}
       <div className="p-5 md:p-6 space-y-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
               {flag.id}
             </p>
             <h3 className="font-display text-lg md:text-xl font-medium text-ink mt-1">
-              {FLAG_REASON_LABEL[flag.reason]}
+              {flagReasonLabel(flag.reason)}
             </h3>
           </div>
           <AdminStatusPill
@@ -139,7 +178,7 @@ export function AdminFlagCard({
 
         <p className="font-sans text-sm text-ink-soft">{flag.note}</p>
 
-        <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
           {flag.reportedBy === "system"
             ? "System"
             : `@${flag.reportedBy}`}
@@ -153,7 +192,7 @@ export function AdminFlagCard({
 
         {!isOpen && flag.reviewerNote && (
           <div className="rounded-xl border border-line bg-bone-deep p-4">
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
               Reviewer note
             </p>
             <p className="font-sans text-sm text-ink-soft mt-1">
@@ -162,18 +201,22 @@ export function AdminFlagCard({
           </div>
         )}
 
-        {isOpen && (
+        {actionable && (
           <div className="flex items-center gap-3 flex-wrap pt-2">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setHideOpen(true);
-              }}
-              className={primary ? primaryFreshBtn : secondaryBtn}
-            >
-              Hide…
-            </button>
+            {canHide(flag) && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setHideOpen(true);
+                }}
+                className={
+                  primary ? `${dangerBtn} shadow-[var(--shadow-card)]` : dangerBtn
+                }
+              >
+                Hide…
+              </button>
+            )}
             <button
               type="button"
               onClick={(e) => {
@@ -182,29 +225,36 @@ export function AdminFlagCard({
               }}
               className={tertiaryBtn}
             >
-              {confirmDismiss ? "Cancel dismiss" : "Dismiss"}
+              {confirmDismiss
+                ? "Cancel"
+                : flag.status === "hidden"
+                  ? "Restore photo & dismiss"
+                  : "Dismiss"}
             </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setEscalateOpen(true);
-              }}
-              className={tertiaryBtn}
-            >
-              Escalate…
-            </button>
+            {canEscalate(flag) && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEscalateOpen(true);
+                }}
+                className={tertiaryBtn}
+              >
+                Escalate…
+              </button>
+            )}
           </div>
         )}
 
-        {confirmDismiss && isOpen && (
+        {confirmDismiss && actionable && (
           <div
             onClick={(e) => e.stopPropagation()}
             className="rounded-xl border border-line bg-bone-deep p-4 space-y-3"
           >
             <p className="font-sans text-sm text-ink-soft">
-              Mark this flag a false alarm. The photo stays live, no action
-              against the photographer. The dismissal is logged.
+              {flag.status === "hidden"
+                ? "Reopen the photo for runners (unless another hidden flag still targets it) and mark this flag a false alarm."
+                : "Mark this flag a false alarm. The photo stays live, no action against the photographer. The dismissal is logged."}
             </p>
             <button
               type="button"
@@ -237,11 +287,6 @@ export function AdminFlagCard({
   );
 }
 
-const primaryFreshBtn =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] bg-fresh text-bone hover:bg-fresh-deep transition-colors rounded-full px-5 py-2";
-
-const secondaryBtn =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2";
-
-const tertiaryBtn =
-  "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-3 py-2";
+const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm}`;
+const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} px-3`;
+const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm}`;

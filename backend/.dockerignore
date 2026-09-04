@@ -1,0 +1,14 @@
+build/
+bin/
+.gradle/
+.kotlin/
+.storage/
+dev/
+scripts/
+*.md
+# Real secrets for local dev — never in an image.
+src/main/resources/application-local.yml
+src/main/resources/application-dev.yml
+src/main/resources/application-prod.yml
+.env
+.env.local

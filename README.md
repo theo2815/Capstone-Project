@@ -79,7 +79,7 @@ Full integration contracts live in `ai-api/docs/integration-architecture.md` and
 | `backend/`    | Spring Boot · Kotlin · PostgreSQL · PayMongo         | AWS EC2           |
 | `website/`    | Next.js · React · Tailwind                           | Vercel            |
 | `mobile/`     | Kotlin · Jetpack Compose · MVVM (Android)            | Google Play Store |
-| `desktop/`    | Electron · React · Node.js (Windows, separate repo)  | Microsoft Store + GitHub Releases |
+| `desktop/`    | Electron · React · Node.js (Windows, separate repo)  | Microsoft Store |
 | Database      | PostgreSQL 16 + pgvector                             | AWS RDS           |
 | Object Storage| AWS S3 (CloudFront CDN planned)                      | AWS               |
 | Task Queue    | Redis                                                | AWS EC2           |
@@ -119,7 +119,7 @@ Each module has its own setup. Start with the module's `CLAUDE.md` and `docs/` f
 ### Prerequisites
 
 - **ai-api**: Python 3.11+, PostgreSQL with pgvector, Redis
-- **backend**: JDK 17+, PostgreSQL, Gradle
+- **backend**: JDK 21, PostgreSQL, Gradle
 - **website**: Node.js 20+, npm
 - **mobile**: Android Studio, JDK 17, an Android device or emulator
 
@@ -182,25 +182,7 @@ Each module also has its own `CLAUDE.md` and `docs/` directory with module-speci
 
 ## Project Status
 
-| Module    | Status                                                                 |
-|-----------|------------------------------------------------------------------------|
-| ai-api    | Phases 1–6 complete; production hardening in progress                  |
-| backend   | All four roles locked; ai-api integration shipped                      |
-| website   | All four roles locked; admin + runner + photographer surfaces complete |
-| mobile    | Runner + photographer flows wired; camera tether iteration in progress |
-| desktop   | Live (BatchMyPhotos, distributed via Microsoft Store + auto-update)    |
-
-### ai-api phases
-
-| Phase   | Feature                                              | Status   |
-|---------|------------------------------------------------------|----------|
-| Phase 1 | Foundation (FastAPI, DB, auth, middleware)           | Complete |
-| Phase 2 | Blur Detection (Laplacian-based)                     | Complete |
-| Phase 3 | Face Recognition (InsightFace + pgvector)            | Complete |
-| Phase 4 | Bib Number Recognition (PaddleOCR)                   | Complete |
-| Phase 5 | Async Batch Processing (Celery + Redis)              | Complete |
-| Phase 6 | C++ Acceleration (pybind11)                          | Complete |
-| Phase 7 | Production Hardening                                 | Pending  |
+QuickPitik is in active development. The AI service, Spring Boot backend, website, and mobile app are all implemented and integrated; production hardening and a real-event beta are the remaining arcs. Phase-by-phase history and the live roadmap live in **`docs/IMPLEMENTATION_PLAN.md`** — this README does not restate per-module status, which drifts.
 
 ---
 

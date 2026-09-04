@@ -1,29 +1,44 @@
 @import "tailwindcss";
 
-/* ── QuickPitik Design Tokens — Quiet Studio (locked 2026-05-01) ── */
+/* ── QuickPitik Design Tokens — "Finish Line" (overhaul 2026-08-25) ──
+   Bolder, more athletic take on the calm "Quiet Studio" pack (2026-05-01):
+   same warm bone + green schema, but a deep forest-green accent (`fresh`
+   #1B7A46), a deeper forest green (`pine`) for depth, big Anton hero type,
+   and Archivo for headings/body. Legacy token names are kept and remapped
+   so pages not yet migrated still render coherently. */
 
 :root {
-  /* Legacy palette (kept so unredesigned pages still render) */
-  --charcoal: #2B2B2B;
-  --cool-gray: #CBCBCB;
-  --warm-white: #F8F7F4;
-  --steel-blue: #6D8196;
-  --teal: #2A7B88;
+  /* Legacy palette (remapped to new values — do not use on new pages) */
+  --charcoal: #17171A;
+  --cool-gray: #C9C7BE;
+  --warm-white: #FAFAF7;
+  --steel-blue: #475569;
+  --teal: #16A34A;
 
-  /* Quiet Studio palette */
-  --bone: #F8F5EE;
-  --bone-deep: #EFEAE0;
-  --ink: #111111;
-  --ink-soft: #2A2A28;
-  --fresh: #2D9E5E;
-  --fresh-deep: #237A48;
-  --slate: #475569;
-  --slate-soft: #64748B;
-  --line: #E5E2D9;
-  --surface: #FFFFFF;
+  /* Finish Line palette — green-forward (keeps the Quiet Studio schema) */
+  --paper: #F8F5EE;      /* primary canvas — warm bone (unchanged schema) */
+  --paper-deep: #EFEAE0; /* alt section / subtle stripe */
+  --ink: #111111;        /* primary text, near-black */
+  --ink-soft: #2A2A28;   /* secondary text */
+
+  --fresh: #1B7A46;      /* PRIMARY accent — deep forest green (CTA, active, key numerals) */
+  --fresh-deep: #14562F; /* fresh hover — deeper */
+  --fresh-tint: #E6F1E9; /* light green wash on paper */
+  --pine: #0C3321;       /* deepest forest green — depth without going black */
+  --pine-soft: #123f28;  /* lighter forest green */
+
+  --slate: #475569;      /* quiet secondary text, kickers */
+  --slate-soft: #64748B; /* tertiary text, captions */
+  --line: #E5E2D9;       /* subtle borders on paper */
+  --line-strong: #D4D2C8;
+  --surface: #FFFFFF;    /* card surfaces */
+
+  /* Aliases so existing `bone` utilities keep resolving */
+  --bone: var(--paper);
+  --bone-deep: var(--paper-deep);
 
   /* Semantic */
-  --background: var(--bone);
+  --background: var(--paper);
   --foreground: var(--ink);
   --muted: var(--slate-soft);
   --accent: var(--fresh);
@@ -31,6 +46,24 @@
   --success: var(--fresh);
   --error: #DC2626;
   --warning: #D97706;
+
+  /* Radii + elevation (athletic: crisp, confident lift) */
+  --radius-chip: 6px;
+  --radius-card: 16px;
+  --radius-xl: 24px;
+  --shadow-card: 0 1px 2px rgba(17,17,20,0.04), 0 8px 24px -12px rgba(17,17,20,0.12);
+  --shadow-lift: 0 2px 4px rgba(17,17,20,0.05), 0 20px 40px -16px rgba(17,17,20,0.22);
+
+  /* Layout — <SiteHeader> height, and the offset every sticky bar that pins
+     beneath it must use. These have to be one number: the header is
+     `sticky top-0`, so a sticky sibling with a smaller offset slides under it
+     and a larger one leaves a gap. Header content is 36px (size-9 bells +
+     avatar) inside 16px padding, plus the 1px border-b; box-sizing: border-box
+     from Tailwind preflight means this value IS the rendered height.
+     Previously each call site hardcoded `top-[3.75rem]` (60px), which was
+     right for neither auth state — the header measured 69px signed-in and
+     ~57px signed-out, because its tallest child depends on who's looking. */
+  --site-header-h: 69px;
 }
 
 @theme inline {
@@ -41,17 +74,25 @@
   --color-steel-blue: var(--steel-blue);
   --color-teal: var(--teal);
 
-  /* Quiet Studio palette */
-  --color-bone: var(--bone);
-  --color-bone-deep: var(--bone-deep);
+  /* Finish Line palette — green-forward */
+  --color-paper: var(--paper);
+  --color-paper-deep: var(--paper-deep);
   --color-ink: var(--ink);
   --color-ink-soft: var(--ink-soft);
   --color-fresh: var(--fresh);
   --color-fresh-deep: var(--fresh-deep);
+  --color-fresh-tint: var(--fresh-tint);
+  --color-pine: var(--pine);
+  --color-pine-soft: var(--pine-soft);
   --color-slate: var(--slate);
   --color-slate-soft: var(--slate-soft);
   --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
   --color-surface: var(--surface);
+
+  /* Legacy aliases (bone utilities still resolve) */
+  --color-bone: var(--bone);
+  --color-bone-deep: var(--bone-deep);
 
   /* Semantic */
   --color-background: var(--background);
@@ -62,6 +103,10 @@
   --color-success: var(--success);
   --color-error: var(--error);
   --color-warning: var(--warning);
+
+  /* Radii + elevation */
+  --radius-chip: var(--radius-chip);
+  --radius-card: var(--radius-card);
 
   /* Derived shades (legacy — for unredesigned pages only) */
   --color-charcoal-light: #5A5A5A;
@@ -77,9 +122,10 @@
   --color-border-strong: var(--cool-gray);
 
   /* Fonts */
-  --font-display: var(--font-bricolage);
-  --font-sans: var(--font-funnel);
-  --font-mono: var(--font-geist-mono);
+  --font-hero: var(--font-anton);      /* hero display + big race numbers */
+  --font-display: var(--font-archivo); /* headings + UI-bold */
+  --font-sans: var(--font-archivo);    /* body */
+  --font-mono: var(--font-geist-mono); /* bibs / times / prices / stats */
 
   /* Animations */
   --animate-fade-up: fade-up 0.7s ease-out both;
@@ -87,6 +133,21 @@
   --animate-breathe: breathe 4s ease-in-out infinite;
   --animate-draw-line: draw-line 1.4s cubic-bezier(0.16, 1, 0.3, 1) both;
   --animate-count-up: count-up 0.8s ease-out both;
+}
+
+/* Type scale — Finish Line readability retune (2026-08-26).
+   Body copy is pinned at explicit text-sm/text-base across ~130 files, so
+   overriding these scale tokens is the site-wide lever (not the body{}
+   font-size below). Shifts the readable range up ~6%; the default unitless
+   line-height ratios ride the new sizes, so leading stays proportional, and
+   the ratios between rungs hold, so hierarchy is preserved. Headings
+   (text-2xl+, .font-hero) stay at Tailwind defaults — already large, and
+   holding them keeps their lead over the now-larger body. */
+@theme {
+  --text-sm: 0.9375rem;   /* 15px (was 14) */
+  --text-base: 1.0625rem; /* 17px (was 16) */
+  --text-lg: 1.1875rem;   /* 19px (was 18) */
+  --text-xl: 1.3125rem;   /* 21px (was 20) */
 }
 
 @keyframes fade-up {
@@ -148,6 +209,25 @@
   }
 }
 
+/* ── Global keyboard focus ──
+   Lives in @layer base so any hand-written `focus:outline-none focus-visible:ring-*`
+   utility chain still wins; everything without one gets this brand outline. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--fresh);
+    outline-offset: 2px;
+  }
+}
+
+/* ── Invalid-field border ──
+   Unlayered on purpose: must beat `border-line` utility classes. Forms already
+   set aria-invalid; this makes the state visible without per-site branches. */
+input[aria-invalid="true"],
+textarea[aria-invalid="true"],
+select[aria-invalid="true"] {
+  border-color: var(--error);
+}
+
 html {
   -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
@@ -158,7 +238,31 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
-  font-feature-settings: "ss01", "cv11";
+  font-size: 17px;      /* readable base — Finish Line retune 2026-08-26 (was 16) */
+  line-height: 1.55;    /* comfortable body leading */
+  letter-spacing: -0.006em;
+}
+
+/* ── Hero display: Anton, condensed uppercase race-banner impact ── */
+.font-hero {
+  font-family: var(--font-hero), var(--font-display), sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.005em;
+  line-height: 0.92;
+  font-weight: 400;
+}
+
+/* ── Race-stripe motif: three green/ink bars (finish-line energy) ── */
+.race-stripe {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.race-stripe > span {
+  display: block;
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
 }
 
 /* ── Nav link hover underline ── */
@@ -222,20 +326,21 @@ body {
 
 /* ── Kicker (mono uppercase eyebrow) ──
    Escape-hatch utility; prefer <Kicker> from src/components/ui/kicker.tsx.
-   Comfort floor: 13px (≤390 SE-class) / 14px (≥400 big phones) / 12px (≥768 desktop)
-   / 0.18em / slate. */
+   Comfort floor (retuned 2026-08-26): 14px (≤390 SE-class) / 15px (≥400 big phones)
+   / 13px (≥768 desktop) / 0.14em / slate. Size up + tracking down = more legible
+   and still width-safe at 375px (KICKER_SIZE_CLASS.sm moves in lockstep). */
 .kicker {
   font-family: var(--font-mono), ui-monospace, monospace;
   text-transform: uppercase;
-  font-size: 13px;
-  letter-spacing: 0.18em;
+  font-size: 14px;
+  letter-spacing: 0.14em;
   color: var(--slate);
 }
 @media (min-width: 400px) {
-  .kicker { font-size: 14px; }
+  .kicker { font-size: 15px; }
 }
 @media (min-width: 768px) {
-  .kicker { font-size: 12px; }
+  .kicker { font-size: 13px; }
 }
 
 /* ── Idle breathing (splash chooser cards) ── */

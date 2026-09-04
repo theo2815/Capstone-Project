@@ -25,10 +25,11 @@ import java.util.UUID
 // doesn't block the PayMongo webhook response (PayMongo retries on >30s
 // silence).
 //
-// Idempotency: orders.email_sent_at is the source of truth. The listener
-// short-circuits if it's already stamped. On a failed Resend call we DON'T
-// stamp it — PayMongo's webhook retry (if it happens) will re-fire the
-// AFTER_COMMIT listener and we'll re-try the send.
+// Idempotency: orders.email_sent_at is the source of truth, claimed with a
+// conditional UPDATE (claimReceiptSend) rather than a read-check-write, so two
+// concurrent webhook retries can't both decide to send. The loser skips. On a
+// failed Resend call the claim is released, so PayMongo's webhook retry (if it
+// happens) re-fires the AFTER_COMMIT listener and the send is re-tried.
 //
 // Each order produces one email. Multi-event carts produce N receipts —
 // clean attribution per event matches the multi-Order split.
@@ -41,6 +42,7 @@ class OrderReceiptEmailService(
     private val resendClient: ResendClient,
     private val resendProperties: ResendProperties,
     private val publicProperties: PublicProperties,
+    private val orderAccessTokenService: OrderAccessTokenService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -67,16 +69,6 @@ class OrderReceiptEmailService(
             return
         }
 
-        if (order.shareToken.isNullOrBlank()) {
-            // V18 backfilled every legacy row, and OrderService.create always
-            // mints one — if we ever land here something upstream is broken.
-            log.warn(
-                "Receipt skipped — order {} has no share token; cannot build bundle URL",
-                orderId,
-            )
-            return
-        }
-
         val items = orderItemRepository.findByIdOrderId(order.id)
         if (items.isEmpty()) {
             log.warn("Receipt skipped — order {} has no items", orderId)
@@ -90,7 +82,10 @@ class OrderReceiptEmailService(
         }
 
         val event = eventRepository.findById(order.eventId).orElse(null)
-        val bundleUrl = buildBundleUrl(orderId, order.shareToken!!)
+        val bundleUrl = buildBundleUrl(
+            orderId,
+            orderAccessTokenService.issue(order, OrderCapability.BUNDLE),
+        )
 
         val html = renderHtml(
             order = order,
@@ -100,29 +95,40 @@ class OrderReceiptEmailService(
         )
         val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
         val subject = buildSubject(event?.name)
+        val recipient = order.recipientEmail
+
+        // Claim the send slot BEFORE calling Resend, not after. The early
+        // emailSentAt check above is only a cheap fast path — two concurrent
+        // webhook retries can both pass it, so this conditional UPDATE is what
+        // actually decides who sends. Placed here, after every skip condition,
+        // so an order that legitimately isn't ready yet (no grants, no items)
+        // never burns its one claim.
+        if (orderRepository.claimReceiptSend(orderId, OffsetDateTime.now()) == 0) {
+            log.info("Receipt already claimed by a concurrent send for order {} — skipping", orderId)
+            return
+        }
 
         try {
             val response = resendClient.send(
                 ResendSendEmailRequest(
                     from = sender,
-                    to = listOf(order.recipientEmail),
+                    to = listOf(recipient),
                     subject = subject,
                     html = html,
                 ),
             )
-            order.emailSentAt = OffsetDateTime.now()
-            orderRepository.save(order)
             log.info(
                 "Receipt sent · orderId={} resendId={} to={}",
                 orderId,
                 response.id,
-                order.recipientEmail,
+                recipient,
             )
         } catch (ex: Exception) {
             log.error("Receipt send failed · orderId={} err={}", orderId, ex.message, ex)
-            // Intentionally do NOT stamp email_sent_at — leaves the door open
-            // for a manual reprocess or a future PayMongo webhook re-delivery
-            // to try again.
+            // Hand the claim back so a manual reprocess or a future PayMongo
+            // webhook re-delivery can try again — the same door the old
+            // don't-stamp-on-failure behaviour left open.
+            orderRepository.releaseReceiptSend(orderId)
         }
     }
 

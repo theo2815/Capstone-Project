@@ -3,6 +3,9 @@ package com.quickpitik.controller
 import com.quickpitik.dto.profile.SelfieRefDto
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.profile.SelfieService
+import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
+import com.quickpitik.service.ratelimit.RateLimiter
+import com.quickpitik.service.ratelimit.acquireOrThrow
 import org.springframework.http.MediaType
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -19,6 +22,7 @@ import java.util.UUID
 @RequestMapping("/api/v1/me/selfies")
 class MeSelfieController(
     private val selfieService: SelfieService,
+    private val rateLimiter: RateLimiter,
 ) {
     @GetMapping
     fun list(@AuthenticationPrincipal principal: AuthPrincipal): List<SelfieRefDto> =
@@ -28,12 +32,16 @@ class MeSelfieController(
     fun upload(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @RequestPart("file") file: MultipartFile,
-    ): SelfieRefDto = selfieService.upload(
-        userId = principal.userId,
-        file = file.bytes,
-        contentType = file.contentType,
-        filename = file.originalFilename,
-    )
+    ): SelfieRefDto {
+        // Selfie uploads can trigger AI quality inference — per-user throttle.
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
+        return selfieService.upload(
+            userId = principal.userId,
+            file = file.bytes,
+            contentType = file.contentType,
+            filename = file.originalFilename,
+        )
+    }
 
     @DeleteMapping("/{id}")
     fun delete(

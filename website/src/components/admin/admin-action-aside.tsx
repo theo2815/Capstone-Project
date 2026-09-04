@@ -9,7 +9,14 @@ import { AdminRejectModal } from "./admin-reject-modal";
 import { AdminResetVerificationModal } from "./admin-reset-verification-modal";
 import { AdminSuspendModal } from "./admin-suspend-modal";
 import { AdminMessageModal } from "./admin-message-modal";
-import { cn } from "@/lib/utils";
+import { Kicker } from "@/components/ui/kicker";
+import {
+  BTN_DANGER,
+  BTN_GHOST,
+  BTN_PRIMARY,
+  BTN_SECONDARY,
+  BTN_SIZE,
+} from "@/components/ui/button-styles";
 
 interface AdminActionAsideProps {
   row: AdminUserRow;
@@ -19,9 +26,10 @@ interface AdminActionAsideProps {
 // page. Carries Approve, Reject, Suspend, Unsuspend, Reset verification,
 // Send message. Modal state is local so the detail page stays a thin shell.
 //
-// One-fresh-per-viewport: only Approve is bg-fresh in its rest state. All
-// other primary buttons rest at border-line text-ink and roll to bg-ink on
-// hover. Reject is a tertiary button (no border).
+// One-fresh-per-viewport: only Approve is bg-fresh in its rest state.
+// Destructive actions (Reject, Suspend) carry the shared BTN_DANGER recipe
+// (error text on bone-deep) so they read as consequential before the modal
+// opens; restorative/neutral actions stay secondary/ghost.
 export function AdminActionAside({ row }: AdminActionAsideProps) {
   const { showToast } = useToast();
   const approve = useAdminUserStore((s) => s.approve);
@@ -108,9 +116,9 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
       aria-label="Admin actions"
       className="lg:sticky lg:top-24 mt-12 lg:mt-0 rounded-2xl border border-line bg-bone p-5 md:p-6"
     >
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      <Kicker as="p" tone="soft">
         Admin actions
-      </p>
+      </Kicker>
       <div className="mt-5 space-y-3">
         {isPending && (
           <>
@@ -124,7 +132,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
             <button
               type="button"
               onClick={() => setRejectOpen(true)}
-              className={tertiaryBtn}
+              className={dangerBtn}
             >
               Reject…
             </button>
@@ -135,7 +143,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
           <button
             type="button"
             onClick={() => setSuspendOpen(true)}
-            className={cn(secondaryBtn, "border-ink/20")}
+            className={dangerBtn}
           >
             Suspend…
           </button>
@@ -170,7 +178,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
 
       {isSuspended && row.suspensionReason && (
         <div className="mt-6 pt-5 border-t border-line">
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
             Suspension reason
           </p>
           <p className="font-sans text-sm text-ink-soft mt-2">
@@ -207,11 +215,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   );
 }
 
-const primaryFreshBtn =
-  "w-full font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] bg-fresh text-bone hover:bg-fresh-deep transition-colors rounded-full px-5 py-2.5";
-
-const secondaryBtn =
-  "w-full font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2.5";
-
-const tertiaryBtn =
-  "w-full font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-5 py-2.5";
+const primaryFreshBtn = `${BTN_PRIMARY} ${BTN_SIZE.sm} w-full`;
+const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm} w-full`;
+const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} w-full`;
+const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm} w-full`;

@@ -159,14 +159,15 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `FACE_MIN_ENROLLMENT_CONFIDENCE` | `0.7` | Skip faces below this detection confidence on enroll |
 | `FACE_DET_SIZE` | `640` | RetinaFace input size |
 | `BIB_MIN_CHARS` | `2` | Minimum digit count for a bib candidate |
-| `MAX_FILE_SIZE` | `10485760` | Max single upload in bytes (10MB) |
+| `MAX_FILE_SIZE` | `26214400` | Max single upload in bytes (25MB) — matches the Spring backend's multipart ceiling |
+| `MAX_IMAGE_DIMENSION` | `12000` | Max px on the longest edge at upload. Fail-closed bomb guard, not a quality gate — enforced by both the single-image and batch validators |
 | `MAX_BATCH_SIZE` | `50` | Max files per `/batch` endpoint |
 | `MEGA_BATCH_MAX_SIZE` | `500` | Max files per `/mega` endpoint |
 | `STREAM_BATCH_MAX_SIZE` | `500` | Max files per `/detect/stream` |
 | `STREAM_CLASSIFY_MAX_SIZE` | `500` | Max files per `/classify/stream` |
 | `MAX_ACTIVE_JOBS_PER_KEY` | `10` | Backpressure cap on concurrent batch jobs per API key |
 | `JOB_RETENTION_DAYS` | `7` | Auto-delete completed/failed jobs older than this |
-| `MAX_INFERENCE_DIMENSION` | `640` | Downscale images before inference to this max side |
+| `MAX_INFERENCE_DIMENSION` | `1280` | Downscale images before inference to this max side. Shared by the face + bib pipelines, endpoints and Celery workers alike |
 | `INFERENCE_SUB_BATCH_SIZE` | `50` | Sub-batch size inside Celery batch tasks |
 | `ONNX_INTRA_OP_THREADS` | `6` | ONNX intra-op thread count |
 | `BLOB_STORE_PATH` | `/tmp/quickpitik-blobs` | Shared volume for batch image staging |

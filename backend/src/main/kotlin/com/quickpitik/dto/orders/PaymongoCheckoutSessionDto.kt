@@ -59,4 +59,17 @@ data class PaymongoCheckoutSessionResponseAttributes(
     @JsonProperty("checkout_url") val checkoutUrl: String = "",
     @JsonProperty("client_key") val clientKey: String = "",
     val status: String = "",
+    val payments: List<PaymongoPaymentResource> = emptyList(),
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class PaymongoPaymentResource(
+    val id: String = "",
+    val type: String = "payment",
+    val attributes: PaymongoPaymentAttributes = PaymongoPaymentAttributes(),
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class PaymongoPaymentAttributes(
+    val status: String = "",
 )

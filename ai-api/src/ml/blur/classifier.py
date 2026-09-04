@@ -10,12 +10,6 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-try:
-    from _quickpitik_cpp import classify_preprocess as _cpp_classify_preprocess
-    _HAS_CPP_PREPROCESS = True
-except ImportError:
-    _HAS_CPP_PREPROCESS = False
-
 
 class BlurClassifier:
     """Classify images into blur categories using an ONNX model.
@@ -130,17 +124,28 @@ class BlurClassifier:
     def _preprocess(self, image: np.ndarray) -> np.ndarray:
         """Preprocess BGR image for ONNX inference.
 
-        Matches YOLOv8 classify inference pipeline:
         1. Center-crop to square (using shorter dimension)
-        2. Resize to input_size x input_size
+        2. Area-average down to input_size x input_size
         3. BGR -> RGB, normalize to [0, 1]
         4. HWC -> CHW, add batch dimension
 
-        Uses C++ fused implementation when available (3-5x faster).
-        """
-        if _HAS_CPP_PREPROCESS:
-            return _cpp_classify_preprocess(image, self.input_size)
+        INTER_AREA, not INTER_LINEAR: the model was trained and validated by
+        Ultralytics on PIL/torchvision resizes, which anti-alias. OpenCV's
+        INTER_LINEAR does not — it point-samples a 2x2 neighbourhood, so a large
+        downscale undersamples and manufactures high-frequency edges. Those fake
+        edges make blurry photos read as `sharp`, the one error the cull must not
+        make. Measured on 1057 labelled val images: blurry-called-sharp 10 -> 4,
+        accuracy 97.45% -> 98.30%, with sharp-called-blurry staying at 0.
 
+        The C++ `classify_preprocess` is deliberately NOT used here. It is also
+        bilinear, so it aliases the same way, and it is not actually faster
+        (measured 0.485 vs 0.481 ms — see docs/cpp-integration.md, which already
+        rates it "neutral to slower"). It also ships in no deployment: the
+        package builds with the setuptools backend and no ext_modules, and the
+        Dockerfile copies only src/ and models/. Keeping the branch meant a dev
+        box with a locally built .pyd classified photos differently from
+        production. See the 2026-08-14 ADR.
+        """
         h, w = image.shape[:2]
         # Center-crop to square (matches YOLOv8 CenterCrop)
         m = min(h, w)
@@ -148,7 +153,7 @@ class BlurClassifier:
         cropped = image[top : top + m, left : left + m]
         # Resize to target size
         resized = cv2.resize(
-            cropped, (self.input_size, self.input_size), interpolation=cv2.INTER_LINEAR
+            cropped, (self.input_size, self.input_size), interpolation=cv2.INTER_AREA
         )
         # BGR -> RGB, normalize to [0, 1]
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
@@ -201,11 +206,20 @@ class BlurClassifier:
 
         If the ONNX model supports dynamic batch (detected at load time),
         preprocesses all images, stacks into (N, 3, H, W), and runs one
-        session.run() call for 3-5x throughput improvement.
+        session.run() call.
 
-        If the model is static batch=1 (common with default YOLOv8 export),
-        runs per-image inference internally — still benefits from the
-        sub-batch decode parallelism in the caller.
+        If the model is static batch=1 (the default YOLOv8 export — pass
+        dynamic=True, see scripts/export_blur_classifier.py), runs per-image
+        inference internally — still benefits from the sub-batch decode
+        parallelism in the caller. Results are identical either way (verified
+        to float32 epsilon).
+
+        Expected gain: on CPU this is small — measured ~1.06x on a 50-image
+        batch (2.8 vs 3.0 ms/image), because the model is tiny (1.4M params)
+        and ONNX Runtime already parallelises a single inference across
+        ONNX_INTRA_OP_THREADS, leaving little per-call overhead to amortise.
+        Batching is what unlocks throughput on GPU (USE_GPU=true); on CPU the
+        real wins are the parallel decode and the client-side downscale.
 
         Args:
             images: List of BGR numpy arrays. None entries are skipped and

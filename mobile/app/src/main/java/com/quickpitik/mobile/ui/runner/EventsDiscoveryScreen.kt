@@ -13,23 +13,27 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
-import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.EventDto
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
+import kotlinx.coroutines.launch
 
 // Date-filter chips, mirroring the website's date dropdown. Each (except ANY) maps
 // to a single lifecycle bucket; selecting one collapses the segmented view into a
@@ -65,35 +69,72 @@ private const val FLAT_PAGE_SIZE = 12
 fun EventsDiscoveryScreen(
     viewModel: RunnerGalleryViewModel,
     savedEventsViewModel: SavedEventsViewModel,
+    inboxViewModel: RunnerInboxViewModel,
     onEventSelected: (EventDto) -> Unit,
-    onNavigateToOrders: () -> Unit,
-    onNavigateToProfile: () -> Unit,
-    onNavigateToSettings: () -> Unit,
+    onOpenOrder: (String) -> Unit,
     onLogout: () -> Unit,
 ) {
     val eventsState by viewModel.eventsState.collectAsState()
     val savedIds by savedEventsViewModel.savedIds.collectAsState()
 
-    var query by remember { mutableStateOf("") }
-    var cityFilter by remember { mutableStateOf("all") }
-    var dateFilter by remember { mutableStateOf(DateFilter.ANY) }
+    // rememberSaveable: filters survive rotation (they still reset on
+    // navigation away — URL-persisted filters are a web-only affordance).
+    var query by rememberSaveable { mutableStateOf("") }
+    var cityFilter by rememberSaveable { mutableStateOf("all") }
+    var dateFilter by rememberSaveable { mutableStateOf(DateFilter.ANY) }
 
-    val context = LocalContext.current
+    val inboxMessages by inboxViewModel.messages.collectAsState()
+    val inboxUnread by inboxViewModel.unreadCount.collectAsState()
+    var showInbox by remember { mutableStateOf(false) }
 
     // Saved-events list is refreshed each time the browse screen is shown (the
     // runner is always authed here), keeping the heart state and the profile
     // race log in sync. Toggle feedback surfaces as a snackbar.
     val snackbarHostState = remember { SnackbarHostState() }
     val savedMessage by savedEventsViewModel.message.collectAsState()
-    // Refetch on every screen entry — the VM's `init` only runs once at process
-    // start, so an event the admin published mid-session would never appear
-    // otherwise. The VM keeps the existing list visible during the refetch
-    // (Loading state is only assigned when no prior Success exists).
+    // Refetch on every screen entry — the VM is graph-scoped and survives all
+    // navigation until logout, so an event the admin published mid-session
+    // would otherwise never appear (web /events refetches every visit). The VM
+    // keeps the existing list visible during the refetch (Loading is only
+    // assigned when no prior Success exists), so this is stale-while-revalidate.
     LaunchedEffect(Unit) { viewModel.fetchPublicEvents() }
-    LaunchedEffect(Unit) { savedEventsViewModel.refresh() }
+    // Saved events + the runner inbox are RUNNER-role-gated server-side — a
+    // photographer browsing in runner view (ViewMode) gets neither: the fetch
+    // and the socket are skipped, the bell and hearts don't render. Web parity.
+    val isTrueRunner = rememberIsTrueRunner()
+    if (isTrueRunner) {
+        LaunchedEffect(Unit) { savedEventsViewModel.refresh() }
+    }
+    // Inbox pushes live over /ws/me/runner/notifications, held only while this
+    // screen is on-screen so a pocketed phone isn't keeping a socket open. The
+    // socket refetches on every (re)open, which also covers the cold-start load.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    if (isTrueRunner) DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> inboxViewModel.connect()
+                Lifecycle.Event.ON_STOP -> inboxViewModel.disconnect()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            inboxViewModel.disconnect()
+        }
+    }
     LaunchedEffect(savedMessage) {
-        savedMessage?.let {
-            snackbarHostState.showSnackbar(it)
+        savedMessage?.let { msg ->
+            // An unsave carries an Undo action (web parity — accidental
+            // unsaves happen); everything else is a plain toast.
+            val undo = savedEventsViewModel.undoCandidate.value
+            val result = snackbarHostState.showSnackbar(
+                message = msg,
+                actionLabel = if (undo != null) "Undo" else null,
+            )
+            if (result == SnackbarResult.ActionPerformed && undo != null) {
+                savedEventsViewModel.undoUnsave(undo.first, undo.second)
+            }
             savedEventsViewModel.clearMessage()
         }
     }
@@ -103,91 +144,55 @@ fun EventsDiscoveryScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(24.dp)
+                .padding(top = 24.dp)
         ) {
-            // ---- Header: brand + cart + avatar menu (same chrome as the gallery) ----
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("RACE PHOTOS · CEBU", style = Typography.labelMedium, color = Slate)
-                    Text(
-                        "QuickPitik",
-                        style = Typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Ink
-                    )
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Cart access lives in the global FloatingCart pill — header icon dropped
-                    // to avoid two affordances pointing at the same overlay.
-                    var menuExpanded by remember { mutableStateOf(false) }
-                    val sessionManager = remember { SessionManager.getInstance(context) }
-                    val userName = sessionManager.getUserName() ?: "Runner"
-                    Box {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(BoneDeep)
-                                .clickable { menuExpanded = true },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                userName.take(1).uppercase(),
-                                color = Ink,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = menuExpanded,
-                            onDismissRequest = { menuExpanded = false },
-                            modifier = Modifier.background(Bone)
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Profile & Selfies", color = Ink) },
-                                onClick = { menuExpanded = false; onNavigateToProfile() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Account Settings", color = Ink) },
-                                onClick = { menuExpanded = false; onNavigateToSettings() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Purchased Photos", color = Ink) },
-                                onClick = { menuExpanded = false; onNavigateToOrders() }
-                            )
-                            Divider(color = SlateSoft)
-                            DropdownMenuItem(
-                                text = { Text("Sign Out", color = ErrorRed) },
-                                onClick = { menuExpanded = false; onLogout() }
-                            )
-                        }
+            // ---- Sticky Header ----
+            RunnerTopBar(
+                kicker = "RACE PHOTOS · CEBU",
+                onLogout = onLogout,
+                trailingContent = {
+                    if (isTrueRunner) {
+                        RunnerInboxBell(
+                            messageCount = inboxMessages.size,
+                            unreadCount = inboxUnread,
+                            onClick = { showInbox = true },
+                        )
                     }
                 }
-            }
+            )
 
             Spacer(Modifier.height(24.dp))
 
-            // ---- Hero ----
-            Text(
-                "Pick your race.",
-                style = Typography.displayLarge,
-                color = Ink
-            )
-            Text(
-                "Find your photos.",
-                style = Typography.displayLarge,
-                color = Fresh
-            )
+            // Pull-to-refresh (Mobile Design skill: every network-backed
+            // list). The spinner settles when the fetch Job actually
+            // completes, not on a timer.
+            var refreshing by remember { mutableStateOf(false) }
+            val refreshScope = rememberCoroutineScope()
+            PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = {
+                    refreshing = true
+                    refreshScope.launch {
+                        if (isTrueRunner) savedEventsViewModel.refresh()
+                        viewModel.fetchPublicEvents().join()
+                        refreshing = false
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp)
+            ) {
+                // ---- Hero (Anton uppercase — Finish Line) ----
+                HeroText("Pick your race.")
+            HeroText("Find your photos.", color = Fresh)
             Spacer(Modifier.height(8.dp))
             Text(
                 "Open an event, then search by face or bib. Free to look — pay only for the ones you keep.",
@@ -302,16 +307,37 @@ fun EventsDiscoveryScreen(
                         SEGMENTS.forEach { segment ->
                             val items = withState.filter { it.second == segment.state }
                             if (items.isNotEmpty()) {
+                                // Explicit key: every forEach iteration shares
+                                // one composite key hash, so positional storage
+                                // would restore counts onto the wrong segment.
+                                var visibleCount by rememberSaveable(
+                                    key = "segment-count-${segment.state.name}",
+                                ) {
+                                    mutableStateOf(FLAT_PAGE_SIZE)
+                                }
                                 if (rendered > 0) Spacer(Modifier.height(28.dp))
                                 SegmentHeader(segment, items.size)
                                 Spacer(Modifier.height(12.dp))
-                                EventGrid(items, savedIds, onEventSelected, savedEventsViewModel::toggle)
+                                EventGrid(
+                                    items.take(visibleCount),
+                                    savedIds,
+                                    onEventSelected,
+                                    savedEventsViewModel::toggle,
+                                )
+                                if (items.size > visibleCount) {
+                                    Spacer(Modifier.height(16.dp))
+                                    GhostCta(
+                                        text = "LOAD MORE",
+                                        onClick = { visibleCount += FLAT_PAGE_SIZE },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                                 rendered++
                             }
                         }
                     } else {
                         // Flat filtered view with load-more, like the web's FlatResults.
-                        var visibleCount by remember(query, cityFilter, dateFilter) { mutableStateOf(FLAT_PAGE_SIZE) }
+                        var visibleCount by rememberSaveable(query, cityFilter, dateFilter) { mutableStateOf(FLAT_PAGE_SIZE) }
                         val cityLabel = if (cityFilter == "all") "All cities" else cityFilter
                         Text(
                             "${filtered.size} of ${withState.size} ${if (withState.size == 1) "race" else "races"}",
@@ -343,6 +369,8 @@ fun EventsDiscoveryScreen(
 
             Spacer(Modifier.height(24.dp))
         }
+        }
+        }
     }
         SnackbarHost(
             hostState = snackbarHostState,
@@ -350,6 +378,22 @@ fun EventsDiscoveryScreen(
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(16.dp)
+        )
+    }
+
+    if (showInbox) {
+        RunnerInboxSheet(
+            messages = inboxMessages,
+            onDismiss = { showInbox = false },
+            onMarkRead = { inboxViewModel.markRead(it) },
+            onMarkAllRead = { inboxViewModel.markAllRead() },
+            onRemove = { inboxViewModel.remove(it) },
+            onOpenOrder = { orderId ->
+                showInbox = false
+                onOpenOrder(orderId)
+            },
+            fetchError = inboxViewModel.fetchError.collectAsState().value,
+            onRetry = { inboxViewModel.fetchMessages() },
         )
     }
 }
@@ -505,7 +549,7 @@ private fun EventTile(
             ) {
                 if (!event.bannerUrl.isNullOrEmpty()) {
                     AsyncImage(
-                        model = event.bannerUrl,
+                        model = RetrofitClient.resolveImageUrl(event.bannerUrl),
                         contentDescription = event.name,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
@@ -518,15 +562,26 @@ private fun EventTile(
                         modifier = Modifier.align(Alignment.Center)
                     )
                 }
-                StatusChip(
-                    state = state,
-                    modifier = Modifier.align(Alignment.TopStart).padding(10.dp)
-                )
-                SaveButton(
-                    saved = saved,
-                    onToggle = { onToggleSave(event) },
-                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp)
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    StatusChip(
+                        state = state,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    // Saved events are RUNNER-gated server-side — hidden for a
+                    // photographer browsing in runner view (see rememberIsTrueRunner).
+                    if (rememberIsTrueRunner()) {
+                        SaveButton(
+                            saved = saved,
+                            onToggle = { onToggleSave(event) },
+                        )
+                    }
+                }
             }
             Column(modifier = Modifier.padding(14.dp)) {
                 Text(
@@ -579,27 +634,27 @@ private fun SaveButton(saved: Boolean, onToggle: () -> Unit, modifier: Modifier 
 @Composable
 private fun StatusChip(state: EventState, modifier: Modifier = Modifier) {
     val (label, accent) = when (state) {
-        EventState.LIVE -> "PHOTOS UPLOADING" to Fresh
-        EventState.UPCOMING -> "SAVE THE DATE" to Bone
-        EventState.OPEN -> "PHOTOS READY" to Bone
+        EventState.LIVE -> "UPLOADING" to Fresh
+        EventState.UPCOMING -> "UPCOMING" to Bone
+        EventState.OPEN -> "READY" to Bone
         EventState.PAST -> "ARCHIVE" to Bone.copy(alpha = 0.7f)
     }
     Surface(
-        shape = RoundedCornerShape(percent = 100),
-        color = Ink.copy(alpha = 0.55f),
+        shape = PillShape,
+        color = Ink.copy(alpha = 0.75f),
         modifier = modifier
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(accent))
             Text(
-                label,
-                style = Typography.labelSmall,
-                fontWeight = FontWeight.Bold,
+                text = label,
+                style = Typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
                 color = accent,
+                maxLines = 1,
             )
         }
     }

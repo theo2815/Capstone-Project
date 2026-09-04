@@ -4,7 +4,9 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,12 +22,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -34,7 +37,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -47,18 +52,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PayoutAccountDto
+import com.quickpitik.mobile.data.remote.RegionDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SocialLinkDto
-import com.quickpitik.mobile.ui.theme.BadgeShape
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.ErrorRed
@@ -70,6 +75,7 @@ import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.Kicker
 import com.quickpitik.mobile.ui.theme.Line
 import com.quickpitik.mobile.ui.theme.LoadingSkeleton
+import com.quickpitik.mobile.ui.theme.PillShape
 import com.quickpitik.mobile.ui.theme.PrimaryCta
 import com.quickpitik.mobile.ui.theme.QpCard
 import com.quickpitik.mobile.ui.theme.QpCardShape
@@ -78,90 +84,13 @@ import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.StatusChip
 import com.quickpitik.mobile.ui.theme.StatusTone
 import com.quickpitik.mobile.ui.theme.Typography
-import com.quickpitik.mobile.ui.theme.WarningOrange
 
 // ─── Reference data ──────────────────────────────────────────────────────────
-// PH regions/provinces is pre-existing inline data (separate cleanup task in
-// mobile/tasks.md "Now" — backend-owned reference data). Keeping the structure
-// surgical to today's redesign.
-
-data class PHProvince(val code: String, val name: String)
-data class PHRegion(val code: String, val name: String, val provinces: List<PHProvince>)
-
-val PH_REGIONS = listOf(
-    PHRegion("ncr", "National Capital Region (NCR)", listOf(PHProvince("metro-manila", "Metro Manila"))),
-    PHRegion("car", "Cordillera Administrative Region (CAR)", listOf(
-        PHProvince("abra", "Abra"), PHProvince("apayao", "Apayao"), PHProvince("benguet", "Benguet"),
-        PHProvince("ifugao", "Ifugao"), PHProvince("kalinga", "Kalinga"), PHProvince("mountain-province", "Mountain Province"),
-    )),
-    PHRegion("region-1", "Region I (Ilocos Region)", listOf(
-        PHProvince("ilocos-norte", "Ilocos Norte"), PHProvince("ilocos-sur", "Ilocos Sur"),
-        PHProvince("la-union", "La Union"), PHProvince("pangasinan", "Pangasinan"),
-    )),
-    PHRegion("region-2", "Region II (Cagayan Valley)", listOf(
-        PHProvince("batanes", "Batanes"), PHProvince("cagayan", "Cagayan"),
-        PHProvince("isabela", "Isabela"), PHProvince("nueva-vizcaya", "Nueva Vizcaya"), PHProvince("quirino", "Quirino"),
-    )),
-    PHRegion("region-3", "Region III (Central Luzon)", listOf(
-        PHProvince("aurora", "Aurora"), PHProvince("bataan", "Bataan"), PHProvince("bulacan", "Bulacan"),
-        PHProvince("nueva-ecija", "Nueva Ecija"), PHProvince("pampanga", "Pampanga"),
-        PHProvince("tarlac", "Tarlac"), PHProvince("zambales", "Zambales"),
-    )),
-    PHRegion("region-4a", "Region IV-A (CALABARZON)", listOf(
-        PHProvince("batangas", "Batangas"), PHProvince("cavite", "Cavite"),
-        PHProvince("laguna", "Laguna"), PHProvince("quezon", "Quezon"), PHProvince("rizal", "Rizal"),
-    )),
-    PHRegion("region-4b", "Region IV-B (MIMAROPA)", listOf(
-        PHProvince("marinduque", "Marinduque"), PHProvince("occidental-mindoro", "Occidental Mindoro"),
-        PHProvince("oriental-mindoro", "Oriental Mindoro"), PHProvince("palawan", "Palawan"), PHProvince("romblon", "Romblon"),
-    )),
-    PHRegion("region-5", "Region V (Bicol Region)", listOf(
-        PHProvince("albay", "Albay"), PHProvince("camarines-norte", "Camarines Norte"),
-        PHProvince("camarines-sur", "Camarines Sur"), PHProvince("catanduanes", "Catanduanes"),
-        PHProvince("masbate", "Masbate"), PHProvince("sorsogon", "Sorsogon"),
-    )),
-    PHRegion("region-6", "Region VI (Western Visayas)", listOf(
-        PHProvince("aklan", "Aklan"), PHProvince("antique", "Antique"), PHProvince("capiz", "Capiz"),
-        PHProvince("guimaras", "Guimaras"), PHProvince("iloilo", "Iloilo"), PHProvince("negros-occidental", "Negros Occidental"),
-    )),
-    PHRegion("region-7", "Region VII (Central Visayas)", listOf(
-        PHProvince("bohol", "Bohol"), PHProvince("cebu", "Cebu"),
-        PHProvince("negros-oriental", "Negros Oriental"), PHProvince("siquijor", "Siquijor"),
-    )),
-    PHRegion("region-8", "Region VIII (Eastern Visayas)", listOf(
-        PHProvince("biliran", "Biliran"), PHProvince("leyte", "Leyte"), PHProvince("northern-samar", "Northern Samar"),
-        PHProvince("samar", "Samar"), PHProvince("southern-leyte", "Southern Leyte"), PHProvince("eastern-samar", "Eastern Samar"),
-    )),
-    PHRegion("region-9", "Region IX (Zamboanga Peninsula)", listOf(
-        PHProvince("zamboanga-del-norte", "Zamboanga del Norte"),
-        PHProvince("zamboanga-del-sur", "Zamboanga del Sur"),
-        PHProvince("zamboanga-sibugay", "Zamboanga Sibugay"),
-    )),
-    PHRegion("region-10", "Region X (Northern Mindanao)", listOf(
-        PHProvince("bukidnon", "Bukidnon"), PHProvince("camiguin", "Camiguin"),
-        PHProvince("lanao-del-norte", "Lanao del Norte"), PHProvince("misamis-occidental", "Misamis Occidental"),
-        PHProvince("misamis-oriental", "Misamis Oriental"),
-    )),
-    PHRegion("region-11", "Region XI (Davao Region)", listOf(
-        PHProvince("davao-de-oro", "Davao de Oro"), PHProvince("davao-del-norte", "Davao del Norte"),
-        PHProvince("davao-del-sur", "Davao del Sur"), PHProvince("davao-occidental", "Davao Occidental"),
-        PHProvince("davao-oriental", "Davao Oriental"),
-    )),
-    PHRegion("region-12", "Region XII (SOCCSKSARGEN)", listOf(
-        PHProvince("cotabato", "Cotabato"), PHProvince("sarangani", "Sarangani"),
-        PHProvince("south-cotabato", "South Cotabato"), PHProvince("sultan-kudarat", "Sultan Kudarat"),
-    )),
-    PHRegion("region-13", "Region XIII (Caraga)", listOf(
-        PHProvince("agusan-del-norte", "Agusan del Norte"), PHProvince("agusan-del-sur", "Agusan del Sur"),
-        PHProvince("dinagat-islands", "Dinagat Islands"), PHProvince("surigao-del-norte", "Surigao del Norte"),
-        PHProvince("surigao-del-sur", "Surigao del Sur"),
-    )),
-    PHRegion("barmm", "Bangsamoro Autonomous Region in Muslim Mindanao (BARMM)", listOf(
-        PHProvince("basilan", "Basilan"), PHProvince("lanao-del-sur", "Lanao del Sur"),
-        PHProvince("maguindanao-del-norte", "Maguindanao del Norte"), PHProvince("maguindanao-del-sur", "Maguindanao del Sur"),
-        PHProvince("sulu", "Sulu"), PHProvince("tawi-tawi", "Tawi-Tawi"),
-    )),
-)
+// PH regions/provinces come from the backend (`GET /api/v1/regions`), not from
+// this file. A hardcoded 75-line copy lived here until 2026-08-16 while the
+// website carried a third copy of its own, so a region added backend-side
+// reached neither client. The list arrives via PhotographerDashboardViewModel
+// .regions as List<RegionDto> — see that DTO for the wire shape.
 
 // ─── Platform + payout constants (website parity) ────────────────────────────
 
@@ -245,13 +174,8 @@ private fun validatePayoutNumber(method: String, raw: String): String? {
     return null
 }
 
-private fun resolveImageUrl(url: String?): String? {
-    if (url == null || url.trim().isEmpty()) return null
-    // M-2 (2026-05-27 PM): host derived from RetrofitClient.BASE_URL.
-    if (url.startsWith("/")) return "${RetrofitClient.backendOrigin}$url"
-    return url.replace("localhost", RetrofitClient.backendHost)
-        .replace("127.0.0.1", RetrofitClient.backendHost)
-}
+private fun resolveImageUrl(url: String?): String? =
+    RetrofitClient.resolveImageUrl(url?.takeIf { it.isNotBlank() })
 
 // ─── Sheet modes ─────────────────────────────────────────────────────────────
 
@@ -279,12 +203,32 @@ fun PhotographerSettingsScreen(
     val brandSettings by viewModel.brandSettings.collectAsState()
     val payoutAccounts by viewModel.payoutAccounts.collectAsState()
     val socials by viewModel.socials.collectAsState()
+    val regions by viewModel.regions.collectAsState()
     val isSaving by viewModel.isSavingSettings.collectAsState()
     val actionMessage by viewModel.settingsActionState.collectAsState()
+    val settingsLoadError by viewModel.settingsLoadError.collectAsState()
+
+    // Hydration gate: with no cached brand payload and a failed fetch, the
+    // form would render EMPTY but editable — and Save would overwrite real
+    // server values with blanks. Show the failure instead.
+    if (brandSettings == null && settingsLoadError != null) {
+        Box(
+            modifier = modifier.fillMaxSize().background(Bone),
+            contentAlignment = Alignment.Center,
+        ) {
+            ErrorView(
+                message = settingsLoadError ?: "",
+                title = "Couldn't load your settings",
+                onRetry = { viewModel.fetchSettings() },
+            )
+        }
+        return
+    }
 
     // Batched form inputs (Save button)
     var brandName by remember { mutableStateOf("") }
     var bio by remember { mutableStateOf("") }
+    var brandColor by remember { mutableStateOf("none") }
     var handle by remember { mutableStateOf("") }
     var regionCode by remember { mutableStateOf("") }
     var provinceCode by remember { mutableStateOf("") }
@@ -293,51 +237,20 @@ fun PhotographerSettingsScreen(
     var coverUri by remember { mutableStateOf<String?>(null) }
     var watermarkUri by remember { mutableStateOf<String?>(null) }
 
-    var avatarBytes by remember { mutableStateOf<ByteArray?>(null) }
-    var coverBytes by remember { mutableStateOf<ByteArray?>(null) }
-    var watermarkBytes by remember { mutableStateOf<ByteArray?>(null) }
-
     val avatarPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        uri?.let {
-            try {
-                context.contentResolver.openInputStream(it)?.use { stream ->
-                    avatarBytes = stream.readBytes()
-                    avatarUri = it.toString()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to load image", Toast.LENGTH_SHORT).show()
-            }
-        }
+        uri?.let { avatarUri = it.toString() }
     }
     val coverPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        uri?.let {
-            try {
-                context.contentResolver.openInputStream(it)?.use { stream ->
-                    coverBytes = stream.readBytes()
-                    coverUri = it.toString()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to load image", Toast.LENGTH_SHORT).show()
-            }
-        }
+        uri?.let { coverUri = it.toString() }
     }
     val watermarkPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        uri?.let {
-            try {
-                context.contentResolver.openInputStream(it)?.use { stream ->
-                    watermarkBytes = stream.readBytes()
-                    watermarkUri = it.toString()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to load image", Toast.LENGTH_SHORT).show()
-            }
-        }
+        uri?.let { watermarkUri = it.toString() }
     }
 
     LaunchedEffect(actionMessage) {
@@ -347,28 +260,34 @@ fun PhotographerSettingsScreen(
                 avatarUri = null
                 coverUri = null
                 watermarkUri = null
-                avatarBytes = null
-                coverBytes = null
-                watermarkBytes = null
             }
             viewModel.clearSettingsActionState()
         }
     }
 
+    // Hydrate ONCE per screen mount. The old per-field `if (x.isEmpty())`
+    // guard meant a field the photographer deliberately CLEARED was silently
+    // repopulated from the server on the next fetchSettings() — an emptied bio
+    // would spring back mid-edit. A single hydration pass keeps later
+    // refetches from clobbering any in-progress edit, cleared or typed.
+    var formHydrated by remember { mutableStateOf(false) }
     LaunchedEffect(brandSettings) {
-        brandSettings?.let {
-            if (brandName.isEmpty()) brandName = it.brandName.orEmpty()
-            if (bio.isEmpty()) bio = it.bio.orEmpty()
-            if (handle.isEmpty()) handle = it.handle.orEmpty()
-            if (regionCode.isEmpty()) regionCode = it.regionCode.orEmpty()
-            if (provinceCode.isEmpty()) provinceCode = it.provinceCode.orEmpty()
-        }
+        val s = brandSettings ?: return@LaunchedEffect
+        if (formHydrated) return@LaunchedEffect
+        formHydrated = true
+        brandName = s.brandName.orEmpty()
+        bio = s.bio.orEmpty()
+        brandColor = s.brandColor?.takeIf { it.isNotBlank() } ?: "none"
+        handle = s.handle.orEmpty()
+        regionCode = s.regionCode.orEmpty()
+        provinceCode = s.provinceCode.orEmpty()
     }
 
     var socialSheetMode by remember { mutableStateOf<SocialSheetMode?>(null) }
     var payoutSheetMode by remember { mutableStateOf<PayoutSheetMode?>(null) }
     var socialRowToDelete by remember { mutableStateOf<SocialLinkDto?>(null) }
     var payoutRowToDelete by remember { mutableStateOf<PayoutAccountDto?>(null) }
+    var hasAttemptedSubmit by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -380,11 +299,131 @@ fun PhotographerSettingsScreen(
         item("header") {
             Kicker(text = "Settings · brand + payouts", color = Slate)
         }
+        item("heroIdentity") {
+            val resolvedAvatar = avatarUri ?: resolveImageUrl(brandSettings?.avatarUrl)
+            Card(
+                shape = QpCardShape,
+                colors = CardDefaults.cardColors(containerColor = BoneDeep),
+                border = BorderStroke(1.dp, Line),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        // Interactive 76dp Avatar with tap-to-change
+                        Box(
+                            modifier = Modifier
+                                .size(76.dp)
+                                .clip(CircleShape)
+                                .background(Fresh)
+                                .border(2.dp, Line, CircleShape)
+                                .clickable {
+                                    avatarPickerLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                    )
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (!resolvedAvatar.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = resolvedAvatar,
+                                    contentDescription = "Studio avatar",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop,
+                                )
+                            } else {
+                                Text(
+                                    text = brandName.ifBlank { "Photographer" }.take(1).uppercase(),
+                                    color = Bone,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 30.sp,
+                                )
+                            }
+                        }
+
+                        // Studio info & role badge
+                        Column(modifier = Modifier.weight(1f)) {
+                            Surface(
+                                shape = PillShape,
+                                color = Ink,
+                                modifier = Modifier.padding(bottom = 6.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                ) {
+                                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Fresh))
+                                    Text(
+                                        text = "PHOTOGRAPHER STUDIO",
+                                        style = Typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
+                                        color = Bone,
+                                    )
+                                }
+                            }
+                            Text(
+                                text = brandName.ifBlank { "Studio Settings" },
+                                style = Typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = Ink,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = if (handle.isNotBlank()) "@$handle" else "Setup public handle below",
+                                style = Typography.bodySmall,
+                                color = Slate,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+
+                    // Avatar Actions
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        PrimaryCta(
+                            text = "Change photo",
+                            onClick = {
+                                avatarPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                        )
+                        if (avatarUri != null) {
+                            GhostCta(
+                                text = "Revert staged",
+                                onClick = { avatarUri = null },
+                            )
+                        }
+                    }
+                }
+            }
+        }
         item("verification") {
             VerificationSlab(
                 state = verificationState,
+                brandSettings = brandSettings,
+                socials = socials,
+                payoutAccounts = payoutAccounts,
+                handle = handle,
+                regionCode = regionCode,
+                brandName = brandName,
+                bio = bio,
+                avatarUri = avatarUri,
+                coverUri = coverUri,
                 onSubmit = { viewModel.submitVerification() },
                 onWithdraw = { viewModel.withdrawVerification() },
+                onAttemptSubmit = { hasAttemptedSubmit = true },
+                onRetry = { viewModel.fetchVerificationStatus() },
             )
         }
         item("publicProfile") {
@@ -398,6 +437,8 @@ fun PhotographerSettingsScreen(
                 onBrandNameChange = { brandName = it },
                 bio = bio,
                 onBioChange = { bio = it },
+                brandColor = brandColor,
+                onBrandColorChange = { brandColor = it },
                 onPickAvatar = {
                     avatarPickerLauncher.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -408,6 +449,7 @@ fun PhotographerSettingsScreen(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                     )
                 },
+                showValidation = hasAttemptedSubmit,
             )
         }
         item("watermark") {
@@ -420,15 +462,21 @@ fun PhotographerSettingsScreen(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                     )
                 },
+                showValidation = hasAttemptedSubmit,
             )
         }
         item("handle") {
             HairlineDivider()
-            HandleSlab(value = handle, onChange = { handle = it })
+            HandleSlab(
+                value = handle,
+                onChange = { handle = it },
+                showValidation = hasAttemptedSubmit,
+            )
         }
         item("region") {
             HairlineDivider()
             RegionSlab(
+                regions = regions,
                 regionCode = regionCode,
                 provinceCode = provinceCode,
                 onRegionChange = {
@@ -436,6 +484,7 @@ fun PhotographerSettingsScreen(
                     provinceCode = ""
                 },
                 onProvinceChange = { provinceCode = it },
+                showValidation = hasAttemptedSubmit,
             )
         }
         item("socials") {
@@ -445,6 +494,7 @@ fun PhotographerSettingsScreen(
                 onAdd = { socialSheetMode = SocialSheetMode.Add },
                 onEdit = { socialSheetMode = SocialSheetMode.Edit(it) },
                 onAskDelete = { socialRowToDelete = it },
+                showValidation = hasAttemptedSubmit,
             )
         }
         item("payouts") {
@@ -455,6 +505,7 @@ fun PhotographerSettingsScreen(
                 onEdit = { payoutSheetMode = PayoutSheetMode.Edit(it) },
                 onAskDelete = { payoutRowToDelete = it },
                 onSetPrimary = { viewModel.setPrimaryPayoutAccount(it.id) },
+                showValidation = hasAttemptedSubmit,
             )
         }
         item("actions") {
@@ -471,9 +522,10 @@ fun PhotographerSettingsScreen(
                         regionCode = regionCode,
                         provinceCode = provinceCode,
                         socialUrl = "",
-                        avatarBytes = avatarBytes,
-                        coverBytes = coverBytes,
-                        watermarkBytes = watermarkBytes,
+                        avatarUri = avatarUri,
+                        coverUri = coverUri,
+                        watermarkUri = watermarkUri,
+                        brandColor = brandColor,
                     )
                 },
                 onSignOut = onLogout,
@@ -500,13 +552,11 @@ fun PhotographerSettingsScreen(
         PayoutEditorSheet(
             mode = mode,
             onDismiss = { payoutSheetMode = null },
-            onConfirm = { method, accountName, accountNumber, qrBytes ->
+            onConfirm = { method, accountName, accountNumber, qrUri ->
                 when (mode) {
-                    is PayoutSheetMode.Add -> viewModel.addPayoutAccount(method, accountName, accountNumber, qrBytes)
-                    is PayoutSheetMode.Edit -> {
-                        viewModel.updatePayoutAccount(mode.account.id, accountName, accountNumber)
-                        if (qrBytes != null) viewModel.uploadPayoutAccountQr(mode.account.id, qrBytes)
-                    }
+                    is PayoutSheetMode.Add -> viewModel.addPayoutAccount(method, accountName, accountNumber, qrUri)
+                    is PayoutSheetMode.Edit ->
+                        viewModel.updatePayoutAccount(mode.account.id, accountName, accountNumber, qrUri)
                 }
                 payoutSheetMode = null
             },
@@ -564,7 +614,9 @@ fun PhotographerSettingsScreen(
 
 @Composable
 private fun HairlineDivider() {
-    Divider(thickness = 1.dp, color = Line)
+    Column(modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)) {
+        Divider(thickness = 1.dp, color = Line)
+    }
 }
 
 // ─── Slab: Verification ──────────────────────────────────────────────────────
@@ -572,8 +624,19 @@ private fun HairlineDivider() {
 @Composable
 private fun VerificationSlab(
     state: VerificationUiState,
+    brandSettings: com.quickpitik.mobile.data.remote.BrandSettingsResponseDto?,
+    socials: List<SocialLinkDto>,
+    payoutAccounts: List<PayoutAccountDto>,
+    handle: String,
+    regionCode: String,
+    brandName: String,
+    bio: String,
+    avatarUri: String?,
+    coverUri: String?,
     onSubmit: () -> Unit,
     onWithdraw: () -> Unit,
+    onAttemptSubmit: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     Column {
         Kicker(text = "Verification", color = SlateSoft)
@@ -582,7 +645,10 @@ private fun VerificationSlab(
             is VerificationUiState.Loading -> {
                 LoadingSkeleton(modifier = Modifier.fillMaxWidth().height(40.dp))
             }
-            is VerificationUiState.Error -> ErrorView(message = state.message)
+            is VerificationUiState.Error -> ErrorView(
+                message = state.message,
+                onRetry = onRetry,
+            )
             is VerificationUiState.Success -> {
                 val data = state.verification
                 val status = data.status.lowercase()
@@ -598,30 +664,110 @@ private fun VerificationSlab(
                     "approved" -> "Your profile is public and discoverable by runners."
                     "pending" -> "Sit tight — an admin will review within 1–2 days."
                     "rejected" -> data.suspensionReason ?: "Update your profile and resubmit."
-                    else -> "Fill the slabs below, then submit for review."
+                    else -> "Fill all sections below to enable submission for review."
                 }
                 Text(text = body, color = Slate, style = Typography.bodyMedium)
 
-                if (!data.missing.isNullOrEmpty() && status != "approved") {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Missing: ${data.missing.joinToString(" · ")}",
-                        color = SlateSoft,
-                        style = Typography.bodySmall,
+                // Requirement set aligned with the website's
+                // useAllRequiredFilled (and the backend's missing[]): COVER is
+                // required, BIO is optional. Mobile had these inverted, so the
+                // two clients disagreed about what blocks submission.
+                val localMissing = buildList {
+                    if (brandSettings?.avatarUrl.isNullOrBlank() && avatarUri == null) add("Avatar")
+                    if (brandSettings?.coverUrl.isNullOrBlank() && coverUri == null) add("Cover photo")
+                    if (brandName.isBlank()) add("Brand name")
+                    if (handle.isBlank()) add("Public handle")
+                    if (regionCode.isBlank()) add("Region")
+                    if (socials.isEmpty()) add("Social link")
+                    if (payoutAccounts.isEmpty()) add("Payout method")
+                }
+                val allMissing = (data.missing.orEmpty() + localMissing).distinct()
+                val isComplete = allMissing.isEmpty()
+
+                var showIncompleteDialog by remember { mutableStateOf(false) }
+
+                if (showIncompleteDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showIncompleteDialog = false },
+                        containerColor = Bone,
+                        title = {
+                            Text(
+                                text = "Incomplete Profile Setup",
+                                color = Ink,
+                                style = Typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = "Please fill in all empty sections below before submitting your profile for review.",
+                                color = Slate,
+                                style = Typography.bodyMedium
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showIncompleteDialog = false }) {
+                                Text("GOT IT", color = Ink, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     )
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
+                // Withdrawing takes you out of the admin's queue — confirm
+                // first (web gates this behind a danger confirm too).
+                var confirmWithdrawReview by remember { mutableStateOf(false) }
+                if (confirmWithdrawReview) {
+                    AlertDialog(
+                        onDismissRequest = { confirmWithdrawReview = false },
+                        containerColor = Bone,
+                        title = {
+                            Text(
+                                text = "Withdraw from review?",
+                                color = Ink,
+                                style = Typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = "Your submission leaves the admin queue and you'll need to submit again when ready.",
+                                color = Slate,
+                                style = Typography.bodyMedium,
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                confirmWithdrawReview = false
+                                onWithdraw()
+                            }) {
+                                Text("WITHDRAW", color = ErrorRed, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { confirmWithdrawReview = false }) {
+                                Text("KEEP IT", color = Ink, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                    )
+                }
                 when (status) {
                     "pending" -> GhostCta(
                         text = "Withdraw review",
-                        onClick = onWithdraw,
+                        onClick = { confirmWithdrawReview = true },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     "approved" -> Unit
                     else -> GhostCta(
                         text = "Submit for review",
-                        onClick = onSubmit,
+                        onClick = {
+                            onAttemptSubmit()
+                            if (isComplete) {
+                                onSubmit()
+                            } else {
+                                showIncompleteDialog = true
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -642,11 +788,22 @@ private fun PublicProfileSlab(
     onBrandNameChange: (String) -> Unit,
     bio: String,
     onBioChange: (String) -> Unit,
+    brandColor: String,
+    onBrandColorChange: (String) -> Unit,
     onPickAvatar: () -> Unit,
     onPickCover: () -> Unit,
+    showValidation: Boolean = false,
 ) {
+    // Bio is optional; the cover is required (web requirement set).
+    val isMissing = (avatarRemoteUrl.isNullOrBlank() && avatarStagedUri == null) ||
+            (coverRemoteUrl.isNullOrBlank() && coverStagedUri == null) ||
+            brandName.isBlank()
+    val isError = showValidation && isMissing
     Column {
-        Kicker(text = "Public profile", color = SlateSoft)
+        Kicker(
+            text = if (isError) "Public profile  ·  FILL THIS SECTION" else "Public profile",
+            color = if (isError) ErrorRed else SlateSoft
+        )
         Spacer(modifier = Modifier.height(12.dp))
 
         // Cover banner — tap to replace
@@ -668,6 +825,8 @@ private fun PublicProfileSlab(
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
+                // Cover is REQUIRED for verification (web parity — mobile
+                // used to call it optional while requiring the optional bio).
                 Text(text = "TAP TO ADD COVER", color = SlateSoft, style = Typography.labelMedium)
             }
         }
@@ -727,12 +886,55 @@ private fun PublicProfileSlab(
             label = "Bio",
             value = bio,
             onChange = onBioChange,
-            placeholder = "A short line runners see on your profile.",
+            placeholder = "A short line runners see on your profile (optional).",
             singleLine = false,
             minLines = 3,
         )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Brand accent — the color the public profile renders as the cover
+        // fallback + hairline (web COLOR_ORDER / BRAND_COLOR_HEX). Mobile
+        // could RENDER a brand color but never set one; every save used to
+        // hardcode "none" and wipe a website-chosen accent.
+        Kicker(text = "Brand accent", color = SlateSoft)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            BRAND_COLOR_SWATCHES.forEach { (wire, hex) ->
+                val selected = brandColor == wire
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(if (wire == "none") Bone else hex)
+                        .border(
+                            width = if (selected) 2.dp else 1.dp,
+                            color = if (selected) Ink else Line,
+                            shape = CircleShape,
+                        )
+                        .clickable { onBrandColorChange(wire) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (wire == "none") {
+                        Text(text = "—", color = SlateSoft, style = Typography.labelMedium)
+                    }
+                }
+            }
+        }
     }
 }
+
+// Wire value → swatch fill, mirroring the website's BRAND_COLOR_HEX (the wire
+// values are the backend's ALLOWED_BRAND_COLORS; hexes are the website's, so
+// the two clients preview identically).
+private val BRAND_COLOR_SWATCHES: List<Pair<String, Color>> = listOf(
+    "none" to Color.Transparent,
+    "fresh" to Color(0xFF2D9E5E),
+    "amber" to Color(0xFFD97706),
+    "indigo" to Color(0xFF4F46E5),
+    "rose" to Color(0xFFE11D48),
+    "ink" to Color(0xFF111111),
+)
 
 // ─── Slab: Watermark ─────────────────────────────────────────────────────────
 
@@ -741,9 +943,15 @@ private fun WatermarkSlab(
     remoteUrl: String?,
     stagedUri: String?,
     onPick: () -> Unit,
+    showValidation: Boolean = false,
 ) {
+    val isMissing = remoteUrl.isNullOrBlank() && stagedUri == null
+    val isError = showValidation && isMissing
     Column {
-        Kicker(text = "Watermark", color = SlateSoft)
+        Kicker(
+            text = if (isError) "Watermark  ·  FILL THIS SECTION" else "Watermark",
+            color = if (isError) ErrorRed else SlateSoft
+        )
         Spacer(modifier = Modifier.height(12.dp))
         QpCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -795,9 +1003,18 @@ private fun WatermarkSlab(
 // ─── Slab: Handle ────────────────────────────────────────────────────────────
 
 @Composable
-private fun HandleSlab(value: String, onChange: (String) -> Unit) {
+private fun HandleSlab(
+    value: String,
+    onChange: (String) -> Unit,
+    showValidation: Boolean = false,
+) {
+    val isMissing = value.isBlank()
+    val isError = showValidation && isMissing
     Column {
-        Kicker(text = "Public handle", color = SlateSoft)
+        Kicker(
+            text = if (isError) "Public handle  ·  FILL THIS SECTION" else "Public handle",
+            color = if (isError) ErrorRed else SlateSoft
+        )
         Spacer(modifier = Modifier.height(12.dp))
         QpFormField(
             label = "@your-handle",
@@ -819,29 +1036,39 @@ private fun HandleSlab(value: String, onChange: (String) -> Unit) {
 
 @Composable
 private fun RegionSlab(
+    regions: List<RegionDto>,
     regionCode: String,
     provinceCode: String,
     onRegionChange: (String) -> Unit,
     onProvinceChange: (String) -> Unit,
+    showValidation: Boolean = false,
 ) {
-    val selectedRegion = PH_REGIONS.firstOrNull { it.code == regionCode }
+    val selectedRegion = regions.firstOrNull { it.code == regionCode }
     val selectedProvince = selectedRegion?.provinces?.firstOrNull { it.code == provinceCode }
     var regionMenuExpanded by remember { mutableStateOf(false) }
     var provinceMenuExpanded by remember { mutableStateOf(false) }
+    val isMissing = regionCode.isBlank()
+    val isError = showValidation && isMissing
 
     Column {
-        Kicker(text = "Region", color = SlateSoft)
+        Kicker(
+            text = if (isError) "Region  ·  FILL THIS SECTION" else "Region",
+            color = if (isError) ErrorRed else SlateSoft
+        )
         Spacer(modifier = Modifier.height(12.dp))
 
         DropdownField(
             label = "Region",
             valueLabel = selectedRegion?.name.orEmpty(),
-            placeholder = "Pick a region",
+            // The saved code can't resolve to a name until the list arrives,
+            // so say it's loading rather than "Pick a region" — which would
+            // read as "nothing is set" on a photographer who has set one.
+            placeholder = if (regions.isEmpty()) "Loading regions…" else "Pick a region",
             expanded = regionMenuExpanded,
             onExpand = { regionMenuExpanded = true },
             onCollapse = { regionMenuExpanded = false },
         ) {
-            PH_REGIONS.forEach { region ->
+            regions.forEach { region ->
                 DropdownMenuItem(
                     text = { Text(region.name, color = Ink, style = Typography.bodyMedium) },
                     onClick = {
@@ -884,14 +1111,20 @@ private fun SocialsSlab(
     onAdd: () -> Unit,
     onEdit: (SocialLinkDto) -> Unit,
     onAskDelete: (SocialLinkDto) -> Unit,
+    showValidation: Boolean = false,
 ) {
+    val isMissing = socials.isEmpty()
+    val isError = showValidation && isMissing
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Kicker(text = "Socials · ${socials.size} of ${SOCIAL_PLATFORMS.size}", color = SlateSoft)
+            Kicker(
+                text = if (isError) "Socials  ·  FILL THIS SECTION" else "Socials · ${socials.size} of ${SOCIAL_PLATFORMS.size}",
+                color = if (isError) ErrorRed else SlateSoft
+            )
         }
         Spacer(modifier = Modifier.height(12.dp))
         if (socials.isEmpty()) {
@@ -977,9 +1210,15 @@ private fun PayoutsSlab(
     onEdit: (PayoutAccountDto) -> Unit,
     onAskDelete: (PayoutAccountDto) -> Unit,
     onSetPrimary: (PayoutAccountDto) -> Unit,
+    showValidation: Boolean = false,
 ) {
+    val isMissing = payouts.isEmpty()
+    val isError = showValidation && isMissing
     Column {
-        Kicker(text = "Payouts · ${payouts.size} of ${PAYOUT_METHODS.size}", color = SlateSoft)
+        Kicker(
+            text = if (isError) "Payouts  ·  FILL THIS SECTION" else "Payouts · ${payouts.size} of ${PAYOUT_METHODS.size}",
+            color = if (isError) ErrorRed else SlateSoft
+        )
         Spacer(modifier = Modifier.height(12.dp))
         if (payouts.isEmpty()) {
             Text(
@@ -1057,13 +1296,25 @@ private fun PayoutRow(
                         color = SlateSoft,
                         style = Typography.bodySmall,
                     )
-                    if (account.qr != null) {
-                        Text(
-                            text = "QR code on file",
-                            color = Slate,
-                            style = Typography.bodySmall,
-                        )
-                    }
+                }
+                // qr.dataUrl is named for the website's local pre-upload shape,
+                // but the backend serves a presigned storage URL (PayoutAccount
+                // Service.qrUrlFor), so Coil loads it directly — HostRewrite
+                // Interceptor on the shared ImageLoader handles the dev
+                // localhost host. Showing the actual code beats "on file": the
+                // photographer can confirm they uploaded the right one.
+                val qrUrl = account.qr?.dataUrl
+                if (qrUrl != null) {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    AsyncImage(
+                        model = qrUrl,
+                        contentDescription = "Payout QR code",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(QpCardShape)
+                            .background(BoneDeep),
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(6.dp))
@@ -1093,6 +1344,7 @@ private fun BottomActions(
     onSave: () -> Unit,
     onSignOut: () -> Unit,
 ) {
+    var showLogoutConfirm by remember { mutableStateOf(false) }
     Column {
         PrimaryCta(
             text = if (isSaving) "Saving…" else "Save changes",
@@ -1103,8 +1355,45 @@ private fun BottomActions(
         Spacer(modifier = Modifier.height(10.dp))
         GhostCta(
             text = "Sign out",
-            onClick = onSignOut,
+            onClick = { showLogoutConfirm = true },
             modifier = Modifier.fillMaxWidth(),
+        )
+    }
+
+    if (showLogoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirm = false },
+            containerColor = Bone,
+            title = {
+                Text(
+                    text = "Sign out of QuickPitik?",
+                    style = Typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                )
+            },
+            text = {
+                Text(
+                    text = "You will need to sign in again to access your studio, upload queues, and earnings.",
+                    style = Typography.bodyMedium,
+                    color = Slate,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutConfirm = false
+                        onSignOut()
+                    }
+                ) {
+                    Text("SIGN OUT", color = ErrorRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirm = false }) {
+                    Text("CANCEL", color = Slate, fontWeight = FontWeight.Bold)
+                }
+            }
         )
     }
 }
@@ -1307,9 +1596,8 @@ private fun SocialEditorSheet(
 private fun PayoutEditorSheet(
     mode: PayoutSheetMode,
     onDismiss: () -> Unit,
-    onConfirm: (method: String, accountName: String, accountNumber: String, qrBytes: ByteArray?) -> Unit,
+    onConfirm: (method: String, accountName: String, accountNumber: String, qrUri: String?) -> Unit,
 ) {
-    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     var method by remember(mode) {
@@ -1328,23 +1616,13 @@ private fun PayoutEditorSheet(
             if (mode is PayoutSheetMode.Edit) formatPayoutNumber(mode.account.method, mode.account.accountNumber) else "",
         )
     }
-    var qrBytes by remember(mode) { mutableStateOf<ByteArray?>(null) }
     var qrUri by remember(mode) { mutableStateOf<String?>(null) }
     var methodMenuExpanded by remember { mutableStateOf(false) }
 
     val qrPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        uri?.let {
-            try {
-                context.contentResolver.openInputStream(it)?.use { stream ->
-                    qrBytes = stream.readBytes()
-                    qrUri = it.toString()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to load QR image", Toast.LENGTH_SHORT).show()
-            }
-        }
+        uri?.let { qrUri = it.toString() }
     }
 
     val numberDigits = accountNumberInput.filter { it.isDigit() }
@@ -1434,7 +1712,14 @@ private fun PayoutEditorSheet(
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else if (mode is PayoutSheetMode.Edit && mode.account.qr != null) {
-                            Text(text = "ON FILE", color = SlateSoft, style = Typography.labelSmall)
+                            // Stored QR — a presigned URL, so Coil renders it
+                            // like any other remote image. See the card above.
+                            AsyncImage(
+                                model = mode.account.qr.dataUrl,
+                                contentDescription = "Payout QR on file",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
                         } else {
                             Text(text = "+", color = Slate, fontSize = 24.sp)
                         }
@@ -1442,7 +1727,7 @@ private fun PayoutEditorSheet(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (qrBytes != null) "Will replace on save" else "Pick a PNG of your QR",
+                            text = if (qrUri != null) "Will replace on save" else "Pick a PNG of your QR",
                             color = Ink,
                             style = Typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
@@ -1466,7 +1751,7 @@ private fun PayoutEditorSheet(
             Spacer(modifier = Modifier.height(20.dp))
             PrimaryCta(
                 text = if (mode is PayoutSheetMode.Edit) "Save changes" else "Add method",
-                onClick = { onConfirm(method, accountName.trim(), numberDigits, qrBytes) },
+                onClick = { onConfirm(method, accountName.trim(), numberDigits, qrUri) },
                 enabled = canSubmit,
                 modifier = Modifier.fillMaxWidth(),
             )

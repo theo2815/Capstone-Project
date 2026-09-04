@@ -5,10 +5,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-// Quiet Studio type scale — three fonts, three jobs (website parity):
-//   • Display (Bricolage Grotesque) — headlines + titles. NORMAL case, never uppercase.
-//     Medium (500) is the house default; Bold (700) only for hero/splash.
-//   • Body (Funnel Sans) — paragraph copy, sub-lines, links, button labels.
+// "Finish Line" type scale — four fonts, four jobs (website parity, 2026-08-26):
+//   • Hero (Anton) — displayLarge only, rendered UPPERCASE via HeroText.
+//     Single-weight face: always FontWeight.Normal. Never in studio surfaces.
+//   • Display (Archivo) — section headlines + titles, sentence case.
+//   • Body (Archivo) — paragraph copy, sub-lines, links, button labels.
 //   • Mono (Geist Mono) — kickers (rendered UPPERCASE at call sites) and ALL numerals.
 //     Mono styles carry `tnum` so figures stay column-aligned (tabular-nums).
 //
@@ -16,13 +17,15 @@ import androidx.compose.ui.unit.sp
 private val mono = "tnum" // tabular figures for mono kickers + numerals
 
 val Typography = Typography(
-    // ── Display (Bricolage) ──────────────────────────────────────────────
+    // ── Hero (Anton — via HeroText, which uppercases) ────────────────────
     displayLarge = TextStyle(
-        fontFamily = DisplayFontFamily,
-        fontWeight = FontWeight.Bold,        // hero only
+        fontFamily = HeroFontFamily,
+        fontWeight = FontWeight.Normal,      // Anton's ONLY weight — never bold
         fontSize = 32.sp,
         lineHeight = 38.sp,
-        letterSpacing = (-0.5).sp
+        // Anton is condensed; the negative tracking Bricolage wanted reads
+        // cramped here. Tune on device if needed.
+        letterSpacing = 0.5.sp
     ),
     displayMedium = TextStyle(
         fontFamily = DisplayFontFamily,
@@ -38,7 +41,7 @@ val Typography = Typography(
         lineHeight = 28.sp,
         letterSpacing = (-0.3).sp
     ),
-    // ── Titles (Bricolage) ───────────────────────────────────────────────
+    // ── Titles (Archivo) ─────────────────────────────────────────────────
     titleLarge = TextStyle(
         fontFamily = DisplayFontFamily,
         fontWeight = FontWeight.SemiBold,
@@ -60,7 +63,7 @@ val Typography = Typography(
         lineHeight = 20.sp,
         letterSpacing = 0.sp
     ),
-    // ── Body (Funnel) ────────────────────────────────────────────────────
+    // ── Body (Archivo) ───────────────────────────────────────────────────
     bodyLarge = TextStyle(
         fontFamily = BodyFontFamily,
         fontWeight = FontWeight.Normal,

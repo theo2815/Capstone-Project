@@ -3,9 +3,11 @@ package com.quickpitik.repository
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
@@ -15,18 +17,181 @@ import java.util.UUID
 
 interface PhotoRepository : JpaRepository<Photo, UUID> {
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT DISTINCT p FROM Photo p WHERE p.id IN :ids ORDER BY p.id")
+    fun findAllByIdForUpdate(@Param("ids") ids: Collection<UUID>): List<Photo>
+
     // Bulk re-prices every photo under the event. Used by admin event PATCH
     // when the operator changes events.price_per_photo so existing photos
-    // pick up the new price across runner-facing galleries. Cart drift is
-    // handled separately by CartService.add → CART_ITEM_PRICE_CHANGED at
-    // checkout — we deliberately do not touch cart_items.price_php_at_add
-    // so the server-canonical snapshot guarantee stays intact.
+    // pick up the new price across runner-facing galleries. Carts follow
+    // automatically: CartService renders the live photos.price_php and
+    // OrderService.create charges it, so cart_items.price_php_at_add is
+    // deliberately left alone — nothing displays or bills off that column.
+    // V46: an approved watermark-policy change makes every LIVE preview stale.
+    // Back to PROCESSING with a fresh budget; PhotoWatermarkTrigger.reconcile
+    // re-renders them under the new policy within a sweep. Runners lose the
+    // photos for that cycle — acceptable for an owner-requested, admin-
+    // approved change.
+    @Modifying
+    @Query(
+        "UPDATE Photo p SET p.status = com.quickpitik.entity.PhotoStatus.PROCESSING, p.processingAttempts = 0 " +
+            "WHERE p.eventId = :eventId AND p.status = com.quickpitik.entity.PhotoStatus.LIVE",
+    )
+    fun resetForRewatermark(@Param("eventId") eventId: UUID): Int
+
     @Modifying
     @Query("UPDATE Photo p SET p.pricePhp = :price WHERE p.eventId = :eventId")
     fun updatePriceByEventId(
         @Param("eventId") eventId: UUID,
         @Param("price") price: BigDecimal,
     ): Int
+
+    // Bulk re-queue for AI indexing (admin reindex endpoint). Resets the
+    // attempt budget so the reconcile sweep actually picks the rows up —
+    // exhausted attempts are otherwise excluded forever.
+    @Modifying
+    @Query(
+        "UPDATE Photo p SET p.indexingStatus = com.quickpitik.entity.IndexingStatus.PENDING, " +
+            "p.indexingAttempts = 0, p.indexingError = null " +
+            "WHERE p.eventId = :eventId AND p.indexingStatus IN :statuses",
+    )
+    fun requeueIndexing(
+        @Param("eventId") eventId: UUID,
+        @Param("statuses") statuses: Collection<IndexingStatus>,
+    ): Int
+
+    // Async-watermark reconcile sweep (V36): PROCESSING rows the AFTER_COMMIT
+    // hot path missed (app crash, storage outage), oldest first. Mirrors
+    // findIndexingBacklog.
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.status = com.quickpitik.entity.PhotoStatus.PROCESSING
+          AND p.processingAttempts < :maxAttempts
+          AND p.uploadedAt < :cutoff
+        ORDER BY p.uploadedAt ASC
+        """,
+    )
+    fun findWatermarkBacklog(
+        @Param("maxAttempts") maxAttempts: Int,
+        @Param("cutoff") cutoff: OffsetDateTime,
+        pageable: Pageable,
+    ): List<Photo>
+
+    // Targeted, conditional flip to LIVE once the watermark object is stored.
+    // Deliberately NOT an entity save: PhotoIndexingService writes the same row
+    // concurrently via full-row save(), and two load-mutate-save flows would
+    // clobber each other's columns. Touching only the watermark columns kills
+    // one direction of that race; the status guard makes re-runs no-ops (the
+    // sweep is the self-heal for the other direction).
+    @Modifying
+    @Query(
+        "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, p.phash = :phash, " +
+            "p.phashClean = :phashClean, p.phashCentre = :phashCentre, p.publishedAt = CURRENT_TIMESTAMP, " +
+            "p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
+            "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING",
+    )
+    fun publishWatermarked(
+        @Param("id") id: UUID,
+        @Param("key") key: String,
+        @Param("phash") phash: Long,
+        @Param("phashClean") phashClean: Long,
+        @Param("phashCentre") phashCentre: Long,
+    ): Int
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.processingAttempts = p.processingAttempts + 1 WHERE p.id = :id")
+    fun incrementProcessingAttempts(@Param("id") id: UUID): Int
+
+    // Fingerprint registry (V42) catch-up: LIVE previews that predate the
+    // phash column. PhotoWatermarkTrigger.backfillPhash hashes them in batches.
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.status = com.quickpitik.entity.PhotoStatus.LIVE
+          AND p.phash IS NULL
+          AND p.watermarkS3Key IS NOT NULL
+        ORDER BY p.uploadedAt ASC
+        """,
+    )
+    fun findPhashBacklog(pageable: Pageable): List<Photo>
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.phash = :phash WHERE p.id = :id")
+    fun setPhash(@Param("id") id: UUID, @Param("phash") phash: Long): Int
+
+    // Nearest stored fingerprint by Hamming distance, for POST
+    // /public/photos/verify. The upload is compared against all three
+    // registered hashes — marked frame, clean frame, clean centre crop (V43;
+    // pre-V43 rows have only the first, and a NULL loses at 64) — so a
+    // screenshot, a cleaned copy and a crop to the runner all attribute.
+    // Returns [photographer_id, event_id, distance] — deliberately no photo
+    // id, so the answer can never become a photo URL.
+    // ponytail: full scan of LIVE rows; a BK-tree or pg extension when photos > ~1M.
+    @Query(
+        value = """
+        SELECT p.photographer_id, p.event_id,
+               LEAST(
+                 bit_count(CAST((p.phash # :h) AS bit(64))),
+                 COALESCE(bit_count(CAST((p.phash_clean # :h) AS bit(64))), 64),
+                 COALESCE(bit_count(CAST((p.phash_centre # :h) AS bit(64))), 64)
+               ) AS d
+        FROM photos p
+        WHERE p.status = 'LIVE' AND p.phash IS NOT NULL
+        ORDER BY d ASC
+        LIMIT 1
+        """,
+        nativeQuery = true,
+    )
+    fun findNearestByPhash(@Param("h") h: Long): List<Array<Any>>
+
+    // No-bib event grid: merge each photographer's first-ranked photo, then
+    // each second-ranked photo, and so on. The snapshot freezes the LIVE set
+    // while the visitor pages; the seeded hash only varies near-equal rows.
+    // ponytail: this window ranks the event's LIVE rows; materialize only if
+    // EXPLAIN shows it hurting at real event scale.
+    @Query(
+        value = """
+        WITH ranked AS (
+            SELECT p.id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY p.photographer_id
+                       ORDER BY p.captured_at DESC NULLS LAST, p.uploaded_at DESC, p.id ASC
+                   ) AS photographer_round,
+                   DATE_TRUNC('hour', COALESCE(p.captured_at, p.uploaded_at)) AS relevance_bucket,
+                   p.photographer_id,
+                   p.captured_at,
+                   p.uploaded_at
+            FROM photos p
+            WHERE p.event_id = :eventId
+              AND p.status = 'LIVE'
+              AND p.published_at <= :snapshotAt
+        )
+        SELECT p.*
+        FROM ranked r
+        JOIN photos p ON p.id = r.id
+        ORDER BY r.photographer_round ASC,
+                 (r.photographer_id IS NULL) ASC,
+                 r.relevance_bucket DESC,
+                 hashtextextended(COALESCE(r.photographer_id::text, 'unknown'), :seed) ASC,
+                 r.captured_at DESC NULLS LAST,
+                 r.uploaded_at DESC,
+                 r.id ASC
+        """,
+        countQuery = """
+        SELECT COUNT(*) FROM photos p
+        WHERE p.event_id = :eventId
+          AND p.status = 'LIVE'
+          AND p.published_at <= :snapshotAt
+        """,
+        nativeQuery = true,
+    )
+    fun findForEventNoBib(
+        @Param("eventId") eventId: UUID,
+        @Param("snapshotAt") snapshotAt: OffsetDateTime,
+        @Param("seed") seed: Long,
+        pageable: Pageable,
+    ): Page<Photo>
 
     // Bib filter is a substring (contains) match — OCR routinely clips digits
     // (e.g. "7202" stored as "720" or "71830" when the bib is "183") so exact

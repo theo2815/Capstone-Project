@@ -3,7 +3,6 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { AdminRail } from "@/components/admin/admin-rail";
 import { AdminMobileStrip } from "@/components/admin/admin-mobile-strip";
 import { AdminShellKeyboard } from "@/components/admin/admin-shell-keyboard";
-import { DesktopNudge } from "@/components/dashboard/desktop-nudge";
 
 // Persistent shell for every /admin/* page. Diverges from <DashboardShell>
 // on layout width: admin goes full-bleed (no max-w-7xl) because queue +
@@ -14,8 +13,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
       <SiteHeader />
-      <div className="md:hidden sticky top-[3.75rem] z-20">
-        <DesktopNudge />
+      <div className="md:hidden sticky top-[var(--site-header-h)] z-20">
         <AdminMobileStrip />
       </div>
       <div className="flex-1 w-full px-6 md:px-10 flex flex-col">

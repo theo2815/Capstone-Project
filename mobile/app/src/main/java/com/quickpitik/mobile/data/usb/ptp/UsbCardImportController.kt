@@ -2,8 +2,10 @@ package com.quickpitik.mobile.data.usb.ptp
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import com.quickpitik.mobile.BuildConfig
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import java.io.OutputStream
 
 /**
  * Pulls the JPEG bytes for a chosen subset of card handles — the transfer half
@@ -52,10 +54,16 @@ class UsbCardImportController(
     }
 
     /**
-     * Pull each photo in [photos] in order. For each successful PTP read,
-     * [onPulled] is invoked and should return true if the bytes were durably
-     * persisted (file written + queued for upload). A return of false counts
-     * the photo as failed so the UI summary stays honest.
+     * Pull each photo in [photos] in order. For each one, [onPulled] is invoked
+     * with a writer that streams the JPEG into whatever sink the caller opens,
+     * and should return true if the bytes were durably persisted (file written
+     * + queued for upload). A return of false counts the photo as failed so the
+     * UI summary stays honest.
+     *
+     * The bytes are handed over as a writer rather than a `ByteArray` so a large
+     * frame never exists in memory: the PTP data phase lands directly in the
+     * caller's file. Exceptions thrown by the writer surface inside the caller's
+     * sink handling, which is where the partial file has to be cleaned up.
      *
      * Per-photo failures (PTP read errors, persist errors) are non-fatal — the
      * loop carries on and reports the tally. Session-level failures (no device,
@@ -64,7 +72,7 @@ class UsbCardImportController(
     suspend fun import(
         photos: List<CardPhoto>,
         emit: suspend (Progress) -> Unit,
-        onPulled: suspend (photo: CardPhoto, bytes: ByteArray) -> Boolean,
+        onPulled: suspend (photo: CardPhoto, writeTo: (OutputStream) -> Unit) -> Boolean,
     ) {
         if (photos.isEmpty()) {
             emit(Progress.Done(succeededHandles = emptySet(), failedHandles = emptySet()))
@@ -99,24 +107,25 @@ class UsbCardImportController(
             for ((idx, photo) in photos.withIndex()) {
                 if (!currentCoroutineContext().isActive) return
 
-                val ptpStart = System.currentTimeMillis()
-                val bytes = try {
-                    session.getObject(photo.handle)
-                } catch (e: Exception) {
-                    null
-                }
-                val ptpMs = System.currentTimeMillis() - ptpStart
+                // Timed inside the writer so the log keeps reporting the PTP
+                // read alone, not the caller's disk write on top of it.
+                var pulledBytes = 0L
+                var ptpMs = 0L
+                val didPersist = runCatching {
+                    onPulled(photo) { sink ->
+                        val ptpStart = System.currentTimeMillis()
+                        pulledBytes = session.getObjectTo(photo.handle, sink)
+                        ptpMs = System.currentTimeMillis() - ptpStart
+                    }
+                }.getOrDefault(false)
+
                 // QP/UPLOAD-PERF — `adb logcat -s QP/UPLOAD-PERF` shows
                 // per-phase ms for each photo (ptp / persist / upload).
-                android.util.Log.i(
-                    "QP/UPLOAD-PERF",
-                    "ptp-read handle=${photo.handle} file=${photo.filename} bytes=${bytes?.size ?: 0} ms=$ptpMs",
-                )
-
-                val didPersist = if (bytes != null && bytes.isNotEmpty()) {
-                    runCatching { onPulled(photo, bytes) }.getOrDefault(false)
-                } else {
-                    false
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.i(
+                        "QP/UPLOAD-PERF",
+                        "ptp-read handle=${photo.handle} file=${photo.filename} bytes=$pulledBytes ms=$ptpMs",
+                    )
                 }
 
                 if (didPersist) succeeded.add(photo.handle) else failed.add(photo.handle)

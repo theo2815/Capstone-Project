@@ -21,7 +21,7 @@ On error:
   "data": null,
   "error": {
     "code": "ImageValidationError",
-    "message": "File exceeds 10MB limit"
+    "message": "File exceeds 25MB limit"
   }
 }
 ```
@@ -161,7 +161,9 @@ Classify an image into blur categories using a CNN model (YOLOv8n-cls). Returns 
 Two modes:
 
 - **Full classification** (default): predicted class + probability vector over `sharp`, `defocused_object_portrait`, `defocused_blurred`, `motion_blurred`.
-- **Targeted detection**: when `blur_type` is set, returns a binary Detected / Not Detected answer for that type.
+- **Targeted detection**: when `blur_type` is set, returns a binary Detected / Not Detected answer for that type. `detected` requires both a matching predicted class **and** `confidence >= BLUR_DETECTION_MIN_CONFIDENCE` (0.5) — identical on `/classify`, `/classify/stream` and `/classify/batch`.
+
+All classify paths downscale to `BLUR_CLASSIFY_DECODE_DIM` (640) before inference, so the single, streaming and Celery endpoints return the same class for the same image. `image_dimensions` reports the decoded size before that step.
 
 **Request:**
 - `file` (multipart)
@@ -217,7 +219,7 @@ Same as `/batch` but up to 500 images via Celery chord.
 
 ## Face Recognition
 
-Pipeline: InsightFace (RetinaFace detection + ArcFace embedding, 512-dim) → pgvector cosine search. Face data is always scoped by `api_key_id`; passing `event_id` narrows enrollment and search further.
+Pipeline: InsightFace (RetinaFace detection + ArcFace embedding, 512-dim) → pgvector cosine search. Face data is always scoped by `api_key_id`, and `event_id` is **required** on every enroll and search surface (root rule 5) — `detect` and `compare` are the exceptions, since neither touches stored data.
 
 ### POST /api/v1/faces/detect
 
@@ -252,8 +254,8 @@ Register a person's face. Detects, embeds, and stores. Faces below `FACE_MIN_ENR
 **Request (multipart form):**
 - `file` (required): Image containing the person
 - `person_name` (required, 1–255 chars)
-- `person_id` (optional, UUID): Add embeddings to an existing person. Must belong to the caller's API key.
-- `event_id` (optional, ≤255 chars): Event to scope this enrollment to
+- `person_id` (optional, UUID): Add embeddings to an existing person. Must belong to the caller's API key **and** to `event_id`.
+- `event_id` (**required**, 1–255 chars): Event to scope this enrollment to. Omitting it (or sending `""`) returns `422` — enrollment is fail-closed event isolation, like search. An embedding stored without an event is unreachable: every search path requires an `event_id`, and `DELETE /faces/persons?event_id=` cannot erase it.
 
 **Scope:** `faces:write`
 
@@ -287,7 +289,7 @@ Register a person's face. Detects, embeds, and stores. Faces below `FACE_MIN_ENR
 
 Async bulk enroll — every image in the batch is attached to the same person (new or existing). Up to `MAX_BATCH_SIZE` (50).
 
-**Form fields:** same as `/enroll` plus `files` (multipart list).
+**Form fields:** same as `/enroll` plus `files` (multipart list). `event_id` is **required** here too (422 if omitted), and a supplied `person_id` must belong to the caller's API key and to that event.
 
 ### POST /api/v1/faces/search
 
@@ -297,7 +299,7 @@ Detect faces and search stored embeddings.
 - `file` (required)
 - `threshold` (query, optional, default `0.4`): minimum cosine similarity
 - `top_k` (query, optional, default `10`, max `100`): max matches per detected face
-- `event_id` (query, optional): restrict search to this event
+- `event_id` (query, **required**): restrict search to this event — enforced fail-closed since 2026-06-02, per root rule 5 and the §Face Recognition preamble above
 
 **Response:**
 ```json

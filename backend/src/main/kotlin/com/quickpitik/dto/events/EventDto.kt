@@ -18,8 +18,14 @@ data class EventDto(
     val photoCount: Int,
     val participantCount: Int,
     val status: EventStatus,
+    // Photographer-owned events (V46). Only PUBLIC events reach the list, so
+    // `visibility` here is informational; `pricingMode` tells a tile "free".
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
 )
 
+// `photographerHandle` is the owner of a photographer-created event (V46) —
+// what a free gallery credits — and null for admin events.
 data class EventDetailDto(
     val id: UUID,
     val slug: String,
@@ -36,4 +42,8 @@ data class EventDetailDto(
     val pricePerPhoto: BigDecimal,
     val bundlePrice: BigDecimal?,
     val bundleSize: Int?,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val photographerHandle: String? = null,
 )

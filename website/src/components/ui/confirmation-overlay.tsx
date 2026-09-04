@@ -76,7 +76,7 @@ export function ConfirmationOverlay() {
   }
 
   return (
-    <Modal isOpen={true} onClose={handleCancel} title={config.title}>
+    <Modal isOpen={true} onClose={handleCancel} title={config.title} hideClose>
       <div className="space-y-5">
         {typeof config.message === "string" ? (
           <p className="font-sans text-sm text-ink-soft">{config.message}</p>
@@ -87,7 +87,7 @@ export function ConfirmationOverlay() {
         {error && (
           <p
             role="alert"
-            className="font-mono uppercase text-[12px] tracking-[0.18em] text-error"
+            className="font-mono uppercase text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.18em] text-error"
           >
             {error}
           </p>
@@ -98,7 +98,7 @@ export function ConfirmationOverlay() {
             type="button"
             onClick={handleCancel}
             disabled={loading}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors disabled:opacity-50 disabled:cursor-not-allowed px-2"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors disabled:opacity-50 disabled:cursor-not-allowed px-2"
           >
             {cancelLabel}
           </button>
@@ -107,10 +107,10 @@ export function ConfirmationOverlay() {
             onClick={runConfirm}
             disabled={loading}
             className={cn(
-              "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full px-5 py-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed",
+              "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-5 py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
               config.danger
                 ? "bg-bone-deep border border-line text-error hover:bg-line"
-                : "bg-fresh text-bone hover:bg-fresh-deep",
+                : "bg-fresh text-surface hover:bg-fresh-deep",
             )}
           >
             {loading ? "Working…" : confirmLabel}

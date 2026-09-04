@@ -8,5 +8,5 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 // in place when we flip the switch.
 @ConfigurationProperties(prefix = "app.admin")
 data class AdminProperties(
-    val flagsEnabled: Boolean = false,
+    val flagsEnabled: Boolean = true,
 )

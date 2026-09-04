@@ -33,6 +33,9 @@ type EventTileUploadProps = {
   event: ListEvent;
   index?: number;
   canUpload: boolean;
+  /** Photographer-owned event (V46): the owner uploads on any date, so the
+   *  ±4-day grace copy doesn't apply. */
+  bypassWindow?: boolean;
 };
 
 type EventTileManageProps = {
@@ -41,6 +44,9 @@ type EventTileManageProps = {
   index?: number;
   photoCount: number;
   salesCount: number;
+  /** Review / visibility chip for an owned event ("Pending review",
+   *  "Unlisted · Free"). Admin events carry none. */
+  note?: string;
 };
 
 export type EventTileProps =
@@ -72,6 +78,8 @@ export function EventTile(props: EventTileProps) {
             src={event.bannerUrl}
             alt=""
             aria-hidden="true"
+            loading="lazy"
+            decoding="async"
             className="absolute inset-0 w-full h-full object-cover"
           />
         ) : (
@@ -81,7 +89,7 @@ export function EventTile(props: EventTileProps) {
                 {event.name}
               </span>
             </div>
-            <span className="absolute bottom-3 right-3 font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/35">
+            <span className="absolute bottom-3 right-3 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/35">
               Banner · soon
             </span>
           </>
@@ -105,10 +113,10 @@ export function EventTile(props: EventTileProps) {
         )}
       </div>
       <div className="p-6 md:p-7">
-        <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate mb-3">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-3">
           <span className="tnum">{dateLabel}</span> · {cityUpper}
         </p>
-        <h3 className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-tight text-ink">
+        <h3 className="font-display text-2xl md:text-3xl font-extrabold tracking-tight leading-tight text-ink">
           {event.name}
         </h3>
         <p className="mt-3 font-sans text-sm md:text-base text-ink-soft">
@@ -119,9 +127,10 @@ export function EventTile(props: EventTileProps) {
           <UploadFooter
             event={event}
             canUpload={(props as EventTileUploadProps).canUpload}
+            bypassWindow={props.mode === "upload" ? props.bypassWindow : undefined}
           />
         )}
-        {mode === "manage" && <ManageFooter />}
+        {props.mode === "manage" && <ManageFooter note={props.note} />}
       </div>
     </>
   );
@@ -131,7 +140,7 @@ export function EventTile(props: EventTileProps) {
       return (
         <div
           aria-label={`${event.name} — opens on race day`}
-          className="group block rounded-2xl border border-line bg-bone overflow-hidden"
+          className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden"
           style={animationStyle}
         >
           {body}
@@ -143,7 +152,7 @@ export function EventTile(props: EventTileProps) {
       <Link
         href={hrefOverride ?? `/events/${event.slug}`}
         aria-label={`Open ${event.name}`}
-        className="group block rounded-2xl border border-line bg-bone overflow-hidden transition-all duration-300 hover:border-ink hover:-translate-y-[2px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden transition-all duration-300 hover:border-fresh/50 hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
         style={animationStyle}
       >
         {body}
@@ -166,7 +175,7 @@ export function EventTile(props: EventTileProps) {
       <Link
         href={target}
         aria-label={aria}
-        className="group block rounded-2xl border border-line bg-bone overflow-hidden transition-all duration-300 hover:border-ink hover:-translate-y-[2px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden transition-all duration-300 hover:border-fresh/50 hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
         style={animationStyle}
       >
         {body}
@@ -179,7 +188,7 @@ export function EventTile(props: EventTileProps) {
     <Link
       href={`${ROUTES.DASHBOARD_EVENTS}/${event.id}`}
       aria-label={`Open ${event.name}`}
-      className="group block rounded-2xl border border-line bg-bone overflow-hidden transition-all duration-300 hover:border-ink hover:-translate-y-[2px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+      className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden transition-all duration-300 hover:border-fresh/50 hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
       style={animationStyle}
     >
       {body}
@@ -194,11 +203,11 @@ function BrowseFooter({ isUpcoming }: { isUpcoming: boolean }) {
   return (
     <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
       {isUpcoming ? (
-        <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
           Opens on race day
         </span>
       ) : (
-        <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors">
+        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors">
           Open →
         </span>
       )}
@@ -209,20 +218,25 @@ function BrowseFooter({ isUpcoming }: { isUpcoming: boolean }) {
 function UploadFooter({
   event,
   canUpload,
+  bypassWindow = false,
 }: {
   event: ListEvent;
   canUpload: boolean;
+  bypassWindow?: boolean;
 }) {
   // Verification-incomplete is the most actionable issue, so it wins over
   // the date-based hints. Once verified, the date drives copy:
   //   upcoming      → opens on race day
   //   live (grace)  → upload →
   //   open / past   → window closed (4-day grace expired)
+  // An owned event (V46) skips the date gate entirely.
   const inGrace = canUploadToEvent(event.date);
   let cta: string;
   let muted = false;
   if (!canUpload) {
     cta = "Finish settings →";
+  } else if (bypassWindow) {
+    cta = "Upload →";
   } else if (event.state === "upcoming") {
     cta = "Opens on race day →";
   } else if (inGrace) {
@@ -237,8 +251,8 @@ function UploadFooter({
       <span
         className={
           muted
-            ? "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate"
-            : "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors"
+            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate"
+            : "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors"
         }
       >
         {cta}
@@ -247,10 +261,13 @@ function UploadFooter({
   );
 }
 
-function ManageFooter() {
+function ManageFooter({ note }: { note?: string }) {
   return (
-    <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
-      <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink group-hover:text-fresh transition-colors">
+    <div className="mt-6 pt-4 border-t border-line flex items-center justify-between gap-4">
+      <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate truncate">
+        {note}
+      </span>
+      <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors">
         Open →
       </span>
     </div>
@@ -265,7 +282,7 @@ export function StatusChip({ state }: { state: EventState }) {
           aria-hidden="true"
           className="size-1.5 rounded-full bg-fresh breathe"
         />
-        <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-fresh">
+        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh">
           Photos uploading
         </span>
       </div>
@@ -275,7 +292,7 @@ export function StatusChip({ state }: { state: EventState }) {
     return (
       <div className="absolute top-4 left-5 flex items-center gap-2.5">
         <span aria-hidden="true" className="size-1.5 rounded-full bg-fresh" />
-        <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/85">
+        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/85">
           Save the date
         </span>
       </div>
@@ -285,7 +302,7 @@ export function StatusChip({ state }: { state: EventState }) {
     return (
       <div className="absolute top-4 left-5 flex items-center gap-2.5">
         <span aria-hidden="true" className="size-1.5 rounded-full bg-bone/85" />
-        <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/85">
+        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/85">
           Photos ready
         </span>
       </div>
@@ -294,7 +311,7 @@ export function StatusChip({ state }: { state: EventState }) {
   return (
     <div className="absolute top-4 left-5 flex items-center gap-2.5">
       <span aria-hidden="true" className="size-1.5 rounded-full bg-bone/40" />
-      <span className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone/55">
+      <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/55">
         Archive
       </span>
     </div>

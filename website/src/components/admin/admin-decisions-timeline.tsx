@@ -61,7 +61,7 @@ export function AdminDecisionsTimeline({
               <p className="font-display text-base text-ink truncate">
                 {targetLabel}
               </p>
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
                 {formatDecidedAt(entry.decidedAt)}
                 {renderMetaSuffix(entry)}
               </p>
@@ -72,7 +72,7 @@ export function AdminDecisionsTimeline({
               )}
             </div>
             <span
-              className={`font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] shrink-0 mt-1 ${decisionTone(entry.decision)}`}
+              className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] shrink-0 mt-1 ${decisionTone(entry.decision)}`}
             >
               {DECISION_LABEL[entry.decision]}
             </span>

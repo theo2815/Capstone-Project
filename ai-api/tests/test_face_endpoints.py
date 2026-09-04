@@ -81,7 +81,10 @@ class TestFaceEnroll:
         resp = client.post(
             "/api/v1/faces/enroll",
             files={"file": ("noise.jpg", data, "image/jpeg")},
-            data={"person_name": "Test Person"},
+            data={
+                "person_name": "Test Person",
+                "event_id": "11111111-1111-1111-1111-111111111111",
+            },
         )
         body = resp.json()
         assert body["success"] is False
@@ -169,6 +172,57 @@ class TestSearchEventIsolation:
         assert resp.status_code != 422
 
 
+class TestEnrollEventIsolation:
+    """Fail-closed event isolation on the ENROLL surface (root rule 5).
+
+    Search was made fail-closed in June; enroll was missed and kept defaulting
+    event_id to None. The failure mode is not a leak but an orphan: an
+    embedding stored with event_id NULL can never be returned (every search
+    path requires an event_id, and NULL matches none of them) and can never be
+    erased by DELETE /faces/persons?event_id=. /faces/enroll/mega already
+    required it — these two endpoints were the inconsistent surfaces.
+    """
+
+    _EVENT = "22222222-2222-2222-2222-222222222222"
+
+    def test_enroll_requires_event_id(self, client: TestClient):
+        resp = client.post(
+            "/api/v1/faces/enroll",
+            files={"file": ("noise.jpg", _make_jpeg_bytes(), "image/jpeg")},
+            data={"person_name": "Orphan Maker"},
+        )
+        assert resp.status_code == 422
+
+    def test_enroll_batch_requires_event_id(self, client: TestClient):
+        resp = client.post(
+            "/api/v1/faces/enroll/batch",
+            files=[("files", ("noise.jpg", _make_jpeg_bytes(), "image/jpeg"))],
+            data={"person_name": "Orphan Maker"},
+        )
+        assert resp.status_code == 422
+
+    def test_enroll_rejects_blank_event_id(self, client: TestClient):
+        # An empty string is not a scope — min_length=1 keeps "" from passing
+        # for the same reason None does not.
+        resp = client.post(
+            "/api/v1/faces/enroll",
+            files={"file": ("noise.jpg", _make_jpeg_bytes(), "image/jpeg")},
+            data={"person_name": "Orphan Maker", "event_id": ""},
+        )
+        assert resp.status_code == 422
+
+    def test_enroll_with_event_id_is_accepted(self, client: TestClient):
+        # Reaches the handler (noise has no face, so NO_FACES) rather than
+        # being rejected at validation — proves the guard is scope-specific.
+        resp = client.post(
+            "/api/v1/faces/enroll",
+            files={"file": ("noise.jpg", _make_jpeg_bytes(), "image/jpeg")},
+            data={"person_name": "Scoped", "event_id": self._EVENT},
+        )
+        assert resp.status_code != 422
+        assert resp.json()["error"]["code"] == "NO_FACES"
+
+
 class TestFaceCompare:
     def test_compare_no_faces(self, client: TestClient):
         data1 = _make_jpeg_bytes()
@@ -241,8 +295,8 @@ class TestEnrollMultiFace:
             def __init__(self, session):
                 pass
 
-            async def get_person(self, pid, api_key_id=None):
-                return types.SimpleNamespace(id=pid, name="x", event_id=None)
+            async def get_person(self, pid, api_key_id=None, event_id=None):
+                return types.SimpleNamespace(id=pid, name="x", event_id=event_id)
 
             async def create_person(self, name, api_key_id, event_id):
                 return types.SimpleNamespace(id=_uuid.uuid4(), name=name, event_id=event_id)
@@ -440,3 +494,61 @@ class TestWebhookTenantScoping:
         assert count == 0
         assert captured["event"] == "job.completed"
         assert captured["api_key_id"] == "key-A"
+
+
+class TestVectorCastBinding:
+    """Vector casts in raw SQL must use CAST(:name AS vector), not :name::vector.
+
+    SQLAlchemy's text() bind-parameter regex refuses a name followed by ':',
+    so ":query::vector" backtracks and binds a parameter called "quer". The
+    real value is never substituted, Postgres receives a literal ':' and
+    raises `syntax error at or near ":"`.
+
+    This was fixed in the async FaceRepository on 2026-05-20 but the sync copy
+    kept the broken form until 2026-08-14 — which meant /faces/search/batch and
+    /faces/search/mega failed for every image containing exactly ONE face (the
+    len(embeddings) == 1 branch of batch_search_similar delegates to
+    search_similar). The worker swallows per-image exceptions into a result
+    row, so it degraded silently rather than failing the job.
+
+    DB-free: asserts on how the SQL text parses, not on query results.
+    """
+
+    def _binds(self, sql: str) -> set[str]:
+        from sqlalchemy import text
+
+        return set(text(sql)._bindparams.keys())
+
+    def test_colon_cast_loses_the_parameter(self):
+        # Documents WHY the rule exists — this is the shape that broke.
+        assert self._binds("SELECT :query::vector") == {"quer"}
+        assert self._binds("SELECT CAST(:query AS vector)") == {"query"}
+
+    @pytest.mark.parametrize(
+        "module",
+        [
+            "src.db.repositories.face_repo",
+            "src.db.repositories.sync_face_repo",
+        ],
+    )
+    def test_repos_contain_no_colon_cast(self, module: str):
+        import ast
+        import importlib
+        import inspect
+        import re
+
+        source = inspect.getsource(importlib.import_module(module))
+
+        # Drop docstrings before scanning. The SQL we are policing lives in
+        # ordinary string literals, so the scan cannot simply skip strings —
+        # but docstrings are prose, and the ones explaining this very bug
+        # quote the broken form on purpose.
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                doc = ast.get_docstring(node, clean=False)
+                if doc:
+                    source = source.replace(doc, "")
+
+        offenders = re.findall(r":\w+::\w+", source)
+        assert not offenders, f"{module} uses ':name::type' casts: {offenders}"

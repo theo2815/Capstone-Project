@@ -25,6 +25,7 @@ import { Modal } from "@/components/ui/modal";
 import { useAuth } from "@/hooks/use-auth";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { useToast } from "@/hooks/use-toast";
+import { ApiError } from "@/lib/api";
 import { uploadAvatar } from "@/lib/api-avatar";
 import {
   deletePayoutAccount,
@@ -43,6 +44,7 @@ import {
   submitVerification,
   withdrawVerification,
 } from "@/lib/api-photographer-settings";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAuthStore } from "@/store/auth-store";
 import { useUserMediaStore } from "@/store/user-media-store";
@@ -57,14 +59,16 @@ import {
   validateImageFile,
 } from "@/lib/image-utils";
 import {
-  PH_REGIONS,
   REGION_GROUP_LABEL,
   formatRegionLabel,
   getRegion,
+  type PHRegion,
   type RegionGroup,
 } from "@/lib/ph-regions";
+import { useRegions } from "@/hooks/use-regions";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { validateHandle } from "@/lib/reserved-handles";
+import { ROUTES } from "@/lib/constants";
 import {
   usePhotographerSettingsStore,
   BRAND_COLOR_HEX,
@@ -416,20 +420,25 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       const prev = snapPayoutsById.get(p.id);
       if (!prev) {
         // New payout. POST creates the row server-side; if the user attached
-        // a QR locally, a second call uploads it. We queue the QR upload
-        // synchronously inside onSuccess so the dependent ordering holds
-        // regardless of how Promise.allSettled interleaves elsewhere.
+        // a QR locally, a second call uploads it. Both live inside one `run`
+        // so a failed QR reaches the failures list instead of vanishing
+        // behind the parent "Settings saved." toast.
+        //
+        // The store + snapshot commit happens INSIDE run, before the QR
+        // upload, not in onSuccess. onSuccess only fires for fulfilled tasks
+        // (see the results.forEach below), so if the QR throws while the
+        // commit sat in onSuccess, the snapshot would never learn the server
+        // id and the next Save would POST a duplicate payout account. This
+        // ordering is what keeps retries idempotent.
         const localId = p.id;
         tasks.push({
           label: "Payout account",
-          run: () =>
-            postPayoutAccount({
+          run: async () => {
+            const serverRow = await postPayoutAccount({
               method: p.method,
               accountNumber: p.accountNumber,
               accountName: p.accountName,
-            }),
-          onSuccess: (result) => {
-            const serverRow = result as PayoutAccount;
+            });
             usePhotographerSettingsStore.setState((prev) => ({
               payouts: prev.payouts.map((row) =>
                 row.id === localId
@@ -441,22 +450,18 @@ function EditModeProvider({ children }: { children: ReactNode }) {
                   : row,
               ),
             }));
-            snap.payouts = [
-              ...snap.payouts,
-              {
-                ...serverRow,
-                qr: p.qr ? { ...p.qr } : null,
-              },
-            ];
+            // Snapshot the account with qr: null until the QR actually
+            // lands. If the QR upload throws, the next Save diffs a null qr
+            // against the local one, sees qrChanged, and retries just the
+            // QR through the existing path below — no duplicate account.
+            snap.payouts = [...snap.payouts, { ...serverRow, qr: null }];
             if (p.qr) {
               const file = dataUrlToFile(p.qr.dataUrl, `qr-${serverRow.id}.png`);
-              void postPayoutQr(serverRow.id, file).catch((err) => {
-                console.error(
-                  "[photographer/settings] QR upload after payout POST failed",
-                  err,
-                );
-              });
+              await postPayoutQr(serverRow.id, file);
+              const row = snap.payouts.find((x) => x.id === serverRow.id);
+              if (row) row.qr = { ...p.qr };
             }
+            return serverRow;
           },
         });
       } else {
@@ -564,12 +569,19 @@ function EditModeProvider({ children }: { children: ReactNode }) {
           watermark: null,
         };
         setEditing(false);
+        // Name what was saved when the whole batch is one kind of change —
+        // "Cover saved." tells the photographer their edit landed, where the
+        // generic line left them checking. Dedupe mirrors the failure branch
+        // below: three social rows read as "Social link", not three names.
+        const savedLabels = Array.from(new Set(tasks.map((t) => t.label)));
         showToast({
           kind: "success",
           message:
             tasks.length === 0
               ? "No changes to save."
-              : "Settings saved.",
+              : savedLabels.length === 1
+                ? `${savedLabels[0]} saved.`
+                : "Settings saved.",
         });
       } else {
         // Stay in edit mode so the photographer can retry / fix the failure.
@@ -584,9 +596,17 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         const labels = Array.from(
           new Set(failures.map((f) => f.label)),
         ).join(", ");
+        // Surface the backend's own error when there is one — a 429 or
+        // validation reject is not a connection problem, and hiding the
+        // message sent the photographer down the wrong debugging path.
+        const backendMessage = failures
+          .map((f) => (f.r as PromiseRejectedResult).reason)
+          .find((reason) => reason instanceof ApiError)?.message;
         showToast({
           kind: "error",
-          message: `Couldn't save ${labels}. Check your connection and try again.`,
+          message: backendMessage
+            ? `Couldn't save ${labels}. ${backendMessage}`
+            : `Couldn't save ${labels}. Check your connection and try again.`,
         });
       }
     } finally {
@@ -640,14 +660,14 @@ function EditModePill() {
   if (readyToSubmitSlot) return null;
 
   return createPortal(
-    <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3">
+    <div className="fixed bottom-[calc(6rem_+_env(safe-area-inset-bottom))] md:bottom-6 right-6 z-50 flex items-center gap-3">
       {editing ? (
         <>
           <button
             type="button"
             onClick={cancelEdit}
             disabled={saving}
-            className="font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-5 rounded-full shadow-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            className="font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-5 rounded-full shadow-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Cancel
           </button>
@@ -655,7 +675,7 @@ function EditModePill() {
             type="button"
             onClick={() => void saveEdit()}
             disabled={saving}
-            className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? "Saving…" : "Save changes"}
             {!saving && <span aria-hidden="true">→</span>}
@@ -719,12 +739,18 @@ function SlabStatusChip({ ready }: { ready: boolean }) {
 // the submit POST and emit a server-rendered row on the admin's next poll;
 // in mock mode, we have to bridge the two stores ourselves. Returns null
 // when there's no authenticated session (defensive — caller bails).
-function buildAdminSubmissionRow(): AdminUserRow | null {
+function buildAdminSubmissionRow(
+  regions: readonly PHRegion[],
+): AdminUserRow | null {
   const sessionUser = useAuthStore.getState().user;
   if (!sessionUser) return null;
   const settings = usePhotographerSettingsStore.getState();
   const regionLabel = settings.region
-    ? formatRegionLabel(settings.region.regionCode, settings.region.provinceCode)
+    ? formatRegionLabel(
+        regions,
+        settings.region.regionCode,
+        settings.region.provinceCode,
+      )
     : null;
   return {
     userId: sessionUser.id,
@@ -755,8 +781,13 @@ function buildAdminSubmissionRow(): AdminUserRow | null {
   };
 }
 
-function mirrorSubmissionToAdminStore(): void {
-  const row = buildAdminSubmissionRow();
+// `regions` comes from useRegions() at the component boundary — these two are
+// plain functions (they read Zustand via getState()), so the list has to be
+// passed in rather than hooked. The label is only a fallback for the admin
+// queue, which resolves its own via formatRegionLabel; an empty list here just
+// leaves it null.
+function mirrorSubmissionToAdminStore(regions: readonly PHRegion[]): void {
+  const row = buildAdminSubmissionRow(regions);
   if (!row) return;
   useAdminUserStore.getState().upsertSubmission(row);
 }
@@ -769,6 +800,7 @@ function mirrorSubmissionToAdminStore(): void {
 // Returns whether the BE accepted, so callers (the nudge modal) can decide
 // to close their own UI or stay open for a retry.
 async function submitForReview(opts: {
+  regions: readonly PHRegion[];
   setStatus: (s: VerificationStatus) => void;
   showToast: (t: { kind: "info" | "success" | "error"; message: string }) => void;
 }): Promise<{ submitted: boolean }> {
@@ -776,7 +808,7 @@ async function submitForReview(opts: {
     const response = await submitVerification();
     if (response.status === "pending") {
       opts.setStatus("pending");
-      mirrorSubmissionToAdminStore();
+      mirrorSubmissionToAdminStore(opts.regions);
       opts.showToast({
         kind: "info",
         message: "Submitted for review. We'll let you know.",
@@ -886,11 +918,30 @@ export default function SettingsPage() {
       <RegionSlab />
       <SocialSlab />
       <PayoutSlab />
+      <EventCouponsSlab />
       <ReadyToSubmitNudge />
       <EditModePill />
     </EditModeProvider>
   );
 }
+
+function EventCouponsSlab() {
+  return (
+    <Slab id="coupon" number="07" title="Event coupons" caption="One offer per event">
+      <p className="font-sans text-base text-ink-soft leading-relaxed max-w-md">
+        Coupons belong to a paid event, so they only appear on that event&apos;s
+        eligible photos.
+      </p>
+      <Link
+        href={ROUTES.DASHBOARD_EVENTS}
+        className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-5")}
+      >
+        Manage event coupons
+      </Link>
+    </Slab>
+  );
+}
+
 
 // While status === "pending", keep the admin store's snapshot in sync with
 // the photographer's live edits, and auto-flip back to "incomplete" if any
@@ -903,6 +954,7 @@ export default function SettingsPage() {
 // state so they re-submit when fixed.
 function PendingEditWatcher() {
   const { editing } = useEditMode();
+  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -938,8 +990,9 @@ function PendingEditWatcher() {
       setStatus("incomplete");
       return;
     }
-    mirrorSubmissionToAdminStore();
+    mirrorSubmissionToAdminStore(regions);
   }, [
+    regions,
     status,
     complete,
     editing,
@@ -966,6 +1019,7 @@ function PendingEditWatcher() {
 // the nudge resets so it can fire again on next completion).
 function ReadyToSubmitNudge() {
   const { editing } = useEditMode();
+  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -1012,7 +1066,7 @@ function ReadyToSubmitNudge() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await submitForReview({ setStatus, showToast });
+      await submitForReview({ regions, setStatus, showToast });
     } finally {
       setSubmitting(false);
       // Close the modal regardless of outcome — the toast surfaces success
@@ -1050,7 +1104,7 @@ function ReadyToSubmitNudge() {
             type="button"
             onClick={handleSubmit}
             disabled={submitting}
-            className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submitting ? "Submitting…" : "Submit for review"}
             <span aria-hidden="true">→</span>
@@ -1085,7 +1139,7 @@ function ReadyToSubmitPill({ onClick }: { onClick: () => void }) {
   }, []);
   if (!mounted) return null;
   return createPortal(
-    <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3">
+    <div className="fixed bottom-[calc(6rem_+_env(safe-area-inset-bottom))] md:bottom-6 right-6 z-50 flex items-center gap-3">
       <button
         type="button"
         onClick={beginEdit}
@@ -1097,7 +1151,7 @@ function ReadyToSubmitPill({ onClick }: { onClick: () => void }) {
       <button
         type="button"
         onClick={onClick}
-        className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2"
+        className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2"
       >
         <span aria-hidden="true" className="size-2 rounded-full bg-bone" />
         Submit for review
@@ -1136,6 +1190,7 @@ function useAllRequiredFilled(): boolean {
 
 function VerificationStatusPanel() {
   const { editing, beginEdit } = useEditMode();
+  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -1153,7 +1208,7 @@ function VerificationStatusPanel() {
       // `/admin/verifications`. The photographer sits in `pending` until a
       // human reviews them. Phase 1 wires the real BE call: the helper
       // flips local state only after the BE confirms.
-      await submitForReview({ setStatus, showToast });
+      await submitForReview({ regions, setStatus, showToast });
     } finally {
       setSubmitting(false);
     }
@@ -1257,7 +1312,7 @@ function VerificationStatusPanel() {
           type="button"
           onClick={handleSubmit}
           disabled={!complete || submitting || editing}
-          className="inline-flex items-center gap-2 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="inline-flex items-center gap-2 font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {editing
             ? "Save your changes first"
@@ -1351,6 +1406,7 @@ function SubHeading({ label, caption }: { label: string; caption?: string }) {
 
 function LivePreview() {
   const { user } = useAuth();
+  const { editing } = useEditMode();
   const cover = usePhotographerSettingsStore((s) => s.cover);
   const brandName = usePhotographerSettingsStore((s) => s.brandName);
   const brandColor = usePhotographerSettingsStore((s) => s.brandColor);
@@ -1376,7 +1432,10 @@ function LivePreview() {
         <Kicker as="p" tone="soft">
           Live preview
         </Kicker>
-        {handleValid ? (
+        {/* A valid-looking handle isn't a live handle. While editing, the
+            store holds the typed value and the backend still knows the old
+            one, so opening /{handle} in a new tab 404s mid-keystroke. */}
+        {handleValid && !editing ? (
           <Kicker
             as={Link}
             href={`/${trimmedHandle}`}
@@ -1388,7 +1447,7 @@ function LivePreview() {
           </Kicker>
         ) : (
           <Kicker tone="soft">
-            Set URL to open
+            {editing ? "Save to open" : "Set URL to open"}
           </Kicker>
         )}
       </div>
@@ -2089,7 +2148,11 @@ function HandleSlab() {
     ? `quickpitik.com/${handle.trim().toLowerCase()}`
     : "quickpitik.com/your-handle";
 
-  const previewHref = valid ? `/${handle.trim().toLowerCase()}` : "#";
+  // Preview opens the *live* profile, so it stays shut until the handle is
+  // saved — mid-edit the backend still serves the old handle and the new tab
+  // would 404. Copy link is unaffected: copying a not-yet-live URL is fine.
+  const canPreview = valid && !editing;
+  const previewHref = canPreview ? `/${handle.trim().toLowerCase()}` : "#";
 
   const copy = useCallback(async () => {
     if (!valid) return;
@@ -2173,7 +2236,7 @@ function HandleSlab() {
               type="button"
               onClick={copy}
               disabled={!valid}
-              className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
+              className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
             >
               Copy link
             </button>
@@ -2181,18 +2244,21 @@ function HandleSlab() {
               href={previewHref}
               target="_blank"
               rel="noopener noreferrer"
-              aria-disabled={!valid}
+              aria-disabled={!canPreview}
+              title={
+                valid && editing ? "Save your changes to preview" : undefined
+              }
               onClick={(e) => {
-                if (!valid) e.preventDefault();
+                if (!canPreview) e.preventDefault();
               }}
               className={cn(
                 "font-sans text-sm transition-colors inline-flex items-center gap-1",
-                valid
+                canPreview
                   ? "text-ink hover:text-fresh"
                   : "text-slate-soft cursor-not-allowed",
               )}
             >
-              Preview
+              {valid && editing ? "Save to preview" : "Preview"}
               <span aria-hidden="true">↗</span>
             </a>
           </div>
@@ -2210,25 +2276,33 @@ function RegionSlab() {
   const { editing } = useEditMode();
   const region = usePhotographerSettingsStore((s) => s.region);
   const setRegion = usePhotographerSettingsStore((s) => s.setRegion);
+  const { regions, isLoading: regionsLoading } = useRegions();
 
-  const selectedRegion = region ? getRegion(region.regionCode) : undefined;
+  const selectedRegion = region ? getRegion(regions, region.regionCode) : undefined;
   const selectedProvince =
     region && selectedRegion
       ? selectedRegion.provinces.find((p) => p.code === region.provinceCode)
       : undefined;
 
   // A persisted region/province code can fail to resolve when the backend
-  // renames or removes one (Phase B+ — the mock list never changes). Surface
-  // the gap so the user knows to re-pick instead of silently rendering
-  // "Pick a region" as if nothing was set.
-  const staleRegion = !!region && !selectedRegion;
+  // renames or removes one. Surface the gap so the user knows to re-pick
+  // instead of silently rendering "Pick a region" as if nothing was set.
+  //
+  // Gated on !regionsLoading since 2026-08-16: the list is fetched now, so
+  // during the first paint `regions` is empty and EVERY saved code would
+  // otherwise look stale and flash a bogus warning.
+  const staleRegion = !regionsLoading && !!region && !selectedRegion;
   const staleProvince =
-    !!region && !!selectedRegion && !!region.provinceCode && !selectedProvince;
+    !regionsLoading &&
+    !!region &&
+    !!selectedRegion &&
+    !!region.provinceCode &&
+    !selectedProvince;
 
   function handlePickRegion(regionCode: string) {
     if (region?.regionCode === regionCode) return;
     // Reset province when region changes — the user must re-pick.
-    const next = getRegion(regionCode);
+    const next = getRegion(regions, regionCode);
     if (!next) return;
     setRegion({ regionCode, provinceCode: "" });
   }
@@ -2285,7 +2359,8 @@ function RegionSlab() {
                         selectedRegion ? "text-ink" : "text-slate-soft",
                       )}
                     >
-                      {selectedRegion?.name ?? "Pick a region"}
+                      {selectedRegion?.name ??
+                        (regionsLoading ? "Loading regions…" : "Pick a region")}
                     </span>
                     <span aria-hidden="true" className="text-slate shrink-0">
                       ▾
@@ -2298,7 +2373,7 @@ function RegionSlab() {
                     <Kicker as="p" tone="soft" className="px-4 py-2">
                       {REGION_GROUP_LABEL[group]}
                     </Kicker>
-                    {PH_REGIONS.filter((r) => r.group === group).map((r) => (
+                    {regions.filter((r) => r.group === group).map((r) => (
                       <DropdownItem
                         key={r.code}
                         onClick={() => handlePickRegion(r.code)}
@@ -3169,7 +3244,7 @@ function PayoutForm({
         <button
           type="submit"
           disabled={!canSave}
-          className="font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+          className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
         >
           {submitLabel}
           <span aria-hidden="true">→</span>

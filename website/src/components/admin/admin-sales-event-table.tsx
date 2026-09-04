@@ -88,7 +88,7 @@ export function AdminSalesEventTable() {
               onClick={() => handleSort(opt.key)}
               aria-pressed={isActive}
               className={cn(
-                "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full px-3 py-1 border transition-colors",
+                "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-3 py-1 border transition-colors",
                 isActive
                   ? "border-ink text-ink"
                   : "border-line text-slate hover:text-ink hover:border-ink",
@@ -133,13 +133,13 @@ function EventTableRow({ row }: { row: SalesEventRow }) {
               <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
                 {row.name}
               </p>
-              <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft border border-line rounded-full px-2 py-0.5">
+              <Kicker tone="soft" className="border border-line rounded-full px-2 py-0.5">
                 Implied
-              </span>
+              </Kicker>
             </div>
-            <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate-soft tnum mt-1">
+            <Kicker as="p" tone="soft" tnum className="mt-1">
               {row.city} · {capitalize(row.state)} · {row.photoCount.toLocaleString()} photos
-            </p>
+            </Kicker>
           </div>
 
           <DataCell label="Date" value={formatLongDate(row.date, true)} mono />
@@ -186,7 +186,7 @@ function DataCell({
         className={cn(
           "font-mono tnum",
           mono
-            ? "uppercase tracking-[0.15em] text-[13px] min-[400px]:text-[14px] md:text-[12px]"
+            ? "uppercase tracking-[0.15em] text-[14px] min-[400px]:text-[15px] md:text-[13px]"
             : emphasis
               ? "font-medium text-base md:text-base"
               : "text-sm md:text-sm",

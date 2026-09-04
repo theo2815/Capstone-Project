@@ -28,6 +28,13 @@ class CartItemEntity(
     @Column(name = "event_id", nullable = false)
     var eventId: UUID,
 
+    /**
+     * The photo's price when this row was written. **Not** the displayed or
+     * charged price — `CartService.toDto` renders and `OrderService.create`
+     * charges the live `photos.price_php`. Its one live use is
+     * `CartService.add`, which compares against it to raise
+     * CART_ITEM_PRICE_CHANGED (H-4) when a runner re-adds a re-priced photo.
+     */
     @Column(name = "price_php_at_add", nullable = false, precision = 12, scale = 2)
     var pricePhpAtAdd: BigDecimal,
 

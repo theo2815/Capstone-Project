@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
+import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useToast } from "@/hooks/use-toast";
 import { ApiError } from "@/lib/api";
 import {
@@ -122,7 +123,7 @@ export function RequestPayoutModal({
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed transition-colors px-4 py-2"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink disabled:opacity-50 disabled:cursor-not-allowed transition-colors px-4 py-2"
           >
             Cancel
           </button>
@@ -130,7 +131,7 @@ export function RequestPayoutModal({
             type="button"
             onClick={handleSubmit}
             disabled={submitting || !primary}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone bg-fresh hover:bg-fresh-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors rounded-full px-5 py-2"
+            className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
           >
             {submitting ? "Submitting…" : "Submit request"}
           </button>

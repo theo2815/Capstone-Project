@@ -12,6 +12,9 @@ services:
       - LOG_LEVEL=DEBUG
       - DEBUG=true
       - ENVIRONMENT=development
+      - METRICS_ENABLED=false
+      - HOME=/tmp
+      - MPLCONFIGDIR=/tmp/matplotlib
     volumes:
       - ./src:/app/src
       - ./models:/app/models

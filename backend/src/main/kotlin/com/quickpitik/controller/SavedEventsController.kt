@@ -6,6 +6,7 @@ import com.quickpitik.dto.cart.SaveEventRequest
 import com.quickpitik.dto.cart.SavedEventSummaryDto
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.cart.SavedEventsService
+import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
@@ -16,8 +17,10 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
 
+// Runner-only surface — see the note on CartController.
 @RestController
 @RequestMapping("/api/v1/me/saved-events")
+@PreAuthorize("hasRole('RUNNER')")
 class SavedEventsController(
     private val savedEventsService: SavedEventsService,
 ) {

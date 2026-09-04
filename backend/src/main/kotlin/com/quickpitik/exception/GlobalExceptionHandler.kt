@@ -4,19 +4,26 @@ import com.quickpitik.common.ApiError
 import com.quickpitik.common.ApiResponse
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.service.ai.AiApiException
+import jakarta.validation.ConstraintViolationException
 import org.slf4j.LoggerFactory
 import org.springframework.core.Ordered
 import org.springframework.core.annotation.Order
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.security.access.AccessDeniedException
 import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.web.HttpMediaTypeNotSupportedException
+import org.springframework.web.HttpRequestMethodNotSupportedException
 import org.springframework.web.bind.MethodArgumentNotValidException
+import org.springframework.web.bind.MissingServletRequestParameterException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 import org.springframework.web.multipart.MaxUploadSizeExceededException
 import org.springframework.web.multipart.MultipartException
+import org.springframework.web.multipart.support.MissingServletRequestPartException
+import org.springframework.web.servlet.resource.NoResourceFoundException
 
 @RestControllerAdvice
 @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -40,6 +47,28 @@ class GlobalExceptionHandler {
         ResponseEntity.status(HttpStatus.NOT_FOUND).body(
             ApiResponse.failure(ApiError(code = ex.code, message = ex.message ?: "Not found")),
         )
+
+    /**
+     * A request to a path no controller maps. Spring raises this from the
+     * dispatcher rather than from application code, so without an explicit
+     * handler it fell through to [handleGeneric] and answered `500
+     * INTERNAL_ERROR` — a typo in a client URL looked like a server fault, and
+     * the error log filled with stack traces for requests that were simply
+     * wrong. Found 2026-08-15 by requesting `/photos/upload` (the real path is
+     * `/photos`).
+     *
+     * Logged at debug, not error: an unmatched path is a client mistake, and
+     * anything reachable by a scanner must not be able to fill the log.
+     */
+    @ExceptionHandler(NoResourceFoundException::class)
+    fun handleNoResource(ex: NoResourceFoundException): ResponseEntity<ApiResponse<Nothing>> {
+        log.debug("No handler for {}", ex.resourcePath)
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ApiResponse.failure(
+                ApiError(code = ErrorCodes.NOT_FOUND, message = "Resource not found"),
+            ),
+        )
+    }
 
     @ExceptionHandler(ValidationException::class)
     fun handleValidation(ex: ValidationException): ResponseEntity<ApiResponse<Nothing>> =
@@ -101,6 +130,30 @@ class GlobalExceptionHandler {
         )
     }
 
+    /**
+     * A body Jackson can't turn into the target type: malformed JSON, a
+     * missing `@RequestBody`, or — because Kotlin's non-null constructor
+     * params have no defaults — a required field left out. All three are the
+     * caller's mistake, but with no handler they fell through to
+     * [handleGeneric] and came back as a 500 INTERNAL_ERROR.
+     *
+     * The message is fixed rather than derived from the exception: Jackson's
+     * text carries parse context — payload fragments and Kotlin class names —
+     * that has no business in a public envelope. Log it, don't ship it.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException::class)
+    fun handleUnreadableBody(ex: HttpMessageNotReadableException): ResponseEntity<ApiResponse<Nothing>> {
+        log.warn("Unreadable request body: {}", ex.message)
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "Request body could not be parsed.",
+                ),
+            ),
+        )
+    }
+
     @ExceptionHandler(HttpMediaTypeNotSupportedException::class)
     fun handleUnsupportedMediaType(ex: HttpMediaTypeNotSupportedException): ResponseEntity<ApiResponse<Nothing>> =
         ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE).body(
@@ -112,10 +165,23 @@ class GlobalExceptionHandler {
             ),
         )
 
+    /**
+     * ai-api failures are not all outages. `AiApiException.status` already
+     * carries what actually happened — a 4xx means ai-api understood us and
+     * rejected the input (bad image, unprocessable selfie), a 5xx or a
+     * connect failure means the service is down. Collapsing both to 503 told
+     * the caller to "try again later" for a problem retrying can never fix.
+     * Map 4xx → 422 (the input is the problem), everything else → 503.
+     */
     @ExceptionHandler(AiApiException::class)
     fun handleAiApi(ex: AiApiException): ResponseEntity<ApiResponse<Nothing>> {
         log.warn("ai-api call failed: status={} code={} message={}", ex.status, ex.aiCode, ex.message)
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(
+        val clientFault = ex.status.is4xxClientError
+        val status = if (clientFault) HttpStatus.UNPROCESSABLE_ENTITY else HttpStatus.SERVICE_UNAVAILABLE
+        val message =
+            if (clientFault) "That image could not be processed. Please try a different one."
+            else "AI service is temporarily unavailable. Please try again."
+        return ResponseEntity.status(status).body(
             ApiResponse.failure(
                 ApiError(
                     // F5 (2026-05-27): pass through ai-api's specific code
@@ -123,8 +189,8 @@ class GlobalExceptionHandler {
                     // map it to targeted copy instead of always showing the
                     // generic "AI service down" message. Null aiCode = real
                     // outage → falls back to AI_API_UNAVAILABLE.
-                    code = ex.aiCode ?: ErrorCodes.AI_API_UNAVAILABLE,
-                    message = "AI service is temporarily unavailable. Please try again.",
+                    code = aiErrorCode(ex.aiCode),
+                    message = message,
                 ),
             ),
         )
@@ -141,11 +207,102 @@ class GlobalExceptionHandler {
         )
     }
 
+    // ─── Malformed-request mappings (2026-08-27). Each of these previously
+    // fell through to the 500 catch-all — a bad UUID in a path variable or a
+    // missing multipart part is the CLIENT's error and must read as one.
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException::class)
+    fun handleTypeMismatch(ex: MethodArgumentTypeMismatchException): ResponseEntity<ApiResponse<Nothing>> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "Invalid value for '${ex.name}'",
+                    field = ex.name,
+                ),
+            ),
+        )
+
+    @ExceptionHandler(MissingServletRequestPartException::class)
+    fun handleMissingPart(ex: MissingServletRequestPartException): ResponseEntity<ApiResponse<Nothing>> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "Missing required part '${ex.requestPartName}'",
+                    field = ex.requestPartName,
+                ),
+            ),
+        )
+
+    @ExceptionHandler(MissingServletRequestParameterException::class)
+    fun handleMissingParameter(ex: MissingServletRequestParameterException): ResponseEntity<ApiResponse<Nothing>> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "Missing required parameter '${ex.parameterName}'",
+                    field = ex.parameterName,
+                ),
+            ),
+        )
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException::class)
+    fun handleMethodNotSupported(ex: HttpRequestMethodNotSupportedException): ResponseEntity<ApiResponse<Nothing>> =
+        ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(
+            ApiResponse.failure(
+                ApiError(code = ErrorCodes.METHOD_NOT_ALLOWED, message = "Method not allowed"),
+            ),
+        )
+
+    @ExceptionHandler(ConstraintViolationException::class)
+    fun handleConstraintViolation(ex: ConstraintViolationException): ResponseEntity<ApiResponse<Nothing>> {
+        val first = ex.constraintViolations.firstOrNull()
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiResponse.failure(
+                ApiError(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = first?.message ?: "Validation failed",
+                    field = first?.propertyPath?.toString()?.substringAfterLast('.'),
+                ),
+            ),
+        )
+    }
+
     @ExceptionHandler(Exception::class)
     fun handleGeneric(ex: Exception): ResponseEntity<ApiResponse<Nothing>> {
         log.error("Unhandled exception", ex)
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
             ApiResponse.failure(ApiError(code = "INTERNAL_ERROR", message = "Internal server error")),
+        )
+    }
+
+    /**
+     * `AiApiException.aiCode` is ai-api's `error.code` verbatim off the wire.
+     * Per ai-api/docs/integration-contracts.md, only some of those are stable
+     * wire codes — `QuickPitikError` subclasses set `error.code` to the Python
+     * *class name* (`ImageValidationError`, `JobNotFoundError`, …). Forwarding
+     * that raw leaks ai-api internals into our public envelope and hands the FE
+     * a code it can't map. Allowlist the documented codes; collapse everything
+     * else (class names, future codes, null) to AI_API_UNAVAILABLE.
+     */
+    private fun aiErrorCode(aiCode: String?): String =
+        if (aiCode in AI_WIRE_CODES) aiCode!! else ErrorCodes.AI_API_UNAVAILABLE
+
+    private companion object {
+        // ai-api/docs/integration-contracts.md § Error Handling Contract.
+        val AI_WIRE_CODES = setOf(
+            "LOW_QUALITY",
+            "NO_FACES",
+            "NOT_FOUND",
+            "INVALID_INPUT",
+            "INVALID_WEBHOOK_URL",
+            "DELETE_FAILED",
+            "EMPTY_BATCH",
+            "BATCH_TOO_LARGE",
+            "TOO_MANY_JOBS",
+            "MODEL_UNAVAILABLE",
+            "REQUEST_TIMEOUT",
         )
     }
 }

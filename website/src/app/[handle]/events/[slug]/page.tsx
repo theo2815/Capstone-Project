@@ -14,6 +14,7 @@ import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
+import { useInfiniteList } from "@/hooks/use-infinite-list";
 import { useUrlState } from "@/hooks/use-url-state";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { useCartStore } from "@/store/cart-store";
@@ -21,6 +22,7 @@ import { useUiStore } from "@/store/ui-store";
 import { isReservedHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
+import { triggerDownload } from "@/lib/utils";
 import { fetchEventDetail } from "@/lib/api-events";
 import {
   fetchPublicPhotographer,
@@ -67,7 +69,10 @@ export default function HandleEventPage() {
 }
 
 function PageBody({ handle, slug }: { handle: string; slug: string }) {
-  // Profile + event detail fan out in parallel — both 5-min stale, both BE.
+  // Profile + event detail fan out in parallel, both BE. Long stale times:
+  // a public profile changes when the photographer edits settings (30 min),
+  // an event's metadata changes on an admin edit (10 min) — and the presigned
+  // cover URLs inside both live 1 h, which bounds how stale is safe.
   // useQuery (not the wrapper hook) so we can distinguish "still loading"
   // from "404 / not found". The wrapper collapses both into null which would
   // flash NotFoundBody before the BE response lands.
@@ -75,13 +80,13 @@ function PageBody({ handle, slug }: { handle: string; slug: string }) {
     queryKey: ["photographer", "public", handle],
     queryFn: () => fetchPublicPhotographer(handle),
     enabled: handle.length > 0,
-    staleTime: 5 * 60_000,
+    staleTime: 30 * 60_000,
   });
   const eventQuery = useQuery({
     queryKey: ["events", slug, "detail"],
     queryFn: () => fetchEventDetail(slug),
     enabled: slug.length > 0,
-    staleTime: 60_000,
+    staleTime: 10 * 60_000,
   });
 
   if (profileQuery.isLoading || eventQuery.isLoading) {
@@ -122,34 +127,28 @@ function Gallery({
       ? BRAND_COLOR_HEX[profile.brandColor]
       : null;
 
-  // Pull the photographer's slice for this event from the BE. Capped at 240
-  // to keep the initial payload bounded — matches the runner-facing
-  // /events/[slug]?browse=1 batch size. Beyond 240, photographers should
-  // expect users to paginate via "Load more".
-  const photosQuery = useQuery<MockPhoto[]>({
-    queryKey: [
-      "photographer",
-      "public",
-      profile.handle,
-      event.slug,
-      "photos",
-      { offset: 0, limit: 240 },
-    ],
-    queryFn: () =>
-      fetchPublicPhotographerEventPhotos(profile.handle, event.slug, event, photoCount, {
-        offset: 0,
-        limit: 240,
+  // Real server pagination for the browse. bib filtering is client-side (the
+  // public endpoint has no bib param — see "requires backend changes"), so
+  // Load-more progresses the whole gallery and the bib filter is a view over
+  // what's loaded; runners searching a specific bib use /events/[slug] (server
+  // bib search) instead.
+  const list = useInfiniteList<MockPhoto>({
+    queryKey: ["photographer", "public", profile.handle, event.slug, "photos"],
+    fetchPage: (offset, limit) =>
+      fetchPublicPhotographerEventPhotos(profile.handle, event.slug, {
+        offset,
+        limit,
       }),
+    limit: PAGE_SIZE.PHOTO_INCREMENT,
     staleTime: 60_000,
   });
-  const photos = photosQuery.data ?? [];
+  const photos = list.items;
 
   const [bibFilter, setBibFilter] = useUrlState<string>("bib", "", {
     parse: (raw) => raw.trim().toUpperCase(),
   });
   const [searchOpen, setSearchOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PHOTO_INITIAL);
 
   const submitBib = (raw: string) => {
     const clean = raw.trim().toUpperCase();
@@ -174,24 +173,16 @@ function Gallery({
   }, [photos, cleanedQuery, isFiltered]);
 
   useEffect(() => {
-    setLoadedCount(PAGE_SIZE.PHOTO_INITIAL);
-  }, [cleanedQuery]);
-
-  const visibleSlice = useMemo(
-    () => visible.slice(0, loadedCount),
-    [visible, loadedCount],
-  );
-
-  useEffect(() => {
-    if (previewIndex !== null && previewIndex >= visibleSlice.length) {
-      setPreviewIndex(visibleSlice.length === 0 ? null : visibleSlice.length - 1);
+    if (previewIndex !== null && previewIndex >= visible.length) {
+      setPreviewIndex(visible.length === 0 ? null : visible.length - 1);
     }
-  }, [visibleSlice.length, previewIndex]);
+  }, [visible.length, previewIndex]);
 
   const total = visible.reduce((sum, p) => sum + p.price, 0);
-  const showBuyAll = isFiltered && visible.length > 0;
+  const showBuyAll =
+    isFiltered && visible.length > 0 && event.pricingMode !== "free";
   const previewPhoto =
-    previewIndex !== null ? visibleSlice[previewIndex] ?? null : null;
+    previewIndex !== null ? visible[previewIndex] ?? null : null;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -218,10 +209,17 @@ function Gallery({
             <span className="text-slate-soft">·</span>
             <CoverageStateChip state={coverage?.state ?? "open"} />
           </Kicker>
-          <h1 className="font-display text-4xl md:text-6xl font-medium tracking-tight leading-[0.95] text-ink mt-4">
+          <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight leading-[0.95] text-ink mt-4">
             {isFiltered ? (
               visible.length === 0 ? (
-                "No matches yet."
+                // The bib filter is a client view over loaded pages — while
+                // unsearched pages remain (or a fetch is in flight), the
+                // negative isn't known yet.
+                list.hasNextPage || list.isFetching ? (
+                  "Searching…"
+                ) : (
+                  "No matches yet."
+                )
               ) : (
                 <>
                   We found{" "}
@@ -258,24 +256,35 @@ function Gallery({
             )}
           </p>
           <Kicker as="p" tone="soft" className="mt-3">
-            ₱<span className="tnum">{event.pricePerPhoto}</span> per photo ·
-            free watermarked previews · pay once, download forever
+            {event.pricingMode === "free" ? (
+              <>Free · every photo downloads in full, no watermark</>
+            ) : (
+              <>
+                ₱<span className="tnum">{event.pricePerPhoto}</span> per photo ·
+                free watermarked previews · pay once, download forever
+              </>
+            )}
           </Kicker>
 
-          <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-3">
-            <Kicker
-              as={Link}
-              href={`/events/${event.slug}`}
-              className="hover:text-ink transition-colors px-3 py-1.5 rounded-full border border-line hover:border-slate"
-            >
-              See all photographers →
-            </Kicker>
-          </div>
+          {/* An unlisted event (V46) is link-only — /events/{slug} would
+              still resolve, but the cross-link invites a browse it was
+              never meant to join. */}
+          {event.visibility !== "unlisted" && (
+            <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-3">
+              <Kicker
+                as={Link}
+                href={`/events/${event.slug}`}
+                className="hover:text-ink transition-colors px-3 py-1.5 rounded-full border border-line hover:border-slate"
+              >
+                See all photographers →
+              </Kicker>
+            </div>
+          )}
         </div>
       </header>
 
       {photos.length > 0 && (
-        <div className="sticky top-[3.75rem] z-20 bg-bone/90 backdrop-blur-md border-b border-line">
+        <div className="sticky top-[var(--site-header-h)] z-20 bg-bone/90 backdrop-blur-md border-b border-line">
           <div className="max-w-7xl mx-auto px-6 md:px-10 py-3 flex items-center gap-3">
             <Kicker
               as="button"
@@ -320,7 +329,7 @@ function Gallery({
               </Kicker>
             ) : (
               <Kicker tone="soft" className="shrink-0 hidden sm:inline">
-                <span className="tnum text-ink">{photos.length}</span> photos
+                <span className="tnum text-ink">{list.total}</span> photos
               </Kicker>
             )}
           </div>
@@ -329,9 +338,38 @@ function Gallery({
 
       <div className="flex-1 px-6 md:px-10 py-10 md:py-14 pb-32">
         <div className="max-w-7xl mx-auto">
-          {photos.length === 0 ? (
+          {list.isLoading ? (
+            // First photos page is a client fetch with no SSR seed — don't
+            // show "Photos coming soon" (or an error's empty fallback) while
+            // it's still in flight.
+            <div
+              className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]"
+              aria-busy="true"
+            >
+              {Array.from({ length: 8 }, (_, i) => (
+                <Skeleton key={i} className="h-full w-full rounded-xl" />
+              ))}
+            </div>
+          ) : list.error && photos.length === 0 ? (
+            <div className="border border-dashed border-line rounded-2xl p-10 md:p-16 text-center max-w-2xl mx-auto">
+              <Kicker as="p" tone="soft">
+                Gallery
+              </Kicker>
+              <p className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink mt-4">
+                Couldn&apos;t load photos.
+              </p>
+              <Kicker
+                as="button"
+                type="button"
+                onClick={list.refetch}
+                className="mt-6 inline-flex text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
+              >
+                Try again ↻
+              </Kicker>
+            </div>
+          ) : photos.length === 0 ? (
             <EmptyGalleryPanel displayName={profile.displayName} />
-          ) : isFiltered && visible.length === 0 ? (
+          ) : isFiltered && visible.length === 0 && !list.hasNextPage ? (
             <BibEmptyResult
               event={event}
               bib={bibFilter}
@@ -341,7 +379,7 @@ function Gallery({
           ) : (
             <>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
-                {visibleSlice.map((p, i) => (
+                {visible.map((p, i) => (
                   <PhotoMosaicTile
                     key={p.id}
                     event={event}
@@ -351,13 +389,14 @@ function Gallery({
                   />
                 ))}
               </div>
+              {/* Load-more progresses the whole gallery; when a bib is active
+                  the grid above is the filtered view over what's loaded. */}
               <LoadMoreButton
-                shown={visibleSlice.length}
-                total={visible.length}
+                shown={photos.length}
+                total={list.total}
                 increment={PAGE_SIZE.PHOTO_INCREMENT}
-                onLoadMore={() =>
-                  setLoadedCount((n) => n + PAGE_SIZE.PHOTO_INCREMENT)
-                }
+                onLoadMore={list.fetchNextPage}
+                isLoading={list.isFetchingNextPage}
                 countSuffix={isFiltered ? `· BIB ${bibFilter}` : undefined}
               />
             </>
@@ -371,7 +410,7 @@ function Gallery({
         <FindPhotosModal
           eventSlug={event.slug}
           eyebrow={`${profile.displayName} · ${event.name}`}
-          photoCount={photos.length}
+          photoCount={list.total}
           eventPhotoCount={event.photoCount}
           onClose={() => setSearchOpen(false)}
           onSubmitBib={submitBib}
@@ -383,7 +422,7 @@ function Gallery({
           event={event}
           photo={previewPhoto}
           index={previewIndex}
-          total={visibleSlice.length}
+          total={visible.length}
           onClose={() => setPreviewIndex(null)}
           onPrev={
             previewIndex > 0
@@ -391,7 +430,7 @@ function Gallery({
               : undefined
           }
           onNext={
-            previewIndex < visibleSlice.length - 1
+            previewIndex < visible.length - 1
               ? () => setPreviewIndex(previewIndex + 1)
               : undefined
           }
@@ -487,6 +526,28 @@ function PhotoPreviewMount({
   const openCheckout = useUiStore((s) => s.openCheckout);
   const startExpressCheckout = useUiStore((s) => s.startExpressCheckout);
 
+  // Free event (V46): the original is anyone's — owned-mode card, Download
+  // CTA, no cart. The credit stays off: the page is already theirs.
+  if (photo.free && photo.downloadUrl) {
+    const downloadUrl = photo.downloadUrl;
+    return (
+      <PhotoPreviewCard
+        mode="owned"
+        photo={photo}
+        eventName={event.name}
+        eventDate={event.date}
+        index={index + 1}
+        total={total}
+        showPhotographerCredit={false}
+        onClose={onClose}
+        onPrev={onPrev}
+        onNext={onNext}
+        footnote="Free · yours to keep"
+        onDownload={() => triggerDownload(downloadUrl)}
+      />
+    );
+  }
+
   const cartPayload = {
     photoId: photo.id,
     eventId: event.id,
@@ -526,8 +587,13 @@ function PhotoPreviewMount({
     <PhotoPreviewCard
       photo={photo}
       eventName={event.name}
+      eventDate={event.date}
       index={index + 1}
       total={total}
+      // Every photo on this page is this photographer's, and their name is in
+      // the header — crediting each shot back to the page you're standing on
+      // is noise.
+      showPhotographerCredit={false}
       inCart={inCart}
       onClose={onClose}
       onPrev={onPrev}
@@ -569,7 +635,7 @@ function EmptyGalleryPanel({ displayName }: { displayName: string }) {
       <Kicker as="p" tone="soft">
         Gallery
       </Kicker>
-      <p className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink mt-4">
+      <p className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink mt-4">
         Photos coming soon.
       </p>
       <p className="font-sans text-base text-ink-soft mt-3 max-w-md mx-auto">
@@ -615,7 +681,7 @@ function NotFoundBody({
         <Kicker as="p" tone="soft">
           Not found
         </Kicker>
-        <h1 className="font-display text-4xl md:text-5xl font-medium tracking-tight text-ink mt-4">
+        <h1 className="font-display text-4xl md:text-5xl font-extrabold tracking-tight text-ink mt-4">
           {headline}
         </h1>
         <p className="font-sans text-base text-ink-soft mt-3">{body}</p>

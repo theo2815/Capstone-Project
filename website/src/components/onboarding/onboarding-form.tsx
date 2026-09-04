@@ -3,6 +3,7 @@
 import { useEffect, useState, type SVGProps } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
+import { ApiError } from "@/lib/api";
 import { ROUTES } from "@/lib/constants";
 import { roleHome } from "@/lib/redirect";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,7 @@ export function OnboardingForm() {
   const { pendingOAuth, completeOnboarding, cancelOnboarding } = useAuth();
   const [role, setRole] = useState<Role | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!pendingOAuth) {
@@ -22,12 +24,33 @@ export function OnboardingForm() {
 
   if (!pendingOAuth) return null;
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!role || isSubmitting) return;
     setIsSubmitting(true);
-    completeOnboarding(role);
-    router.replace(roleHome(role));
+    setError(null);
+    try {
+      await completeOnboarding(role);
+      router.replace(roleHome(role));
+    } catch (err) {
+      // The parked Google token lives ~1h. If it expired while this page sat
+      // open, the pick cannot complete — restart the flow from /login, where
+      // one more button click mints a fresh token.
+      if (
+        err instanceof ApiError &&
+        err.errors.some((issue) => issue.code === "INVALID_GOOGLE_TOKEN")
+      ) {
+        cancelOnboarding();
+        router.replace(ROUTES.LOGIN);
+        return;
+      }
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Something went wrong. Try again.",
+      );
+      setIsSubmitting(false);
+    }
   }
 
   function handleSignOut() {
@@ -41,7 +64,7 @@ export function OnboardingForm() {
       className="grid gap-10 md:grid-cols-2 md:gap-12 lg:gap-20"
     >
       <div className="stagger-children space-y-8">
-        <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+        <p className="font-mono uppercase tracking-[0.14em] text-[11px] text-slate">
           Welcome
         </p>
 
@@ -55,14 +78,14 @@ export function OnboardingForm() {
           <p className="font-sans text-base text-ink-soft">
             How will you use QuickPitik?
           </p>
-          <p className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate">
             This choice is permanent.
           </p>
         </div>
 
         <div className="flex items-center justify-between gap-3 border-y border-line py-3">
           <div className="flex items-center gap-3 min-w-0">
-            <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft shrink-0">
+            <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft shrink-0">
               Signed in
             </span>
             <span className="font-sans text-sm text-ink truncate">
@@ -72,7 +95,7 @@ export function OnboardingForm() {
           <button
             type="button"
             onClick={handleSignOut}
-            className="font-mono uppercase tracking-[0.2em] text-[10px] text-slate hover:text-ink transition-colors shrink-0"
+            className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-ink transition-colors shrink-0"
           >
             Not you?
           </button>
@@ -106,10 +129,16 @@ export function OnboardingForm() {
           />
         </div>
 
+        {error && (
+          <p role="alert" className="font-sans text-sm text-error">
+            {error}
+          </p>
+        )}
+
         <button
           type="submit"
           disabled={!role || isSubmitting}
-          className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-bone py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSubmitting ? "Setting up…" : "Continue →"}
         </button>
@@ -168,7 +197,7 @@ function RoleCard({
         )}
       />
 
-      <p className="mt-5 font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+      <p className="mt-5 font-mono uppercase tracking-[0.14em] text-[10px] text-slate">
         {label}
       </p>
 
@@ -181,7 +210,7 @@ function RoleCard({
       </p>
 
       {tag && (
-        <p className="mt-auto pt-5 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh-deep">
+        <p className="mt-auto pt-5 font-mono uppercase tracking-[0.14em] text-[10px] text-fresh-deep">
           {tag}
         </p>
       )}

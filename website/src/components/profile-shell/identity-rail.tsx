@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { useAuth } from "@/hooks/use-auth";
+import { useEffectiveRole } from "@/hooks/use-effective-role";
 import { useActiveSection } from "@/hooks/use-active-section";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -59,8 +60,11 @@ export function IdentityRail({
 }: IdentityRailProps) {
   const router = useRouter();
   const { logout } = useAuth();
+  const effectiveRole = useEffectiveRole();
   const activeId = useActiveSection(jumpSections.map((s) => s.id));
-  const moreLinks = moreLinksForRole(user.role, currentPath);
+  // Effective role so the rail "More" list shows runner links (Orders) in
+  // runner view, not the photographer's Dashboard link.
+  const moreLinks = moreLinksForRole(effectiveRole ?? user.role, currentPath);
 
   function handleSignOut() {
     logout();
@@ -72,12 +76,12 @@ export function IdentityRail({
       <div className="flex items-start gap-5 md:block">
         <AvatarDisc name={user.name} size="md" />
         <div className="flex-1 min-w-0 md:mt-7">
-          <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
             {kicker}
           </p>
           <h1
             className={cn(
-              "font-display font-medium tracking-tight leading-[1.05] text-ink mt-3",
+              "font-display font-extrabold tracking-tight leading-[1.05] text-ink mt-3",
               HEADLINE_SIZE[headlineSize],
             )}
           >
@@ -93,7 +97,7 @@ export function IdentityRail({
 
       {jumpSections.length > 0 && (
         <nav aria-label="Jump to section" className="hidden md:block mt-10">
-          <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
             Jump to
           </p>
           <ul className="mt-4 space-y-3">
@@ -128,7 +132,7 @@ export function IdentityRail({
       )}
 
       <div className="mt-8 md:mt-10">
-        <p className="font-mono uppercase tracking-[0.3em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           More
         </p>
         <ul className="mt-4 space-y-3">

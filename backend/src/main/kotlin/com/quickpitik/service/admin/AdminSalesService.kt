@@ -31,16 +31,20 @@ class AdminSalesService(
     fun kpis(rangeRaw: String?): AdminSalesKpisDto {
         val (from, to) = windowFor(rangeRaw)
         val photographerKeep = transactionRepository.sumPhotographerKeepInWindow(from, to)
+        val discounts = transactionRepository.sumDiscountsInWindow(from, to)
         val refunds = transactionRepository.sumRefundsInWindow(from, to)
         val totalSales = transactionRepository.countSalesInWindow(from, to)
         val keepRate = platformProperties.photographerKeepRate
-        // GMV is reconstructed from photographer keep / keepRate so we don't
-        // need a parallel source-of-truth on order_items totals (the
+        // GMV is reconstructed from the photographer's share / keepRate so we
+        // don't need a parallel source-of-truth on order_items totals (the
         // transactions table already nets refunds via the negative-amount
-        // row pattern from PR 9).
+        // row pattern from PR 9). A coupon (V45) lowers kept but not the
+        // share the platform fee is computed on, so the discount is added
+        // back first — otherwise the fee under-reports by discount / keepRate.
+        val grossBase = photographerKeep.add(discounts)
         val gmv = if (keepRate.signum() == 0) BigDecimal.ZERO
-        else photographerKeep.divide(keepRate, 2, RoundingMode.HALF_UP)
-        val platformRevenue = gmv.subtract(photographerKeep).max(BigDecimal.ZERO)
+        else grossBase.divide(keepRate, 2, RoundingMode.HALF_UP)
+        val platformRevenue = gmv.subtract(grossBase).max(BigDecimal.ZERO)
         return AdminSalesKpisDto(
             gmv = gmv,
             platformRevenue = platformRevenue,
@@ -63,16 +67,19 @@ class AdminSalesService(
                 val eventId = row[0] as UUID
                 val impliedCut = (row[1] as? Number)?.let { BigDecimal(it.toString()) } ?: BigDecimal.ZERO
                 val refunds = (row[2] as? Number)?.let { BigDecimal(it.toString()) } ?: BigDecimal.ZERO
-                eventId to Pair(impliedCut, refunds)
+                val discounts = (row.getOrNull(4) as? Number)?.let { BigDecimal(it.toString()) } ?: BigDecimal.ZERO
+                eventId to Triple(impliedCut, refunds, discounts)
             }
             .toMap()
 
         val events = eventRepository.findAllById(rows.keys).filter { it.deletedAt == null }
         val keepRate = platformProperties.photographerKeepRate
         val items = events.mapNotNull { event ->
-            val (impliedCut, refunds) = rows[event.id] ?: return@mapNotNull null
+            val (impliedCut, refunds, discounts) = rows[event.id] ?: return@mapNotNull null
+            // Same add-back as kpis(): kept + coupon discounts is the share
+            // the platform fee was taken from.
             val impliedGmv = if (keepRate.signum() == 0) BigDecimal.ZERO
-            else impliedCut.divide(keepRate, 2, RoundingMode.HALF_UP)
+            else impliedCut.add(discounts).divide(keepRate, 2, RoundingMode.HALF_UP)
             event to AdminSalesEventRowDto(
                 id = event.id.toString(),
                 slug = event.slug,

@@ -72,6 +72,20 @@ class EventCoverService(
             )
         val w = original.width
         val h = original.height
+        // A source smaller than the target ratio itself has no 4:3 crop. The
+        // integer division below floors to zero and getSubimage throws
+        // RasterFormatException (1×1 source) — or, for a source that clears
+        // the crop but not the downscale, BufferedImage throws
+        // IllegalArgumentException (4×1 source). Both surfaced as a 500.
+        // w ≥ 4 and h ≥ 3 makes every crop and output dimension ≥ 3 on both
+        // branches, so neither can degenerate.
+        if (w < TARGET_W || h < TARGET_H) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "cover must be at least ${TARGET_W}×${TARGET_H} px",
+                field = "cover",
+            )
+        }
         // Center-crop to a 4:3 aspect ratio. Wider sources lose horizontal
         // margins; taller sources lose vertical margins. Same approach the
         // FE preview uses, so the photographer sees what runners see.

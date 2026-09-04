@@ -90,10 +90,19 @@ async def enroll_face(
     file: UploadFile = File(...),
     person_name: str = Form(..., min_length=1, max_length=255),
     person_id: str | None = Form(default=None),
-    event_id: str | None = Form(default=None, max_length=255),
+    event_id: str = Form(..., min_length=1, max_length=255),
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
-    """Detect faces, extract embeddings, and store in the database."""
+    """Detect faces, extract embeddings, and store in the database.
+
+    event_id is required: enrollment is fail-closed event isolation (root rule
+    5), the same guarantee /faces/search already enforces. An embedding stored
+    without an event is not merely unscoped — it is unreachable, because every
+    search path now requires an event_id and ``event_id IS NULL`` matches none
+    of them, and ``DELETE /faces/persons?event_id=`` cannot erase it either. So
+    a missing scope produced silent, permanently un-erasable orphans rather
+    than a leak. FastAPI rejects the request with 422 instead.
+    """
     check_scope("faces:write", key_meta)
     start = time.perf_counter()
     settings = request.app.state.settings
@@ -136,7 +145,13 @@ async def enroll_face(
                     request_id=getattr(request.state, "request_id", ""),
                     error={"code": "INVALID_INPUT", "message": "Invalid person_id format"},
                 )
-            person = await repo.get_person(pid, api_key_id=caller_key_id)
+            # Scoped by event as well as tenant: adding faces to a person that
+            # belongs to a DIFFERENT event would file the embedding under that
+            # other event while the caller believed it was enrolling into this
+            # one — the same cross-event mixing event_id exists to prevent.
+            person = await repo.get_person(
+                pid, api_key_id=caller_key_id, event_id=event_id
+            )
             if person is None:
                 return APIResponse(
                     success=False,
@@ -584,13 +599,17 @@ async def enroll_faces_batch(
     files: list[UploadFile] = File(..., description="Image files (JPEG, PNG, WebP)"),
     person_name: str = Form(..., min_length=1, max_length=255),
     person_id: str | None = Form(default=None),
-    event_id: str | None = Form(default=None, max_length=255),
+    event_id: str = Form(..., min_length=1, max_length=255),
     key_meta: dict = Depends(verify_api_key),
 ):
     """Submit a batch of images for async face enrollment.
 
     All images are enrolled under the same person. If `person_id` is provided,
     embeddings are added to that existing person; otherwise a new person is created.
+
+    event_id is required, for the same reason as /faces/enroll: enrollment is
+    fail-closed event isolation (root rule 5). /faces/enroll/mega already
+    required it; these two were the inconsistent, fail-open surfaces.
 
     Returns a job ID immediately. Poll GET /api/v1/jobs/{job_id} for results.
     """

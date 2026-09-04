@@ -17,7 +17,9 @@ import { VerificationBanner } from "@/components/dashboard/verification-banner";
 import { SiteHeader } from "@/components/layout/site-header";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useCanUpload } from "@/hooks/use-can-upload";
+import { usePhotographerEventDetail } from "@/hooks/use-photographer-data";
 import { usePublicEvents } from "@/hooks/use-public-events";
 import { useToast } from "@/hooks/use-toast";
 import { usePhotographerVerificationSync } from "@/lib/photographer-verification-sync";
@@ -35,7 +37,14 @@ import {
   uploadDaysRemaining,
 } from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
-import { ACCEPTED_IMAGE_MIME, MAX_UPLOAD_BYTES } from "@/lib/image-utils";
+import {
+  ACCEPTED_IMAGE_MIME,
+  HEIC_GUIDANCE,
+  HEIC_REJECTION,
+  isHeicFile,
+  looksLikeHeic,
+  MAX_UPLOAD_BYTES,
+} from "@/lib/image-utils";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +55,13 @@ import { cn } from "@/lib/utils";
 // 1500-photo coverage across three parallel tabs.
 
 const BATCH_LIMIT = 500;
+
+// Ceiling on simultaneous upload XHRs. Without it a 500-file batch fires 500
+// requests at once — HTTP/2 multiplexes them onto one connection, so nothing
+// queues at the transport layer and the tab holds 500 Files plus 500
+// onprogress closures live. Mirrors the bounded worker pool the pre-flight
+// hash step already uses below.
+const MAX_CONCURRENT_UPLOADS = 4;
 
 // Stable empty-array reference so useEventCatalog's memo doesn't churn while
 // the public events fetch is in-flight.
@@ -90,25 +106,56 @@ export default function FocusedUploadPage() {
   // a skeleton — 404 only fires once we know the event truly isn't there.
   const liveEvents = usePublicEvents();
   const catalog = useEventCatalog(liveEvents ?? EMPTY_SEED);
-  const event = useMemo(
+  const catalogEvent = useMemo(
     () => (eventId ? catalog.find((e) => e.id === eventId) : undefined),
     [catalog, eventId],
   );
 
+  // The catalog is one capped page (BE MAX_LIMIT) of the whole platform's
+  // events, so a covered event can fall past it while staying uploadable.
+  // On a miss, resolve directly by id through the photographer detail
+  // endpoint — it 404s only for events this photographer never touched,
+  // which are unreachable from the picker anyway.
+  // Resolved unconditionally (V46): an approved public owned event is in
+  // the catalog too, and only the detail says it is ours — which is what
+  // lifts the race-day gate below. A 404 here is only fatal on a catalog
+  // miss; for a catalog hit it just means "not covered yet".
+  const needFallback = liveEvents !== null && !catalogEvent && !!eventId;
+  const { detail: fallbackDetail, isMissing } = usePhotographerEventDetail(
+    eventId ?? null,
+  );
+  const ownedByMe = fallbackDetail?.ownedByMe === true;
+
+  // Same ListEvent synthesis as /dashboard/events/[id] — summary fields from
+  // the BE; participantCount + status + city are slot fillers the upload
+  // surface doesn't read.
+  const event: ListEvent | undefined =
+    catalogEvent ??
+    (fallbackDetail
+      ? {
+          id: fallbackDetail.id,
+          slug: fallbackDetail.slug,
+          name: fallbackDetail.name,
+          date: fallbackDetail.date,
+          location: fallbackDetail.location,
+          photoCount: fallbackDetail.photoCount,
+          participantCount: 0,
+          status: "ACTIVE",
+          state: fallbackDetail.state as EventState,
+          city: fallbackDetail.location.split(",").pop()?.trim() ?? "",
+        }
+      : undefined);
+
   if (liveEvents === null) {
-    return (
-      <main className="bg-bone text-ink min-h-screen flex flex-col">
-        <SiteHeader />
-        <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-            Loading event…
-          </p>
-        </div>
-      </main>
-    );
+    return <FocusedUploadSkeleton />;
   }
 
   if (!event) {
+    // Fallback still in flight — keep the skeleton up; a 404 verdict is the
+    // only thing that should read as "this event doesn't exist for you."
+    if (needFallback && !isMissing) {
+      return <FocusedUploadSkeleton />;
+    }
     notFound();
   }
 
@@ -118,15 +165,40 @@ export default function FocusedUploadPage() {
 
       <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
         <BackChip />
-        <Hero event={event} />
+        <Hero event={event} ownedByMe={ownedByMe} />
         <VerificationBanner />
         {/* Boundary scoped to the gate + dropzone so a thrown error in the
             upload pipeline (drag handler, batch validator, mock progress
             tick) keeps the back chip + hero usable. The header is outside
             the boundary so the user can always navigate away. */}
         <ErrorBoundary>
-          <UploadGate event={event} />
+          <UploadGate event={event} ownedByMe={ownedByMe} />
         </ErrorBoundary>
+      </div>
+    </main>
+  );
+}
+
+// Mirrors the loaded layout's shape (back chip → hero → dropzone) so the swap
+// is reflow-free when the events fetch resolves. Same precedent as
+// <FocusedShareSkeleton> on /dashboard/events/[id]. The back chip renders for
+// real — it doesn't depend on the fetch, and a photographer who landed here by
+// mistake shouldn't have to wait to leave.
+function FocusedUploadSkeleton() {
+  return (
+    <main className="bg-bone text-ink min-h-screen flex flex-col">
+      <SiteHeader />
+      <div
+        className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24"
+        aria-busy="true"
+      >
+        <BackChip />
+        <section className="mb-12 md:mb-16">
+          <Skeleton className="h-3 w-48" />
+          <Skeleton className="h-10 md:h-14 w-3/4 mt-4" />
+          <Skeleton className="h-4 w-1/3 mt-4" />
+        </section>
+        <Skeleton className="h-64 md:h-80 w-full rounded-2xl" />
       </div>
     </main>
   );
@@ -136,7 +208,7 @@ function BackChip() {
   return (
     <Link
       href={ROUTES.DASHBOARD_UPLOAD}
-      className="inline-flex items-center gap-2 font-mono uppercase tracking-[0.3em] text-[10px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone mb-8 md:mb-10"
+      className="inline-flex items-center gap-2 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone mb-8 md:mb-10"
     >
       <span aria-hidden="true">←</span>
       <span>Back to picker</span>
@@ -144,16 +216,22 @@ function BackChip() {
   );
 }
 
-function Hero({ event }: { event: ListEvent }) {
+function Hero({
+  event,
+  ownedByMe,
+}: {
+  event: ListEvent;
+  ownedByMe: boolean;
+}) {
   return (
     <section className="mb-12 md:mb-16">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum flex items-center gap-2 flex-wrap">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum flex items-center gap-2 flex-wrap">
         <span>{formatLongDate(event.date, true)}</span>
         <span className="text-slate-soft">·</span>
         <StateChip state={event.state} />
-        <GraceBadge event={event} />
+        {!ownedByMe && <GraceBadge event={event} />}
       </p>
-      <h1 className="font-display text-4xl md:text-6xl font-medium tracking-tight text-ink mt-4 leading-[1.05]">
+      <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight text-ink mt-4 leading-[1.05]">
         {event.name}
       </h1>
       <p className="font-sans text-base md:text-lg text-ink-soft mt-4 max-w-md">
@@ -178,13 +256,21 @@ function StateChip({ state }: { state: EventState }) {
   return <span>{STATE_LABEL[state]}</span>;
 }
 
-function UploadGate({ event }: { event: ListEvent }) {
+function UploadGate({
+  event,
+  ownedByMe,
+}: {
+  event: ListEvent;
+  ownedByMe: boolean;
+}) {
   const gate = useCanUpload();
 
-  if (event.state === "upcoming") {
+  // The owner of a photographer-owned event (V46) uploads on any date — the
+  // BE skips the window for them too. Verification still gates below.
+  if (!ownedByMe && event.state === "upcoming") {
     return (
       <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Not yet
         </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
@@ -204,10 +290,10 @@ function UploadGate({ event }: { event: ListEvent }) {
   // Grace period closed — race day was 4+ days ago. Photographers cannot
   // push fresh photos to this event; the gallery itself stays open for sale
   // (and remains searchable on /events/[slug]).
-  if (!canUploadToEvent(event.date)) {
+  if (!ownedByMe && !canUploadToEvent(event.date)) {
     return (
       <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Upload window closed
         </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
@@ -236,7 +322,7 @@ function UploadGate({ event }: { event: ListEvent }) {
     // owns the message.
     return (
       <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Uploads paused
         </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
@@ -249,7 +335,7 @@ function UploadGate({ event }: { event: ListEvent }) {
   if (gate.kind !== "ok") {
     return (
       <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Uploads disabled
         </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
@@ -285,6 +371,8 @@ function UploadForm({ event }: { event: ListEvent }) {
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
+  // Upload XHRs currently in flight — see MAX_CONCURRENT_UPLOADS.
+  const activeRef = useRef(0);
 
   const accepted = useMemo(
     () => entries.filter((e) => e.status === "done"),
@@ -367,6 +455,13 @@ function UploadForm({ event }: { event: ListEvent }) {
         return [...prev, ...uniq];
       });
 
+      // The row error has to stay short enough to survive `uppercase truncate`,
+      // so the actual iPhone fix goes in a toast. Fired once per batch, not
+      // once per file — a 200-photo camera-roll dump is all HEIC or none.
+      if (slice.some(looksLikeHeic)) {
+        showToast({ kind: "error", message: HEIC_GUIDANCE, duration: 6000 });
+      }
+
       if (dropped > 0) {
         showToast({
           kind: "error",
@@ -402,14 +497,18 @@ function UploadForm({ event }: { event: ListEvent }) {
 
     void (async () => {
       // Hash with bounded concurrency so a 500-file batch doesn't read every
-      // file into memory at once.
+      // file into memory at once. The HEIC sniff rides along here rather than
+      // in validate(): it has to read bytes, and this pass is already reading
+      // every file. A HEIC is rejected outright, so skip hashing it.
       const files = pending.map((e) => e.file);
       const hashes = new Array<string>(files.length);
+      const heic = new Array<boolean>(files.length);
       let cursor = 0;
       const worker = async () => {
         while (cursor < files.length) {
           const i = cursor++;
-          hashes[i] = await sha256Hex(files[i]);
+          heic[i] = await isHeicFile(files[i]);
+          hashes[i] = heic[i] ? "" : await sha256Hex(files[i]);
         }
       };
       await Promise.all(
@@ -418,9 +517,12 @@ function UploadForm({ event }: { event: ListEvent }) {
       if (cancelled) return;
 
       let byHash = new Map<string, PhotoExistsResult>();
+      const checkable = [...new Set(hashes.filter((h) => h.length > 0))];
       try {
-        const results = await checkPhotosExist(event.id, [...new Set(hashes)]);
-        byHash = new Map(results.map((r) => [r.hash, r]));
+        if (checkable.length > 0) {
+          const results = await checkPhotosExist(event.id, checkable);
+          byHash = new Map(results.map((r) => [r.hash, r]));
+        }
       } catch {
         // Leave byHash empty → every file falls through to "queued" and the
         // server-side unique index remains the source of truth.
@@ -428,11 +530,21 @@ function UploadForm({ event }: { event: ListEvent }) {
       if (cancelled) return;
 
       const hashById = new Map(pending.map((e, i) => [e.id, hashes[i]]));
+      const heicById = new Map(pending.map((e, i) => [e.id, heic[i]]));
       setEntries((prev) =>
         prev.map((p) => {
           if (p.status !== "checking") return p;
           const hash = hashById.get(p.id);
           if (hash === undefined) return p;
+          if (heicById.get(p.id)) {
+            return {
+              ...p,
+              status: "error",
+              progress: 0,
+              retryable: false,
+              error: HEIC_REJECTION,
+            };
+          }
           const result = byHash.get(hash);
           if (result?.status === "same_event") {
             return { ...p, status: "skipped", progress: 0, error: undefined };
@@ -451,6 +563,11 @@ function UploadForm({ event }: { event: ListEvent }) {
           return { ...p, status: "queued" };
         }),
       );
+      // Renamed HEICs only surface here — validate() saw image/jpeg and let
+      // them through, so this is the photographer's first notice.
+      if (heic.some(Boolean)) {
+        showToast({ kind: "error", message: HEIC_GUIDANCE, duration: 6000 });
+      }
       // checking → queued doesn't change entries.length, so nudge the upload
       // effect to pick the freshly-queued files up.
       setRetryNonce((n) => n + 1);
@@ -466,11 +583,22 @@ function UploadForm({ event }: { event: ListEvent }) {
   // no separate publish step — done == in the gallery (web uploads go straight
   // to live; blur culling is desktop-only via BatchMyPhotos). One XHR per
   // file (Q-013) with onprogress driving setEntries.
+  //
+  // Only MAX_CONCURRENT_UPLOADS run at a time. `activeRef` counts the XHRs in
+  // flight; each settled upload frees its slot and bumps retryNonce, which
+  // re-runs this effect to start the next queued file. The queued → uploading
+  // flip stays synchronous (before any await) so a re-fired effect can never
+  // claim an entry that is already being sent.
   useEffect(() => {
-    const queued = entries.filter((e) => e.status === "queued");
+    const slots = MAX_CONCURRENT_UPLOADS - activeRef.current;
+    if (slots <= 0) return;
+    const queued = entries
+      .filter((e) => e.status === "queued")
+      .slice(0, slots);
     if (queued.length === 0) return;
 
     queued.forEach((entry) => {
+      activeRef.current += 1;
       setEntries((prev) =>
         prev.map((p) =>
           p.id === entry.id ? { ...p, status: "uploading" } : p,
@@ -493,13 +621,16 @@ function UploadForm({ event }: { event: ListEvent }) {
           );
         })
         .catch((err: Error & { code?: string }) => {
-          // Backend duplicate-rejection codes are terminal — the same bytes
-          // will always be rejected, so don't offer a retry (mirrors the mobile
+          // Codes where the same bytes will always be rejected — duplicates,
+          // the ≥80MP pixel-bomb guard (415 UNSUPPORTED_MEDIA_TYPE), oversize —
+          // are terminal: don't offer a retry (mirrors the mobile
           // PhotoUploadWorker terminal-code guard). The pre-flight check catches
-          // these first; this is the fallback for when it was skipped or failed.
+          // duplicates first; this is the fallback for when it was skipped.
           const terminal =
             err.code === "PHOTO_DUPLICATE_DIFFERENT_EVENT" ||
-            err.code === "PHOTO_DUPLICATE_SAME_EVENT";
+            err.code === "PHOTO_DUPLICATE_SAME_EVENT" ||
+            err.code === "UNSUPPORTED_MEDIA_TYPE" ||
+            err.code === "PAYLOAD_TOO_LARGE";
           setEntries((prev) =>
             prev.map((p) =>
               p.id === entry.id
@@ -513,10 +644,27 @@ function UploadForm({ event }: { event: ListEvent }) {
                 : p,
             ),
           );
+        })
+        .finally(() => {
+          // Free the slot and nudge the effect so the next queued file starts.
+          activeRef.current -= 1;
+          setRetryNonce((n) => n + 1);
         });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries.length, retryNonce, event.id]);
+
+  // Guard against losing a batch to F5 / browser-close / back-button. Photos
+  // already marked done persist on the backend, but in-flight XHRs abort and
+  // files still being hashed never get sent — both are gone with no record.
+  // Browsers render their own confirmation copy; a custom string is ignored.
+  const unsavedCount = inFlight.length + checking.length;
+  useEffect(() => {
+    if (unsavedCount === 0) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [unsavedCount]);
 
   function handleSelect(e: ChangeEvent<HTMLInputElement>) {
     if (e.target.files) {
@@ -627,7 +775,7 @@ function UploadForm({ event }: { event: ListEvent }) {
               href={newTabHref}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-6 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
+              className="mt-6 font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
             >
               Upload more in new tab
               <span aria-hidden="true">↗</span>
@@ -652,7 +800,7 @@ function UploadForm({ event }: { event: ListEvent }) {
           />
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono uppercase tracking-[0.25em] text-[10px] tnum">
+        <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] tnum">
           <span className={atLimit ? "text-error" : "text-slate-soft"}>
             Queued{" "}
             <span className={atLimit ? "text-error" : "text-ink"}>
@@ -734,7 +882,7 @@ function StagedSection({
   return (
     <section className="mb-10">
       <div className="flex items-baseline justify-between border-b border-line pb-4 mb-6 gap-4 flex-wrap">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate tnum">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
           <span className="text-ink">{entries.length.toLocaleString()}</span>{" "}
           staged
         </p>
@@ -807,7 +955,7 @@ function OverallProgress({
   return (
     <div className="mb-8">
       <div className="flex items-baseline justify-between gap-4 mb-3">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] tnum">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] tnum">
           {isComplete ? (
             <span className="text-fresh">
               All uploaded · {validTotal.toLocaleString()} live
@@ -827,7 +975,7 @@ function OverallProgress({
             </span>
           )}
         </p>
-        <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-ink tnum">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
           {pct}%
         </p>
       </div>
@@ -848,7 +996,7 @@ function UploadMoreFooter({ href }: { href: string }) {
   return (
     <section className="mt-12 md:mt-16 border-t border-line pt-8 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
       <div className="max-w-md">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
           Need to upload more?
         </p>
         <p className="font-sans text-base text-ink-soft mt-2">
@@ -933,7 +1081,7 @@ const QueueRow = memo(function QueueRow({
         {status === "done" && (
           <span
             aria-hidden="true"
-            className="absolute bottom-0.5 right-0.5 size-3.5 rounded-full bg-fresh text-bone flex items-center justify-center font-mono text-[8px] leading-none"
+            className="absolute bottom-0.5 right-0.5 size-3.5 rounded-full bg-fresh text-surface flex items-center justify-center font-mono text-[8px] leading-none"
           >
             ✓
           </span>
@@ -1018,6 +1166,12 @@ const QueueRow = memo(function QueueRow({
 });
 
 function validate(file: File): string | undefined {
+  // Named HEIC is caught here; a HEIC renamed to .jpg reports image/jpeg and
+  // slips past — the pre-flight pass sniffs its header and rejects it there.
+  // Both paths share HEIC_GUIDANCE so the copy doesn't diverge.
+  if (looksLikeHeic(file)) {
+    return HEIC_REJECTION;
+  }
   if (!ACCEPTED_IMAGE_MIME.includes(file.type)) {
     return "JPEG, PNG, or WebP only.";
   }

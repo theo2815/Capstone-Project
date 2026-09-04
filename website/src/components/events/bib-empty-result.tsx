@@ -24,7 +24,7 @@ export function BibEmptyResult({
   return (
     <div className="px-6 md:px-10 py-16 md:py-24">
       <div className="max-w-2xl mx-auto rounded-2xl bg-bone-deep border border-line p-8 md:p-12">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate mb-4">
+        <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-4">
           BIB {bib} · {event.name}
         </p>
         <p className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight leading-tight">
@@ -37,7 +37,7 @@ export function BibEmptyResult({
         <button
           type="button"
           onClick={onClear}
-          className="mt-6 font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-fresh transition-colors"
+          className="mt-6 font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-fresh transition-colors"
         >
           {ctaLabel}
         </button>
@@ -82,7 +82,7 @@ function NotifyForm({ bib }: { bib: string }) {
   const [submitted, setSubmitted] = useState(false);
   if (submitted) {
     return (
-      <p className="mt-8 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh">
+      <p className="mt-8 font-mono uppercase tracking-[0.14em] text-[10px] text-fresh">
         ✓ We&apos;ll email you when bib {bib} appears.
       </p>
     );
@@ -96,7 +96,7 @@ function NotifyForm({ bib }: { bib: string }) {
       className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-end gap-3 max-w-md"
     >
       <label className="flex-1">
-        <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate block mb-2">
+        <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate block mb-2">
           Notify me
         </span>
         <input
@@ -110,7 +110,7 @@ function NotifyForm({ bib }: { bib: string }) {
       </label>
       <button
         type="submit"
-        className="bg-ink hover:bg-ink-soft text-bone px-5 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors whitespace-nowrap"
+        className="bg-ink hover:bg-ink-soft text-bone px-5 py-3 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors whitespace-nowrap"
       >
         Notify me →
       </button>

@@ -6,8 +6,16 @@ import type { RunnerMessage } from "@/lib/runner-messages";
 // principal's userId and gates on hasRole('RUNNER') so a photographer /
 // unauth caller never reaches this surface (403).
 
-export async function fetchMyRunnerMessages(): Promise<RunnerMessage[]> {
-  return api.get<RunnerMessage[]>("/me/runner/messages");
+// Body is a bare array (mobile parity); the true un-removed total rides the
+// X-Total-Count header. `total` is null if the header is absent (older BE).
+export async function fetchMyRunnerMessages(
+  limit?: number,
+): Promise<{ messages: RunnerMessage[]; total: number | null }> {
+  const qs = limit != null ? `?limit=${limit}` : "";
+  const { data, total } = await api.getWithTotal<RunnerMessage[]>(
+    `/me/runner/messages${qs}`,
+  );
+  return { messages: data, total };
 }
 
 export async function markMyRunnerMessageRead(

@@ -14,3 +14,13 @@ export function useRedirectTarget(fallback: string = ROUTES.HOME): string {
   const raw = params?.get("redirect");
   return isSafeRedirect(raw) ? raw : fallback;
 }
+
+// Reads `?next=<path>` — the "come back here when you're done" convention the
+// event page uses when it sends a runner off to build a selfie library
+// (`/profile?next=/events/<slug>#selfies` from PhotoAlertToggle and the
+// selfie-search tip). Null when absent or unsafe.
+export function useNextTarget(): string | null {
+  const params = useSearchParams();
+  const raw = params?.get("next");
+  return isSafeRedirect(raw) ? raw : null;
+}

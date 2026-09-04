@@ -25,6 +25,11 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-websocket")
+	// Health + Micrometer metrics (2026-08-27 observability pass): /actuator/health
+	// is public, everything else ADMIN-only (SecurityConfig). Brings Hikari/JVM/
+	// HTTP-server metrics for free plus the qp.* instruments (upload, dedup,
+	// indexing outcomes, AI call latency, rate-limit denials, watermark cache).
+	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 	implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
 	implementation("org.flywaydb:flyway-core")
@@ -35,7 +40,17 @@ dependencies {
 	runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
 	runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
 
+	// Google ID-token verification for /auth/google (NimbusJwtDecoder + cached
+	// auto-rotating JWKS fetch). Version from the Spring Boot BOM. Deliberately
+	// NOT the resource-server starter — jose alone activates no auto-config, so
+	// the jjwt filter chain above stays the only authentication path.
+	implementation("org.springframework.security:spring-security-oauth2-jose")
+
 	implementation("software.amazon.awssdk:s3:2.30.21")
+	// AWS Rekognition — face index/search + bib text detection, used when
+	// app.ai.provider=rekognition (the AWS-managed alternative to self-hosted
+	// ai-api for web/mobile face + bib). Same SDK version as s3 above.
+	implementation("software.amazon.awssdk:rekognition:2.30.21")
 
 	// Pooled HTTP client for the ai-api RestClient (RestClientConfig). Async
 	// photo indexing fans out concurrent face + bib calls; the default
@@ -53,12 +68,25 @@ dependencies {
 	// PR per docs/IMPLEMENTATION_PLAN.md scaling notes).
 	implementation("com.bucket4j:bucket4j-core:8.10.1")
 
+	// OpenAPI 3 spec + Swagger UI, generated from the controllers. Not in the
+	// Spring Boot BOM, so the version is explicit; the 2.8.x line targets Boot
+	// 3.4/3.5. Served only when API_DOCS_ENABLED=true. See OpenApiConfig for
+	// why the generated schemas have to be post-processed.
+	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9")
+
 	runtimeOnly("org.postgresql:postgresql")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("org.springframework.security:spring-security-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+	// Real-Postgres integration tests, tagged "integration" and excluded from
+	// `test` — see the task wiring below. Versions come from the Spring Boot
+	// BOM's testcontainers dependency management.
+	testImplementation("org.springframework.boot:spring-boot-testcontainers")
+	testImplementation("org.testcontainers:junit-jupiter")
+	testImplementation("org.testcontainers:postgresql")
 }
 
 kotlin {
@@ -73,6 +101,32 @@ allOpen {
 	annotation("jakarta.persistence.Embeddable")
 }
 
-tasks.withType<Test> {
-	useJUnitPlatform()
+// One artifact: build/libs/backend-<version>.jar. The classes-only `-plain.jar`
+// is a start-command footgun (no Main-Class), and application-local.yml
+// (gitignored, real secrets) lives in src/main/resources so must never be packaged.
+tasks.jar { enabled = false }
+tasks.bootJar { exclude("application-local.yml") }
+
+// `./gradlew test` stays Docker-free — backend/CLAUDE.md promises that, and it
+// is what keeps the unit suite runnable on a machine with nothing installed but
+// a JDK. Everything that needs a real Postgres is tagged "integration" and runs
+// only under the `integrationTest` task below.
+tasks.test {
+	useJUnitPlatform {
+		excludeTags("integration")
+	}
+}
+
+// Spins a throwaway Postgres 16 per run via Testcontainers; requires a running
+// Docker daemon. Shares the `test` source set rather than adding a second one —
+// too few integration classes to justify the extra Gradle wiring.
+val integrationTest by tasks.registering(Test::class) {
+	description = "Runs @Tag(\"integration\") tests against a Testcontainers Postgres."
+	group = "verification"
+	useJUnitPlatform {
+		includeTags("integration")
+	}
+	testClassesDirs = sourceSets.test.get().output.classesDirs
+	classpath = sourceSets.test.get().runtimeClasspath
+	shouldRunAfter(tasks.test)
 }

@@ -8,9 +8,8 @@ import {
   type FocusEvent,
 } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { AvatarDisc } from "@/components/account/avatar-disc";
-import { moreLinksForRole } from "@/components/profile-shell";
 import { RailTipPortal } from "@/components/ui/rail-tip-portal";
 import { useAuth } from "@/hooks/use-auth";
 import { useCanUpload } from "@/hooks/use-can-upload";
@@ -57,9 +56,8 @@ const DASHBOARD_ROUTES: ReadonlyArray<DashboardRoute> = [
 // system can be silenced with the master "Hide tips" toggle at the top of
 // the Sections list (preference persists in localStorage).
 export function DashboardRail() {
-  const router = useRouter();
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const gate = useCanUpload();
   const [tipsDisabled, setTipsDisabled] = useState(false);
 
@@ -92,26 +90,27 @@ export function DashboardRail() {
   if (!user) return null;
 
   const memberSince = formatMemberSince(user.createdAt);
-  // Pass DASHBOARD as currentPath so /dashboard is filtered from MORE; we're
-  // inside the dashboard tree on every /dashboard/* route.
-  const moreLinks = moreLinksForRole(user.role, ROUTES.DASHBOARD);
-
-  function handleSignOut() {
-    logout();
-    router.replace(ROUTES.HOME);
-  }
+  // The rail header (avatar + "Dashboard.") rides along on mobile only at the
+  // Overview; sub-pages navigate via <DashboardBottomNav>, so it's desktop-only
+  // there. Profile / Account / Sign out live in the header avatar menu now.
+  const isOverview = pathname === ROUTES.DASHBOARD;
 
   return (
-    <aside className="md:sticky md:top-20 md:self-start pt-6 md:pt-10 pb-6 md:pb-8 md:max-h-[calc(100vh-5rem)] md:overflow-y-auto border-b md:border-0 border-line">
+    <aside
+      className={cn(
+        "md:sticky md:top-20 md:self-start pt-6 md:pt-10 pb-6 md:pb-8 md:max-h-[calc(100vh-5rem)] md:overflow-y-auto border-b md:border-0 border-line",
+        isOverview ? "" : "hidden md:block",
+      )}
+    >
       <div className="flex items-start gap-5 md:block">
         <AvatarDisc name={user.name} size="md" />
         <div className="flex-1 min-w-0 md:mt-7">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
             Photographer · Cebu
             <span className="text-slate-soft"> · </span>
             <span className="tnum">Since {memberSince}</span>
           </p>
-          <h1 className="font-display text-3xl md:text-4xl font-medium tracking-tight leading-[1.05] text-ink mt-3">
+          <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
             Dashboard.
           </h1>
           <p className="font-sans text-sm text-slate mt-2 max-w-xs">
@@ -122,14 +121,14 @@ export function DashboardRail() {
 
       <nav aria-label="Dashboard sections" className="hidden md:block mt-10">
         <div className="flex items-baseline justify-between gap-3">
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
             Sections
           </p>
           <button
             type="button"
             onClick={toggleTipsDisabled}
             aria-pressed={tipsDisabled}
-            className="font-mono uppercase tracking-[0.25em] text-[9px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             {tipsDisabled ? "Show tips" : "Hide tips"}
           </button>
@@ -153,33 +152,6 @@ export function DashboardRail() {
           })}
         </ul>
       </nav>
-
-      <div className="mt-8 md:mt-10">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
-          More
-        </p>
-        <ul className="mt-4 space-y-3">
-          {moreLinks.map((link) => (
-            <li key={link.href}>
-              <Link
-                href={link.href}
-                className="font-display text-base text-slate hover:text-ink transition-colors"
-              >
-                {link.label}
-              </Link>
-            </li>
-          ))}
-          <li>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="font-display text-base text-slate hover:text-ink transition-colors"
-            >
-              Sign out
-            </button>
-          </li>
-        </ul>
-      </div>
     </aside>
   );
 }
@@ -293,7 +265,7 @@ function RailRow({
                 ? `Hide tip for ${route.label}`
                 : `Show tip for ${route.label}`
             }
-            className="shrink-0 size-5 rounded-full border border-line text-slate hover:text-ink hover:border-ink transition-colors flex items-center justify-center font-mono text-[10px] leading-none focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone [@media(hover:hover)]:hidden"
+            className="shrink-0 size-5 rounded-full border border-line text-slate hover:text-ink hover:border-ink transition-colors flex items-center justify-center font-mono text-[12px] leading-none focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone [@media(hover:hover)]:hidden"
           >
             <span aria-hidden="true">{pinned ? "−" : "?"}</span>
           </button>

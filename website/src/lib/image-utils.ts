@@ -31,6 +31,12 @@ export class ImageProcessingError extends Error {
 }
 
 export function validateImageFile(file: File): string | null {
+  // Ahead of the MIME gate: a HEIC fails SUPPORTED_TYPES anyway, but "Use a
+  // JPEG, PNG, or WebP image." tells an iPhone user nothing about how to get
+  // one — and HEIC is what iPhones shoot by default. HEIC_GUIDANCE names the
+  // Settings path. Mostly reached by drag-and-drop and "All files" picks; the
+  // `accept` list filters honestly-named .heic out of most OS pickers.
+  if (looksLikeHeic(file)) return HEIC_GUIDANCE;
   if (!SUPPORTED_TYPES.has(file.type)) {
     return "Use a JPEG, PNG, or WebP image.";
   }
@@ -38,6 +44,52 @@ export function validateImageFile(file: File): string | null {
     return "Image must be under 8 MB.";
   }
   return null;
+}
+
+// ─── HEIC / HEIF detection ────────────────────────────────────────────────
+// iPhones shoot HEIC by default and the backend rejects it. Two detection
+// paths because neither alone is enough:
+//   looksLikeHeic — cheap, synchronous, catches honestly-named files.
+//   isHeicFile    — reads the header, catches a .heic renamed to .jpg. macOS
+//                   and Windows both report `file.type === "image/jpeg"` for
+//                   that file (the MIME comes from the extension), so MIME
+//                   validation waves it through and the bytes get uploaded
+//                   only for the backend to reject them.
+
+// Two strings because they land in two very different slots. The per-file row
+// on /upload/[eventId] renders its error `uppercase truncate` in a narrow
+// column, so anything past ~30 chars is lost; the full iPhone path goes in a
+// toast where it has room to be read.
+export const HEIC_REJECTION = "HEIC — export as JPEG.";
+
+export const HEIC_GUIDANCE =
+  "HEIC photos aren't supported. On iPhone: Settings › Camera › Formats › Most Compatible, or export as JPEG before uploading.";
+
+export function looksLikeHeic(file: File): boolean {
+  return /^image\/hei[cf]$/i.test(file.type) || /\.hei[cf]$/i.test(file.name);
+}
+
+// ISO base-media `ftyp` major brands that mean HEIF/HEIC.
+const HEIF_BRANDS = new Set([
+  "heic",
+  "heix",
+  "heim",
+  "heis",
+  "hevc",
+  "hevx",
+  "hevm",
+  "hevs",
+  "mif1",
+  "msf1",
+]);
+
+// ftyp box layout: [0..3] box size · [4..7] "ftyp" · [8..11] major brand.
+export async function isHeicFile(file: File): Promise<boolean> {
+  const header = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  if (header.length < 12) return false;
+  const ascii = (start: number) =>
+    String.fromCharCode(...header.subarray(start, start + 4));
+  return ascii(4) === "ftyp" && HEIF_BRANDS.has(ascii(8).toLowerCase());
 }
 
 export async function squareCropToDataUrl(

@@ -26,4 +26,10 @@ class OrderItem(
 
     @Column(name = "price_php_at_purchase", nullable = false, precision = 12, scale = 2)
     var pricePhpAtPurchase: BigDecimal,
+
+    // Photographer-coupon discount on this item (V45); 0 when none applied.
+    // pricePhpAtPurchase stays the list price — what the runner paid is
+    // pricePhpAtPurchase − discountPhp, and that is what a refund returns.
+    @Column(name = "discount_php", nullable = false, precision = 12, scale = 2)
+    var discountPhp: BigDecimal = BigDecimal.ZERO,
 )

@@ -14,6 +14,9 @@ object OpaqueTokens {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     }
 
+    /** 6-digit zero-padded OTP for password reset. */
+    fun generateOtp(): String = "%06d".format(random.nextInt(1_000_000))
+
     fun hash(token: String): String {
         val md = MessageDigest.getInstance("SHA-256")
         val digest = md.digest(token.toByteArray(StandardCharsets.UTF_8))

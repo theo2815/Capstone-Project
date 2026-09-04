@@ -11,6 +11,9 @@ data class AdminKpisDto(
     val openDisputes: Long,
     val openFlags: Long,
     val pendingPayouts: Long,
+    // Photographer-owned events awaiting a decision (V46): new submissions
+    // + parked pricing changes.
+    val pendingEventRequests: Long = 0,
 )
 
 // Mirrors AdminTrendPoint. Day-bucketed counts for the kpi-trend chart.

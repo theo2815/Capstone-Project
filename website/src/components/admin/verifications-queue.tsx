@@ -4,7 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import {
+  BTN_DANGER,
+  BTN_PRIMARY,
+  BTN_SECONDARY,
+  BTN_SIZE,
+} from "@/components/ui/button-styles";
 import { PAGE_SIZE } from "@/lib/pagination-config";
+import { safeHttpUrl } from "@/lib/utils";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { CollapsibleReviewSection } from "@/components/admin/admin-collapse";
@@ -34,6 +41,7 @@ import {
 } from "@/lib/admin-photographer-view";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { formatRegionLabel } from "@/lib/ph-regions";
+import { useRegions } from "@/hooks/use-regions";
 
 // Verifications queue body — extracted from /admin/verifications/page.tsx so
 // /admin/inbox can render the same three slabs (Open queue · Incomplete ·
@@ -309,7 +317,7 @@ export function VerificationsQueue() {
   return (
     <>
       {(showFirstLoad || showError) && (
-        <div className="rounded-2xl border border-line bg-bone-deep/40 px-5 py-4 font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+        <div className="rounded-2xl border border-line bg-bone-deep/40 px-5 py-4 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           {showFirstLoad
             ? "Loading admin queue…"
             : (
@@ -377,13 +385,13 @@ export function VerificationsQueue() {
                     <p className="font-display text-base text-ink truncate">
                       {row.brandName ?? row.name}
                     </p>
-                    <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1">
+                    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1">
                       {row.handle ? `@${row.handle}` : "No handle yet"}
                       <span className="text-slate-soft"> · </span>
                       <CompletenessFraction snapshot={row.settingsSnapshot} />
                     </p>
                   </div>
-                  <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft shrink-0">
+                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft shrink-0">
                     Self-serve
                   </span>
                 </li>
@@ -426,7 +434,7 @@ export function VerificationsQueue() {
                       <p className="font-display text-base text-ink truncate">
                         {target?.brandName ?? target?.name ?? entry.userId}
                       </p>
-                      <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+                      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
                         {formatDecidedAt(entry.decidedAt)}
                         {entry.reason && (
                           <>
@@ -437,7 +445,7 @@ export function VerificationsQueue() {
                       </p>
                     </div>
                     <span
-                      className={`font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] shrink-0 ${
+                      className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] shrink-0 ${
                         entry.decision === "approved"
                           ? "text-fresh"
                           : "text-slate"
@@ -485,12 +493,12 @@ export function VerificationsQueue() {
           kicker="Verification"
           title={openRow.brandName ?? openRow.name}
           rightHeader={
-            <span className="inline-flex items-center font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full border border-line text-slate px-3 py-0.5">
+            <span className="inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border border-line text-slate px-3 py-0.5">
               Pending
             </span>
           }
           subtitle={
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
               {openRow.handle ? `@${openRow.handle}` : "No handle yet"}
               <span className="text-slate-soft"> · </span>
               {openRow.region ?? openRow.city}
@@ -505,14 +513,14 @@ export function VerificationsQueue() {
               <button
                 type="button"
                 onClick={() => setDrawerRejectOpen(true)}
-                className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
+                className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
               >
                 Reject…
               </button>
               <button
                 type="button"
                 onClick={handleDrawerApprove}
-                className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone bg-ink hover:bg-fresh hover:text-bone transition-colors rounded-full px-5 py-2"
+                className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
               >
                 Approve
               </button>
@@ -628,11 +636,11 @@ function PendingRow({
                 <h3 className="font-display text-xl md:text-2xl font-medium text-ink truncate">
                   {row.brandName ?? row.name}
                 </h3>
-                <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate">
+                <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
                   @{row.handle ?? "—"}
                 </p>
               </div>
-              <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-2">
+              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2">
                 {row.region ?? row.city}
                 <span className="text-slate-soft"> · </span>
                 <span className="tnum">
@@ -642,11 +650,11 @@ function PendingRow({
 
               <div className="mt-5 flex items-center gap-3 flex-wrap">
                 <CompletenessStrip snapshot={liveSnapshot} />
-                <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+                <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
                   {completeness.filled}/{completeness.total} fields
                 </span>
                 {liveSnapshot && (
-                  <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
                     ·{" "}
                     <span className="tnum">{liveSnapshot.socialCount}</span>{" "}
                     social ·{" "}
@@ -681,6 +689,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
   const { user: sessionUser } = useAuth();
   const liveSettings = usePhotographerSettingsStore();
   const effective = useEffectivePhotographerSettings(row.userId);
+  const { regions } = useRegions();
 
   const isSelf = sessionUser?.id === row.userId;
   const liveSnapshot: PhotographerSettingsSnapshot | null = effective
@@ -707,7 +716,11 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
 
   const completeness = computeCompleteness(liveSnapshot);
   const resolvedRegion = effective?.region
-    ? formatRegionLabel(effective.region.regionCode, effective.region.provinceCode)
+    ? formatRegionLabel(
+        regions,
+        effective.region.regionCode,
+        effective.region.provinceCode,
+      )
     : null;
   const regionLine = resolvedRegion ?? row.region ?? "Not set";
   const publicHandle = effective?.handle?.trim() || row.handle || "";
@@ -729,7 +742,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
           <p className="font-display text-lg md:text-xl text-ink truncate">
             {row.brandName ?? row.name}
           </p>
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft truncate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft truncate">
             {row.email}
           </p>
         </div>
@@ -797,7 +810,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
         <div className="rounded-2xl border border-line bg-bone-deep p-5 md:p-6 space-y-4">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <CompletenessStrip snapshot={liveSnapshot} />
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
               {completeness.filled}/{completeness.total} fields
             </p>
           </div>
@@ -811,7 +824,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
                 >
                   <span className="text-ink">{field.label}</span>
                   <span
-                    className={`font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] ${
+                    className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] ${
                       filled ? "text-fresh" : "text-slate-soft"
                     }`}
                   >
@@ -824,13 +837,13 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
               <>
                 <li className="flex items-center justify-between gap-4 font-sans text-sm pt-2 border-t border-line">
                   <span className="text-ink">Social profiles</span>
-                  <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate tnum">
+                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
                     {liveSnapshot.socialCount} linked
                   </span>
                 </li>
                 <li className="flex items-center justify-between gap-4 font-sans text-sm">
                   <span className="text-ink">Payout methods</span>
-                  <span className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate tnum">
+                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
                     {liveSnapshot.payoutCount} on file
                   </span>
                 </li>
@@ -905,7 +918,7 @@ function PublicUrlSection({ handle }: { handle: string }) {
         href={`/${handle}`}
         target="_blank"
         rel="noopener"
-        className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+        className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
       >
         Open ↗
       </Link>
@@ -982,14 +995,16 @@ function SocialsSection({
               {social.url}
             </p>
           </div>
-          <a
-            href={social.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="shrink-0 font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
-          >
-            Open ↗
-          </a>
+          {safeHttpUrl(social.url) && (
+            <a
+              href={safeHttpUrl(social.url)!}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+            >
+              Open ↗
+            </a>
+          )}
         </li>
       ))}
     </ul>
@@ -1020,12 +1035,12 @@ function PayoutsSection({
             <p className="font-display text-base text-ink truncate">
               {PAYOUT_METHOD_LABEL[p.method]}
               {p.isPrimary && (
-                <span className="ml-2 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh tnum">
+                <span className="ml-2 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh tnum">
                   Primary
                 </span>
               )}
             </p>
-            <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-1 tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
               {formatPayoutNumber(p.method, p.accountNumber)}
             </p>
           </div>
@@ -1049,13 +1064,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         {label}
       </dt>
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink tnum"
+            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >
@@ -1085,28 +1100,28 @@ function VerificationsBulkBar({
       className="fixed inset-x-4 bottom-4 lg:left-auto lg:right-8 lg:bottom-6 lg:max-w-xl z-40 rounded-2xl border border-ink bg-bone shadow-2xl px-4 md:px-6 py-4 animate-[fade-up_0.2s_ease-out_both]"
     >
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate">
+        <p className="kicker">
           <span className="tnum">{count}</span> selected
         </p>
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={onApprove}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] bg-fresh text-bone hover:bg-fresh-deep transition-colors rounded-full px-4 py-2"
+            className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
           >
             Approve {count}
           </button>
           <button
             type="button"
             onClick={onReject}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-2"
+            className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}
           >
             Reject {count}…
           </button>
           <button
             type="button"
             onClick={onClear}
-            className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-3 py-2"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-2"
           >
             Clear
           </button>

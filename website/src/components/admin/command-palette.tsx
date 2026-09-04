@@ -9,9 +9,9 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/modal";
+import { Kicker } from "@/components/ui/kicker";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { useAdminDisputeStore } from "@/store/admin-dispute-store";
-import { useAdminFlagStore } from "@/store/admin-flag-store";
 import { useAdminPayoutStore } from "@/store/admin-payout-store";
 import { useAdminUsersData } from "@/lib/admin-users-data";
 import {
@@ -21,6 +21,7 @@ import {
   type PaletteEntry,
 } from "@/lib/admin-palette-index";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
+import { useAdminFlags, EMPTY_FLAGS } from "@/hooks/use-admin-data";
 import { cn } from "@/lib/utils";
 
 // Phase 5 admin ⌘K command palette. Reads live snapshots from the four
@@ -49,7 +50,7 @@ export function CommandPalette() {
 
   const { rows: userPool } = useAdminUsersData();
   const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
-  const flagOverrides = useAdminFlagStore((s) => s.overrides);
+  const flags = useAdminFlags()?.items ?? EMPTY_FLAGS;
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
 
   const router = useRouter();
@@ -64,10 +65,10 @@ export function CommandPalette() {
       buildPaletteIndex({
         userPool,
         disputeOverrides,
-        flagOverrides,
+        flags,
         payoutOverrides,
       }),
-    [userPool, disputeOverrides, flagOverrides, payoutOverrides],
+    [userPool, disputeOverrides, flags, payoutOverrides],
   );
 
   const indexById = useMemo(() => {
@@ -171,6 +172,7 @@ export function CommandPalette() {
       isOpen={open}
       onClose={() => setOpen(false)}
       className="max-w-xl p-0"
+      hideClose
     >
       <div className="border-b border-line p-4 md:p-5">
         <input
@@ -182,6 +184,10 @@ export function CommandPalette() {
             setActiveIdx(0);
           }}
           onKeyDown={handleInputKeyDown}
+          // The fuzzy scorer runs over every page, queue and photographer on
+          // each keystroke; a pasted wall of text makes that scale badly for
+          // a query no result can ever match.
+          maxLength={200}
           placeholder="Search admin · pages, queues, photographers"
           aria-label="Search admin"
           aria-controls="palette-results"
@@ -199,9 +205,9 @@ export function CommandPalette() {
         ) : (
           <>
             {trimmed.length === 0 && (
-              <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft px-5 pt-4 pb-2">
+              <Kicker as="p" tone="soft" className="px-5 pt-4 pb-2">
                 Recent
-              </p>
+              </Kicker>
             )}
             <ul
               ref={listRef}
@@ -224,13 +230,13 @@ export function CommandPalette() {
         )}
       </div>
       <div className="border-t border-line px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
-        <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+        <Kicker as="p" tone="soft">
           {results.length === 0
             ? trimmed.length === 0
               ? "Type to search"
               : "0 matches"
             : `${results.length} ${results.length === 1 ? "match" : "matches"}`}
-        </p>
+        </Kicker>
         <div className="flex items-center gap-3 flex-wrap">
           <Hint label="Move" keys={["↑", "↓"]} />
           <Hint label="Open" keys={["Enter"]} />
@@ -266,7 +272,7 @@ function PaletteRow({
     >
       <span
         className={cn(
-          "shrink-0 inline-flex items-center font-mono uppercase tracking-[0.25em] text-[10px] rounded-full border px-2 py-0.5",
+          "shrink-0 inline-flex items-center font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border px-2 py-0.5",
           active ? "border-ink text-ink" : "border-line text-slate",
         )}
       >
@@ -275,9 +281,9 @@ function PaletteRow({
       <div className="min-w-0 flex-1">
         <p className="font-sans text-sm text-ink truncate">{entry.title}</p>
         {entry.subtitle && (
-          <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft mt-1 truncate">
+          <Kicker as="p" tone="soft" className="mt-1 truncate">
             {entry.subtitle}
-          </p>
+          </Kicker>
         )}
       </div>
       <span
@@ -298,12 +304,12 @@ function EmptyState() {
     <div className="px-5 py-8">
       <p className="font-sans text-sm text-ink-soft">
         {ADMIN_FLAGS_ENABLED
-          ? "Search anything in admin — pages, pending verifications, disputes, flags, payout cycles, photographers."
-          : "Search anything in admin — pages, pending verifications, disputes, payout cycles, photographers."}
+          ? "Search anything in admin — pages, pending verifications, disputes, flags, payouts, photographers."
+          : "Search anything in admin — pages, pending verifications, disputes, payouts, photographers."}
       </p>
-      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft mt-3">
+      <Kicker as="p" tone="soft" className="mt-3">
         Picks you make appear here as recents on next open.
-      </p>
+      </Kicker>
     </div>
   );
 }
@@ -315,9 +321,9 @@ function NoMatches({ query }: { query: string }) {
         No matches for{" "}
         <span className="font-mono text-ink">&ldquo;{query}&rdquo;</span>.
       </p>
-      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft mt-3">
+      <Kicker as="p" tone="soft" className="mt-3">
         Try a brand name, queue id, runner handle, or page name.
-      </p>
+      </Kicker>
     </div>
   );
 }
@@ -328,14 +334,12 @@ function Hint({ label, keys }: { label: string; keys: string[] }) {
       {keys.map((k, i) => (
         <kbd
           key={i}
-          className="font-mono text-[11px] text-ink rounded-md border border-line bg-bone-deep px-1.5 py-0.5"
+          className="font-mono text-[12px] text-ink rounded-md border border-line bg-bone-deep px-1.5 py-0.5"
         >
           {k}
         </kbd>
       ))}
-      <span className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
-        {label}
-      </span>
+      <Kicker tone="soft">{label}</Kicker>
     </div>
   );
 }

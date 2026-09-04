@@ -1,5 +1,6 @@
 "use client";
 
+import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -18,10 +19,6 @@ import {
   withdrawDispute,
   type RunnerDispute,
 } from "@/lib/api-orders";
-import {
-  appendDownloadDisposition,
-  buildPhotoDownloadFilename,
-} from "@/lib/download-helpers";
 import { type MockOrder } from "@/store/orders-store";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirmation } from "@/hooks/use-confirmation";
@@ -47,6 +44,7 @@ import {
 } from "@/lib/format";
 import { ApiError } from "@/lib/api";
 import { cn, formatPrice } from "@/lib/utils";
+import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
 
 // Programmatic anchor click — direct hit to the presigned S3 URL avoids the
 // CORS-on-fetch trap. Same idiom for per-photo + bundle.
@@ -183,7 +181,7 @@ function SpendSlab() {
       title="Spend"
       caption="Lifetime totals"
     >
-      <div className="grid grid-cols-3 gap-4 md:gap-8">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3 lg:gap-8">
         <Stat value={`₱${stats.total.toLocaleString()}`} label="spent" accent />
         <Stat
           value={String(stats.orderCount)}
@@ -213,10 +211,10 @@ function Stat({
   accent?: boolean;
 }) {
   return (
-    <div className="border-l border-line pl-4 md:pl-6 first:border-0 first:pl-0">
+    <div className="border-line lg:border-l lg:pl-6 lg:first:border-0 lg:first:pl-0">
       <p
         className={cn(
-          "font-display font-medium tracking-tight tnum text-3xl md:text-5xl leading-none",
+          "font-display font-extrabold tracking-tight tnum text-3xl md:text-4xl leading-none",
           accent ? "text-fresh" : "text-ink",
         )}
       >
@@ -440,13 +438,12 @@ function ReceiptRow({
   function handleDownloadOne(id: string) {
     const photo = detail?.photos.find((p) => p.id === id);
     if (!photo?.downloadUrl) return;
-    // appendDownloadDisposition flips the response to
-    // Content-Disposition: attachment so mobile Safari (which ignores
-    // cross-origin `<a download>`) and desktop both save instead of
-    // navigating to the image. Same plumbing as the /orders/return cards.
-    const filename = buildPhotoDownloadFilename(photo);
-    const url = appendDownloadDisposition(photo.downloadUrl, filename);
-    triggerDownload(url, filename);
+    // The backend bakes Content-Disposition: attachment + filename INTO the
+    // signed downloadUrl (LocalFs query params / S3 response-content-disposition)
+    // so mobile Safari (which ignores cross-origin `<a download>`) and desktop
+    // both save instead of navigating. Appending our own params here would
+    // break the SigV4 signature under S3/R2 — don't.
+    triggerDownload(photo.downloadUrl);
     showToast({
       kind: "success",
       message: `Downloading ${id.replace(/^mock-/, "")}…`,
@@ -465,16 +462,16 @@ function ReceiptRow({
           {eventName && eventSlug ? (
             <Link
               href={`/events/${eventSlug}`}
-              className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink hover:text-fresh transition-colors mt-2 inline-block max-w-full truncate"
+              className="font-display text-xl md:text-2xl font-bold tracking-tight text-ink hover:text-fresh underline decoration-line-strong decoration-2 underline-offset-[6px] hover:decoration-fresh transition-colors mt-2 inline-block max-w-full truncate"
             >
               {eventName}
             </Link>
           ) : eventName ? (
-            <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
+            <p className="font-display text-xl md:text-2xl font-bold tracking-tight text-ink mt-2">
               {eventName}
             </p>
           ) : (
-            <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-slate mt-2">
+            <p className="font-display text-xl md:text-2xl font-bold tracking-tight text-slate mt-2">
               Event archived
             </p>
           )}
@@ -492,17 +489,24 @@ function ReceiptRow({
           />
         </div>
         <div className="flex items-baseline justify-between md:flex-col md:items-end gap-3 md:gap-2 shrink-0">
-          <p className="font-mono tnum font-medium text-ink text-xl md:text-2xl">
-            ₱{total.toLocaleString()}
-          </p>
+          <div className="md:text-right">
+            <p className="font-mono tnum font-medium text-ink text-xl md:text-2xl">
+              ₱{total.toLocaleString()}
+            </p>
+            {order.couponCode && (order.discountTotal ?? 0) > 0 && (
+              <Kicker as="p" tone="soft" tnum className="mt-1 whitespace-nowrap">
+                {order.couponCode} · −₱{(order.discountTotal ?? 0).toLocaleString()}
+              </Kicker>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
             aria-controls={`receipt-${orderLabel}-photos`}
-            className="font-sans text-sm text-slate hover:text-ink transition-colors inline-flex items-center gap-1.5 group"
+            className="font-sans text-sm font-medium text-ink hover:text-fresh transition-colors inline-flex items-center gap-1.5 group"
           >
-            <span className="underline decoration-line underline-offset-4 decoration-1 group-hover:decoration-ink">
+            <span className="underline decoration-line-strong underline-offset-4 decoration-1 group-hover:decoration-fresh">
               {expanded ? "Hide photos" : "View photos"}
             </span>
             <span
@@ -539,7 +543,7 @@ function ReceiptRow({
               <button
                 type="button"
                 onClick={handleDownloadAll}
-                className="font-sans text-base font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
+                className="font-display text-base font-bold border border-ink text-ink hover:bg-ink hover:text-surface py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
               >
                 {photoCount === 1 ? "Download photo" : "Download all"}
                 <span aria-hidden="true">↓</span>
@@ -565,7 +569,7 @@ function ReceiptRow({
                 type="button"
                 onClick={() => handleCancelRequest(cancellableDispute.id)}
                 disabled={withdrawingId === cancellableDispute.id}
-                className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors disabled:opacity-40 disabled:hover:text-slate disabled:hover:decoration-line"
+                className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors disabled:opacity-50 disabled:hover:text-slate disabled:hover:decoration-line"
               >
                 {withdrawingId === cancellableDispute.id
                   ? "Cancelling…"
@@ -631,15 +635,16 @@ function PhotoStrip({
             type="button"
             onClick={() => onSelect(i)}
             aria-label={`Preview ${id.replace(/^mock-/, "")}`}
-            className="aspect-[4/3] bg-bone-deep border border-line rounded-md flex items-center justify-center overflow-hidden hover:border-ink/40 hover:bg-bone transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            className="aspect-[4/3] bg-bone-deep border border-line rounded-md flex items-center justify-center overflow-hidden hover:border-ink hover:shadow-[var(--shadow-card)] transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             {thumb ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={thumb}
                 alt={id.replace(/^mock-/, "")}
-                className="size-full object-cover"
+                className={`size-full object-cover ${PROTECTED_IMG_CLASS}`}
                 loading="lazy"
+                {...PROTECTED_IMG_PROPS}
               />
             ) : (
               <Kicker tnum className="px-2 truncate">
@@ -654,9 +659,9 @@ function PhotoStrip({
           type="button"
           onClick={() => onSelect(max)}
           aria-label={`View ${overflow} more photo${overflow === 1 ? "" : "s"}`}
-          className="aspect-[4/3] bg-bone-deep border border-line rounded-md flex items-center justify-center overflow-hidden hover:border-ink/40 hover:bg-bone transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+          className="aspect-[4/3] bg-bone-deep border border-line rounded-md flex items-center justify-center overflow-hidden hover:border-ink hover:shadow-[var(--shadow-card)] transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
         >
-          <span className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[12px] tracking-[0.18em] text-ink uppercase tnum">
+          <span className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.18em] text-ink uppercase tnum">
             +{overflow}
           </span>
         </button>
@@ -668,17 +673,15 @@ function PhotoStrip({
 function ReceiptsEmpty() {
   return (
     <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-      <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+      <p className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-ink">
         No purchases yet.
       </p>
       <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
         Find your photos and pick the ones worth keeping.
       </p>
-      <Link
-        href={ROUTES.EVENTS}
-        className="mt-6 inline-block font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
-      >
+      <Link href={ROUTES.EVENTS} className={cn(BTN_PRIMARY, BTN_SIZE.md, "mt-6")}>
         Browse races
+        <span aria-hidden="true">→</span>
       </Link>
     </div>
   );

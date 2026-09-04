@@ -1,6 +1,7 @@
 "use client";
 
 import { Modal } from "@/components/ui/modal";
+import { Kicker } from "@/components/ui/kicker";
 import { useAdminLegendStore } from "@/store/admin-legend-store";
 
 interface ShortcutRow {
@@ -48,9 +49,9 @@ export function KeyboardLegend() {
           >
             <div className="min-w-0">
               <p className="font-sans text-sm text-ink">{row.label}</p>
-              <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft mt-1">
+              <Kicker as="p" tone="soft" className="mt-1">
                 {row.scope}
-              </p>
+              </Kicker>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {row.keys.map((k, i) => (

@@ -18,5 +18,10 @@ interface SavedEventsRepository {
 
     suspend fun refresh(token: String): Result<List<SavedEventSummaryDto>>
     suspend fun save(token: String, event: EventDto): Result<SavedEventSummaryDto>
+
+    // Id-only re-save — the Undo path for an unsave, where only id + name
+    // survive (race-log rows). No optimistic insert: the server's summary row
+    // is appended on success.
+    suspend fun saveById(token: String, eventId: String): Result<SavedEventSummaryDto>
     suspend fun unsave(token: String, eventId: String): Result<Boolean>
 }

@@ -157,9 +157,66 @@ def create_app() -> FastAPI:
                 response.headers["X-RateLimit-Reset"] = str(rate_info["reset"])
             return response
 
+    # Total request body ceiling. Pure ASGI so the check costs one header lookup
+    # and never touches the body — the /stream endpoints are the desktop's
+    # high-throughput path, and an O(1) guard here is what makes bounding them
+    # affordable at all.
+    #
+    # This is the only thing bounding the AGGREGATE of a multipart upload. Both
+    # /blur/*/stream endpoints read every file into a list and hold all of them
+    # at once, so at STREAM_*_MAX_SIZE=500 the per-file checks in image_utils
+    # cannot bound memory on their own — 500 files under the per-file cap still
+    # sum to 12.5 GB.
+    #
+    # Content-Length only: a chunked request carries no length to check and
+    # passes through to the per-file layer. Not a total guarantee, and not
+    # claimed as one.
+    _max_body = settings.MAX_REQUEST_BODY
+
+    class BodySizeLimitMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+
+            for name, value in scope.get("headers", []):
+                if name != b"content-length":
+                    continue
+                try:
+                    declared = int(value)
+                except ValueError:
+                    break  # malformed — let the server reject it
+                if declared > _max_body:
+                    response = JSONResponse(
+                        status_code=413,
+                        content={
+                            "success": False,
+                            "request_id": scope.get("state", {}).get("request_id", ""),
+                            "error": {
+                                "code": "REQUEST_TOO_LARGE",
+                                "message": (
+                                    f"Request body of {declared // (1024 * 1024)}MB exceeds the "
+                                    f"{_max_body // (1024 * 1024)}MB limit. Send fewer files "
+                                    f"per request."
+                                ),
+                            },
+                        },
+                    )
+                    await response(scope, receive, send)
+                    return
+                break
+
+            await self.app(scope, receive, send)
+
     # Middleware (order matters: last added = outermost = first on request)
     app.add_middleware(RateLimitHeadersMiddleware)
     app.add_middleware(TimeoutMiddleware)
+    # Inside RequestIDMiddleware so the 413 envelope carries a real request_id,
+    # still outside routing so it rejects before multipart is parsed.
+    app.add_middleware(BodySizeLimitMiddleware)
     app.add_middleware(RequestIDMiddleware)
     setup_cors(app, settings.ALLOWED_ORIGINS)
     # SecurityHeaders outermost: catches ALL responses including timeout/rate-limit errors
@@ -188,12 +245,13 @@ def create_app() -> FastAPI:
         should_group_status_codes=True,
         excluded_handlers=["/metrics"],
     )
-    instrumentator.instrument(app)
+    if settings.METRICS_ENABLED:
+        instrumentator.instrument(app)
 
-    if settings.DEBUG:
+    if settings.METRICS_ENABLED and settings.DEBUG:
         # In development, expose /metrics without auth
         instrumentator.expose(app, include_in_schema=False)
-    else:
+    elif settings.METRICS_ENABLED:
         # In production, serve metrics behind a dedicated authenticated route
         from starlette.responses import Response
         from prometheus_client import generate_latest, CONTENT_TYPE_LATEST

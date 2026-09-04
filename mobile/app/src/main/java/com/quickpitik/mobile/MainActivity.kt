@@ -5,39 +5,171 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavController
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.quickpitik.mobile.data.local.SessionEvents
+import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.ViewMode
+import com.quickpitik.mobile.data.local.isPhotographerRole
 import com.quickpitik.mobile.ui.auth.AuthViewModel
+import com.quickpitik.mobile.ui.auth.ForgotPasswordScreen
 import com.quickpitik.mobile.ui.auth.LoginScreen
 import com.quickpitik.mobile.ui.auth.RegisterScreen
-import com.quickpitik.mobile.ui.photographer.PhotographerDashboardScreen
+import com.quickpitik.mobile.ui.auth.ConfirmEmailChangeScreen
+import com.quickpitik.mobile.ui.auth.VerifyEmailScreen
+import com.quickpitik.mobile.ui.photographer.EventsState
+import com.quickpitik.mobile.ui.photographer.PhotographerCaptureScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
+import com.quickpitik.mobile.ui.photographer.PhotographerEarningsScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerEventShareScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerEventsScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerFloatingBottomNav
+import com.quickpitik.mobile.ui.photographer.PhotographerOverviewScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerPublicProfileScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerSettingsScreen
+import com.quickpitik.mobile.ui.photographer.PublicPhotographerViewModel
+import com.quickpitik.mobile.ui.photographer.STUDIO_TAB_ROUTES
+import com.quickpitik.mobile.ui.photographer.StudioInboxLifecycle
+import com.quickpitik.mobile.ui.photographer.StudioTabScaffold
+import com.quickpitik.mobile.ui.photographer.StudioTheme
+import com.quickpitik.mobile.ui.photographer.VerificationUiState
+import com.quickpitik.mobile.ui.runner.AccountSettingsScreen
+import com.quickpitik.mobile.ui.runner.CartViewModel
 import com.quickpitik.mobile.ui.runner.EventsDiscoveryScreen
 import com.quickpitik.mobile.ui.runner.FloatingCart
-import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
-import com.quickpitik.mobile.ui.runner.RunnerGalleryViewModel
-import com.quickpitik.mobile.ui.runner.SavedEventsViewModel
-import com.quickpitik.mobile.ui.runner.CartViewModel
 import com.quickpitik.mobile.ui.runner.OrderReturnScreen
 import com.quickpitik.mobile.ui.runner.OrdersScreen
-import com.quickpitik.mobile.ui.runner.ProfileViewModel
 import com.quickpitik.mobile.ui.runner.ProfileScreen
-import com.quickpitik.mobile.ui.runner.AccountSettingsScreen
+import com.quickpitik.mobile.ui.runner.ProfileViewModel
+import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
+import com.quickpitik.mobile.ui.runner.RunnerGalleryViewModel
+import com.quickpitik.mobile.ui.runner.RunnerInboxViewModel
+import com.quickpitik.mobile.ui.runner.SavedEventsViewModel
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.PillShape
 import com.quickpitik.mobile.ui.theme.QuickPitikMobileTheme
+import com.quickpitik.mobile.ui.theme.Slate
+
+// Runner-owned route PATTERNS (as the back stack reports them). Used by the
+// role guard and, minus the receipt route, by the bottom-nav gate.
+// "photographer/{handle}" and the auth routes belong to NEITHER role set —
+// they are shared surfaces.
+private val RUNNER_ROUTES = setOf(
+    "events", "gallery", "profile", "settings",
+    "orders?orderId={orderId}", "orders/return/{orderId}",
+)
+
+// Where the runner bottom nav shows: the tab surfaces + the orders list, but
+// NOT the modal PayMongo receipt ("orders/return/{orderId}").
+private val RUNNER_NAV_ROUTES = setOf(
+    "events", "gallery", "profile", "settings", "orders?orderId={orderId}",
+)
+
+// Tab route sequences in left-to-right display order for directional slide transitions
+private val RUNNER_TAB_ORDER = listOf(
+    "events",
+    "profile",
+    "orders?orderId={orderId}",
+    "settings",
+)
+
+private val STUDIO_TAB_ORDER = listOf(
+    "studio/home",
+    "studio/capture",
+    "studio/events",
+    "studio/earnings",
+    "studio/settings",
+)
+
+private fun tabIndexForRoute(route: String?): Int {
+    if (route == null) return -1
+    val clean = route.substringBefore("?")
+    val rIdx = RUNNER_TAB_ORDER.indexOfFirst { it.substringBefore("?") == clean }
+    if (rIdx != -1) return rIdx
+    val sIdx = STUDIO_TAB_ORDER.indexOfFirst { it.substringBefore("?") == clean }
+    if (sIdx != -1) return sIdx
+    return -1
+}
+
+private fun arePeerTabs(fromRoute: String?, toRoute: String?): Boolean {
+    if (fromRoute == null || toRoute == null) return false
+    val f = fromRoute.substringBefore("?")
+    val t = toRoute.substringBefore("?")
+    val bothRunner = RUNNER_TAB_ORDER.any { it.substringBefore("?") == f } &&
+        RUNNER_TAB_ORDER.any { it.substringBefore("?") == t }
+    if (bothRunner) return true
+    val bothStudio = STUDIO_TAB_ORDER.any { it.substringBefore("?") == f } &&
+        STUDIO_TAB_ORDER.any { it.substringBefore("?") == t }
+    return bothStudio
+}
 
 class MainActivity : ComponentActivity() {
     // Latest deep-link URI from a quickpitik:// intent. Compose observes this
@@ -47,7 +179,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        deepLinkUri = pickQuickpitikUri(intent)
+        // Only consume the launch intent's deep link on a FRESH start. On a
+        // config change / process-death restore the NavController restores its
+        // own back stack — re-handling the intent here would re-navigate and,
+        // for one-shot email tokens, re-POST an already-spent token.
+        if (savedInstanceState == null) {
+            deepLinkUri = pickQuickpitikUri(intent)
+        }
         setContent {
             QuickPitikMobileTheme {
                 val navController = rememberNavController()
@@ -60,199 +198,746 @@ class MainActivity : ComponentActivity() {
                     handleQuickpitikUri(uri, navController, cartViewModel)
                     deepLinkUri = null
                 }
-                val profileViewModel: ProfileViewModel = viewModel()
-                // Hoisted to the NavHost scope so the events-discovery browse screen,
-                // the gallery cockpit, and the profile race log all read/write the one
-                // shared instance (selected event + saved-events store stay in sync).
-                val runnerViewModel: RunnerGalleryViewModel = viewModel()
-                val savedEventsViewModel: SavedEventsViewModel = viewModel()
+                // Cold start with a cached JWT should land on the user's home
+                // surface, not bounce them through login again. Same role→route
+                // mapping as onLoginSuccess below, kept in one place. remember{}
+                // so a later clearSession() can't re-key the NavHost mid-session.
+                val sessionManager = remember { SessionManager.getInstance(this@MainActivity) }
+                val startDestination = remember {
+                    ViewMode.init(sessionManager)
+                    when {
+                        sessionManager.getAccessToken() == null -> "login"
+                        // A photographer who killed the app while in runner
+                        // view cold-starts back into runner view — starting in
+                        // studio with the flag still set would strand the flag,
+                        // because studio is legal for the true role and the
+                        // guard would never fire.
+                        isPhotographerRole(sessionManager.getUserRole()) &&
+                            sessionManager.isRunnerView() -> "runner"
+                        isPhotographerRole(sessionManager.getUserRole()) -> "studio"
+                        else -> "runner"
+                    }
+                }
+                val runnerView by ViewMode.runnerView.collectAsState()
 
-                Box(modifier = Modifier.fillMaxSize()) {
-                NavHost(
-                    navController = navController,
-                    startDestination = "login"
-                ) {
-                    composable("login") {
-                        LoginScreen(
-                            viewModel = authViewModel,
-                            onNavigateToRegister = {
-                                navController.navigate("register")
-                            },
-                            onLoginSuccess = { isPhotographer ->
-                                val target = if (isPhotographer) "dashboard" else "events"
-                                navController.navigate(target) {
-                                    popUpTo("login") { inclusive = true }
-                                }
-                            }
-                        )
+                // Raised by TokenAuthenticator when refresh fails: the session is
+                // unrecoverable, so drop the whole back stack and land on login.
+                // The payload (nullable) says WHY — e.g. an ACCOUNT_SUSPENDED
+                // rejection — and is surfaced as a notice on the login screen.
+                var sessionNotice by remember { mutableStateOf<String?>(null) }
+                LaunchedEffect(Unit) {
+                    SessionEvents.forcedLogout.collect { reason ->
+                        sessionNotice = reason
+                        // Parity with the manual sign-out paths: the next user
+                        // on this device must not inherit the previous
+                        // session's cart pill — nor its runner-view flag.
+                        cartViewModel.clearCart()
+                        ViewMode.reset(sessionManager)
+                        navController.navigate("login") {
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
+                        }
                     }
-                    composable("register") {
-                        RegisterScreen(
-                            viewModel = authViewModel,
-                            onNavigateToLogin = {
-                                navController.navigate("login")
-                            },
-                            onRegisterSuccess = { isPhotographer ->
-                                val target = if (isPhotographer) "dashboard" else "events"
-                                navController.navigate(target) {
-                                    popUpTo("login") { inclusive = true }
-                                }
-                            }
-                        )
+                }
+
+                val navBackStackEntry by navController.currentBackStackEntryAsState()
+                val currentRoute = navBackStackEntry?.destination?.route
+                // Exact route PATTERNS, not startsWith: "orders/return/{orderId}"
+                // is the modal PayMongo receipt and must NOT carry the
+                // persistent nav (startsWith("orders") used to match it).
+                val showRunnerBottomBar = currentRoute in RUNNER_NAV_ROUTES
+
+                // While any studio/* destination is on the stack this resolves
+                // the graph's back-stack entry — the owner of the ONE shared
+                // PhotographerDashboardViewModel. Null for runner sessions, so
+                // a runner never constructs the VM (and its init{} salvo).
+                val studioEntry = remember(navBackStackEntry) {
+                    runCatching { navController.getBackStackEntry("studio") }.getOrNull()
+                }
+
+                // The single studio tab-navigation path: bottom nav + Overview
+                // quick links both come through here, so the per-tab
+                // deliberate-refresh `when` exists exactly once (it was
+                // duplicated twice in the old DashboardScreen). popUpTo keeps
+                // the stack at [home, currentTab] — back from any tab lands
+                // Home; back from Home exits. saveState/restoreState preserve
+                // tab-internal scroll. NOTE: studio/capture is deliberately
+                // absent from the refresh `when` — PublicEventPickerList
+                // refetches itself on re-entry.
+                val studioNavigate: (String) -> Unit = navigate@{ route ->
+                    if (currentRoute != route) {
+                        navController.navigate(route) {
+                            popUpTo("studio/home") { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
-                    composable("dashboard") {
-                        val photographerViewModel: PhotographerDashboardViewModel = viewModel()
-                        PhotographerDashboardScreen(
-                            viewModel = photographerViewModel,
-                            onLogout = {
-                                authViewModel.resetState()
-                                navController.navigate("login") {
-                                    popUpTo("dashboard") { inclusive = true }
-                                }
-                            }
-                        )
+                    val entry = runCatching {
+                        navController.getBackStackEntry("studio")
+                    }.getOrNull() ?: return@navigate
+                    val vm = ViewModelProvider(entry)[PhotographerDashboardViewModel::class.java]
+                    when (route) {
+                        "studio/home" -> {
+                            vm.fetchVerificationStatus()
+                            vm.fetchEvents()
+                            vm.fetchEarningsAndTransactions()
+                            // REST hydration for the inbox — the WS push in the
+                            // VM only refetches once the socket actually opens,
+                            // and Overview derives the rejection banner from
+                            // these messages.
+                            vm.fetchMessages()
+                        }
+                        "studio/events" -> {
+                            vm.fetchEvents()
+                            // The tab merges covered + public events; both
+                            // refreshed here (this replaces the screen's old
+                            // mount-time LaunchedEffect).
+                            vm.fetchPublicEvents()
+                        }
+                        "studio/earnings" -> vm.fetchEarningsAndTransactions()
+                        "studio/settings" -> {
+                            vm.fetchVerificationStatus()
+                            vm.fetchSettings()
+                        }
                     }
-                    // Runner landing — browse every race (web /events), then tap a card
-                    // to open its cockpit. Selecting an event seeds the shared
-                    // RunnerGalleryViewModel before navigating to the gallery.
-                    composable("events") {
-                        EventsDiscoveryScreen(
-                            viewModel = runnerViewModel,
-                            savedEventsViewModel = savedEventsViewModel,
-                            onEventSelected = { event ->
-                                runnerViewModel.selectEvent(event)
-                                navController.navigate("gallery")
-                            },
-                            onNavigateToOrders = { navController.navigate("orders") },
-                            onNavigateToProfile = { navController.navigate("profile") },
-                            onNavigateToSettings = { navController.navigate("settings") },
-                            onLogout = {
-                                authViewModel.resetState()
-                                cartViewModel.clearCart()
-                                navController.navigate("login") {
-                                    popUpTo("events") { inclusive = true }
-                                }
-                            }
-                        )
+                }
+
+                // Inbox socket held once for the whole studio session — a
+                // per-tab lifecycle would reconnect (and refetch) on every tab
+                // switch. See StudioInboxLifecycle.
+                if (studioEntry != null) {
+                    val studioVm: PhotographerDashboardViewModel = viewModel(studioEntry)
+                    StudioInboxLifecycle(studioVm)
+                }
+
+                // Role guard — the one choke point every navigation source
+                // (bottom nav, deep links, programmatic) passes through.
+                // Runner routes reject a photographer; studio routes reject a
+                // runner. `photographer/{handle}` and the auth routes are in
+                // neither set (shared). Redirects never popUpTo: a hostile
+                // deep link must not be able to pop the studio graph and kill
+                // a live tether session.
+                // Web use-effective-role parity: runner routes check the
+                // EFFECTIVE role (a photographer in runner view passes),
+                // studio routes check the TRUE role (a photographer in runner
+                // view may still deep-return to studio).
+                LaunchedEffect(navBackStackEntry, runnerView) {
+                    val route = navBackStackEntry?.destination?.route ?: return@LaunchedEffect
+                    if (sessionManager.getAccessToken() == null) return@LaunchedEffect
+                    val photographer = isPhotographerRole(sessionManager.getUserRole())
+                    val effectiveRunner = !photographer || runnerView
+                    when {
+                        route in RUNNER_ROUTES && !effectiveRunner ->
+                            navController.navigate("studio") { launchSingleTop = true }
+                        route.startsWith("studio") && !photographer ->
+                            navController.navigate("runner") { launchSingleTop = true }
                     }
-                    composable("gallery") {
-                        RunnerGalleryScreen(
-                            viewModel = runnerViewModel,
-                            cartViewModel = cartViewModel,
-                            onNavigateToOrders = {
-                                navController.navigate("orders")
-                            },
-                            onNavigateToProfile = {
-                                navController.navigate("profile")
-                            },
-                            onNavigateToSettings = {
-                                navController.navigate("settings")
-                            },
-                            onNavigateBack = {
-                                navController.popBackStack()
-                            },
-                            onLogout = {
-                                authViewModel.resetState()
-                                cartViewModel.clearCart()
-                                navController.navigate("login") {
-                                    popUpTo("events") { inclusive = true }
-                                }
-                            }
-                        )
+                }
+
+                // RunnerTopBar's "Switch to photographer" lands here — the bar
+                // has no NavController. Pop-inclusive so the stack never mixes
+                // the two roles' surfaces.
+                LaunchedEffect(Unit) {
+                    ViewMode.switchToPhotographer.collect {
+                        ViewMode.reset(sessionManager)
+                        navController.navigate("studio") {
+                            popUpTo("runner") { inclusive = true }
+                            launchSingleTop = true
+                        }
                     }
-                    composable("profile") {
-                        ProfileScreen(
-                            viewModel = profileViewModel,
-                            cartViewModel = cartViewModel,
-                            savedEventsViewModel = savedEventsViewModel,
-                            onNavigateBack = {
-                                navController.popBackStack()
-                            },
-                            onOpenEvent = { slug ->
-                                val event = runnerViewModel.eventBySlug(slug)
-                                if (event != null) {
-                                    runnerViewModel.selectEvent(event)
-                                    navController.navigate("gallery")
+                }
+
+                Scaffold(
+                    containerColor = Bone,
+                    bottomBar = {
+                        when {
+                            currentRoute in STUDIO_TAB_ROUTES && studioEntry != null -> {
+                                val studioVm: PhotographerDashboardViewModel = viewModel(studioEntry)
+                                val verificationState by studioVm.verificationState.collectAsState()
+                                val showSettingsBadge = when (val s = verificationState) {
+                                    is VerificationUiState.Success ->
+                                        s.verification.status.lowercase() != "approved"
+                                    else -> true
+                                }
+                                PhotographerFloatingBottomNav(
+                                    currentRoute = currentRoute,
+                                    showSettingsBadge = showSettingsBadge,
+                                    onNavigate = studioNavigate,
+                                )
+                            }
+                            showRunnerBottomBar -> RunnerFloatingBottomNav(
+                                currentRoute = currentRoute,
+                                onNavigate = { route ->
+                                    if (route == "events" && currentRoute == "gallery") {
+                                        if (!navController.popBackStack("events", inclusive = false)) {
+                                            navController.navigate("events") {
+                                                popUpTo("events") { inclusive = true }
+                                                launchSingleTop = true
+                                            }
+                                        }
+                                        return@RunnerFloatingBottomNav
+                                    }
+                                    val isAlreadyOnOrders = route == "orders" && currentRoute?.startsWith("orders") == true
+                                    if (currentRoute != route && !isAlreadyOnOrders) {
+                                        navController.navigate(route) {
+                                            popUpTo("events") { saveState = true }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                ) { innerPadding ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                    ) {
+                        NavHost(
+                            navController = navController,
+                            startDestination = startDestination,
+                            enterTransition = {
+                                val fromRoute = initialState.destination.route
+                                val toRoute = targetState.destination.route
+                                if (arePeerTabs(fromRoute, toRoute)) {
+                                    val fromIdx = tabIndexForRoute(fromRoute)
+                                    val toIdx = tabIndexForRoute(toRoute)
+                                    if (toIdx > fromIdx) {
+                                        slideIntoContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                                            initialOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                    } else {
+                                        slideIntoContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                                            initialOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                    }
                                 } else {
-                                    // Event not in the loaded set — fall back to browse.
-                                    navController.navigate("events")
+                                    slideIntoContainer(
+                                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                        animationSpec = tween(300, easing = FastOutSlowInEasing)
+                                    ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
                                 }
                             },
-                            onBrowseEvents = {
-                                navController.navigate("events")
-                            }
-                        )
-                    }
-                    composable("settings") {
-                        AccountSettingsScreen(
-                            viewModel = profileViewModel,
-                            onNavigateBack = {
-                                navController.popBackStack()
+                            exitTransition = {
+                                val fromRoute = initialState.destination.route
+                                val toRoute = targetState.destination.route
+                                if (arePeerTabs(fromRoute, toRoute)) {
+                                    val fromIdx = tabIndexForRoute(fromRoute)
+                                    val toIdx = tabIndexForRoute(toRoute)
+                                    if (toIdx > fromIdx) {
+                                        slideOutOfContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                            animationSpec = tween(240, easing = FastOutLinearInEasing),
+                                            targetOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                    } else {
+                                        slideOutOfContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                            animationSpec = tween(240, easing = FastOutLinearInEasing),
+                                            targetOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                    }
+                                } else {
+                                    slideOutOfContainer(
+                                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                                        targetOffset = { (it * 0.25f).toInt() }
+                                    ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                }
                             },
-                            onLogout = {
-                                authViewModel.resetState()
-                                cartViewModel.clearCart()
-                                navController.navigate("login") {
-                                    popUpTo("events") { inclusive = true }
+                            popEnterTransition = {
+                                val fromRoute = initialState.destination.route
+                                val toRoute = targetState.destination.route
+                                if (arePeerTabs(fromRoute, toRoute)) {
+                                    val fromIdx = tabIndexForRoute(fromRoute)
+                                    val toIdx = tabIndexForRoute(toRoute)
+                                    if (toIdx > fromIdx) {
+                                        slideIntoContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                                            initialOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                    } else {
+                                        slideIntoContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                                            initialOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                    }
+                                } else {
+                                    slideIntoContainer(
+                                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                                        initialOffset = { (it * 0.25f).toInt() }
+                                    ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing))
+                                }
+                            },
+                            popExitTransition = {
+                                val fromRoute = initialState.destination.route
+                                val toRoute = targetState.destination.route
+                                if (arePeerTabs(fromRoute, toRoute)) {
+                                    val fromIdx = tabIndexForRoute(fromRoute)
+                                    val toIdx = tabIndexForRoute(toRoute)
+                                    if (toIdx > fromIdx) {
+                                        slideOutOfContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                            animationSpec = tween(240, easing = FastOutLinearInEasing),
+                                            targetOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                    } else {
+                                        slideOutOfContainer(
+                                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                            animationSpec = tween(240, easing = FastOutLinearInEasing),
+                                            targetOffset = { (it * 0.28f).toInt() }
+                                        ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                    }
+                                } else {
+                                    slideOutOfContainer(
+                                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                        animationSpec = tween(300, easing = FastOutSlowInEasing)
+                                    ) + fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
                                 }
                             }
-                        )
-                    }
-                    composable("orders") {
-                        OrdersScreen(
-                            viewModel = cartViewModel,
-                            onNavigateBack = {
-                                navController.popBackStack()
+                        ) {
+                            composable("login") {
+                                LoginScreen(
+                                    viewModel = authViewModel,
+                                    sessionNotice = sessionNotice,
+                                    onNavigateToRegister = {
+                                        navController.navigate("register")
+                                    },
+                                    onNavigateToForgotPassword = {
+                                        navController.navigate("forgot-password")
+                                    },
+                                    onLoginSuccess = { isPhotographer ->
+                                        sessionNotice = null
+                                        val target = if (isPhotographer) "studio" else "runner"
+                                        if (!isPhotographer) cartViewModel.fetchCart()
+                                        navController.navigate(target) {
+                                            popUpTo("login") { inclusive = true }
+                                        }
+                                    }
+                                )
                             }
-                        )
-                    }
-                    // PayMongo return surface — entered via the quickpitik://
-                    // deep link MobileReturnController emits after the gateway
-                    // bounces the browser back. Reads the orderId arg, polls
-                    // /me/orders/{id} until PAID, then renders the receipt
-                    // editorial.
-                    composable(
-                        route = "orders/return/{orderId}",
-                        arguments = listOf(navArgument("orderId") { type = NavType.StringType }),
-                    ) { entry ->
-                        val orderId = entry.arguments?.getString("orderId").orEmpty()
-                        OrderReturnScreen(
-                            orderId = orderId,
+                            composable("forgot-password") {
+                                ForgotPasswordScreen(
+                                    viewModel = authViewModel,
+                                    onNavigateToLogin = {
+                                        navController.navigate("login") {
+                                            popUpTo("login") { inclusive = true }
+                                        }
+                                    }
+                                )
+                            }
+                            composable("register") {
+                                RegisterScreen(
+                                    viewModel = authViewModel,
+                                    onNavigateToLogin = {
+                                        navController.navigate("login")
+                                    },
+                                    onRegisterSuccess = { isPhotographer ->
+                                        val target = if (isPhotographer) "studio" else "runner"
+                                        if (!isPhotographer) cartViewModel.fetchCart()
+                                        navController.navigate(target) {
+                                            popUpTo("login") { inclusive = true }
+                                        }
+                                    }
+                                )
+                            }
+                            composable(
+                                route = "verify-email?token={token}",
+                                arguments = listOf(navArgument("token") { type = NavType.StringType; nullable = true; defaultValue = null })
+                            ) { backStackEntry ->
+                                val token = backStackEntry.arguments?.getString("token")
+                                VerifyEmailScreen(
+                                    token = token,
+                                    // popUpTo(0): the deep link can arrive with
+                                    // any stack underneath (login OR a live
+                                    // runner/studio graph) — popping to a named
+                                    // route would silently no-op when it isn't
+                                    // on the stack and leave dead screens behind.
+                                    onNavigateToLogin = {
+                                        navController.navigate("login") {
+                                            popUpTo(0) { inclusive = true }
+                                            launchSingleTop = true
+                                        }
+                                    },
+                                    onNavigateToDashboard = { isPhotographer ->
+                                        sessionNotice = null
+                                        val target = if (isPhotographer) "studio" else "runner"
+                                        if (!isPhotographer) cartViewModel.fetchCart()
+                                        navController.navigate(target) {
+                                            popUpTo(0) { inclusive = true }
+                                            launchSingleTop = true
+                                        }
+                                    }
+                                )
+                            }
+                            composable(
+                                route = "confirm-email-change?token={token}",
+                                arguments = listOf(navArgument("token") { type = NavType.StringType; nullable = true; defaultValue = null })
+                            ) { backStackEntry ->
+                                val token = backStackEntry.arguments?.getString("token")
+                                ConfirmEmailChangeScreen(
+                                    token = token,
+                                    onNavigateToLogin = {
+                                        // On success the screen cleared the
+                                        // session — finish the logout the same
+                                        // way forcedLogout does: cart + the
+                                        // in-memory runner-view flag, which
+                                        // survives the prefs wipe.
+                                        if (sessionManager.getAccessToken() == null) {
+                                            cartViewModel.clearCart()
+                                            ViewMode.reset(sessionManager)
+                                        }
+                                        navController.navigate("login") {
+                                            popUpTo(0) { inclusive = true }
+                                            launchSingleTop = true
+                                        }
+                                    }
+                                )
+                            }
+                            // ── Photographer studio ─────────────────────────
+                            // Nested graph so all seven routes share ONE
+                            // PhotographerDashboardViewModel scoped to the
+                            // graph's back-stack entry: lazy (a runner session
+                            // never constructs it), and cleared exactly when
+                            // logout pops the graph — the same teardown the old
+                            // dashboard-entry scoping gave the tether loop.
+                            // GUARD RULE: nothing may popUpTo past "studio"
+                            // except logout/forced-logout, or a live tether VM
+                            // dies mid-shoot.
+                            navigation(startDestination = "studio/home", route = "studio") {
+                                val studioLogout: () -> Unit = {
+                                    authViewModel.logout()
+                                    cartViewModel.clearCart()
+                                    navController.navigate("login") {
+                                        popUpTo("studio") { inclusive = true }
+                                    }
+                                }
+                                val openProfilePreview: () -> Unit = {
+                                    navController.navigate("studio/profile-preview")
+                                }
+                                // Enter runner view: pop the studio graph
+                                // inclusively so the stack never mixes the two
+                                // roles' surfaces (system back can't land a
+                                // runner-view user on a studio screen). This
+                                // clears the studio VM — same teardown as
+                                // logout; StudioTabScaffold confirms first if
+                                // a shutter watch is live.
+                                val switchToRunnerView: () -> Unit = {
+                                    ViewMode.set(sessionManager, true)
+                                    navController.navigate("runner") {
+                                        popUpTo("studio") { inclusive = true }
+                                        launchSingleTop = true
+                                    }
+                                }
+                                composable("studio/home") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    StudioTabScaffold(
+                                        viewModel = vm,
+                                        onLogout = studioLogout,
+                                        onPreviewProfile = openProfilePreview,
+                                        onSwitchToRunner = switchToRunnerView,
+                                    ) {
+                                        PhotographerOverviewScreen(
+                                            viewModel = vm,
+                                            onNavigateToSettings = { studioNavigate("studio/settings") },
+                                            onNavigateToTab = studioNavigate,
+                                        )
+                                    }
+                                }
+                                composable("studio/capture") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    StudioTabScaffold(
+                                        viewModel = vm,
+                                        onLogout = studioLogout,
+                                        onPreviewProfile = openProfilePreview,
+                                        onSwitchToRunner = switchToRunnerView,
+                                    ) {
+                                        PhotographerCaptureScreen(viewModel = vm)
+                                    }
+                                }
+                                composable("studio/events") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    StudioTabScaffold(
+                                        viewModel = vm,
+                                        onLogout = studioLogout,
+                                        onPreviewProfile = openProfilePreview,
+                                        onSwitchToRunner = switchToRunnerView,
+                                    ) {
+                                        PhotographerEventsScreen(
+                                            viewModel = vm,
+                                            onOpenShare = { event ->
+                                                navController.navigate("studio/share/${event.id}")
+                                            },
+                                            onSyncEvent = { ev ->
+                                                vm.selectEvent(ev)
+                                                studioNavigate("studio/capture")
+                                            },
+                                        )
+                                    }
+                                }
+                                composable("studio/earnings") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    StudioTabScaffold(
+                                        viewModel = vm,
+                                        onLogout = studioLogout,
+                                        onPreviewProfile = openProfilePreview,
+                                        onSwitchToRunner = switchToRunnerView,
+                                    ) {
+                                        PhotographerEarningsScreen(viewModel = vm)
+                                    }
+                                }
+                                composable("studio/settings") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    StudioTabScaffold(
+                                        viewModel = vm,
+                                        onLogout = studioLogout,
+                                        onPreviewProfile = openProfilePreview,
+                                        onSwitchToRunner = switchToRunnerView,
+                                    ) {
+                                        PhotographerSettingsScreen(
+                                            viewModel = vm,
+                                            onLogout = studioLogout,
+                                        )
+                                    }
+                                }
+                                // Fullscreen sub-surfaces — no tab chrome, no
+                                // bottom nav; back pops to the launching tab.
+                                composable(
+                                    route = "studio/share/{eventId}",
+                                    arguments = listOf(navArgument("eventId") { type = NavType.StringType }),
+                                ) { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    val eventId = entry.arguments?.getString("eventId")
+                                    val eventsState by vm.eventsState.collectAsState()
+                                    val event = (eventsState as? EventsState.Success)
+                                        ?.events?.firstOrNull { it.id == eventId }
+                                    if (event == null) {
+                                        // List not loaded / unknown id — nothing
+                                        // to share; fall back to the tab.
+                                        LaunchedEffect(eventId) { navController.popBackStack() }
+                                    } else {
+                                        StudioTheme {
+                                            PhotographerEventShareScreen(
+                                                event = event,
+                                                viewModel = vm,
+                                                onBack = { navController.popBackStack() },
+                                            )
+                                        }
+                                    }
+                                }
+                                composable("studio/profile-preview") { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    // Route-scoped on purpose: the same screen
+                                    // serves a runner tapping a photo byline
+                                    // via "photographer/{handle}".
+                                    val publicVm: PublicPhotographerViewModel = viewModel()
+                                    val brandSettings by vm.brandSettings.collectAsState()
+                                    val isBrandSettingsLoading by vm.isFetchingBrandSettings.collectAsState()
+                                    val brandSettingsError by vm.settingsLoadError.collectAsState()
+                                    LaunchedEffect(Unit) {
+                                        if (brandSettings == null) vm.fetchBrandSettings()
+                                    }
+                                    StudioTheme {
+                                        PhotographerPublicProfileScreen(
+                                            handle = brandSettings?.handle,
+                                            viewModel = publicVm,
+                                            onBack = { navController.popBackStack() },
+                                            // "|| brandSettings == null": the fetch
+                                            // starts in a LaunchedEffect AFTER the
+                                            // first frame, so on that frame the
+                                            // loading flag is still false — without
+                                            // this the no-handle card flashes once.
+                                            isBrandSettingsLoading = isBrandSettingsLoading ||
+                                                (brandSettings == null && brandSettingsError == null),
+                                            brandSettingsError = brandSettingsError,
+                                        )
+                                    }
+                                }
+                            }
+                            // Runner state belongs to the authenticated runner
+                            // session, not the Activity. The graph is lazy and
+                            // popping it on logout clears every user-owned VM.
+                            navigation(startDestination = "events", route = "runner") {
+                                val runnerLogout: () -> Unit = {
+                                    authViewModel.logout()
+                                    cartViewModel.clearCart()
+                                    navController.navigate("login") {
+                                        popUpTo("runner") { inclusive = true }
+                                    }
+                                }
+                                composable("events") { entry ->
+                                    val graphEntry = runnerGraphEntry(navController, entry)
+                                    val runnerViewModel: RunnerGalleryViewModel = viewModel(graphEntry)
+                                    val savedEventsViewModel: SavedEventsViewModel = viewModel(graphEntry)
+                                    val runnerInboxViewModel: RunnerInboxViewModel = viewModel(graphEntry)
+                                EventsDiscoveryScreen(
+                                    viewModel = runnerViewModel,
+                                    savedEventsViewModel = savedEventsViewModel,
+                                    inboxViewModel = runnerInboxViewModel,
+                                    onEventSelected = { event ->
+                                        runnerViewModel.selectEvent(event)
+                                        navController.navigate("gallery")
+                                    },
+                                    onOpenOrder = { orderId -> navController.navigate("orders?orderId=$orderId") },
+                                    onLogout = runnerLogout,
+                                )
+                            }
+                                composable("gallery") { entry ->
+                                    val graphEntry = runnerGraphEntry(navController, entry)
+                                    val runnerViewModel: RunnerGalleryViewModel = viewModel(graphEntry)
+                                    val savedEventsViewModel: SavedEventsViewModel = viewModel(graphEntry)
+                                    val runnerInboxViewModel: RunnerInboxViewModel = viewModel(graphEntry)
+                                RunnerGalleryScreen(
+                                    viewModel = runnerViewModel,
+                                    cartViewModel = cartViewModel,
+                                    inboxViewModel = runnerInboxViewModel,
+                                    savedEventsViewModel = savedEventsViewModel,
+                                    onOpenOrder = { orderId ->
+                                        navController.navigate("orders?orderId=$orderId")
+                                    },
+                                    onOpenPhotographer = { handle ->
+                                        navController.navigate("photographer/$handle")
+                                    },
+                                    onNavigateBack = {
+                                        navController.popBackStack()
+                                    },
+                                    onLogout = runnerLogout,
+                                )
+                            }
+                            composable(
+                                route = "photographer/{handle}",
+                                arguments = listOf(navArgument("handle") { type = NavType.StringType }),
+                            ) { entry ->
+                                val publicPhotographerViewModel: PublicPhotographerViewModel = viewModel()
+                                PhotographerPublicProfileScreen(
+                                    handle = entry.arguments?.getString("handle"),
+                                    viewModel = publicPhotographerViewModel,
+                                    onBack = { navController.popBackStack() },
+                                    // Runner context — the per-event gallery is
+                                    // transactional here (web parity).
+                                    cartViewModel = cartViewModel,
+                                )
+                            }
+                                composable("profile") { entry ->
+                                    val graphEntry = runnerGraphEntry(navController, entry)
+                                    val profileViewModel: ProfileViewModel = viewModel(graphEntry)
+                                    val runnerViewModel: RunnerGalleryViewModel = viewModel(graphEntry)
+                                    val savedEventsViewModel: SavedEventsViewModel = viewModel(graphEntry)
+                                ProfileScreen(
+                                    viewModel = profileViewModel,
+                                    cartViewModel = cartViewModel,
+                                    savedEventsViewModel = savedEventsViewModel,
+                                    runnerViewModel = runnerViewModel,
+                                    onOpenEvent = { slug ->
+                                        val event = runnerViewModel.eventBySlug(slug)
+                                        if (event != null) {
+                                            runnerViewModel.selectEvent(event)
+                                            navController.navigate("gallery")
+                                        } else {
+                                            navController.navigate("events")
+                                        }
+                                    },
+                                    onBrowseEvents = {
+                                        navController.navigate("events") {
+                                            popUpTo("events") { inclusive = false }
+                                            launchSingleTop = true
+                                        }
+                                    },
+                                    onLogout = runnerLogout,
+                                )
+                            }
+                                composable("settings") { entry ->
+                                    val graphEntry = runnerGraphEntry(navController, entry)
+                                    val profileViewModel: ProfileViewModel = viewModel(graphEntry)
+                                AccountSettingsScreen(
+                                    viewModel = profileViewModel,
+                                    onLogout = runnerLogout,
+                                )
+                            }
+                            composable(
+                                route = "orders?orderId={orderId}",
+                                arguments = listOf(
+                                    navArgument("orderId") {
+                                        type = NavType.StringType
+                                        nullable = true
+                                        defaultValue = null
+                                    }
+                                ),
+                            ) { entry ->
+                                OrdersScreen(
+                                    viewModel = cartViewModel,
+                                    initialOrderId = entry.arguments?.getString("orderId"),
+                                    onLogout = runnerLogout,
+                                    onBrowseEvents = {
+                                        navController.navigate("events") {
+                                            popUpTo("events") { inclusive = false }
+                                            launchSingleTop = true
+                                        }
+                                    },
+                                )
+                            }
+                            composable(
+                                route = "orders/return/{orderId}?token={token}",
+                                arguments = listOf(
+                                    navArgument("orderId") { type = NavType.StringType },
+                                    navArgument("token") {
+                                        type = NavType.StringType
+                                        nullable = true
+                                        defaultValue = null
+                                    }
+                                ),
+                            ) { entry ->
+                                val orderId = entry.arguments?.getString("orderId").orEmpty()
+                                val shareToken = entry.arguments?.getString("token")
+                                OrderReturnScreen(
+                                    orderId = orderId,
+                                    shareToken = shareToken,
+                                    cartViewModel = cartViewModel,
+                                    onNavigateToOrders = {
+                                        cartViewModel.resetOrderReturnState()
+                                        navController.navigate("orders") {
+                                            popUpTo("events") { saveState = true }
+                                            launchSingleTop = true
+                                        }
+                                    },
+                                    onBrowseEvents = {
+                                        cartViewModel.resetOrderReturnState()
+                                        navController.navigate("events") {
+                                            popUpTo("events") { inclusive = true }
+                                            launchSingleTop = true
+                                        }
+                                    },
+                                    onClose = {
+                                        cartViewModel.resetOrderReturnState()
+                                        navController.popBackStack()
+                                    },
+                                )
+                            }
+
+                            }
+                        }
+
+                        // Global floating-cart pill + cart/checkout sheets
+                        FloatingCart(
+                            navController = navController,
                             cartViewModel = cartViewModel,
-                            onNavigateToOrders = {
-                                cartViewModel.resetOrderReturnState()
+                            onAfterCheckoutSuccess = {
                                 navController.navigate("orders") {
                                     popUpTo("events") { saveState = true }
                                     launchSingleTop = true
                                 }
                             },
-                            onBrowseEvents = {
-                                cartViewModel.resetOrderReturnState()
-                                navController.navigate("events") {
-                                    popUpTo("events") { inclusive = true }
-                                    launchSingleTop = true
-                                }
-                            },
-                            onClose = {
-                                cartViewModel.resetOrderReturnState()
-                                navController.popBackStack()
-                            },
                         )
                     }
-                }
-
-                // Global floating-cart pill + cart/checkout sheets — mirrors website
-                // FloatingCart. Lives outside the NavHost so it overlays every route.
-                FloatingCart(
-                    navController = navController,
-                    cartViewModel = cartViewModel,
-                    onAfterCheckoutSuccess = {
-                        navController.navigate("orders") {
-                            popUpTo("events") { saveState = true }
-                            launchSingleTop = true
-                        }
-                    },
-                )
                 }
             }
         }
@@ -267,7 +952,15 @@ class MainActivity : ComponentActivity() {
 
     private fun pickQuickpitikUri(intent: Intent?): Uri? {
         val data = intent?.data ?: return null
-        return if (data.scheme.equals("quickpitik", ignoreCase = true)) data else null
+        if (data.scheme.equals("quickpitik", ignoreCase = true)) return data
+        val path = data.path?.lowercase().orEmpty()
+        // startsWith, not ==: the manifest filter uses pathPrefix, so the OS
+        // also delivers "/verify-email/" — an exact match would drop it.
+        if ((data.scheme.equals("http", ignoreCase = true) || data.scheme.equals("https", ignoreCase = true)) &&
+            (path.startsWith("/verify-email") || path.startsWith("/confirm-email-change"))) {
+            return data
+        }
+        return null
     }
 
     // Maps:
@@ -283,6 +976,38 @@ class MainActivity : ComponentActivity() {
         // as scheme=quickpitik, host=orders, path=/return.
         val host = uri.host?.lowercase() ?: return
         val path = uri.path?.lowercase().orEmpty()
+        // Email-token links are role-neutral auth surfaces — route them BEFORE
+        // the photographer guard below, or a photographer's own verification /
+        // email-change link would bounce to studio with the token unredeemed.
+        // startsWith mirrors the manifest's pathPrefix so a trailing slash
+        // still routes.
+        when {
+            host == "confirm-email-change" || path.startsWith("/confirm-email-change") -> {
+                val token = uri.getQueryParameter("token").orEmpty()
+                navController.navigate("confirm-email-change?token=$token") {
+                    launchSingleTop = true
+                }
+                return
+            }
+            host == "verify-email" || path.startsWith("/verify-email") -> {
+                val token = uri.getQueryParameter("token").orEmpty()
+                navController.navigate("verify-email?token=$token") {
+                    launchSingleTop = true
+                }
+                return
+            }
+        }
+        // Every quickpitik:// target below is a runner surface. A photographer
+        // token would 403 the cart fetch and land on screens with no way back,
+        // so route them home instead. Handled here (not only in the route
+        // guard) because the `cart` case opens a sheet WITHOUT navigating —
+        // the destination-change guard never sees it. launchSingleTop, never
+        // popUpTo: a stray deep link must not pop a live tether session.
+        val session = SessionManager.getInstance(this)
+        if (isPhotographerRole(session.getUserRole()) && !session.isRunnerView()) {
+            navController.navigate("studio") { launchSingleTop = true }
+            return
+        }
         when {
             host == "orders" && path.startsWith("/return") -> {
                 val orderId = uri.getQueryParameter("orderId")
@@ -298,11 +1023,14 @@ class MainActivity : ComponentActivity() {
                         launchSingleTop = true
                     }
                 } else {
-                    navController.navigate("orders/return/$orderId") {
+                    val token = uri.getQueryParameter("token")
+                    val route = if (token.isNullOrBlank()) "orders/return/$orderId" else "orders/return/$orderId?token=$token"
+                    navController.navigate(route) {
                         popUpTo("events") { saveState = true }
                         launchSingleTop = true
                     }
                 }
+
             }
             host == "orders" -> {
                 cartViewModel.closeCartSheet()
@@ -321,5 +1049,151 @@ class MainActivity : ComponentActivity() {
                 cartViewModel.openCartSheet()
             }
         }
+    }
+}
+
+// The ONE shared studio VM, owned by the "studio" graph's back-stack entry —
+// every studio route resolves the same instance, and it is cleared (tether
+// teardown included) exactly when logout pops the graph. `remember(entry)`
+// because getBackStackEntry must not run on every recomposition.
+@Composable
+private fun studioViewModel(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): PhotographerDashboardViewModel {
+    val graphEntry = remember(entry) { navController.getBackStackEntry("studio") }
+    return viewModel(graphEntry)
+}
+
+@Composable
+private fun runnerGraphEntry(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): NavBackStackEntry = remember(entry) { navController.getBackStackEntry("runner") }
+
+// ─── Floating-pill bottom nav for Runner ──────────────────────────────────────
+// Mirrors the Quiet Studio photographer floating pill nav format:
+// Bone background, 1dp Line border, PillShape, animated Ink active background, Bone/Slate tint.
+@Composable
+private fun RunnerFloatingBottomNav(
+    currentRoute: String?,
+    onNavigate: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(PillShape)
+                .background(Bone)
+                .border(BorderStroke(1.dp, Line), PillShape)
+                .padding(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            RunnerFloatingNavItem(
+                icon = Icons.Default.Search,
+                label = "Browse",
+                selected = currentRoute == "events" || currentRoute == "gallery",
+                onClick = { onNavigate("events") },
+                modifier = Modifier.weight(1f),
+            )
+            RunnerFloatingNavItem(
+                icon = Icons.Default.Face,
+                label = "Profile",
+                selected = currentRoute == "profile",
+                onClick = { onNavigate("profile") },
+                modifier = Modifier.weight(1f),
+            )
+            RunnerFloatingNavItem(
+                icon = Icons.Default.List,
+                label = "Orders",
+                // Exact pattern — startsWith("orders") also matched the
+                // PayMongo receipt route "orders/return/{orderId}".
+                selected = currentRoute == "orders?orderId={orderId}",
+                onClick = { onNavigate("orders") },
+                modifier = Modifier.weight(1f),
+            )
+            RunnerFloatingNavItem(
+                icon = Icons.Default.Settings,
+                label = "Settings",
+                selected = currentRoute == "settings",
+                onClick = { onNavigate("settings") },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RunnerFloatingNavItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    badge: Boolean = false,
+) {
+    val bg by animateColorAsState(
+        targetValue = if (selected) Ink else Color.Transparent,
+        animationSpec = tween(180),
+        label = "runnerNavItemBg",
+    )
+    val tint by animateColorAsState(
+        targetValue = if (selected) Bone else Slate,
+        animationSpec = tween(180),
+        label = "runnerNavItemTint",
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (selected) 1.0f else 0.94f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "runnerNavItemScale",
+    )
+    Column(
+        modifier = modifier
+            .heightIn(min = 56.dp)
+            .clip(PillShape)
+            .background(bg)
+            .clickable(onClick = onClick)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        if (badge) {
+            BadgedBox(
+                badge = {
+                    Badge(
+                        containerColor = Fresh,
+                        modifier = Modifier.size(6.dp),
+                    )
+                },
+            ) {
+                Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
+            }
+        } else {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = label,
+            color = tint,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
     }
 }

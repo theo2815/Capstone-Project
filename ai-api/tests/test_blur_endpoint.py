@@ -43,6 +43,21 @@ def _make_png_bytes(width: int = 256, height: int = 256) -> bytes:
     return buf.getvalue()
 
 
+def _solid_png(width: int, height: int) -> bytes:
+    """Flat-colour PNG. Compresses to almost nothing, so a 12000px edge costs
+    little — which is what makes testing against the real cap practical."""
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), (128, 128, 128)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _make_oversized_png_bytes() -> bytes:
+    """One pixel past MAX_IMAGE_DIMENSION on the long edge."""
+    from src.utils.image_utils import MAX_DIMENSION
+
+    return _solid_png(MAX_DIMENSION + 1, 32)
+
+
 class TestBlurEndpointSuccess:
     def test_sharp_image_detected(self, client: TestClient):
         data = _make_jpeg_bytes(sharp=True)
@@ -176,3 +191,485 @@ class TestBlurEndpointAuth:
         )
         # Even in debug, if a key IS provided it must be valid
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/blur/classify/stream  — the desktop's high-throughput path
+# ---------------------------------------------------------------------------
+
+SHARP = {
+    "predicted_class": "sharp",
+    "confidence": 0.97,
+    "probabilities": {"sharp": 0.97, "motion_blurred": 0.03},
+}
+
+
+class _StubClassifier:
+    """Minimal stand-in for BlurClassifier.
+
+    The endpoint only touches ``min_detection_confidence`` and
+    ``classify_batch``; keeping the stub to that surface makes these tests
+    about the streaming contract rather than about model behaviour.
+    """
+
+    def __init__(self, results=None, raises: Exception | None = None,
+                 min_detection_confidence: float = 0.5):
+        self.min_detection_confidence = min_detection_confidence
+        self._results = results
+        self._raises = raises
+        self.calls: list[int] = []
+
+    def classify_batch(self, images):
+        self.calls.append(len(images))
+        if self._raises is not None:
+            raise self._raises
+        if self._results is not None:
+            return list(self._results)
+        # Mirror the real contract: a None input (failed decode) maps to None.
+        return [None if img is None else dict(SHARP) for img in images]
+
+
+@pytest.fixture
+def stub_registry(app):
+    """Swap a stub classifier into the model registry, then restore it.
+
+    ``app`` is module-scoped, so the original must go back or later tests in
+    this file would run against the stub.
+    """
+    registry = app.state.model_registry
+    original = registry.get("blur_classifier")
+    installed = []
+
+    def install(stub):
+        registry._models["blur_classifier"] = stub
+        installed.append(stub)
+        return stub
+
+    yield install
+    registry._models["blur_classifier"] = original
+
+
+def _ndjson(resp) -> list[dict]:
+    import json
+
+    return [json.loads(line) for line in resp.text.splitlines() if line.strip()]
+
+
+def _files(datas: list[bytes]):
+    return [("files", (f"img_{i}.jpg", d, "image/jpeg")) for i, d in enumerate(datas)]
+
+
+class TestDecodeForClassify:
+    """_decode_bgr_for_classify honours BLUR_CLASSIFY_DECODE_DIM.
+
+    The cap is accuracy-relevant (640 beats 1280 on the labelled val set), so it
+    is a calibrated setting rather than an arbitrary constant — worth pinning.
+    """
+
+    def test_downscales_long_edge_to_max_dim(self):
+        from src.api.v1.blur import _decode_bgr_for_classify
+
+        data = _make_jpeg_bytes(width=2000, height=1000)
+        out = _decode_bgr_for_classify(data, 640)
+        assert max(out.shape[:2]) == 640
+        assert out.shape[:2] == (320, 640)  # aspect ratio preserved
+
+    def test_leaves_small_images_untouched(self):
+        from src.api.v1.blur import _decode_bgr_for_classify
+
+        data = _make_jpeg_bytes(width=256, height=256)
+        out = _decode_bgr_for_classify(data, 640)
+        assert out.shape[:2] == (256, 256)
+
+    def test_returns_none_on_undecodable_bytes(self):
+        from src.api.v1.blur import _decode_bgr_for_classify
+
+        assert _decode_bgr_for_classify(b"definitely not an image", 640) is None
+
+    def test_default_setting_is_the_calibrated_640(self):
+        from src.config import Settings
+
+        assert Settings().BLUR_CLASSIFY_DECODE_DIM == 640
+
+
+class TestClassifyStream:
+    def test_streams_one_line_per_image_plus_summary(self, client, stub_registry):
+        stub_registry(_StubClassifier())
+        images = [_make_jpeg_bytes() for _ in range(3)]
+
+        resp = client.post("/api/v1/blur/classify/stream", files=_files(images))
+
+        assert resp.status_code == 200
+        assert resp.headers["X-Total-Images"] == "3"
+        lines = _ndjson(resp)
+        assert len(lines) == 4  # 3 results + 1 summary
+        results, summary = lines[:3], lines[3]
+        assert summary["_summary"] is True
+        assert summary["total"] == 3
+        # index/filename stay paired and in order
+        for i, line in enumerate(results):
+            assert line["index"] == i
+            assert line["filename"] == f"img_{i}.jpg"
+            assert line["predicted_class"] == "sharp"
+
+    def test_undecodable_image_errors_without_killing_the_batch(self, client, stub_registry):
+        stub_registry(_StubClassifier())
+        images = [_make_jpeg_bytes(), b"not an image at all", _make_jpeg_bytes()]
+
+        resp = client.post("/api/v1/blur/classify/stream", files=_files(images))
+
+        assert resp.status_code == 200
+        lines = _ndjson(resp)
+        assert len(lines) == 4
+        assert lines[0]["predicted_class"] == "sharp"
+        assert lines[1]["error"] == "Failed to decode image"
+        assert lines[2]["predicted_class"] == "sharp"
+        assert lines[3]["_summary"] is True
+
+    def test_sub_batch_failure_emits_error_lines_and_still_summarises(
+        self, client, stub_registry
+    ):
+        """Regression: classify_batch raising must not kill the stream.
+
+        The 200 and headers are already sent by then, so an unhandled raise
+        would truncate the body — no error lines, no _summary — and the desktop
+        could not tell that apart from a completed run.
+        """
+        stub_registry(_StubClassifier(raises=RuntimeError("onnx session died")))
+        images = [_make_jpeg_bytes() for _ in range(2)]
+
+        resp = client.post("/api/v1/blur/classify/stream", files=_files(images))
+
+        assert resp.status_code == 200
+        lines = _ndjson(resp)
+        assert len(lines) == 3
+        assert [line["index"] for line in lines[:2]] == [0, 1]
+        assert all("onnx session died" in line["error"] for line in lines[:2])
+        assert lines[2]["_summary"] is True  # stream terminated cleanly
+
+    def test_blur_type_mode_respects_min_confidence(self, client, stub_registry):
+        """detected must mirror BlurClassifier.detect_blur_type: the predicted
+        class has to match AND clear the confidence floor."""
+        low = {
+            "predicted_class": "motion_blurred",
+            "confidence": 0.30,
+            "probabilities": {"motion_blurred": 0.30, "sharp": 0.70},
+        }
+        high = {
+            "predicted_class": "motion_blurred",
+            "confidence": 0.80,
+            "probabilities": {"motion_blurred": 0.80, "sharp": 0.20},
+        }
+        stub_registry(_StubClassifier(results=[low, high], min_detection_confidence=0.5))
+        images = [_make_jpeg_bytes() for _ in range(2)]
+
+        resp = client.post(
+            "/api/v1/blur/classify/stream?blur_type=motion_blurred",
+            files=_files(images),
+        )
+
+        assert resp.status_code == 200
+        lines = _ndjson(resp)
+        assert lines[0]["detected"] is False  # 0.30 < floor
+        assert lines[0]["blur_type_probability"] == 0.30
+        assert lines[1]["detected"] is True   # 0.80 >= floor
+        assert lines[1]["blur_type"] == "motion_blurred"
+
+    def test_over_limit_returns_400(self, client, stub_registry, app, monkeypatch):
+        stub_registry(_StubClassifier())
+        monkeypatch.setattr(app.state.settings, "STREAM_CLASSIFY_MAX_SIZE", 2)
+        images = [_make_jpeg_bytes() for _ in range(3)]
+
+        resp = client.post("/api/v1/blur/classify/stream", files=_files(images))
+
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "BATCH_TOO_LARGE"
+
+    def test_batches_in_sub_batch_sized_chunks(self, client, stub_registry, app, monkeypatch):
+        """Inference is issued per INFERENCE_SUB_BATCH_SIZE chunk, not per image
+        — that grouping is the whole point of the batched path."""
+        stub = stub_registry(_StubClassifier())
+        monkeypatch.setattr(app.state.settings, "INFERENCE_SUB_BATCH_SIZE", 2)
+        images = [_make_jpeg_bytes() for _ in range(5)]
+
+        resp = client.post("/api/v1/blur/classify/stream", files=_files(images))
+
+        assert resp.status_code == 200
+        assert stub.calls == [2, 2, 1]
+        assert len(_ndjson(resp)) == 6  # 5 results + summary
+
+    def test_oversize_file_errors_without_killing_the_batch(
+        self, client, stub_registry, app, monkeypatch
+    ):
+        """A file over MAX_FILE_SIZE is refused per-image, not per-request.
+
+        Until 2026-08-14 the stream endpoints validated nothing at all, so
+        arbitrarily large frames went straight into cv2.imdecode.
+        """
+        stub_registry(_StubClassifier())
+        valid = _make_jpeg_bytes()
+        monkeypatch.setattr(app.state.settings, "MAX_FILE_SIZE", len(valid) + 16)
+        images = [valid, b"x" * (len(valid) + 64), valid]
+
+        resp = client.post("/api/v1/blur/classify/stream", files=_files(images))
+
+        assert resp.status_code == 200
+        lines = _ndjson(resp)
+        assert len(lines) == 4
+        assert lines[0]["predicted_class"] == "sharp"
+        assert "exceeds" in lines[1]["error"] and "limit" in lines[1]["error"]
+        assert lines[2]["predicted_class"] == "sharp"  # neighbour unaffected
+        assert lines[3]["_summary"] is True
+
+    def test_over_dimension_file_errors_without_killing_the_batch(
+        self, client, stub_registry
+    ):
+        """Checked against the real MAX_IMAGE_DIMENSION, not a patched one —
+        cv2.imdecode has no decompression-bomb guard, so this header read is
+        the only thing bounding the allocation."""
+        stub_registry(_StubClassifier())
+        images = [_make_jpeg_bytes(), _make_oversized_png_bytes(), _make_jpeg_bytes()]
+
+        resp = client.post("/api/v1/blur/classify/stream", files=_files(images))
+
+        assert resp.status_code == 200
+        lines = _ndjson(resp)
+        assert len(lines) == 4
+        assert "12001x32" in lines[1]["error"]
+        assert "exceed" in lines[1]["error"]
+        assert lines[2]["predicted_class"] == "sharp"
+        assert lines[3]["_summary"] is True
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/blur/detect/stream — the desktop's other high-throughput path
+#
+# This endpoint had no coverage at all until 2026-08-14 while its classify twin
+# had a full class, which is how it kept its unvalidated read loop unnoticed.
+# ---------------------------------------------------------------------------
+
+
+class TestDetectStream:
+    def test_streams_one_line_per_image_plus_summary(self, client):
+        images = [_make_jpeg_bytes() for _ in range(3)]
+
+        resp = client.post("/api/v1/blur/detect/stream", files=_files(images))
+
+        assert resp.status_code == 200
+        assert resp.headers["X-Total-Images"] == "3"
+        lines = _ndjson(resp)
+        assert len(lines) == 4  # 3 results + summary
+        summary = [line for line in lines if line.get("_summary")]
+        assert len(summary) == 1
+        assert summary[0]["total"] == 3
+        # Results complete out of order here (asyncio.as_completed), so index is
+        # the identity, not position.
+        results = [line for line in lines if not line.get("_summary")]
+        assert sorted(line["index"] for line in results) == [0, 1, 2]
+        assert all("is_blurry" in line for line in results)
+
+    def test_undecodable_image_errors_without_killing_the_batch(self, client):
+        images = [_make_jpeg_bytes(), b"not an image at all", _make_jpeg_bytes()]
+
+        resp = client.post("/api/v1/blur/detect/stream", files=_files(images))
+
+        assert resp.status_code == 200
+        by_index = {line["index"]: line for line in _ndjson(resp) if not line.get("_summary")}
+        assert by_index[1]["error"] == "Failed to decode image"
+        assert "is_blurry" in by_index[0] and "is_blurry" in by_index[2]
+
+    def test_oversize_file_errors_without_killing_the_batch(
+        self, client, app, monkeypatch
+    ):
+        valid = _make_jpeg_bytes()
+        monkeypatch.setattr(app.state.settings, "MAX_FILE_SIZE", len(valid) + 16)
+        images = [valid, b"x" * (len(valid) + 64), valid]
+
+        resp = client.post("/api/v1/blur/detect/stream", files=_files(images))
+
+        assert resp.status_code == 200
+        lines = _ndjson(resp)
+        assert len(lines) == 4
+        by_index = {line["index"]: line for line in lines if not line.get("_summary")}
+        assert "exceeds" in by_index[1]["error"]
+        assert "is_blurry" in by_index[0] and "is_blurry" in by_index[2]
+
+    def test_over_dimension_file_errors_without_killing_the_batch(self, client):
+        images = [_make_jpeg_bytes(), _make_oversized_png_bytes(), _make_jpeg_bytes()]
+
+        resp = client.post("/api/v1/blur/detect/stream", files=_files(images))
+
+        assert resp.status_code == 200
+        by_index = {line["index"]: line for line in _ndjson(resp) if not line.get("_summary")}
+        assert "12001x32" in by_index[1]["error"]
+        assert "is_blurry" in by_index[0] and "is_blurry" in by_index[2]
+
+    def test_over_limit_returns_400(self, client, app, monkeypatch):
+        monkeypatch.setattr(app.state.settings, "STREAM_BATCH_MAX_SIZE", 2)
+        images = [_make_jpeg_bytes() for _ in range(3)]
+
+        resp = client.post("/api/v1/blur/detect/stream", files=_files(images))
+
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "BATCH_TOO_LARGE"
+
+
+# ---------------------------------------------------------------------------
+# validate_stream_file — the per-file half of the 2026-08-14 limits work
+# ---------------------------------------------------------------------------
+
+
+class TestValidateStreamFile:
+    """The lighter sibling of validate_batch_file used by the /stream paths.
+
+    It deliberately drops verify() and the content-type check; what it must NOT
+    drop is the size and pixel bounds, which are the two cv2.imdecode cannot
+    enforce for itself.
+    """
+
+    def test_accepts_a_normal_image(self):
+        from src.utils.image_utils import validate_stream_file
+
+        assert validate_stream_file(_make_jpeg_bytes(), "a.jpg", 25 * 1024 * 1024) is None
+
+    def test_rejects_oversize_bytes(self):
+        from src.utils.image_utils import validate_stream_file
+
+        msg = validate_stream_file(b"x" * 2048, "big.jpg", 1024)
+        assert msg is not None and "big.jpg" in msg
+
+    def test_rejects_over_dimension(self):
+        from src.utils.image_utils import MAX_DIMENSION, validate_stream_file
+
+        msg = validate_stream_file(
+            _make_oversized_png_bytes(), "wide.png", 25 * 1024 * 1024
+        )
+        assert msg is not None
+        assert f"{MAX_DIMENSION}px" in msg
+
+    def test_accepts_exactly_the_cap(self):
+        """Boundary matches validate_batch_file's `>` — the cap itself passes."""
+        from src.utils.image_utils import MAX_DIMENSION, validate_stream_file
+
+        data = _solid_png(MAX_DIMENSION, 32)
+        assert validate_stream_file(data, "edge.png", 25 * 1024 * 1024) is None
+
+    def test_defers_undecodable_bytes_to_cv2(self):
+        """Not PIL-parseable is not the same as invalid — cv2 reads formats PIL
+        does not, and returns None when it genuinely cannot."""
+        from src.utils.image_utils import validate_stream_file
+
+        assert validate_stream_file(b"not an image", "x.jpg", 25 * 1024 * 1024) is None
+
+    def test_rejects_a_decompression_bomb(self, monkeypatch):
+        """PIL raises rather than reporting a size once past MAX_IMAGE_PIXELS,
+        so that path has to reject rather than fall through to cv2."""
+        from PIL import Image as PILImage
+
+        from src.utils.image_utils import validate_stream_file
+
+        monkeypatch.setattr(PILImage, "MAX_IMAGE_PIXELS", 100)
+        msg = validate_stream_file(_make_jpeg_bytes(), "bomb.jpg", 25 * 1024 * 1024)
+        assert msg is not None and "bomb.jpg" in msg
+
+
+# ---------------------------------------------------------------------------
+# MAX_REQUEST_BODY — the aggregate bound
+# ---------------------------------------------------------------------------
+
+
+class TestBodySizeLimit:
+    """The only thing bounding a multipart upload in total.
+
+    Per-file limits cannot do it: both /stream endpoints hold every file in
+    memory at once, so 500 files each under MAX_FILE_SIZE still sum to 12.5 GB.
+    """
+
+    def test_declared_body_over_the_cap_is_refused(self, client, app):
+        over = app.state.settings.MAX_REQUEST_BODY + 1
+
+        resp = client.post(
+            "/api/v1/blur/detect/stream",
+            content=b"x",
+            headers={"Content-Length": str(over)},
+        )
+
+        assert resp.status_code == 413
+        body = resp.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "REQUEST_TOO_LARGE"
+        # Registered inside RequestIDMiddleware so the envelope is complete.
+        assert body["request_id"]
+
+    def test_normal_request_passes(self, client):
+        resp = client.post(
+            "/api/v1/blur/detect/stream", files=_files([_make_jpeg_bytes()])
+        )
+
+        assert resp.status_code == 200
+
+    def test_request_without_content_length_is_not_refused(self, client):
+        """A chunked request declares no length. It passes to the per-file layer
+        rather than being blocked — stated as a limit, not papered over."""
+
+        def chunked():
+            yield b"not-multipart"
+
+        resp = client.post("/api/v1/blur/detect/stream", content=chunked())
+
+        assert resp.status_code != 413
+
+    def test_nginx_client_max_body_size_matches_the_setting(self):
+        """The ceiling lives in two files. This is what stops them drifting —
+        the same failure mode that left MAX_REQUEST_BODY dead for months while
+        nginx quietly enforced a different number.
+        """
+        import re
+        from pathlib import Path
+
+        from src.config import Settings
+
+        conf = Path(__file__).resolve().parents[1] / "nginx.conf"
+        # Leading `#` excludes the commented-out HTTPS block.
+        found = re.findall(
+            r"^\s*client_max_body_size\s+(\d+)([KMG]);",
+            conf.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        assert found, "no active client_max_body_size directive in nginx.conf"
+        units = {"K": 1024, "M": 1024**2, "G": 1024**3}
+        for number, unit in found:
+            assert int(number) * units[unit] == Settings().MAX_REQUEST_BODY
+
+    def test_nginx_config_parses(self):
+        """The value-matching test above passed for months against a file nginx
+        could not load at all (`limit_req off;` — no such parameter). Regexing a
+        directive proves nothing about the config being valid, so hand it to a
+        real nginx.
+
+        Fed on stdin rather than bind-mounted: mounting a Windows path into a
+        container needs path translation this suite should not own. The
+        --add-host is required — without a resolvable upstream nginx aborts on
+        the `server ai-api:8000` line and never reaches the rest of the file.
+        """
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        if shutil.which("docker") is None:
+            pytest.skip("docker unavailable — cannot validate nginx.conf")
+
+        conf = Path(__file__).resolve().parents[1] / "nginx.conf"
+        result = subprocess.run(
+            [
+                "docker", "run", "--rm", "-i",
+                "--add-host", "ai-api:127.0.0.1",
+                "--entrypoint", "sh", "nginx:alpine",
+                "-c", "cat > /etc/nginx/conf.d/default.conf && nginx -t",
+            ],
+            input=conf.read_bytes(),
+            capture_output=True,
+            timeout=180,
+        )
+
+        assert result.returncode == 0, result.stderr.decode(errors="replace")

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { SiteHeader } from "@/components/layout/site-header";
 import { AvatarDisc } from "@/components/account/avatar-disc";
@@ -19,8 +19,14 @@ import {
   type EventDateKey,
 } from "@/components/dashboard/event-filter-bar";
 import { Kicker } from "@/components/ui/kicker";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useAuth } from "@/hooks/use-auth";
-import { usePhotographerEvents } from "@/hooks/use-photographer-data";
+import { useEffectiveRole } from "@/hooks/use-effective-role";
+import { useNextTarget } from "@/hooks/use-redirect-target";
+import {
+  usePhotographerEvents,
+  COVERED_EVENTS_MAX,
+} from "@/hooks/use-photographer-data";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useOrdersList } from "@/hooks/use-orders";
 import { useToast } from "@/hooks/use-toast";
@@ -30,6 +36,7 @@ import {
 } from "@/lib/api-saved-events";
 import type { MockOrder } from "@/store/orders-store";
 import { ROUTES } from "@/lib/constants";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { formatMemberSince, formatRaceDate } from "@/lib/format";
 import type { PhotographerEventSummary } from "@/lib/photographer-mock";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
@@ -75,16 +82,27 @@ export default function ProfilePage() {
 // page with edit affordances.
 function ProfileRouter() {
   const { user } = useAuth();
-  if (!user) return null;
-  if (user.role === "PHOTOGRAPHER") return <PhotographerProfileBody user={user} />;
-  return <RunnerProfileBody user={user} />;
+  const effectiveRole = useEffectiveRole();
+  if (!user || !effectiveRole) return null;
+  // Effective role, not user.role — a photographer in runner view sees the
+  // full runner profile (selfie library + race log), never the photographer
+  // portfolio.
+  if (effectiveRole === "PHOTOGRAPHER")
+    return <PhotographerProfileBody user={user} />;
+  return <RunnerProfileBody user={user} effectiveRole={effectiveRole} />;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
 // Runner profile (existing layout)
 // ─────────────────────────────────────────────────────────────────────────
 
-function RunnerProfileBody({ user }: { user: User }) {
+function RunnerProfileBody({
+  user,
+  effectiveRole,
+}: {
+  user: User;
+  effectiveRole: Role;
+}) {
   const memberSince = formatMemberSince(user.createdAt);
 
   return (
@@ -96,7 +114,7 @@ function RunnerProfileBody({ user }: { user: User }) {
             user={user}
             kicker={
               <>
-                {roleLabel(user.role)}
+                {roleLabel(effectiveRole)}
                 {" · Cebu · "}
                 <span className="tnum">Since {memberSince}</span>
               </>
@@ -108,7 +126,10 @@ function RunnerProfileBody({ user }: { user: User }) {
             currentPath={ROUTES.PROFILE}
           />
           <div className="stagger-children min-w-0 pb-8 md:pb-20 md:border-l md:border-line md:-ml-6 lg:-ml-10 md:pl-6 lg:pl-10">
-            <SelfieLibrarySection />
+            {/* Suspense: the section reads `?next=` via useSearchParams(). */}
+            <Suspense fallback={null}>
+              <SelfieLibrarySection />
+            </Suspense>
             <RaceLogSection />
           </div>
         </div>
@@ -124,6 +145,10 @@ function roleLabel(role: Role): string {
 }
 
 function SelfieLibrarySection() {
+  // The event page sends selfie-less runners here with `?next=/events/<slug>`
+  // (photo-alert opt-in, selfie-search tip). Give them the way back — the
+  // param used to be written and never read, stranding them on the profile.
+  const returnTo = useNextTarget();
   return (
     <Slab
       id="selfies"
@@ -131,7 +156,16 @@ function SelfieLibrarySection() {
       title="Selfie library"
       caption="Used by face search across every event"
     >
-      <SelfieLibrary />
+      {returnTo && (
+        <Link
+          href={returnTo}
+          className="inline-flex items-center gap-1.5 font-sans text-sm text-ink hover:text-fresh transition-colors mb-5"
+        >
+          <span aria-hidden="true">←</span>
+          Back to the race
+        </Link>
+      )}
+      <SelfieLibrary returnTo={returnTo} />
     </Slab>
   );
 }
@@ -191,6 +225,10 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
   const date = formatRaceDate(entry.date);
   const isUpcoming = entry.state === "upcoming";
   const showUnsave = isUpcoming && entry.isSaved;
+  // Purchased-only rows carry `order.eventSlug ?? ""`, and the BE sends null
+  // once an event is hard-deleted. Without this, the row renders an "Open →"
+  // chip over a link to `/events/` — the events list, not the race.
+  const canOpen = entry.slug.length > 0;
   const stateLabel: Record<RaceState, string> = {
     upcoming: "Saved",
     live: "Photos uploading",
@@ -204,7 +242,7 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
         <Kicker as="p" tnum>
           {date}
         </Kicker>
-        <h3 className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2 truncate">
+        <h3 className="font-display text-xl md:text-2xl font-bold tracking-tight text-ink mt-2 truncate">
           {entry.name}
         </h3>
         <p className="font-sans text-sm text-slate mt-2">
@@ -251,7 +289,7 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
         >
           Unsave
         </button>
-      ) : !isUpcoming ? (
+      ) : !isUpcoming && canOpen ? (
         <span className="font-sans text-sm text-ink group-hover:text-fresh transition-colors shrink-0 inline-flex items-center gap-1.5">
           Open
           <span
@@ -265,7 +303,7 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
     </div>
   );
 
-  if (isUpcoming) {
+  if (isUpcoming || !canOpen) {
     return <div className="group block">{body}</div>;
   }
 
@@ -283,7 +321,7 @@ function RaceLogRow({ entry }: { entry: RaceLogEntry }) {
 function RaceLogEmpty() {
   return (
     <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-      <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+      <p className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-ink">
         No races yet.
       </p>
       <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
@@ -371,8 +409,13 @@ function PhotographerProfileBody({ user }: { user: User }) {
   // Live BE rollup of the photographer's covered events. withUploads=true so
   // events the photographer hasn't shot for yet stay out of the portfolio.
   // null = still loading; [] = no covered events. The StatsRow + PortfolioGrid
-  // both feed off this single read.
-  const events = usePhotographerEvents({ withUploads: true });
+  // both feed off this single read. limit=MAX so a prolific portfolio isn't
+  // capped (client-side date/search filter needs the full set); PortfolioGrid
+  // client-slices the render to keep the DOM bounded.
+  const events = usePhotographerEvents({
+    withUploads: true,
+    limit: COVERED_EVENTS_MAX,
+  });
 
   const accent = brandColor !== "none" ? BRAND_COLOR_HEX[brandColor] : null;
   const displayName = brandName.trim() || user.name;
@@ -432,7 +475,7 @@ function PhotographerProfileBody({ user }: { user: User }) {
         </div>
 
         <div className="mt-6 flex items-baseline gap-3 flex-wrap">
-          <h1 className="font-display text-4xl md:text-5xl font-medium tracking-tight text-ink leading-[1.05]">
+          <h1 className="font-display text-4xl md:text-5xl font-extrabold tracking-tight text-ink leading-[1.05]">
             {displayName}
           </h1>
           {accent && (
@@ -454,7 +497,7 @@ function PhotographerProfileBody({ user }: { user: User }) {
         <div className="mt-7 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
           <Link
             href={ROUTES.DASHBOARD_UPLOAD}
-            className="inline-flex items-center justify-center gap-2 font-sans text-base font-medium bg-fresh hover:bg-fresh-deep text-bone py-3 px-6 rounded-full transition-colors w-full sm:w-auto"
+            className="inline-flex items-center justify-center gap-2 font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors w-full sm:w-auto"
           >
             <span aria-hidden="true">+</span>
             Upload photos
@@ -512,7 +555,7 @@ function Stat({ label, value }: { label: string; value: string }) {
       <Kicker as="p">
         {label}
       </Kicker>
-      <p className="font-display font-medium tracking-tight tnum text-2xl md:text-3xl text-ink mt-2 leading-none">
+      <p className="font-display font-extrabold tracking-tight tnum text-2xl md:text-3xl text-ink mt-2 leading-none">
         {value}
       </p>
     </div>
@@ -572,7 +615,7 @@ function PublicUrlChip({ handle }: { handle: string }) {
           type="button"
           onClick={copy}
           disabled={!valid}
-          className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
+          className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
         >
           Copy
         </button>
@@ -618,6 +661,7 @@ function PortfolioGrid({
   const validHandle = handle.length > 0;
   const [date, setDate] = useState<EventDateKey>("any");
   const [query, setQuery] = useState("");
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.PORTFOLIO_INITIAL);
 
   const filtered = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -630,6 +674,13 @@ function PortfolioGrid({
       return true;
     });
   }, [allEvents, date, query]);
+
+  // Client-side filter changes reset the client-side page.
+  useEffect(() => {
+    setLoadedCount(PAGE_SIZE.PORTFOLIO_INITIAL);
+  }, [date, query]);
+
+  const visibleSlice = filtered.slice(0, loadedCount);
 
   const clearFilters = () => {
     setDate("any");
@@ -662,21 +713,31 @@ function PortfolioGrid({
           {filtered.length === 0 ? (
             <EventFilterEmpty onClear={clearFilters} />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
-              {filtered.map((summary, index) => (
-                <EventTile
-                  key={summary.id}
-                  mode="browse"
-                  event={toListEvent(summary)}
-                  index={index}
-                  hrefOverride={
-                    validHandle
-                      ? `/${handle}/events/${summary.slug}`
-                      : undefined
-                  }
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
+                {visibleSlice.map((summary, index) => (
+                  <EventTile
+                    key={summary.id}
+                    mode="browse"
+                    event={toListEvent(summary)}
+                    index={index}
+                    hrefOverride={
+                      validHandle
+                        ? `/${handle}/events/${summary.slug}`
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
+              <LoadMoreButton
+                shown={visibleSlice.length}
+                total={filtered.length}
+                increment={PAGE_SIZE.PORTFOLIO_INCREMENT}
+                onLoadMore={() =>
+                  setLoadedCount((n) => n + PAGE_SIZE.PORTFOLIO_INCREMENT)
+                }
+              />
+            </>
           )}
         </>
       )}
@@ -710,7 +771,7 @@ function PortfolioEmpty() {
   // the page's single fresh element. Empty state points users back up.
   return (
     <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
-      <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+      <p className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-ink">
         Nothing shipped yet.
       </p>
       <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">

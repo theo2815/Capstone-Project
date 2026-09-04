@@ -1,16 +1,20 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useRef } from "react";
+import { useInfiniteList } from "@/hooks/use-infinite-list";
 import {
   fetchEventPhotos,
   type EventPhotosResult,
   type Photo,
 } from "@/lib/api-photos";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 
 interface UseEventPhotosArgs {
   slug: string;
   bib?: string;
-  initialItems?: Photo[];
+  /** SSR seed: the server loader's real envelope (page 0). Gallery only — a
+   *  bib filter caches independently and fetches its own first page. */
+  initialPage?: EventPhotosResult;
   enabled?: boolean;
 }
 
@@ -19,36 +23,52 @@ interface UseEventPhotosResult {
   total: number;
   isLoading: boolean;
   isFetching: boolean;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  fetchNextPage: () => void;
   error: unknown;
 }
 
-// Hook for the per-event photo grid (cockpit + browse modes share it).
-// Q-011: bib filter is server-side; cache key includes the normalized bib so
-// cockpit (no bib) and browse (with bib) cache independently.
+// Per-event photo grid (cockpit + browse share it). Real server pagination:
+// Load-more advances the offset instead of slicing one capped fetch.
+// Q-011: bib filter is server-side; the cache key includes the normalized bib
+// so cockpit (no bib) and browse (with bib) cache — and page — independently.
 export function useEventPhotos(args: UseEventPhotosArgs): UseEventPhotosResult {
   const bib = args.bib?.trim() || undefined;
+  const snapshotRef = useRef(args.initialPage?.snapshotAt);
 
-  const query = useQuery<EventPhotosResult>({
-    queryKey: ["events", args.slug, "photos", { bib: bib ?? null }],
-    queryFn: () => fetchEventPhotos(args.slug, { bib }),
+  const list = useInfiniteList<Photo>({
+    queryKey: [
+      "events",
+      args.slug,
+      "photos",
+      { bib: bib ?? null, snapshotAt: args.initialPage?.snapshotAt ?? null },
+    ],
+    fetchPage: async (offset, limit) => {
+      const page = await fetchEventPhotos(args.slug, {
+        bib,
+        offset,
+        limit,
+        // Page zero starts a new gallery snapshot; later pages reuse it.
+        snapshotAt: !bib && offset > 0 ? snapshotRef.current : undefined,
+      });
+      if (!bib && page.snapshotAt) snapshotRef.current = page.snapshotAt;
+      return page;
+    },
+    limit: PAGE_SIZE.PHOTO_INCREMENT,
+    initialPage: !bib ? args.initialPage : undefined,
     enabled: args.enabled ?? true,
-    initialData:
-      !bib && args.initialItems
-        ? {
-            items: args.initialItems,
-            total: args.initialItems.length,
-            offset: 0,
-            limit: args.initialItems.length,
-          }
-        : undefined,
     staleTime: 30_000,
   });
 
   return {
-    photos: query.data?.items ?? [],
-    total: query.data?.total ?? 0,
-    isLoading: query.isPending,
-    isFetching: query.isFetching,
-    error: query.error,
+    photos: list.items,
+    total: list.total,
+    isLoading: list.isLoading,
+    isFetching: list.isFetching,
+    hasNextPage: list.hasNextPage,
+    isFetchingNextPage: list.isFetchingNextPage,
+    fetchNextPage: list.fetchNextPage,
+    error: list.error,
   };
 }

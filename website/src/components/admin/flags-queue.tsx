@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Kicker } from "@/components/ui/kicker";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminFlagCard } from "@/components/admin/admin-flag-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
@@ -10,9 +11,10 @@ import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/ad
 import { AdminFlagHideModal } from "@/components/admin/admin-flag-hide-modal";
 import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
 import {
-  useAdminFlagStore,
-  getEffectiveFlags,
-} from "@/store/admin-flag-store";
+  useAdminFlags,
+  useFlagActions,
+  EMPTY_FLAGS,
+} from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -20,13 +22,27 @@ import {
   useQueueKeyboardNav,
   useSearchFocusShortcut,
 } from "@/hooks/use-admin-keyboard";
-import { type Flag, type FlagStatus, FLAG_REASON_LABEL } from "@/lib/admin-flags";
-import { getEventById } from "@/lib/event-catalog";
+import {
+  type Flag,
+  type FlagStatus,
+  canDismiss,
+  canEscalate,
+  canHide,
+  flagEventName,
+  flagReasonLabel,
+} from "@/lib/admin-flags";
 import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
 import { formatLongDate } from "@/lib/format";
 
+const DONE_LABEL = {
+  hide: "Hidden",
+  dismiss: "Dismissed",
+  escalate: "Escalated",
+} as const;
+
 const STATUS_LABEL: Record<FlagStatus, string> = {
   open: "Open",
+  resolved: "Resolved",
   hidden: "Hidden",
   dismissed: "Dismissed",
   escalated: "Escalated",
@@ -36,6 +52,8 @@ function statusTone(status: FlagStatus): AdminStatusPillTone {
   switch (status) {
     case "open":
       return "amber";
+    case "resolved":
+      return "fresh";
     case "hidden":
       return "ink";
     case "dismissed":
@@ -58,10 +76,11 @@ function statusTone(status: FlagStatus): AdminStatusPillTone {
 // escDisabled stands down whenever any of them is open.
 
 export function FlagsQueue() {
-  const overrides = useAdminFlagStore((s) => s.overrides);
-  const hide = useAdminFlagStore((s) => s.hide);
-  const dismiss = useAdminFlagStore((s) => s.dismiss);
-  const escalate = useAdminFlagStore((s) => s.escalate);
+  // Open flags are fetched on their own so the actionable list is never
+  // pushed off the end of the newest-first 200-row page by closed history.
+  const openPage = useAdminFlags({ status: "open" });
+  const allPage = useAdminFlags();
+  const { hide, dismiss, escalate } = useFlagActions();
   const { showToast } = useToast();
 
   const [query, setQuery] = useState("");
@@ -70,7 +89,17 @@ export function FlagsQueue() {
   const [drawerEscalateOpen, setDrawerEscalateOpen] = useState(false);
   const [drawerConfirmDismiss, setDrawerConfirmDismiss] = useState(false);
 
-  const effective = useMemo(() => getEffectiveFlags(overrides), [overrides]);
+  const effective = useMemo(() => {
+    const openItems = openPage?.items ?? EMPTY_FLAGS;
+    const history = (allPage?.items ?? EMPTY_FLAGS).filter(
+      (f) => f.status !== "open",
+    );
+    return [...openItems, ...history];
+  }, [openPage, allPage]);
+  const truncated =
+    allPage !== null && allPage.total > allPage.items.length
+      ? { shown: allPage.items.length, total: allPage.total }
+      : null;
 
   const byId = useMemo(() => {
     const map = new Map<string, Flag>();
@@ -99,7 +128,7 @@ export function FlagsQueue() {
     if (q.length === 0) return effective;
     return effective.filter((f) => {
       return (
-        FLAG_REASON_LABEL[f.reason].toLowerCase().includes(q) ||
+        flagReasonLabel(f.reason).toLowerCase().includes(q) ||
         f.photographerHandle.toLowerCase().includes(q) ||
         f.reportedBy.toLowerCase().includes(q) ||
         f.note.toLowerCase().includes(q)
@@ -123,7 +152,7 @@ export function FlagsQueue() {
   );
   const dismissed = useMemo(
     () =>
-      [...filtered.filter((f) => f.status === "dismissed")].sort((a, b) =>
+      [...filtered.filter((f) => f.status === "dismissed" || f.status === "resolved")].sort((a, b) =>
         (b.reviewedAt ?? "").localeCompare(a.reviewedAt ?? ""),
       ),
     [filtered],
@@ -204,36 +233,45 @@ export function FlagsQueue() {
     inputRef: searchInputRef,
   });
 
-  function handleDrawerHideSubmit(reason: string | null) {
+  async function runDrawerAction(
+    verb: "hide" | "dismiss" | "escalate",
+    action: (id: string) => Promise<void>,
+  ) {
     if (!openRow) return;
-    hide(openRow.id, reason);
+    const id = openRow.id;
+    try {
+      await action(id);
+      showToast({ kind: "info", message: `${DONE_LABEL[verb]} · ${id}` });
+      setRowId("");
+    } catch {
+      showToast({
+        kind: "error",
+        message: `Could not ${verb} ${id} — nothing changed. Try again.`,
+      });
+    }
+  }
+
+  function handleDrawerHideSubmit(reason: string | null) {
     setDrawerHideOpen(false);
-    showToast({ kind: "info", message: `Hidden · ${openRow.id}` });
-    setRowId("");
+    void runDrawerAction("hide", (id) => hide(id, reason));
   }
 
   function handleDrawerDismissConfirm() {
-    if (!openRow) return;
-    dismiss(openRow.id);
     setDrawerConfirmDismiss(false);
-    showToast({ kind: "info", message: `Dismissed · ${openRow.id}` });
-    setRowId("");
+    void runDrawerAction("dismiss", (id) => dismiss(id));
   }
 
   function handleDrawerEscalateSubmit(note: string | null) {
-    if (!openRow) return;
-    escalate(openRow.id, note);
     setDrawerEscalateOpen(false);
-    showToast({ kind: "info", message: `Escalated · ${openRow.id}` });
-    setRowId("");
+    void runDrawerAction("escalate", (id) => escalate(id, note));
   }
 
-  // Only register H when the open flag is actionable (status === "open")
+  // Only register H when the flag can still be hidden (open or escalated)
   // and no stacked modal is taking the keystroke instead.
   useDrawerVerbs({
     active:
       openRow !== null &&
-      openRow.status === "open" &&
+      canHide(openRow) &&
       !drawerHideOpen &&
       !drawerEscalateOpen,
     verbs: openRow
@@ -259,8 +297,13 @@ export function FlagsQueue() {
           className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
         />
         {query.trim().length > 0 && (
-          <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft mt-3 tnum">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3 tnum">
             {filtered.length} match{filtered.length === 1 ? "" : "es"}
+          </p>
+        )}
+        {truncated && (
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3 tnum">
+            History shows the newest {truncated.shown} of {truncated.total} flags
           </p>
         )}
       </div>
@@ -338,7 +381,7 @@ export function FlagsQueue() {
           onClose={() => setRowId("")}
           escDisabled={drawerEscDisabled}
           kicker={`Flag · ${openRow.id}`}
-          title={FLAG_REASON_LABEL[openRow.reason]}
+          title={flagReasonLabel(openRow.reason)}
           rightHeader={
             <AdminStatusPill
               label={STATUS_LABEL[openRow.status]}
@@ -385,21 +428,11 @@ export function FlagsQueue() {
 }
 
 export function useOpenFlagsCount(): number {
-  const overrides = useAdminFlagStore((s) => s.overrides);
-  return useMemo(
-    () =>
-      getEffectiveFlags(overrides).filter((f) => f.status === "open").length,
-    [overrides],
-  );
+  return useAdminFlags({ status: "open" })?.total ?? 0;
 }
 
 export function useHiddenFlagsCount(): number {
-  const overrides = useAdminFlagStore((s) => s.overrides);
-  return useMemo(
-    () =>
-      getEffectiveFlags(overrides).filter((f) => f.status === "hidden").length,
-    [overrides],
-  );
+  return useAdminFlags({ status: "hidden" })?.total ?? 0;
 }
 
 function FlagSlab({
@@ -472,10 +505,9 @@ function FlagSlab({
 }
 
 function FlagSubtitle({ flag }: { flag: Flag }) {
-  const event = getEventById(flag.eventId);
-  const eventName = event?.name ?? `Event ${flag.eventId}`;
+  const eventName = flagEventName(flag);
   return (
-    <p className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
       {flag.reportedBy === "system" ? "System" : `@${flag.reportedBy}`}
       <span className="text-slate-soft"> · </span>
       @{flag.photographerHandle}
@@ -502,9 +534,7 @@ function FlagDrawerActions({
   onConfirmDismiss: () => void;
   onEscalate: () => void;
 }) {
-  const isOpen = flag.status === "open";
-
-  if (!isOpen) {
+  if (!canDismiss(flag)) {
     return (
       <p className="font-sans text-sm text-slate-soft">
         This flag is closed. No further actions are available.
@@ -518,16 +548,16 @@ function FlagDrawerActions({
         <button
           type="button"
           onClick={onToggleConfirmDismiss}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
         >
           Cancel
         </button>
         <button
           type="button"
           onClick={onConfirmDismiss}
-          className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
         >
-          Confirm dismiss
+          {flag.status === "hidden" ? "Confirm restore" : "Confirm dismiss"}
         </button>
       </>
     );
@@ -535,67 +565,82 @@ function FlagDrawerActions({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={onEscalate}
-        className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
-      >
-        Escalate…
-      </button>
+      {canEscalate(flag) && (
+        <button
+          type="button"
+          onClick={onEscalate}
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
+        >
+          Escalate…
+        </button>
+      )}
       <button
         type="button"
         onClick={onToggleConfirmDismiss}
-        className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors px-4 py-2"
+        className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
       >
-        Dismiss
+        {flag.status === "hidden" ? "Restore photo & dismiss" : "Dismiss"}
       </button>
-      <button
-        type="button"
-        onClick={onHide}
-        className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-bone bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
-      >
-        Hide…
-      </button>
+      {canHide(flag) && (
+        <button
+          type="button"
+          onClick={onHide}
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+        >
+          Hide…
+        </button>
+      )}
     </>
   );
 }
 
 function FlagDetailBody({ flag }: { flag: Flag }) {
-  const event = getEventById(flag.eventId);
-  const eventName = event?.name ?? `Event ${flag.eventId}`;
+  const eventName = flagEventName(flag);
   const cover = syntheticCoverGradient(flag.id);
 
   return (
     <div className="space-y-10">
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        <Kicker as="p" tone="soft" className="mb-3">
           Photo
-        </p>
-        <div
-          className="aspect-[16/9] rounded-2xl border border-line"
-          style={{
-            background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
-          }}
-          aria-label={flag.photoSnapshot.alt}
-        />
+        </Kicker>
+        {flag.photoSnapshot.thumbnailUrl ? (
+          <div className="aspect-[16/9] rounded-2xl border border-line overflow-hidden bg-bone-deep relative">
+            <img
+              src={flag.photoSnapshot.thumbnailUrl}
+              alt={flag.photoSnapshot.alt}
+              loading="lazy"
+              decoding="async"
+              className="w-full h-full object-cover"
+            />
+          </div>
+        ) : (
+          <div
+            className="aspect-[16/9] rounded-2xl border border-line"
+            style={{
+              background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
+            }}
+            aria-label={flag.photoSnapshot.alt}
+          />
+        )}
         <p className="font-sans text-sm text-ink-soft mt-3">
           {flag.photoSnapshot.alt}
         </p>
       </section>
 
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        <Kicker as="p" tone="soft" className="mb-3">
           Report
-        </p>
+        </Kicker>
         <p className="font-sans text-sm md:text-base text-ink-soft whitespace-pre-line">
           {flag.note}
         </p>
       </section>
 
       <section>
-        <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+        <Kicker as="p" tone="soft" className="mb-3">
           Context
-        </p>
+        </Kicker>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
           <FieldRow
             label="Reported by"
@@ -627,9 +672,9 @@ function FlagDetailBody({ flag }: { flag: Flag }) {
 
       {flag.reviewerNote && (
         <section>
-          <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft mb-3">
+          <Kicker as="p" tone="soft" className="mb-3">
             Reviewer note
-          </p>
+          </Kicker>
           <div className="rounded-xl border border-line bg-bone-deep p-4">
             <p className="font-sans text-sm text-ink-soft">
               {flag.reviewerNote}
@@ -652,13 +697,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft">
+      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         {label}
       </dt>
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-ink tnum"
+            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >

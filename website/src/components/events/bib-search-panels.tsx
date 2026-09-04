@@ -5,6 +5,10 @@ import { useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
+import { useQueryClient } from "@tanstack/react-query";
+import { uploadSelfie } from "@/lib/api-selfies";
+import { SELFIE_MAX } from "@/store/user-media-store";
+import { useEffectiveRole } from "@/hooks/use-effective-role";
 import { ROUTES } from "@/lib/constants";
 import {
   searchEventByFace,
@@ -41,7 +45,7 @@ export function BibPanel({
 }) {
   return (
     <form onSubmit={onSubmit} className="mt-8">
-      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate mb-3">
+      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-3">
         Your bib number
       </p>
       <label className="block">
@@ -56,19 +60,19 @@ export function BibPanel({
           value={bibInput}
           onChange={(e) => onBibChange(e.target.value)}
           placeholder="B-4082"
-          className="block w-full border-b border-line bg-transparent focus:border-fresh outline-none font-mono tracking-[0.25em] text-lg py-3 placeholder:text-slate-soft text-ink"
+          className="block w-full border-b border-line bg-transparent focus:border-fresh outline-none font-mono tracking-[0.14em] text-lg py-3 placeholder:text-slate-soft text-ink"
         />
       </label>
       <button
         type="submit"
-        className="mt-5 inline-flex items-center bg-fresh hover:bg-fresh-deep text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+        className="mt-5 inline-flex items-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors"
       >
         Search by bib →
       </button>
 
       <div className="mt-7 flex items-center gap-3">
         <span className="h-px flex-1 bg-line" />
-        <span className="font-mono uppercase tracking-[0.3em] text-[9px] text-slate-soft">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-slate-soft">
           or
         </span>
         <span className="h-px flex-1 bg-line" />
@@ -77,12 +81,12 @@ export function BibPanel({
       <button
         type="button"
         onClick={onSwitchToSelfie}
-        className="mt-7 inline-flex items-center border border-ink hover:bg-ink hover:text-bone text-ink px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+        className="mt-7 inline-flex items-center border border-ink hover:bg-ink hover:text-bone text-ink px-6 py-3 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
       >
         Match by selfie →
       </button>
 
-      <p className="mt-7 font-mono uppercase tracking-[0.25em] text-[10px] text-slate-soft">
+      <p className="mt-7 font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
         <span className="tnum">{photoCount.toLocaleString()}</span>{" "}
         {photoCount === 1 ? "photo" : "photos"}
         {eventPhotoCount > photoCount ? (
@@ -127,17 +131,23 @@ export function SelfieSearchPanel({
   const router = useRouter();
   const pathname = usePathname();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const role = useAuthStore((s) => s.user?.role);
+  const role = useEffectiveRole();
   const { selfies } = useSelfiesList();
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  // Save-and-search (2026-09-02): keep a fresh selfie in the library without
+  // a detour to /profile. Default on; hidden when the library is full.
+  const [saveToLibrary, setSaveToLibrary] = useState(true);
+  const [notice, setNotice] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   // Photographers don't have a runner selfie library — treat as guest for
   // the library affordance, but they still get upload/take in case they're
   // looking for themselves in another photographer's gallery.
   const isPhotographer = role === "PHOTOGRAPHER";
   const hasLibrary = isAuthenticated && !isPhotographer && selfies.length > 0;
+  const canSave = isAuthenticated && !isPhotographer && selfies.length < SELFIE_MAX;
   const here = pathname || `/events/${eventSlug}`;
 
   function humanizeError(err: unknown): string {
@@ -164,9 +174,38 @@ export function SelfieSearchPanel({
       return;
     }
     setError(null);
+    setNotice(null);
     setIsSearching(true);
     try {
-      const result = await searchEventByFace(eventSlug, { selfieFile: file });
+      let result: EventPhotosResult | null = null;
+      if (canSave && saveToLibrary) {
+        // Save first, then match with the whole library (which now includes
+        // it). A refused save (no face, limit) is a notice, not a failure —
+        // the one-shot file search below still runs.
+        try {
+          await uploadSelfie(file);
+          void queryClient.invalidateQueries({ queryKey: ["me", "selfies"] });
+          setNotice("Saved to your selfie library.");
+          result = await searchEventByFace(eventSlug, { allSelfies: true });
+        } catch (saveErr) {
+          const why = saveErr instanceof ApiError ? saveErr.message : "upload failed";
+          setNotice(`Not saved to your library (${why}) — searching with it anyway.`);
+        }
+      }
+      if (!result) result = await searchEventByFace(eventSlug, { selfieFile: file });
+      onSearchSuccess(result);
+    } catch (err) {
+      setError(humanizeError(err));
+    } finally {
+      setIsSearching(false);
+    }
+  }
+
+  async function searchWithAllSelfies() {
+    setError(null);
+    setIsSearching(true);
+    try {
+      const result = await searchEventByFace(eventSlug, { allSelfies: true });
       onSearchSuccess(result);
     } catch (err) {
       setError(humanizeError(err));
@@ -190,7 +229,7 @@ export function SelfieSearchPanel({
 
   return (
     <div className="mt-8" style={{ animation: "fade-in 0.3s ease-out both" }}>
-      <p className="font-mono uppercase tracking-[0.25em] text-[10px] text-slate mb-4">
+      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-4">
         Selfie match
       </p>
 
@@ -226,9 +265,35 @@ export function SelfieSearchPanel({
               setLibraryOpen(false);
               void searchWithSelfieId(s.id);
             }}
+            onMatchAll={() => {
+              setLibraryOpen(false);
+              void searchWithAllSelfies();
+            }}
           />
         )}
       </div>
+
+      {canSave && (
+        <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-3 font-sans text-sm text-slate select-none">
+          <input
+            type="checkbox"
+            checked={saveToLibrary}
+            onChange={(e) => setSaveToLibrary(e.target.checked)}
+            disabled={isSearching}
+            className="size-4 accent-fresh"
+          />
+          <span>
+            Also save it to my selfie library{" "}
+            <span className="font-mono tnum">({selfies.length} of {SELFIE_MAX})</span>
+          </span>
+        </label>
+      )}
+
+      {notice && (
+        <p role="status" className="mt-2 font-sans text-sm text-slate">
+          {notice}
+        </p>
+      )}
 
       <FieldError
         message={error}
@@ -239,7 +304,7 @@ export function SelfieSearchPanel({
       {isSearching && (
         <p
           role="status"
-          className="mt-4 font-mono uppercase tracking-[0.25em] text-[10px] text-fresh"
+          className="mt-4 font-mono uppercase tracking-[0.14em] text-[10px] text-fresh"
         >
           Matching…
         </p>
@@ -277,7 +342,7 @@ export function SelfieSearchPanel({
       <button
         type="button"
         onClick={onSwitchToBib}
-        className="mt-6 inline-flex items-center font-mono uppercase tracking-[0.25em] text-[10px] text-slate hover:text-fresh transition-colors"
+        className="mt-6 inline-flex items-center font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-fresh transition-colors"
       >
         ← Use bib instead
       </button>
@@ -321,7 +386,7 @@ function SelfieActionCard({
       className={cn(
         "group flex items-center gap-4 rounded-xl px-5 py-4 transition-colors",
         isPrimary
-          ? "bg-fresh text-bone hover:bg-fresh-deep cursor-pointer"
+          ? "bg-fresh text-surface hover:bg-fresh-deep cursor-pointer"
           : "border border-line bg-bone hover:bg-bone-deep text-ink cursor-pointer",
         disabled && "opacity-60 cursor-wait",
       )}
@@ -373,6 +438,8 @@ interface SelfieLibraryCardProps {
   onToggle: () => void;
   selfies: SelfieRef[];
   onPick: (selfie: SelfieRef) => void;
+  /** Match with the whole library at once (backend unions the matches). */
+  onMatchAll: () => void;
 }
 
 // Library card collapses into the same action-row shape as Take/Upload when
@@ -386,6 +453,7 @@ function SelfieLibraryCard({
   onToggle,
   selfies,
   onPick,
+  onMatchAll,
 }: SelfieLibraryCardProps) {
   const count = selfies.length;
   return (
@@ -398,7 +466,7 @@ function SelfieLibraryCard({
         className={cn(
           "w-full flex items-center gap-4 rounded-xl px-5 py-4 transition-colors text-left",
           isPrimary
-            ? "bg-fresh text-bone hover:bg-fresh-deep"
+            ? "bg-fresh text-surface hover:bg-fresh-deep"
             : "border border-line bg-bone hover:bg-bone-deep text-ink",
           disabled && "opacity-60 cursor-wait",
         )}
@@ -442,6 +510,23 @@ function SelfieLibraryCard({
           className="mt-3 rounded-xl border border-line bg-bone-deep p-3"
           style={{ animation: "fade-in 0.2s ease-out both" }}
         >
+          {/* Whole-library match first: every saved selfie is another angle of
+              the same runner, and the backend unions the matches (2026-09-02).
+              Ink, not Fresh — the card header above already carries the accent. */}
+          <button
+            type="button"
+            onClick={onMatchAll}
+            disabled={disabled}
+            className="mb-3 w-full rounded-lg bg-ink px-4 py-3 text-left text-bone transition-colors hover:bg-ink/90 disabled:opacity-60 disabled:cursor-wait focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep"
+          >
+            <span className="block font-display text-sm font-medium tracking-tight">
+              Match with all <span className="font-mono tnum">{count}</span>{" "}
+              {count === 1 ? "selfie" : "selfies"}
+            </span>
+            <span className="block font-sans text-sm text-bone/70 mt-0.5">
+              Best results — different angles find more of your photos. Or pick one below.
+            </span>
+          </button>
           <ul className="grid grid-cols-3 gap-2.5 sm:grid-cols-4">
             {selfies.map((s) => (
               <li key={s.id}>
@@ -462,7 +547,7 @@ function SelfieLibraryCard({
                     draggable={false}
                   />
                   {s.isPrimary && (
-                    <span className="absolute top-1.5 left-1.5 font-mono uppercase tracking-[0.18em] text-[8px] bg-fresh text-bone px-1.5 py-0.5 rounded-full">
+                    <span className="absolute top-1.5 left-1.5 font-mono uppercase tracking-[0.18em] text-[8px] bg-fresh text-surface px-1.5 py-0.5 rounded-full">
                       Primary
                     </span>
                   )}

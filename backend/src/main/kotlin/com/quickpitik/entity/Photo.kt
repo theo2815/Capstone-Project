@@ -65,6 +65,12 @@ class Photo(
     @Column(name = "status", nullable = false, length = 20)
     var status: PhotoStatus = PhotoStatus.LIVE,
 
+    // When the photo became visible to runners. Upload time is not enough:
+    // watermarking is asynchronous, so a PROCESSING row can predate the
+    // gallery snapshot while becoming LIVE after it.
+    @Column(name = "published_at")
+    var publishedAt: OffsetDateTime? = if (status == PhotoStatus.LIVE) uploadedAt else null,
+
     @Column(name = "price_php", nullable = false, precision = 12, scale = 2)
     var pricePhp: BigDecimal,
 
@@ -84,8 +90,39 @@ class Photo(
     @Column(name = "indexing_attempts", nullable = false)
     var indexingAttempts: Int = 0,
 
+    // Async-watermark retry budget (V36). Photos are created PROCESSING and
+    // flipped LIVE by PhotoWatermarkTrigger; only semantic failures
+    // (undecodable bytes) consume this — transport failures leave it intact so
+    // the reconcile sweep keeps re-driving them.
+    @Column(name = "processing_attempts", nullable = false)
+    var processingAttempts: Int = 0,
+
+    // 64-bit perceptual hash of the MARKED preview (watermark.jpg) — the leak
+    // surface a screenshot is matched against by POST /public/photos/verify
+    // (V42). Null until PhotoWatermarkService computes it at the LIVE flip or
+    // the reconcile sweep backfills it.
+    @Column(name = "phash")
+    var phash: Long? = null,
+
+    // Fingerprints of the frame BEFORE the mark was drawn — full frame and the
+    // middle 60% crop (V43) — so a cleaned or runner-cropped copy still
+    // attributes. Null on pre-V43 rows; never backfilled (the clean render is
+    // gone once the preview exists).
+    @Column(name = "phash_clean")
+    var phashClean: Long? = null,
+
+    @Column(name = "phash_centre")
+    var phashCentre: Long? = null,
+
     @Column(name = "indexing_error", columnDefinition = "TEXT")
     var indexingError: String? = null,
+
+    // Which FaceBibProvider produced the stored face/bib results (V33):
+    // "ai_api" or "rekognition". Their person-id spaces are incompatible, so a
+    // provider flip leaves stale rows detectable — and re-drivable via the
+    // admin reindex endpoint — by this stamp.
+    @Column(name = "indexed_provider", length = 16)
+    var indexedProvider: String? = null,
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(

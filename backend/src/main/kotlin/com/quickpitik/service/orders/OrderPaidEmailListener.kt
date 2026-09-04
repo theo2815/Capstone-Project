@@ -10,7 +10,9 @@ import org.springframework.transaction.event.TransactionalEventListener
 // block whatever published the event (PayMongo webhook handler — PayMongo
 // retries on >30s ack silence, so we must respond fast).
 //
-// `@Async` rides Spring's default task executor (see AsyncConfig). On
+// Runs on the bounded `imageProcessing` pool (AsyncConfig): with named
+// executors present Spring creates no default one, so a bare `@Async` would
+// fall back to one unbounded thread per call. On
 // Resend failure we log and move on; no automatic retry — the next
 // PayMongo webhook re-delivery (if any) will re-publish the event and
 // OrderReceiptEmailService.sendReceiptIfPending will try again because
@@ -21,7 +23,7 @@ class OrderPaidEmailListener(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    @Async
+    @Async("imageProcessing")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     fun onOrderPaid(event: OrderPaidEvent) {
         try {

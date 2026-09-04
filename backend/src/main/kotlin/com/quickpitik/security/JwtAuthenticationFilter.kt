@@ -1,11 +1,15 @@
 package com.quickpitik.security
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.quickpitik.common.ApiError
+import com.quickpitik.common.ApiResponse
 import com.quickpitik.entity.Role
 import io.jsonwebtoken.JwtException
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.http.HttpHeaders
+import org.springframework.http.MediaType
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource
@@ -16,6 +20,7 @@ import java.util.UUID
 @Component
 class JwtAuthenticationFilter(
     private val tokenProvider: JwtTokenProvider,
+    private val objectMapper: ObjectMapper,
 ) : OncePerRequestFilter() {
 
     override fun doFilterInternal(
@@ -30,17 +35,42 @@ class JwtAuthenticationFilter(
                 val userId = UUID.fromString(claims.subject)
                 val email = claims["email"] as? String ?: error("missing email claim")
                 val role = Role.valueOf(claims["role"] as? String ?: error("missing role claim"))
-                val principal = AuthPrincipal(userId, email, role)
-                val auth = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
-                auth.details = WebAuthenticationDetailsSource().buildDetails(request)
-                SecurityContextHolder.getContext().authentication = auth
+                // Absent claim = token minted before the suspension gate landed;
+                // treat as active so in-flight sessions aren't mass-logged-out.
+                val suspended = claims["suspended"] as? Boolean ?: false
+                if (!suspended) {
+                    val principal = AuthPrincipal(userId, email, role)
+                    val auth = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
+                    auth.details = WebAuthenticationDetailsSource().buildDetails(request)
+                    SecurityContextHolder.getContext().authentication = auth
+                }
+                // Suspended: leave unauthenticated so JsonAuthenticationEntryPoint
+                // returns the standard 401 envelope. The client's refresh attempt
+                // then fails (revoked token, or ACCOUNT_SUSPENDED from
+                // AuthService.refresh), which is what ends the session.
             } catch (_: JwtException) {
-                // invalid / expired / malformed — leave unauthenticated
+                // invalid / expired / malformed — reject outright so a public
+                // endpoint can't silently treat the caller as a guest
+                writeUnauthorized(response)
+                return
             } catch (_: IllegalArgumentException) {
-                // malformed claims
+                // malformed claims (bad UUID subject, unknown role)
+                writeUnauthorized(response)
+                return
             }
+            // Anything else propagates: an unexpected failure must surface as
+            // a 500, not silently de-authenticate the request.
         }
         filterChain.doFilter(request, response)
+    }
+
+    private fun writeUnauthorized(response: HttpServletResponse) {
+        response.contentType = MediaType.APPLICATION_JSON_VALUE
+        response.status = HttpServletResponse.SC_UNAUTHORIZED
+        objectMapper.writeValue(
+            response.outputStream,
+            ApiResponse.failure(ApiError(code = "UNAUTHORIZED", message = "Invalid or expired token")),
+        )
     }
 
     private fun extractToken(request: HttpServletRequest): String? {
@@ -48,3 +78,4 @@ class JwtAuthenticationFilter(
         return if (header.startsWith("Bearer ", ignoreCase = true)) header.substring(7) else null
     }
 }
+

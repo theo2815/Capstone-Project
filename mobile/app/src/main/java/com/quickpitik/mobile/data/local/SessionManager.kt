@@ -3,6 +3,14 @@ package com.quickpitik.mobile.data.local
 import android.content.Context
 import android.content.SharedPreferences
 
+// THE role check — every "is this a photographer?" branch goes through here.
+// Three call sites used to disagree (equals("PHOTOGRAPHER") in MainActivity vs
+// contains("PHOTO") on the auth screens), which would route a hypothetical new
+// role differently at login than at cold start. Mobile only ever branches
+// photographer/not-photographer, so a boolean beats an enum.
+fun isPhotographerRole(raw: String?): Boolean =
+    raw.equals("PHOTOGRAPHER", ignoreCase = true)
+
 class SessionManager private constructor(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
@@ -17,6 +25,10 @@ class SessionManager private constructor(context: Context) {
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_USER_EMAIL = "user_email"
         private const val KEY_USER_AVATAR = "user_avatar"
+        // Photographer→runner view switch (see ViewMode). Cleared by
+        // clearSession()'s prefs.clear() and explicitly on saveSession so a
+        // fresh login always lands in photographer view.
+        private const val KEY_VIEW_MODE = "runner_view"
 
         @Volatile
         private var INSTANCE: SessionManager? = null
@@ -45,6 +57,25 @@ class SessionManager private constructor(context: Context) {
             putString(KEY_USER_NAME, name)
             putString(KEY_USER_EMAIL, email)
             putString(KEY_USER_AVATAR, avatarUrl)
+            remove(KEY_VIEW_MODE)
+            apply()
+        }
+    }
+
+    fun isRunnerView(): Boolean = prefs.getBoolean(KEY_VIEW_MODE, false)
+
+    fun setRunnerView(runner: Boolean) {
+        prefs.edit().putBoolean(KEY_VIEW_MODE, runner).apply()
+    }
+
+    // Token-only writer for the 401-refresh path. saveSession() would blank the
+    // cached role/name/email/avatar (its params are required), and the refresh
+    // response isn't a reliable place to re-derive them — a locally edited name
+    // would be silently reverted. TokenAuthenticator calls this instead.
+    fun updateTokens(accessToken: String, refreshToken: String?) {
+        prefs.edit().apply {
+            putString(KEY_ACCESS_TOKEN, accessToken)
+            if (refreshToken != null) putString(KEY_REFRESH_TOKEN, refreshToken)
             apply()
         }
     }

@@ -6,6 +6,10 @@ spring:
     username: ${DB_USER:quickpitik}
     password: ${DB_PASSWORD:quickpitik}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # Boot default is 10. Raise via DB_POOL_SIZE if marathon-day upload
+      # concurrency ever saturates it (watch hikaricp.connections.* metrics).
+      maximum-pool-size: ${DB_POOL_SIZE:10}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -13,8 +17,22 @@ spring:
     properties:
       hibernate:
         format_sql: false
+        # Collapses the EAGER @ElementCollection fan-out (Photo.bibs /
+        # Photo.facePersons, Event.categories): N per-row collection selects
+        # become ceil(N/50) IN-selects. A 200-photo grid page drops from
+        # ~401 queries to ~13.
+        default_batch_fetch_size: 50
+        order_inserts: true
+        query:
+          in_clause_parameter_padding: true
         jdbc:
           time_zone: UTC
+          batch_size: 25
+  task:
+    scheduling:
+      # Boot default is 1 thread, which let a slow indexing reconcile sweep
+      # starve the reaper / batch drain / poll / photos-ready sweeps.
+      pool-size: 4
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -26,9 +44,19 @@ spring:
     multipart:
       max-file-size: 25MB
       max-request-size: 25MB
+      # Keep parts in memory (they are read fully into heap anyway) instead of
+      # spooling every upload to java.io.tmpdir first.
+      file-size-threshold: 25MB
 
 server:
   port: ${SERVER_PORT:8080}
+  # Behind a TLS-terminating proxy (Railway). Honours X-Forwarded-For/-Proto so
+  # remoteAddr (per-IP rate-limit keys), isSecure() and HSTS see the real client.
+  forward-headers-strategy: framework
+  # Dev: localhost is a shared cookie jar across every local dev server (e.g. a
+  # Supabase auth-token cookie ~2.5KB from another local app). <img> requests to
+  # /storage carry those cookies and blow past Tomcat's 8KB default, 503-ing image loads.
+  max-http-request-header-size: 64KB
   error:
     include-message: never
     include-stacktrace: never
@@ -49,12 +77,32 @@ app:
     api-base-url: ${PUBLIC_API_BASE_URL:http://localhost:8080/api/v1}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  auth:
+    # Temporary account lockout (V29). Complements the per-IP auth-login bucket
+    # below rather than replacing it: that one caps how fast one host may guess,
+    # this one caps how often one ACCOUNT may be guessed at regardless of source,
+    # and it stays on even when RATE_LIMIT_ENABLED is false (the dev default).
+    # A lock auto-clears after `duration`; raise max-attempts if a demo needs
+    # more headroom.
+    lockout:
+      max-attempts: ${AUTH_LOCKOUT_MAX_ATTEMPTS:5}
+      duration: ${AUTH_LOCKOUT_DURATION:PT15M}
+      # NFR-S-14 (V34): failures only accumulate toward a lock when they land
+      # within this window of the previous one; older streaks restart at 1.
+      window: ${AUTH_LOCKOUT_WINDOW:PT15M}
+    # "Continue with Google" (V38). The Web application OAuth client ID from
+    # Google Cloud — shared audience for the website GIS button AND the mobile
+    # Credential Manager exchange. Blank (dev default) makes /auth/google
+    # answer 503 GOOGLE_AUTH_UNAVAILABLE; both clients hide the button when
+    # their copy of the ID is unset, so the endpoint going dark is symmetric.
+    google:
+      client-id: ${GOOGLE_CLIENT_ID:}
   admin:
     bootstrap-email: ${ADMIN_BOOTSTRAP_EMAIL:admin@quickpitik.local}
     bootstrap-password: ${ADMIN_BOOTSTRAP_PASSWORD:changeme123}
     bootstrap-name: ${ADMIN_BOOTSTRAP_NAME:QuickPitik Admin}
-    # Q-A5 follow-up — flagging surface is off by default in v1.
-    flags-enabled: ${ADMIN_FLAGS_ENABLED:false}
+    # Q-A5 follow-up — flagging surface is enabled.
+    flags-enabled: ${ADMIN_FLAGS_ENABLED:true}
   storage:
     backend: ${STORAGE_BACKEND:LOCAL}
     bucket: ${STORAGE_BUCKET:quickpitik-dev}
@@ -65,6 +113,30 @@ app:
     path-style-access: ${STORAGE_PATH_STYLE:false}
     local-root: ${STORAGE_LOCAL_ROOT:.storage}
     public-base-url: ${STORAGE_PUBLIC_BASE_URL:}
+  ai:
+    # Which backend fulfils face + bib inference. `ai-api` (default) uses the
+    # self-hosted ai-api service configured under app.ai-api below.
+    # `rekognition` routes face + bib to AWS Rekognition. The AI master on/off
+    # switch stays app.ai-api.enabled; this only selects the provider.
+    provider: ${AI_PROVIDER:ai-api}
+    # AWS Rekognition config (used only when provider=rekognition). Credentials
+    # come from the AWS default chain — AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+    # for local dev, or the instance/task role in production. Never put keys here.
+    rekognition:
+      region: ${AWS_REGION:ap-southeast-1}
+      # AWS credentials — leave empty to use the default chain (env vars /
+      # ~/.aws/credentials / instance role). For a plain dev machine, set them
+      # in application-local.yml alongside the other secrets.
+      access-key: ${AWS_ACCESS_KEY_ID:}
+      secret-key: ${AWS_SECRET_ACCESS_KEY:}
+      # One collection per event (prefix + eventId) = the isolation boundary.
+      collection-prefix: ${REKOGNITION_COLLECTION_PREFIX:qp-event-}
+      # Face-search floor, 0–1 (sent to Rekognition as *100). 0.8 ≈ AWS's
+      # recommended identity-match floor; the client never searches looser.
+      face-match-threshold: ${REKOGNITION_FACE_THRESHOLD:0.8}
+      max-faces-per-image: 15
+      bib-min-chars: 2
+      max-image-dimension: 2048
   ai-api:
     # Master switch. Default is off until ai-api work begins — feature
     # development runs faster without 3-attempt retry backoff on every
@@ -85,7 +157,17 @@ app:
     backoff-base-millis: 500
     face-match-threshold-default: 0.6
     face-top-k-default: 5
+    # Demo safety net: when true, an ai-api failure during face search returns
+    # the event's WHOLE photo grid instead of an error. Off by default — that
+    # response shows every runner's photos, which is the opposite of what face
+    # search promises. Flip only for a live demo with ai-api stopped.
+    search-fallback-on-error: ${AI_SEARCH_FALLBACK:false}
     bib-confidence-threshold-default: 0.7
+    # Per-photo indexing retry budget + reconcile cadence. Transport-level
+    # failures (provider unreachable) do NOT consume attempts — only semantic
+    # failures (bad image, 4xx) do, so an outage self-heals via the reconciler.
+    max-indexing-attempts: ${AI_MAX_INDEXING_ATTEMPTS:5}
+    reconcile-interval-ms: ${AI_RECONCILE_INTERVAL_MS:60000}
     # Phase C bulk indexing. PER_PHOTO (default) = Phase-B behaviour (one enroll
     # + one bib HTTP call per photo, off the upload request). BATCH stands that
     # down and drains PENDING photos per event into mega jobs + webhook/poll
@@ -104,32 +186,93 @@ app:
       hmac-secret: ${AI_WEBHOOK_HMAC_SECRET:}
       poll-interval-ms: 30000
       poll-grace-seconds: 90
+  watermark:
+    # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
+    # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off
+    # the request thread. Same attempt semantics as indexing: only semantic
+    # failures (undecodable bytes) consume the budget; transport failures leave
+    # it intact so the reconcile sweep keeps re-driving them.
+    max-attempts: ${WATERMARK_MAX_ATTEMPTS:5}
+    reconcile-interval-ms: ${WATERMARK_RECONCILE_INTERVAL_MS:60000}
+    # POST /public/photos/verify: max Hamming distance (of 64 pHash bits) that
+    # still counts as the same photo. <= half of it reports "strong".
+    verify-max-distance: ${WATERMARK_VERIFY_MAX_DISTANCE:12}
+    # Seeds each preview's stripe geometry via HMAC(secret, photoId) so the
+    # public photo id alone can't regenerate the layer. Keep it stable: a
+    # change re-seeds every future render (existing previews are unaffected).
+    seed-secret: ${WATERMARK_SEED_SECRET:dev-only-watermark-seed-DO-NOT-USE-IN-PRODUCTION}
   rate-limit:
-    enabled: ${RATE_LIMIT_ENABLED:false}
+    # ON by default (decided 2026-08-27; closes the NFR-S-11 posture question).
+    # Set RATE_LIMIT_ENABLED=false for load tests. The per-IP keys use
+    # request.remoteAddr — behind a TLS-terminating proxy configure Tomcat's
+    # RemoteIpValve (server.tomcat.remoteip.remote-ip-header +
+    # internal-proxies) so remoteAddr reflects the real client; never trust
+    # X-Forwarded-For raw (client-forgeable).
+    enabled: ${RATE_LIMIT_ENABLED:true}
     photographer-upload:
       capacity: 600
       refill-period: PT1M
     public-gallery:
       capacity: 60
       refill-period: PT1M
-    # Pre-auth endpoints — per-IP buckets. Sized for normal users plus a
-    # retry cushion; tighter caps go on credential-stuffing-prone surfaces
-    # (login) and email-bombing-prone surfaces (forgot-password).
+    # NFR-S-11: face/bib photo search 30 req / 15 min. Each face search burns
+    # AI inference, so it costs far more than an ordinary read. Greedy refill
+    # = burst of 30, then ~1 token / 30 s.
+    photo-search:
+      capacity: 30
+      refill-period: PT15M
+    # NFR-S-11: auth endpoints 10 req / 15 min by source IP — burst of 10,
+    # then ~1 token / 90 s. Anything past that is credential stuffing, email
+    # bombing, or token brute-force, not a human retrying.
     auth-login:
       capacity: 10
-      refill-period: PT1M
+      refill-period: PT15M
     auth-register:
-      capacity: 5
-      refill-period: PT1M
+      capacity: 10
+      refill-period: PT15M
     auth-forgot-password:
-      capacity: 3
-      refill-period: PT1M
+      capacity: 10
+      refill-period: PT15M
+    auth-verify-reset-otp:
+      capacity: 10
+      refill-period: PT15M
     auth-reset-password:
-      capacity: 5
+      capacity: 10
+      refill-period: PT15M
+    # Guest checkout mints a PayMongo session per call — bound the burn rate.
+    order-create:
+      capacity: 10
       refill-period: PT1M
+    order-read:
+      capacity: 90
+      refill-period: PT1M
+    # Public coupon preview: one lookup + a page of photos per call; its own
+    # bucket so typo'd "Apply" clicks can't drain the checkout bucket.
+    coupon-preview:
+      capacity: 30
+      refill-period: PT1M
+    # Public token-gated bundle download: one S3 GET per photo + zip CPU.
+    bundle-download:
+      capacity: 6
+      refill-period: PT1M
+    # Authenticated small-file uploads (avatar / selfie / cover / watermark /
+    # payout QR) share one per-user bucket.
+    media-upload:
+      capacity: 20
+      refill-period: PT1M
+    # Public photo verification: decode + pHash + Hamming scan per call.
+    photo-verify:
+      capacity: 10
+      refill-period: PT15M
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
     platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}
+    # Largest photographer coupon (whole percent of the photographer's share).
+    # The platform cut never moves, whatever this is set to.
+    coupon-max-percent: ${COUPON_MAX_PERCENT:50}
+    # Upper bound for emailed bundle capabilities and migrated legacy tokens.
+    share-token-ttl: ${SHARE_TOKEN_TTL:P90D}
+    order-capability-secret: ${ORDER_CAPABILITY_SECRET:dev-only-order-capability-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random}
   webhooks:
     payment:
       # Production: set PAYMENT_WEBHOOK_HMAC_SECRET to a 256-bit random value,
@@ -161,6 +304,7 @@ app:
       base-url: ${PAYMONGO_BASE_URL:https://api.paymongo.com/v1}
       connect-timeout: PT5S
       read-timeout: PT15S
+      checkout-ttl: ${PAYMONGO_CHECKOUT_TTL:PT30M}
   email:
     resend:
       # Resend transactional email wiring. Free-tier dev sender
@@ -174,8 +318,33 @@ app:
       connect-timeout: PT5S
       read-timeout: PT15S
 
+# Actuator: /actuator/health is a public liveness probe; metrics + info need
+# an ADMIN bearer (SecurityConfig). Nothing else is exposed over the web.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+# Generated OpenAPI spec + Swagger UI (springdoc). ON by default: the point of
+# the surface is local exploration and the adviser demo, and this service has no
+# production deployment yet. Set API_DOCS_ENABLED=false when one exists —
+# publishing a full route inventory to the internet is free reconnaissance.
+springdoc:
+  api-docs:
+    enabled: ${API_DOCS_ENABLED:true}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${API_DOCS_ENABLED:true}
+    path: /swagger-ui.html
+    # Alphabetical instead of controller-declaration order — too many controllers
+    # to scan in declaration order otherwise.
+    operations-sorter: alpha
+    tags-sorter: alpha
+
 logging:
   level:
     root: INFO
-    com.quickpitik: DEBUG
+    # INFO is the shipped default; set LOG_LEVEL_APP=DEBUG for local debugging.
+    com.quickpitik: ${LOG_LEVEL_APP:INFO}
     org.springframework.security: INFO

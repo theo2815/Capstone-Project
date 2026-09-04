@@ -55,7 +55,7 @@ export function AdminOverviewTrend() {
         >
           Uploads
         </ToggleButton>
-        <span className="ml-auto font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate-soft tnum">
+        <span className="ml-auto font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
           {total.toLocaleString()} {unit} · last 30 days
         </span>
       </div>
@@ -84,9 +84,9 @@ function ToggleButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "font-mono uppercase tracking-[0.25em] text-[13px] min-[400px]:text-[14px] md:text-[12px] rounded-full px-4 py-1.5 transition-colors",
+        "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-1.5 transition-colors",
         active
-          ? "bg-fresh text-bone"
+          ? "bg-fresh text-surface"
           : "border border-line text-slate hover:text-ink hover:border-ink",
       )}
     >

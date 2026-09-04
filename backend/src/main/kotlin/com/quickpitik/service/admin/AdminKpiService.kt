@@ -2,10 +2,12 @@ package com.quickpitik.service.admin
 
 import com.quickpitik.dto.admin.AdminKpisDto
 import com.quickpitik.dto.admin.AdminTrendPointDto
+import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
+import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -28,6 +30,7 @@ class AdminKpiService(
     private val payoutCycleRepository: PayoutCycleRepository,
     private val disputeRepository: DisputeRepository,
     private val flagRepository: FlagRepository,
+    private val eventRepository: EventRepository,
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val jdbcTemplate: JdbcTemplate,
 ) {
@@ -48,6 +51,9 @@ class AdminKpiService(
         val openFlags = flagRepository.countByStatusWire("open")
         val pendingPayouts = payoutCycleRepository.countByStatusWire(PayoutCycleStatus.PENDING.wire) +
             payoutCycleRepository.countByStatusWire(PayoutCycleStatus.SCHEDULED.wire)
+        val pendingEventRequests = eventRepository.countByReviewStatusInAndDeletedAtIsNull(
+            listOf(EventReviewStatus.PENDING, EventReviewStatus.CHANGE_PENDING),
+        )
 
         return AdminKpisDto(
             pendingVerifications = pendingVerifications,
@@ -58,6 +64,7 @@ class AdminKpiService(
             openDisputes = openDisputes,
             openFlags = openFlags,
             pendingPayouts = pendingPayouts,
+            pendingEventRequests = pendingEventRequests,
         )
     }
 

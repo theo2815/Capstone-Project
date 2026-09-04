@@ -2,6 +2,7 @@
 
 import { type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 
 type TooltipPosition =
   | "top"
@@ -58,7 +59,8 @@ export function Tooltip({
         className={cn(
           "absolute pointer-events-none z-30 whitespace-nowrap",
           "bg-bone border border-line text-ink",
-          "font-mono uppercase tracking-[0.25em] text-[9px] py-1.5 px-2.5 rounded-full",
+          "font-mono uppercase py-1.5 px-2.5 rounded-full",
+          KICKER_SIZE_CLASS.sm,
           "shadow-[0_4px_12px_-4px_rgba(17,17,17,0.18)]",
           "opacity-0 scale-95 transition-[opacity,transform] duration-150",
           "group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100",

@@ -28,9 +28,9 @@ import java.util.zip.ZipOutputStream
  *
  * Auth is token-only (not JWT) because the endpoint must be reachable by a
  * top-level <a href> navigation, which carries no Authorization header. The
- * shareToken is unique per order, minted at create time for runners AND
- * guests (V18 backfilled legacy runner orders) — sharing the URL is the
- * same semantic as sharing a Dropbox link.
+ * The purpose-bound capability is signed rather than stored; migrated V18
+ * bearer links remain valid through a one-way hash. Both expire at
+ * `orders.token_expires_at` (90 days by default).
  *
  * Split into two phases so the JPA transaction closes before the bytes start
  * streaming: `prepare()` runs inside @Transactional and resolves everything
@@ -46,6 +46,7 @@ class OrderBundleService(
     private val eventRepository: EventRepository,
     private val downloadGrantRepository: DownloadGrantRepository,
     private val storageService: StorageService,
+    private val orderAccessTokenService: OrderAccessTokenService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -54,8 +55,9 @@ class OrderBundleService(
         val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
 
         // Anti-IDOR: every failure surfaces NOT_FOUND so an attacker probing
-        // by id learns nothing about which ids exist.
-        if (token.isNullOrBlank() || order.shareToken == null || order.shareToken != token) {
+        // by id learns nothing about which ids exist. Expiry (V27) is treated
+        // the same way, and mirrors OrderService.requireValidToken.
+        if (!orderAccessTokenService.isValid(order, token, OrderCapability.BUNDLE)) {
             throw orderNotFound()
         }
         if (order.status != OrderStatus.PAID && order.status != OrderStatus.FULFILLED) {

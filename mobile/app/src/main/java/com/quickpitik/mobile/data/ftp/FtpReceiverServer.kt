@@ -1,3 +1,11 @@
+// UNWIRED — zero call sites as of 2026-08-14. Retained deliberately, not dead
+// by accident: this is the Wi-Fi FTP fallback for bodies whose shutter locks
+// while a USB PTP session is open. It stopped being a prerequisite once the R6
+// was shown to shoot happily in EOS event mode (see vault
+// mobile/notes/camera-tethering), but nothing has been runtime-verified on
+// hardware yet — so it stays until USB live auto-upload passes on the R6.
+// Never runtime-tested. Do not treat as a working path.
+
 package com.quickpitik.mobile.data.ftp
 
 import kotlinx.coroutines.Dispatchers

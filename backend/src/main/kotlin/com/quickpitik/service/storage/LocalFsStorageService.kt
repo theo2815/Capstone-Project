@@ -20,6 +20,7 @@ class LocalFsStorageService(
     private val props: StorageProperties,
     private val environment: Environment,
 ) : StorageService {
+    override val supportsDirectUpload: Boolean = false
     private val log = LoggerFactory.getLogger(javaClass)
     private val root: Path = Paths.get(props.localRoot).toAbsolutePath().also(Files::createDirectories)
 
@@ -67,6 +68,14 @@ class LocalFsStorageService(
 
     override fun presignedGetUrl(key: String, ttl: Duration): String =
         buildLocalUrl(key, ttl, "GET")
+
+    override fun presignedDownloadUrl(key: String, ttl: Duration, filename: String): String {
+        // StorageDownloadDispositionFilter reads these params off /storage/**
+        // and writes the Content-Disposition header — the dev twin of the
+        // signed response-content-disposition the S3 impl bakes in.
+        val encodedName = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20")
+        return buildLocalUrl(key, ttl, "GET") + "&disposition=attachment&filename=$encodedName"
+    }
 
     override fun presignedPutUrl(key: String, ttl: Duration, contentType: String): String =
         buildLocalUrl(key, ttl, "PUT")

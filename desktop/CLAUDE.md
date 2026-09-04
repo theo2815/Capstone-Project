@@ -25,7 +25,7 @@ Scope: desktop does blur + sort only. No face search, no bib recognition, no mar
 
 ## Module boundaries
 
-- **Desktop is the ONE client that calls `ai-api` directly.** Uses its own API key (`sk_test_...`, scopes `blur:read` + `jobs:read`, rate tier `pro`).
+- **Desktop is the ONE client that calls `ai-api` directly.** Uses its own restricted API key — scopes `blur:read` + `jobs:read`. The exact key, scopes, and rate tier are canonical in `../docs/api-keys.md`; don't restate them elsewhere.
 - Desktop has its **own backend and database**, separate from the Spring Boot web/mobile backend.
 
 ## What to read before coding

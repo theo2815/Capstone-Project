@@ -15,7 +15,7 @@ const BATCH_MY_PHOTOS_URL = "https://www.batchmyphotos.com/";
 
 export default function PhotographersPage() {
   return (
-    <main className="snap-y-mobile bg-bone text-ink relative">
+    <main className="snap-y-mobile bg-paper text-ink relative">
       <SiteHeader />
 
       <Hero />
@@ -80,7 +80,7 @@ export default function PhotographersPage() {
             href={BATCH_MY_PHOTOS_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 bg-ink hover:bg-ink-soft text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] transition-colors"
+            className="inline-flex items-center gap-2 bg-ink hover:bg-ink-soft text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
           >
             Get the desktop app
             <svg
@@ -110,32 +110,102 @@ export default function PhotographersPage() {
   );
 }
 
+function Kicker({
+  children,
+  color = "slate",
+}: {
+  children: React.ReactNode;
+  color?: "slate" | "fresh";
+}) {
+  return (
+    <div className="flex items-center gap-3 justify-center">
+      <span className="race-stripe" aria-hidden="true">
+        <span className="bg-fresh" />
+        <span className="bg-fresh-deep" />
+        <span className="bg-ink" />
+      </span>
+      <p
+        className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] ${
+          color === "fresh" ? "text-fresh" : "text-slate"
+        }`}
+      >
+        {children}
+      </p>
+    </div>
+  );
+}
+
+function Arrow() {
+  return (
+    <svg
+      className="size-4 transition-transform duration-300 group-hover:translate-x-1"
+      viewBox="0 0 20 20"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M4 10h12m0 0l-5-5m5 5l-5 5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function PrimaryCta({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group inline-flex items-center gap-2 rounded-full bg-fresh px-6 py-3.5 font-display font-bold text-[15px] text-surface transition-colors hover:bg-fresh-deep"
+    >
+      {children}
+      <Arrow />
+    </Link>
+  );
+}
+
 function Hero() {
   return (
-    <section className="snap-section min-h-[calc(100vh-3.75rem)] flex items-center px-6 md:px-10 py-16 md:py-20 bg-bone">
+    <section className="snap-section md:min-h-[calc(100vh-var(--site-header-h))] flex items-start md:items-center px-6 md:px-10 pt-10 pb-14 md:py-20 bg-paper">
       <div className="max-w-7xl mx-auto w-full grid md:grid-cols-2 gap-12 md:gap-16 items-center">
         <div className="stagger-children">
-          <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate mb-4">
-            For Photographers
-          </p>
-          <h1 className="font-display text-5xl md:text-7xl lg:text-8xl font-medium tracking-tight leading-[0.95]">
+          <div className="flex items-center gap-3">
+            <span className="race-stripe" aria-hidden="true">
+              <span className="bg-fresh" />
+              <span className="bg-fresh-deep" />
+              <span className="bg-ink" />
+            </span>
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+              For photographers
+            </p>
+          </div>
+          <h1 className="font-hero text-ink text-5xl md:text-7xl lg:text-8xl mt-5">
             Stop sorting.
             <br />
             <span className="text-fresh">Start selling.</span>
           </h1>
-          <p className="font-sans text-lg md:text-xl text-ink-soft max-w-md mt-8">
+          <p className="font-sans text-lg md:text-xl text-ink-soft max-w-md mt-7 leading-relaxed">
             Two ways to upload. Both go straight to the marketplace.
           </p>
-          <div className="mt-10 flex items-center gap-4 flex-wrap">
+          <div className="mt-10 flex items-center gap-5 flex-wrap">
             <a
               href="#step-1"
-              className="bg-fresh hover:bg-fresh-deep text-bone px-6 py-3 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+              className="group inline-flex items-center gap-2 rounded-full bg-fresh px-6 py-3.5 font-display font-bold text-[15px] text-surface transition-colors hover:bg-fresh-deep"
             >
-              See how →
+              See how
+              <Arrow />
             </a>
             <a
               href="#cta"
-              className="text-ink hover:text-fresh font-mono uppercase tracking-[0.2em] text-sm transition-colors"
+              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
             >
               Skip to signup
             </a>
@@ -215,12 +285,10 @@ interface ChapterLabelProps {
 
 function ChapterLabel({ kicker, title, sub }: ChapterLabelProps) {
   return (
-    <section className="snap-section py-16 md:py-24 px-6 md:px-10 bg-bone border-y border-line">
-      <div className="max-w-3xl mx-auto text-center stagger-children">
-        <p className="font-mono uppercase tracking-[0.4em] text-[10px] text-fresh mb-4">
-          {kicker}
-        </p>
-        <h2 className="font-display text-4xl md:text-6xl lg:text-7xl font-medium tracking-tight leading-[1.0]">
+    <section className="snap-section py-16 md:py-24 px-6 md:px-10 bg-paper border-y border-line">
+      <div className="max-w-3xl mx-auto text-center stagger-children flex flex-col items-center">
+        <Kicker color="fresh">{kicker}</Kicker>
+        <h2 className="font-hero text-ink text-5xl md:text-7xl lg:text-8xl mt-5">
           {title}
         </h2>
         <p className="font-sans text-base md:text-lg text-ink-soft mt-5 max-w-md mx-auto">
@@ -233,12 +301,10 @@ function ChapterLabel({ kicker, title, sub }: ChapterLabelProps) {
 
 function Pivot() {
   return (
-    <section className="snap-section py-20 md:py-28 px-6 md:px-10 bg-bone-deep border-y border-line">
-      <div className="max-w-3xl mx-auto text-center stagger-children">
-        <p className="font-mono uppercase tracking-[0.4em] text-[10px] text-slate mb-4">
-          No mobile app?
-        </p>
-        <h2 className="font-display text-4xl md:text-6xl lg:text-7xl font-medium tracking-tight leading-[1.0]">
+    <section className="snap-section py-20 md:py-28 px-6 md:px-10 bg-paper-deep border-y border-line">
+      <div className="max-w-3xl mx-auto text-center stagger-children flex flex-col items-center">
+        <Kicker>No mobile app?</Kicker>
+        <h2 className="font-hero text-ink text-5xl md:text-7xl lg:text-8xl mt-5">
           Upload it manually.
         </h2>
         <p className="font-sans text-base md:text-lg text-ink-soft mt-5 max-w-md mx-auto">
@@ -286,7 +352,7 @@ function StepSection({
   cta,
   mockType = "phone",
 }: StepSectionProps) {
-  const bgClass = bg === "bone-deep" ? "bg-bone-deep" : "bg-bone";
+  const bgClass = bg === "bone-deep" ? "bg-paper-deep" : "bg-paper";
   const Mock = mockType === "laptop" ? LaptopMock : DeviceMock;
   return (
     <section
@@ -297,17 +363,17 @@ function StepSection({
         <div className={flip ? "md:order-2" : ""}>
           <Mock>{screen}</Mock>
         </div>
-        <div className={`space-y-6 ${flip ? "md:order-1" : ""}`}>
-          <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate">
+        <div className={`space-y-5 ${flip ? "md:order-1" : ""}`}>
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
             Step
           </p>
-          <p className="font-display text-7xl md:text-8xl lg:text-9xl font-medium text-fresh leading-[0.85] tnum">
+          <p className="font-hero text-fresh text-8xl md:text-9xl leading-[0.8] tnum">
             0{n}
           </p>
-          <h2 className="font-display text-4xl md:text-5xl lg:text-6xl font-medium tracking-tight leading-[1.05]">
+          <h2 className="font-display font-extrabold text-4xl md:text-5xl lg:text-6xl tracking-tight leading-[1.05]">
             {title}
           </h2>
-          <p className="font-sans text-lg md:text-xl text-ink-soft max-w-md">
+          <p className="font-sans text-lg md:text-xl text-ink-soft max-w-md leading-relaxed">
             {sub}
           </p>
           {cta && <div className="pt-2">{cta}</div>}
@@ -349,7 +415,7 @@ function ConnectScreen() {
   return (
     <div className="h-full p-5 flex flex-col">
       <div className="flex items-center justify-between mb-4">
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-fresh flex items-center gap-1.5">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-fresh flex items-center gap-1.5">
           <span className="size-1.5 rounded-full bg-fresh breathe" />
           Tethered
         </span>
@@ -440,7 +506,7 @@ function ConnectScreen() {
       </div>
 
       <div className="mt-4 px-3 py-2 rounded-lg bg-fresh/10 border border-fresh/30 flex items-center justify-between">
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-fresh">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-fresh">
           Connected
         </span>
         <span className="font-mono text-[10px] text-ink">Canon R5</span>
@@ -453,14 +519,14 @@ function StreamScreen() {
   return (
     <div className="h-full p-5 flex flex-col">
       <div className="flex items-center justify-between mb-4">
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-fresh flex items-center gap-1.5">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-fresh flex items-center gap-1.5">
           <span className="size-1.5 rounded-full bg-fresh" />
           Live
         </span>
         <span className="font-mono text-[10px] text-slate tnum">412 ↗</span>
       </div>
 
-      <span className="font-mono uppercase tracking-[0.2em] text-[8px] text-slate mb-2">
+      <span className="font-mono uppercase tracking-[0.14em] text-[8px] text-slate mb-2">
         Streaming to marketplace
       </span>
 
@@ -507,7 +573,7 @@ function StreamScreen() {
         className="px-3 py-2 rounded-lg bg-fresh/10 border border-fresh/30 flex items-center justify-between"
         style={{ animation: "fade-up 0.5s 0.9s both" }}
       >
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-fresh">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-fresh">
           On marketplace
         </span>
         <span className="font-mono text-[10px] text-ink tnum">412 listed</span>
@@ -520,14 +586,14 @@ function EarnScreen() {
   return (
     <div className="h-full p-5 flex flex-col">
       <div className="flex items-center justify-between mb-4">
-        <span className="font-mono uppercase tracking-[0.2em] text-[9px] text-slate">
+        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-slate">
           This week
         </span>
         <span className="font-mono text-[10px] text-slate-soft tnum">+12 sold</span>
       </div>
 
       <div className="mb-5">
-        <p className="font-mono uppercase tracking-[0.3em] text-[8px] text-slate mb-1">
+        <p className="font-mono uppercase tracking-[0.14em] text-[8px] text-slate mb-1">
           Earnings
         </p>
         <p
@@ -564,7 +630,7 @@ function EarnScreen() {
         ))}
       </div>
 
-      <button className="mt-4 bg-ink text-bone py-2.5 rounded-full font-mono uppercase tracking-[0.2em] text-[10px]">
+      <button className="mt-4 bg-ink text-bone py-2.5 rounded-full font-mono uppercase tracking-[0.14em] text-[10px]">
         View payouts →
       </button>
     </div>
@@ -618,7 +684,7 @@ function UploadScreen() {
               strokeLinejoin="round"
             />
           </svg>
-          <span className="font-mono uppercase tracking-[0.25em] text-[8px] md:text-[9px] text-slate mb-0.5">
+          <span className="font-mono uppercase tracking-[0.14em] text-[8px] md:text-[9px] text-slate mb-0.5">
             Drag photos here
           </span>
           <span className="font-mono text-[7px] md:text-[8px] text-slate-soft tracking-wider">
@@ -629,7 +695,7 @@ function UploadScreen() {
         {/* progress */}
         <div className="mt-2.5">
           <div className="flex items-center justify-between mb-1">
-            <span className="font-mono uppercase tracking-[0.2em] text-[7px] md:text-[8px] text-slate">
+            <span className="font-mono uppercase tracking-[0.14em] text-[7px] md:text-[8px] text-slate">
               Per upload limit
             </span>
             <span className="font-mono text-[9px] text-ink tnum">500 max</span>
@@ -654,7 +720,7 @@ function BatchScreen() {
         <div className="size-1.5 rounded-full bg-fresh" />
         <div className="size-1.5 rounded-full bg-slate-soft/40" />
         <div className="size-1.5 rounded-full bg-slate-soft/40" />
-        <span className="ml-3 font-mono uppercase tracking-[0.25em] text-[7px] text-bone/60">
+        <span className="ml-3 font-mono uppercase tracking-[0.14em] text-[7px] text-bone/60">
           BatchMyPhotos
         </span>
         <span className="ml-auto font-mono text-[8px] text-fresh tnum flex items-center gap-1">
@@ -667,7 +733,7 @@ function BatchScreen() {
       <div className="flex-1 p-3 grid grid-cols-[1fr_auto_1fr] gap-2 md:gap-3 items-stretch">
         {/* source */}
         <div className="flex flex-col">
-          <p className="font-mono uppercase tracking-[0.25em] text-[7px] text-slate mb-1">
+          <p className="font-mono uppercase tracking-[0.14em] text-[7px] text-slate mb-1">
             Source
           </p>
           <p
@@ -718,7 +784,7 @@ function BatchScreen() {
 
         {/* sorted folders */}
         <div className="flex flex-col">
-          <p className="font-mono uppercase tracking-[0.25em] text-[7px] text-slate mb-1">
+          <p className="font-mono uppercase tracking-[0.14em] text-[7px] text-slate mb-1">
             Sorted
           </p>
           <p
@@ -769,7 +835,7 @@ function BatchScreen() {
         className="px-3 py-1.5 bg-bone-deep border-t border-line flex items-center justify-between"
         style={{ animation: "fade-up 0.5s 1.2s both" }}
       >
-        <span className="font-mono uppercase tracking-[0.25em] text-[7px] text-slate">
+        <span className="font-mono uppercase tracking-[0.14em] text-[7px] text-slate">
           Manual sort
         </span>
         <span className="font-mono text-[9px] text-slate-soft tnum line-through">
@@ -784,13 +850,11 @@ function FinalCta() {
   return (
     <section
       id="cta"
-      className="snap-section min-h-[80vh] flex items-center px-6 md:px-10 py-16 md:py-24 bg-bone"
+      className="snap-section min-h-[80vh] flex items-center px-6 md:px-10 py-16 md:py-24 bg-paper"
     >
-      <div className="max-w-4xl mx-auto w-full text-center">
-        <p className="font-mono uppercase tracking-[0.3em] text-[11px] text-slate mb-4">
-          Cover your next event
-        </p>
-        <h2 className="font-display text-5xl md:text-7xl lg:text-8xl font-medium tracking-tight leading-[1.0]">
+      <div className="max-w-4xl mx-auto w-full text-center flex flex-col items-center">
+        <Kicker>Cover your next event</Kicker>
+        <h2 className="font-hero text-ink text-5xl md:text-7xl lg:text-8xl mt-5">
           Sell your
           <br />
           <span className="text-fresh">race photos.</span>
@@ -798,20 +862,21 @@ function FinalCta() {
         <p className="font-sans text-lg md:text-xl text-ink-soft mt-6 max-w-md mx-auto">
           Free to list. We take a small cut only when a photo sells.
         </p>
-        <div className="mt-10 flex flex-col md:flex-row items-center justify-center gap-4">
-          <Link
-            href={REGISTER_AS_PHOTOGRAPHER}
-            className="w-full md:w-auto bg-fresh hover:bg-fresh-deep text-bone px-8 py-4 rounded-full font-mono uppercase tracking-[0.2em] text-sm transition-colors"
-          >
-            Start selling →
-          </Link>
+        <div className="mt-10 flex flex-col md:flex-row items-center justify-center gap-5">
+          <PrimaryCta href={REGISTER_AS_PHOTOGRAPHER}>Start selling</PrimaryCta>
           <Link
             href={ROUTES.RUNNERS}
-            className="font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px] text-slate hover:text-ink transition-colors"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
           >
             I&apos;m a runner instead
           </Link>
         </div>
+        <Link
+          href="/?intro=1"
+          className="mt-6 font-mono uppercase tracking-[0.14em] text-[13px] text-slate-soft hover:text-slate transition-colors"
+        >
+          Back to the intro
+        </Link>
       </div>
     </section>
   );
@@ -819,11 +884,11 @@ function FinalCta() {
 
 function Footer() {
   return (
-    <footer className="px-6 md:px-10 py-8 pb-24 md:pb-8 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-bone">
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+    <footer className="px-6 md:px-10 py-8 pb-24 md:pb-8 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-paper">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         QuickPitik &middot; Cebu, Philippines
       </p>
-      <p className="font-mono uppercase tracking-[0.3em] text-[10px] text-slate-soft">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         © 2026
       </p>
     </footer>
@@ -833,14 +898,15 @@ function Footer() {
 function MobileStickyCta() {
   return (
     <div
-      className="md:hidden fixed bottom-0 inset-x-0 px-4 pt-3 bg-bone/95 backdrop-blur-md border-t border-line z-40"
+      className="md:hidden fixed bottom-0 inset-x-0 px-4 pt-3 bg-paper/95 backdrop-blur-md border-t border-line z-40"
       style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
     >
       <Link
         href={REGISTER_AS_PHOTOGRAPHER}
-        className="block w-full bg-fresh active:bg-fresh-deep text-bone text-center py-3.5 rounded-full font-mono uppercase tracking-[0.2em] text-[13px] min-[400px]:text-[14px] md:text-[12px]"
+        className="flex w-full items-center justify-center gap-2 bg-fresh active:bg-fresh-deep text-surface text-center py-3.5 rounded-full font-display font-bold text-[15px]"
       >
-        Start selling →
+        Start selling
+        <Arrow />
       </Link>
     </div>
   );

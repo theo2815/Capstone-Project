@@ -111,7 +111,7 @@ export function AdminDetailDrawer({
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="shrink-0 size-9 rounded-full border border-line text-ink hover:bg-ink hover:text-bone hover:border-ink transition-colors flex items-center justify-center"
+              className="shrink-0 size-9 rounded-full border border-line text-ink hover:bg-ink hover:text-surface hover:border-ink transition-colors flex items-center justify-center"
             >
               <span aria-hidden="true" className="text-lg leading-none">
                 ×

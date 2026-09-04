@@ -44,6 +44,13 @@ class Transaction(
     @Column(name = "amount_kept_php", nullable = false, precision = 12, scale = 2)
     val amountKeptPhp: BigDecimal,
 
+    // Photographer-coupon discount folded into amount_kept_php (V45). Kept on
+    // the ledger so AdminSalesService can reconstruct the list-price gross as
+    // (kept + discount) / keepRate — kept / keepRate alone under-reports the
+    // platform fee once a discount exists. Refund rows carry the negative.
+    @Column(name = "discount_php", nullable = false, precision = 12, scale = 2)
+    val discountPhp: BigDecimal = BigDecimal.ZERO,
+
     @Column(name = "is_refund", nullable = false)
     val isRefund: Boolean = false,
 

@@ -42,14 +42,27 @@ class Order(
     @Column(name = "idempotency_key", length = 64)
     var idempotencyKey: String? = null,
 
+    // Coupon code the runner entered, stamped only on the event order where it
+    // applied. An idempotent replay compares the non-null code set without
+    // re-resolving a coupon that may since have expired.
+    @Column(name = "coupon_code", length = 16)
+    var couponCode: String? = null,
+
+    @Column(name = "coupon_id")
+    var couponId: UUID? = null,
+
     @Column(name = "paid_at")
     var paidAt: OffsetDateTime? = null,
 
-    // Opaque token minted for guest orders so /orders/{id}?token=... is
-    // reachable from the email receipt without an account. NULL for authed
-    // orders — those reach the page via JWT.
-    @Column(name = "share_token", length = 64, unique = true)
-    var shareToken: String? = null,
+    // SHA-256 of the pre-V39 bearer token. New orders use signed capabilities
+    // and leave this null; the hash keeps already-sent links valid.
+    @Column(name = "legacy_share_token_hash", length = 64, unique = true)
+    var legacyShareTokenHash: String? = null,
+
+    // Upper bound for legacy tokens and signed bundle capabilities. The return
+    // capability has its own shorter expiry inside its signed payload.
+    @Column(name = "token_expires_at", nullable = false)
+    var tokenExpiresAt: OffsetDateTime = OffsetDateTime.now().plusDays(90),
 
     // Stamped after the Resend receipt fires. Idempotency guard against
     // PayMongo's retried webhook deliveries — handler checks NULL before send.

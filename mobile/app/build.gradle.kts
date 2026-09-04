@@ -19,11 +19,24 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // Google OAuth web client ID from gradle.properties — see the note
+        // there. Compiled in (not runtime-settable) so release builds can't be
+        // repointed, same stance as DEFAULT_BASE_URL.
+        buildConfigField(
+            "String",
+            "GOOGLE_SERVER_CLIENT_ID",
+            "\"${project.findProperty("QP_GOOGLE_SERVER_CLIENT_ID") ?: ""}\"",
+        )
     }
 
     buildTypes {
+        debug {
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+        }
         release {
             isMinifyEnabled = false
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -39,13 +52,24 @@ android {
     }
     buildFeatures {
         compose = true
+        // AGP 8 stopped generating BuildConfig unless asked. RetrofitClient and
+        // the Login screen's debug server field both gate on BuildConfig.DEBUG
+        // so no release build can be pointed at another backend.
+        buildConfig = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.1"
+        kotlinCompilerExtensionVersion = "1.5.14"
     }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+    testOptions {
+        unitTests {
+            // Robolectric needs the merged manifest + resources on the JVM
+            // test classpath; without this it can't inflate an Application.
+            isIncludeAndroidResources = true
         }
     }
 }
@@ -77,19 +101,27 @@ dependencies {
     // Background Sync (WorkManager)
     implementation(libs.work.runtime.ktx)
 
-    // Camera Integration (CameraX)
-    implementation(libs.camera.core)
-    implementation(libs.camera.camera2)
-    implementation(libs.camera.lifecycle)
-    implementation(libs.camera.view)
-
     // Coil Image Loader
     implementation(libs.coil.compose)
 
     // Jetpack Compose Navigation
     implementation(libs.navigation.compose)
 
+    // Custom Tabs — keeps the PayMongo handoff out of an app-chooser dialog
+    implementation(libs.browser)
+
+    // "Continue with Google" — Credential Manager + Google ID token parsing
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.googleid)
+
     testImplementation(libs.junit)
+    testImplementation(libs.room.testing)
+    testImplementation(libs.work.testing)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.mockwebserver)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

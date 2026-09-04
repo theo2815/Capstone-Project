@@ -4,6 +4,8 @@ import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import java.math.BigDecimal
 import java.time.OffsetDateTime
 import java.util.UUID
@@ -27,6 +29,16 @@ class UserSelfie(
     @Column(name = "quality_score", nullable = false, precision = 5, scale = 4)
     var qualityScore: BigDecimal = BigDecimal.ZERO,
 
+    @Column(name = "quality_test_status", nullable = false, length = 16)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    var qualityTestStatusWire: String = SelfieQualityTestStatus.UNTESTED.wire,
+
     @Column(name = "uploaded_at", nullable = false)
     var uploadedAt: OffsetDateTime = OffsetDateTime.now(),
-)
+) {
+    var qualityTestStatus: SelfieQualityTestStatus
+        get() = SelfieQualityTestStatus.fromWire(qualityTestStatusWire)
+        set(value) {
+            qualityTestStatusWire = value.wire
+        }
+}

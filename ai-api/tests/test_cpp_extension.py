@@ -227,3 +227,71 @@ class TestResizeGray:
         resized = cpp.resize_gray(gray, 32, 32)
         # Not exact due to bilinear interpolation center offset, but close
         assert resized.shape == (32, 32)
+
+
+class TestClassifyPreprocess:
+    """Pins the exported `classify_preprocess` binding's own contract.
+
+    BlurClassifier no longer calls this. It does a bilinear crop-and-resize, and
+    the classifier needs an area-averaged one — bilinear aliases on a large
+    downscale and makes blurry photos read as `sharp` (2026-08-14 ADR). It is
+    also not faster than the OpenCV path, and it ships in no deployment (the
+    package builds with the setuptools backend and no ext_modules).
+
+    These tests still earn their place: the binding is exported and documented,
+    so shape / range / channel-order regressions should be caught. What they no
+    longer imply is that a compiled extension changes how photos classify.
+    """
+
+    @staticmethod
+    def _bilinear_reference(image: np.ndarray, size: int = 224) -> np.ndarray:
+        """OpenCV equivalent of what the C++ claims to do: bilinear crop+resize."""
+        import cv2
+
+        h, w = image.shape[:2]
+        m = min(h, w)
+        top, left = (h - m) // 2, (w - m) // 2
+        cropped = image[top:top + m, left:left + m]
+        resized = cv2.resize(cropped, (size, size), interpolation=cv2.INTER_LINEAR)
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        return np.expand_dims(np.transpose(rgb, (2, 0, 1)), axis=0)
+
+    def test_output_shape_and_dtype(self):
+        bgr = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
+        out = cpp.classify_preprocess(bgr, 224)
+        assert out.shape == (1, 3, 224, 224)
+        assert out.dtype == np.float32
+
+    def test_normalised_to_unit_range(self):
+        bgr = np.random.randint(0, 256, (300, 300, 3), dtype=np.uint8)
+        out = cpp.classify_preprocess(bgr, 224)
+        assert out.min() >= 0.0
+        assert out.max() <= 1.0
+
+    def test_channels_are_rgb_not_bgr(self):
+        # Pure blue in BGR (255, 0, 0) must land in the LAST channel after the
+        # BGR->RGB swap, not the first.
+        bgr = np.zeros((64, 64, 3), dtype=np.uint8)
+        bgr[:, :, 0] = 255
+        out = cpp.classify_preprocess(bgr, 224)
+        assert out[0, 2].mean() == pytest.approx(1.0, abs=1e-3)
+        assert out[0, 0].mean() == pytest.approx(0.0, abs=1e-3)
+
+    def test_matches_bilinear_reference(self):
+        """The binding really is a bilinear crop-and-resize, within rounding.
+
+        It interpolates in double and normalises straight from the float, while
+        cv2.resize rounds to uint8 first (and uses fixed-point weights), so the
+        two differ by under one uint8 step — measured max ~0.76/255 on real
+        photos. That gap is why the two paths were never bit-identical; it is no
+        longer a classification risk now that BlurClassifier uses only OpenCV.
+        """
+        rng = np.random.default_rng(7)
+        for shape in ((480, 640, 3), (640, 480, 3), (512, 512, 3)):
+            bgr = rng.integers(0, 256, shape, dtype=np.uint8)
+            got = cpp.classify_preprocess(bgr, 224)
+            expected = self._bilinear_reference(bgr, 224)
+            assert got.shape == expected.shape
+            # 1.5/255 leaves headroom for rounding without admitting a real
+            # algorithmic change (a wrong crop or channel order blows past this).
+            assert np.abs(got - expected).max() < 1.5 / 255

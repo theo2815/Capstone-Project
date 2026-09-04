@@ -8,6 +8,7 @@ import type {
   Dispute,
   DisputeResolution,
 } from "@/lib/admin-disputes";
+import type { Flag, FlagStatus } from "@/lib/admin-flags";
 import type {
   AdminPayoutCycle,
   AdminPayoutStatus,
@@ -17,8 +18,21 @@ import type {
   PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
 import type { ListEvent } from "@/app/events/events-browser";
+import type {
+  EventReviewStatus,
+  PendingPricingChange,
+} from "@/lib/photographer-mock";
 import type { DecisionLogEntry } from "@/store/admin-user-store";
 import type { PaginatedResponse } from "@/types/api";
+import { safeUUID } from "@/lib/utils";
+
+// Admin queues fetch a page and then categorize/merge/sort it CLIENT-SIDE
+// (status slabs, optimistic-store overrides, GMV sort), so true offset
+// pagination would only ever transform the loaded page. They instead pull up
+// to the BE max in one fetch and keep their own client-slice Load-more, so the
+// rendered DOM stays bounded. Fully scalable admin pagination would need
+// server-side categorization — filed as future work.
+const ADMIN_LIST_LIMIT = 200;
 
 // Phase G admin backend contract (Q-A1 + Q-A2 + Q-A3 + Q-A4 RESOLVED 2026-05-09).
 //
@@ -67,6 +81,8 @@ export interface AdminKpis {
   openDisputes: number;
   openFlags: number;
   pendingPayouts: number;
+  /** V46 — photographer-owned events awaiting a decision (new + pricing change). */
+  pendingEventRequests: number;
 }
 
 export interface AdminTrendPoint {
@@ -112,7 +128,7 @@ function buildUsersQs(args: AdminUserListArgs): string {
   if (args.status) p.set("status", args.status);
   if (args.q) p.set("q", args.q);
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   return p.toString();
 }
 
@@ -272,7 +288,7 @@ function buildDisputesQs(args: AdminDisputeListArgs): string {
   if (args.status) p.set("status", args.status);
   if (args.q) p.set("q", args.q);
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   return p.toString();
 }
 
@@ -321,6 +337,62 @@ export async function escalateDispute(
   );
 }
 
+// ───────────────────────────────────────────── Flags
+
+export interface AdminFlagListArgs {
+  status?: FlagStatus;
+  q?: string;
+  offset?: number;
+  limit?: number;
+}
+
+function buildFlagsQs(args: AdminFlagListArgs): string {
+  const p = new URLSearchParams();
+  if (args.status) p.set("status", args.status);
+  if (args.q) p.set("q", args.q);
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return p.toString();
+}
+
+export function fetchAdminFlags(
+  args: AdminFlagListArgs = {},
+): Promise<PaginatedResponse<Flag>> {
+  return api.get<PaginatedResponse<Flag>>(
+    `/admin/flags?${buildFlagsQs(args)}`,
+  );
+}
+
+export async function hideAdminFlag(
+  flagId: string,
+  resolutionNote?: string | null,
+): Promise<Flag> {
+  return api.post<Flag>(
+    `/admin/flags/${encodeURIComponent(flagId)}/hide`,
+    { resolutionNote },
+  );
+}
+
+export async function dismissAdminFlag(
+  flagId: string,
+  resolutionNote?: string | null,
+): Promise<Flag> {
+  return api.post<Flag>(
+    `/admin/flags/${encodeURIComponent(flagId)}/dismiss`,
+    { resolutionNote },
+  );
+}
+
+export async function escalateAdminFlag(
+  flagId: string,
+  resolutionNote?: string | null,
+): Promise<Flag> {
+  return api.post<Flag>(
+    `/admin/flags/${encodeURIComponent(flagId)}/escalate`,
+    { resolutionNote },
+  );
+}
+
 // ───────────────────────────────────────────── Payouts
 
 export interface AdminPayoutListArgs {
@@ -335,7 +407,7 @@ function buildPayoutsQs(args: AdminPayoutListArgs): string {
   if (args.status) p.set("status", args.status);
   if (args.q) p.set("q", args.q);
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   return p.toString();
 }
 
@@ -385,7 +457,7 @@ export interface BulkPayoutResult {
 // AdminPayoutsController.bulk — retry safety hinges on it. The header is
 // generated per call so each batch is a distinct logical decision.
 function idempotencyHeader(): { headers: HeadersInit } {
-  return { headers: { "Idempotency-Key": crypto.randomUUID() } };
+  return { headers: { "Idempotency-Key": safeUUID() } };
 }
 
 export async function bulkApprovePayouts(
@@ -428,7 +500,7 @@ export async function fetchAdminPayoutReports(
   const p = new URLSearchParams();
   if (args.status) p.set("status", args.status);
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   const res = await api.get<PaginatedResponse<PayoutReport>>(
     `/admin/payouts/reports?${p.toString()}`,
   );
@@ -459,21 +531,60 @@ export async function resolvePayoutReport(
 
 export interface AdminEventListArgs {
   state?: ListEvent["state"];
+  /** `queue` (V46) = photographer-owned events awaiting review — a new
+   *  submission or a parked pricing change on a live event. */
+  review?: "queue";
   offset?: number;
   limit?: number;
 }
 
+// AdminListEventDto — the catalog row plus the V46 ownership + review fields.
+// createdBy* are null for admin-created events.
+export interface AdminEventRow extends ListEvent {
+  createdByHandle: string | null;
+  createdByName: string | null;
+  visibility: "public" | "unlisted";
+  pricingMode: "paid" | "free";
+  watermarkPolicy: "platform" | "own" | "none";
+  reviewStatus: EventReviewStatus;
+  reviewNote: string | null;
+  pendingChange: PendingPricingChange | null;
+}
+
 export async function fetchAdminEvents(
   args: AdminEventListArgs = {},
-): Promise<ListEvent[]> {
+): Promise<AdminEventRow[]> {
   const p = new URLSearchParams();
   if (args.state) p.set("state", args.state);
+  if (args.review) p.set("review", args.review);
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
-  const res = await api.get<PaginatedResponse<ListEvent>>(
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  const res = await api.get<PaginatedResponse<AdminEventRow>>(
     `/admin/events?${p.toString()}`,
   );
   return res.items;
+}
+
+// Photographer-owned event review (V46).
+//   POST /admin/events/{id}/approve — PENDING → live; CHANGE_PENDING → apply the parked trio
+//   POST /admin/events/{id}/reject  — PENDING → rejected (+reason); CHANGE_PENDING → drop the request
+export async function approveAdminEvent(
+  eventId: string,
+): Promise<AdminEventRow> {
+  return api.post<AdminEventRow>(
+    `/admin/events/${encodeURIComponent(eventId)}/approve`,
+    {},
+  );
+}
+
+export async function rejectAdminEvent(
+  eventId: string,
+  reason: string,
+): Promise<AdminEventRow> {
+  return api.post<AdminEventRow>(
+    `/admin/events/${encodeURIComponent(eventId)}/reject`,
+    { reason },
+  );
 }
 
 export interface CreateAdminEventArgs {
@@ -487,6 +598,9 @@ export interface CreateAdminEventArgs {
    *  via EventCoverService — sending the raw file avoids the data-URL
    *  detour that overflowed banner_url VARCHAR(512) and 500'd the create. */
   cover?: File | null;
+  /** Organizer name + race-day notes for the "About this race" strip. */
+  organizerName?: string;
+  description?: string;
 }
 
 export async function createAdminEvent(
@@ -497,6 +611,10 @@ export async function createAdminEvent(
   form.append("date", args.date);
   form.append("location", args.location);
   form.append("pricePerPhoto", String(args.pricePerPhoto));
+  if (args.organizerName !== undefined)
+    form.append("organizerName", args.organizerName);
+  if (args.description !== undefined)
+    form.append("description", args.description);
   if (args.cover) form.append("cover", args.cover);
   return api.post<ListEvent>("/admin/events", form);
 }
@@ -506,14 +624,21 @@ export interface UpdateAdminEventPatch {
   date?: string;
   location?: string;
   /** New per-photo price in PHP. When this changes the BE re-prices every
-   *  existing photo under the event (UPDATE photos SET price_php = ?). Active
-   *  carts fail at checkout with CART_ITEM_PRICE_CHANGED — the snapshot is
-   *  deliberately not mutated. */
+   *  existing photo under the event (UPDATE photos SET price_php = ?).
+   *  Signed-in carts follow along: `GET /me/cart` renders the live
+   *  `photos.price_php`, and checkout charges the same, so there is no drift
+   *  to fail on. (An earlier comment here claimed active carts fail with
+   *  CART_ITEM_PRICE_CHANGED — they never did; that code only fires on
+   *  `CartService.add`.) */
   pricePerPhoto?: number;
   /** New cover file. Wins over `removeCover` when both are present. */
   cover?: File | null;
   /** Clear the existing cover key on the server. Ignored if `cover` is set. */
   removeCover?: boolean;
+  /** New organizer name / race-day notes. Only forwarded when changed in the
+   *  modal; blank is a no-op on the backend (same contract as title/location). */
+  organizerName?: string;
+  description?: string;
 }
 
 export async function updateAdminEvent(
@@ -527,6 +652,10 @@ export async function updateAdminEvent(
   if (patch.pricePerPhoto !== undefined) {
     form.append("pricePerPhoto", String(patch.pricePerPhoto));
   }
+  if (patch.organizerName !== undefined)
+    form.append("organizerName", patch.organizerName);
+  if (patch.description !== undefined)
+    form.append("description", patch.description);
   if (patch.cover) form.append("cover", patch.cover);
   if (patch.removeCover) form.append("removeCover", "true");
   return api.fetch<ListEvent>(
@@ -587,7 +716,7 @@ export async function fetchAdminSalesByEvent(
 ): Promise<AdminSalesEventRow[]> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? 50));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   if (args.order) p.set("order", args.order);
   const res = await api.get<PaginatedResponse<AdminSalesEventRow>>(
     `/admin/sales/by-event?${p.toString()}`,
