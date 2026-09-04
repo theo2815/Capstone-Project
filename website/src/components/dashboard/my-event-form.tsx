@@ -131,11 +131,15 @@ export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
           pricePerPhoto: parsedPrice,
           watermarkPolicy: "platform",
         };
+  // Diff against what the form was prefilled from: the parked request when
+  // one exists, else the live settings. Diffing a change_pending event against
+  // its live trio was always true, so fixing a typo re-filed the request.
+  const base = requested ?? event;
   const trioChanged =
-    !event ||
-    event.pricingMode !== trio.pricingMode ||
-    (event.watermarkPolicy ?? "platform") !== trio.watermarkPolicy ||
-    Number(event.pricePerPhoto) !== trio.pricePerPhoto;
+    !base ||
+    base.pricingMode !== trio.pricingMode ||
+    (base.watermarkPolicy ?? "platform") !== trio.watermarkPolicy ||
+    Number(base.pricePerPhoto) !== trio.pricePerPhoto;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();

@@ -3,6 +3,7 @@ import type {
   PendingPricingChange,
   PhotographerEventSummary,
 } from "@/lib/photographer-mock";
+import { formatPrice } from "@/lib/utils";
 
 // Photographer-owned events (V46): the few derivations the dashboard pages,
 // the upload picker and the admin queue all need, so they agree on wording.
@@ -46,7 +47,7 @@ export function describePricing(trio: {
   if (trio.pricingMode === "free") {
     return `Free · ${trio.watermarkPolicy === "none" ? "no watermark" : "your logo"}`;
   }
-  return `Paid · ₱${Number(trio.pricePerPhoto)} · QuickPitik mark`;
+  return `Paid · ${formatPrice(Number(trio.pricePerPhoto))} · QuickPitik mark`;
 }
 
 export function describePendingChange(change: PendingPricingChange): string {

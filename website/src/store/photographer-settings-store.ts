@@ -60,15 +60,6 @@ export interface WatermarkMedia {
   uploadedAt: string;
 }
 
-// Legacy V45 settings shape retained only to read existing persisted browser
-// state. Event coupons are managed outside this store via api-coupons.ts.
-export interface PhotographerCoupon {
-  code: string;
-  percentOff: number;
-  active: boolean;
-  expiresAt: string | null;
-}
-
 // ─── Region ──────────────────────────────────────────────────────────────
 // Codes resolve against `lib/ph-regions.ts` (mock; backend will own the list
 // via `GET /api/regions`). Storing codes — not display names — so the FE can
@@ -172,7 +163,6 @@ export interface PhotographerSettings {
   region: PhotographerRegion | null;
   socials: SocialLink[];
   payouts: PayoutAccount[];
-  coupon: PhotographerCoupon | null;
 }
 
 interface PhotographerSettingsState extends PhotographerSettings {
@@ -200,7 +190,6 @@ interface PhotographerSettingsState extends PhotographerSettings {
   ) => void;
   setPrimaryPayout: (id: string) => void;
   removePayout: (id: string) => void;
-  setCoupon: (coupon: PhotographerCoupon | null) => void;
   isComplete: () => boolean;
   reset: () => void;
 }
@@ -218,7 +207,6 @@ const SEED: PhotographerSettings = {
   region: null,
   socials: [],
   payouts: [],
-  coupon: null,
 };
 
 function newId(): string {
@@ -247,7 +235,6 @@ export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
       setSuspension: (suspendedAt, suspensionReason) =>
         set({ suspendedAt, suspensionReason }),
       setRegion: (region) => set({ region }),
-      setCoupon: (coupon) => set({ coupon }),
       addSocial: (platform, url) => {
         const id = newId();
         set((s) => ({

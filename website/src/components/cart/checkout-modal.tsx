@@ -8,7 +8,7 @@ import { useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
-import { cn, formatPrice, safeUUID } from "@/lib/utils";
+import { cn, formatPrice, safeHttpUrl, safeUUID } from "@/lib/utils";
 import { postOrder } from "@/lib/api-orders";
 import { postCouponPreview, type CouponPreview } from "@/lib/api-coupons";
 import { ApiError } from "@/lib/api";
@@ -201,7 +201,13 @@ export function CheckoutModal({
         // (the success_url stamped on the Checkout Session). The polling
         // page there flips us into the SuccessStep equivalent once the
         // server-side webhook flips PAID.
-        window.location.href = order.redirectUrl;
+        const redirect = safeHttpUrl(order.redirectUrl);
+        if (!redirect) {
+          setPaymentError("Payment page unavailable. Try again.");
+          setStep("payment");
+          return;
+        }
+        window.location.href = redirect;
         return;
       }
 

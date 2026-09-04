@@ -5,6 +5,15 @@ import type { NextConfig } from "next";
 // shipped none — the guest share-token flow was leaning on the browser's
 // *default* referrer policy to keep ?token= out of cross-origin Referers.
 
+// NEXT_PUBLIC_* is inlined at build time. A production build with the var
+// unset would bake http://localhost:8080 into both the client bundle and the
+// CSP below and ship a green build that cannot reach the API — fail instead.
+if (process.env.NODE_ENV === "production" && !process.env.NEXT_PUBLIC_API_URL) {
+  throw new Error(
+    "NEXT_PUBLIC_API_URL is required for a production build (set it in the Vercel project env).",
+  );
+}
+
 // connect-src must name the API + WS origins the app actually calls.
 // Derived from the same env vars the client code reads (lib/constants.ts,
 // lib/ws-url.ts), with their localhost fallbacks.

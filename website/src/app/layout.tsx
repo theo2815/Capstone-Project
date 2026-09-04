@@ -28,16 +28,29 @@ const geistMono = Geist_Mono({
   display: "swap",
 });
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://quickpitik.com";
+
 export const metadata: Metadata = {
-  title: "QuickPitik — Race Photos, Delivered in Minutes",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: "QuickPitik — Race Photos, Delivered in Minutes",
+    template: "%s | QuickPitik",
+  },
   description:
     "Marathon photos delivered minutes after the finish line. Find yours by face or bib in seconds.",
+  openGraph: {
+    type: "website",
+    siteName: "QuickPitik",
+    images: ["/brand/quickpitik-logo-transparent.png"],
+  },
+  twitter: { card: "summary_large_image" },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: "#F8F5EE",
 };
 
 export default function RootLayout({

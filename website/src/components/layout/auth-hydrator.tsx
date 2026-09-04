@@ -131,6 +131,7 @@ async function fetchMe(accessToken: string | null): Promise<User | null> {
   try {
     const res = await fetch(`${API_BASE_URL}/auth/me`, {
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) return null;
     const body: ApiResponse<User> = await res.json();

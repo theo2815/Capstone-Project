@@ -67,7 +67,9 @@ export function useInfiniteList<T extends { id: string }>({
     queryFn: ({ pageParam }) => fetchPage(pageParam, limit),
     initialPageParam: 0,
     getNextPageParam: (last) => {
-      const next = last.offset + last.limit;
+      // Advance by rows actually returned: a short page (fair ranker caps,
+      // deleted rows) must not skip the gap a full-limit step would leave.
+      const next = last.offset + last.items.length;
       return next < last.total ? next : undefined;
     },
     enabled: enabled ?? true,

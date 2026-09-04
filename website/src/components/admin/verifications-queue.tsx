@@ -11,6 +11,7 @@ import {
   BTN_SIZE,
 } from "@/components/ui/button-styles";
 import { PAGE_SIZE } from "@/lib/pagination-config";
+import { safeHttpUrl } from "@/lib/utils";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { CollapsibleReviewSection } from "@/components/admin/admin-collapse";
@@ -994,14 +995,16 @@ function SocialsSection({
               {social.url}
             </p>
           </div>
-          <a
-            href={social.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
-          >
-            Open ↗
-          </a>
+          {safeHttpUrl(social.url) && (
+            <a
+              href={safeHttpUrl(social.url)!}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+            >
+              Open ↗
+            </a>
+          )}
         </li>
       ))}
     </ul>

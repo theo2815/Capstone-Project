@@ -44,7 +44,6 @@ import {
   submitVerification,
   withdrawVerification,
 } from "@/lib/api-photographer-settings";
-import { usePlatformFees } from "@/hooks/use-photographer-data";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAuthStore } from "@/store/auth-store";
@@ -83,12 +82,11 @@ import {
   type BrandColor,
   type PayoutAccount,
   type PayoutMethod,
-  type PhotographerCoupon,
   type SocialLink,
   type SocialPlatform,
   type VerificationStatus,
 } from "@/store/photographer-settings-store";
-import { cn, formatPrice } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const COVER_MAX_PX = 1920;
 const WATERMARK_MAX_PX = 600;
@@ -154,7 +152,6 @@ interface EditModeSnapshot {
   region: ReturnType<typeof usePhotographerSettingsStore.getState>["region"];
   socials: SocialLink[];
   payouts: PayoutAccount[];
-  coupon: PhotographerCoupon | null;
   avatar: ReturnType<typeof useUserMediaStore.getState>["avatar"];
 }
 
@@ -204,7 +201,6 @@ function takeSnapshot(): EditModeSnapshot {
     // snapshot we'd restore on Cancel.
     socials: s.socials.map((x) => ({ ...x })),
     payouts: s.payouts.map((p) => ({ ...p, qr: p.qr ? { ...p.qr } : null })),
-    coupon: s.coupon ? { ...s.coupon } : null,
     avatar: m.avatar ? { ...m.avatar } : null,
   };
 }
@@ -221,7 +217,6 @@ function restoreSnapshot(snap: EditModeSnapshot): void {
     region: snap.region,
     socials: snap.socials,
     payouts: snap.payouts,
-    coupon: snap.coupon,
   });
   useUserMediaStore.getState().setAvatar(snap.avatar);
 }
@@ -338,10 +333,6 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    // ── Coupon (V45) ────────────────────────────────────────────────────
-    // One row per photographer: PUT upserts, DELETE removes. The BE owns the
-    // validation (code shape, percent cap, uniqueness) and answers 400/409
-    // with a message the failure toast below surfaces verbatim.
     // ── Socials diff ────────────────────────────────────────────────────
     // Three buckets: added (new local rows with non-empty URL), updated (id
     // exists in both but URL changed), removed (id only in snapshot, or URL
@@ -951,245 +942,6 @@ function EventCouponsSlab() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// 07 · Coupon (V45)
-// ─────────────────────────────────────────────────────────────────────────
-//
-// One code per photographer. The discount is a slice of the photographer's
-// own share of each sale — the platform cut never moves — so the slab shows
-// the split at the platform's default price in plain pesos before they save.
-// Optional: no SlabStatusChip, it never gates verification.
-const COUPON_CODE_RE = /^[A-Z0-9]{4,16}$/;
-const COUPON_DEFAULT: PhotographerCoupon = {
-  code: "",
-  percentOff: 10,
-  active: true,
-  expiresAt: null,
-};
-
-// Retained for the V45 UI history until the settings store is migrated.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function LegacyCouponSlab() {
-  const { editing } = useEditMode();
-  const coupon = usePhotographerSettingsStore((s) => s.coupon);
-  const setCoupon = usePhotographerSettingsStore((s) => s.setCoupon);
-  const fees = usePlatformFees();
-
-  const codeError =
-    coupon && coupon.code.length > 0 && !COUPON_CODE_RE.test(coupon.code)
-      ? "4–16 letters or digits, no spaces."
-      : null;
-  const pctError =
-    coupon &&
-    (!Number.isInteger(coupon.percentOff) ||
-      coupon.percentOff < 1 ||
-      coupon.percentOff > fees.couponMaxPercent)
-      ? `A whole number from 1 to ${fees.couponMaxPercent}.`
-      : null;
-
-  // Worked split at the platform's default photo price — same arithmetic as
-  // the backend's couponDiscount(): share × percent, rounded to centavos.
-  const pct = coupon
-    ? Math.min(Math.max(coupon.percentOff || 0, 0), fees.couponMaxPercent)
-    : 0;
-  const price = fees.photoPricePhp;
-  const share = price * fees.photographerKeepRate;
-  const discount = Math.round(share * pct) / 100;
-  const cut = price - share;
-
-  const expiresValue = coupon?.expiresAt ? coupon.expiresAt.slice(0, 10) : "";
-  const today = new Date().toISOString().slice(0, 10);
-
-  return (
-    <Slab
-      id="coupon"
-      number="07"
-      title="Coupon"
-      caption="One code, your margin only"
-    >
-      <Kicker as="p" tone="soft" className="mb-5">
-        Optional
-      </Kicker>
-      {!coupon ? (
-        <div className="space-y-5">
-          <p className="font-sans text-base text-ink-soft leading-relaxed max-w-md">
-            Give runners a code that takes a slice off your share of each
-            photo. It shows on every one of your photos, and QuickPitik&apos;s
-            cut on the sale stays the same.
-          </p>
-          {editing ? (
-            <button
-              type="button"
-              onClick={() => setCoupon(COUPON_DEFAULT)}
-              className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
-            >
-              + Create a coupon
-            </button>
-          ) : (
-            <Kicker as="p" tone="soft">
-              Tap Edit settings to create one
-            </Kicker>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-7">
-          <div className="grid gap-6 md:grid-cols-2">
-            <div className="flex flex-col gap-2">
-              <label htmlFor="coupon-code" className="font-sans text-sm text-slate">
-                Code
-              </label>
-              <input
-                id="coupon-code"
-                value={coupon.code}
-                onChange={(e) =>
-                  setCoupon({
-                    ...coupon,
-                    code: e.target.value.toUpperCase().replace(/\s+/g, ""),
-                  })
-                }
-                placeholder="PHOTO20"
-                autoComplete="off"
-                spellCheck={false}
-                maxLength={16}
-                disabled={!editing}
-                aria-invalid={codeError ? true : undefined}
-                aria-describedby={codeError ? "coupon-code-error" : "coupon-code-hint"}
-                className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-lg font-mono text-ink placeholder:text-slate-soft disabled:text-ink disabled:cursor-not-allowed transition-colors"
-              />
-              {codeError ? (
-                <FieldError message={codeError} id="coupon-code-error" density="tight" />
-              ) : (
-                <p id="coupon-code-hint" className="font-sans text-sm text-slate-soft">
-                  Letters and digits only. Runners type this at checkout.
-                </p>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label htmlFor="coupon-percent" className="font-sans text-sm text-slate">
-                Percent off your share
-              </label>
-              <div className="flex items-baseline gap-2 border-b border-line focus-within:border-fresh transition-colors">
-                <input
-                  id="coupon-percent"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={fees.couponMaxPercent}
-                  step={1}
-                  value={Number.isFinite(coupon.percentOff) ? coupon.percentOff : ""}
-                  onChange={(e) =>
-                    setCoupon({ ...coupon, percentOff: Number(e.target.value) })
-                  }
-                  disabled={!editing}
-                  aria-invalid={pctError ? true : undefined}
-                  aria-describedby={pctError ? "coupon-percent-error" : "coupon-percent-hint"}
-                  className="flex-1 min-w-0 bg-transparent focus:outline-none py-3 text-lg font-mono tnum text-ink disabled:text-ink disabled:cursor-not-allowed"
-                />
-                <span className="font-mono text-base text-slate-soft pr-1">%</span>
-              </div>
-              {pctError ? (
-                <FieldError message={pctError} id="coupon-percent-error" density="tight" />
-              ) : (
-                <p id="coupon-percent-hint" className="font-sans text-sm text-slate-soft">
-                  Up to <span className="tnum">{fees.couponMaxPercent}</span>%.
-                </p>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label htmlFor="coupon-expires" className="font-sans text-sm text-slate">
-                Expires · optional
-              </label>
-              <input
-                id="coupon-expires"
-                type="date"
-                value={expiresValue}
-                min={today}
-                onChange={(e) =>
-                  setCoupon({
-                    ...coupon,
-                    expiresAt: e.target.value
-                      ? new Date(`${e.target.value}T23:59:59`).toISOString()
-                      : null,
-                  })
-                }
-                disabled={!editing}
-                className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-lg font-mono tnum text-ink disabled:text-ink disabled:cursor-not-allowed transition-colors"
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <span className="font-sans text-sm text-slate">Status</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={coupon.active}
-                disabled={!editing}
-                onClick={() => setCoupon({ ...coupon, active: !coupon.active })}
-                className={cn(
-                  "inline-flex w-fit items-center gap-3 rounded-full border px-4 py-2.5 font-sans text-sm transition-colors disabled:cursor-not-allowed",
-                  coupon.active
-                    ? "border-ink text-ink bg-fresh-tint/40"
-                    : "border-line text-slate",
-                )}
-              >
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "size-2 rounded-full shrink-0",
-                    coupon.active ? "bg-fresh" : "bg-line-strong",
-                  )}
-                />
-                {coupon.active ? "Active — shown on your photos" : "Paused — hidden from runners"}
-              </button>
-            </div>
-          </div>
-
-          <div className="border border-line rounded-2xl bg-bone-deep/40 px-5 py-4">
-            <Kicker as="p" tone="soft" tnum>
-              On a {formatPrice(price)} photo
-            </Kicker>
-            <dl className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <dt className="font-sans text-sm text-slate">Runner pays</dt>
-                <dd className="font-mono tnum text-lg text-ink">
-                  {formatPrice(price - discount)}
-                </dd>
-              </div>
-              <div>
-                <dt className="font-sans text-sm text-slate">You earn</dt>
-                <dd className="font-mono tnum text-lg text-ink">
-                  {formatPrice(share - discount)}{" "}
-                  <span className="font-sans text-sm text-slate-soft">
-                    instead of {formatPrice(share)}
-                  </span>
-                </dd>
-              </div>
-              <div>
-                <dt className="font-sans text-sm text-slate">QuickPitik keeps</dt>
-                <dd className="font-mono tnum text-lg text-ink">
-                  {formatPrice(cut)}{" "}
-                  <span className="font-sans text-sm text-slate-soft">either way</span>
-                </dd>
-              </div>
-            </dl>
-          </div>
-
-          {editing && (
-            <button
-              type="button"
-              onClick={() => setCoupon(null)}
-              className="font-sans text-sm text-slate hover:text-error underline decoration-line underline-offset-4 transition-colors"
-            >
-              Remove coupon
-            </button>
-          )}
-        </div>
-      )}
-    </Slab>
-  );
-}
 
 // While status === "pending", keep the admin store's snapshot in sync with
 // the photographer's live edits, and auto-flip back to "incomplete" if any

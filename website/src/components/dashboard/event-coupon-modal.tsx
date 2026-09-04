@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/button-styles";
 import { Modal } from "@/components/ui/modal";
 import { usePlatformFees } from "@/hooks/use-photographer-data";
+import { useToast } from "@/hooks/use-toast";
 import { ApiError } from "@/lib/api";
 import {
   deleteEventCoupon,
@@ -65,6 +66,7 @@ export function EventCouponModal({
   const [error, setError] = useState<string | null>(null);
   const id = useId();
   const fees = usePlatformFees();
+  const { showToast } = useToast();
 
   useEffect(() => {
     if (isOpen) setEventId(initial);
@@ -121,6 +123,7 @@ export function EventCouponModal({
           : null,
         usageLimit: limit,
       });
+      showToast({ kind: "success", message: `Coupon ${code} saved.` });
       onClose();
     } catch (err) {
       setError(messageOf(err, "Couldn't save the coupon."));
@@ -135,6 +138,7 @@ export function EventCouponModal({
     setError(null);
     try {
       await deleteEventCoupon(eventId);
+      showToast({ kind: "success", message: "Coupon removed." });
       onClose();
     } catch (err) {
       setError(messageOf(err, "Couldn't delete the coupon."));

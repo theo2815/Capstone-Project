@@ -200,7 +200,7 @@ export default function FocusedSharePage() {
         <BackChip />
         <Hero event={event} />
         {ownedUi}
-        <ShareHeroBand event={event} />
+        {uploadsOpen && <ShareHeroBand event={event} />}
         <Stats photographer={photographer} />
         <PhotoGrid
           event={event}

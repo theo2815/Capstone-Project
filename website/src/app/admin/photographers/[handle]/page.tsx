@@ -13,6 +13,7 @@ import {
 } from "@/lib/admin-photographer-view";
 import type { EffectivePhotographerSettings } from "@/lib/admin-photographer-view";
 import { ROUTES } from "@/lib/constants";
+import { safeHttpUrl } from "@/lib/utils";
 import { formatLongDate, formatMemberSince } from "@/lib/format";
 import { useEventCatalog } from "@/lib/event-catalog";
 import {
@@ -551,14 +552,16 @@ function SocialsSlab({
                   {social.url}
                 </p>
               </div>
-              <a
-                href={social.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
-              >
-                Open ↗
-              </a>
+              {safeHttpUrl(social.url) && (
+                <a
+                  href={safeHttpUrl(social.url)!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+                >
+                  Open ↗
+                </a>
+              )}
             </li>
           ))}
         </ul>

@@ -30,10 +30,14 @@ export async function generateMetadata({
 }: EventPageProps): Promise<Metadata> {
   const { slug } = await params;
   const event = await getEventDetail(slug);
-  if (!event) return { title: "Event not found | QuickPitik" };
+  if (!event) return { title: "Event not found" };
+  const description = `Find your photos from ${event.name}. Search by bib, browse the wall.`;
   return {
-    title: `${event.name} | QuickPitik`,
-    description: `Find your photos from ${event.name}. Search by bib, browse the wall.`,
+    title: event.name,
+    description,
+    openGraph: event.bannerUrl
+      ? { title: event.name, description, images: [event.bannerUrl] }
+      : undefined,
   };
 }
 
