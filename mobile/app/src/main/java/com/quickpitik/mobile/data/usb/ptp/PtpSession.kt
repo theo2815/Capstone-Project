@@ -261,9 +261,12 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
         buf.putInt(transactionId)
         for (p in params) buf.putInt(p)
         val arr = buf.array()
+        val t0 = System.currentTimeMillis()
         val sent = connection.bulkTransfer(bulkOut, arr, arr.size, TIMEOUT_MS)
         transactionId++
-        if (sent < 0) throw PtpException("send op 0x%04X failed".format(op))
+        // Elapsed ms tells a stalled pipe (fails in ~0 ms) from a silent body
+        // (fails at the timeout) — the field log is all a release build has.
+        if (sent < 0) throw PtpException("send op 0x%04X failed after %d ms".format(op, System.currentTimeMillis() - t0))
     }
 
     /** Send a command that has no data phase; verify the response is OK. */
@@ -390,8 +393,9 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
      */
     private fun readContainer(timeoutMs: Int = TIMEOUT_MS): ByteArray {
         val first = ByteArray(READ_CHUNK)
+        val t0 = System.currentTimeMillis()
         val n = connection.bulkTransfer(bulkIn, first, first.size, timeoutMs)
-        if (n < 4) throw PtpException("short/failed read ($n bytes)")
+        if (n < 4) throw PtpException("short/failed read ($n bytes after ${System.currentTimeMillis() - t0} ms)")
         val declared = ByteBuffer.wrap(first, 0, 4).order(ByteOrder.LITTLE_ENDIAN).int
         val lengthKnown = declared in CONTAINER_HEADER..MAX_CONTAINER
         val out = ByteArrayOutputStream(if (lengthKnown) declared else maxOf(n, READ_CHUNK))

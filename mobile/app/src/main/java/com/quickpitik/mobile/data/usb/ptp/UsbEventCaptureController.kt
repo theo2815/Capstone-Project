@@ -491,15 +491,16 @@ class UsbEventCaptureController(
                 continue
             }
             try {
-                // A previous attempt got no reply: the body's PTP stack is stalled
-                // and a fresh OpenSession alone never clears it (see
-                // PtpSession.resetDevice). Reset first, then give it a moment.
-                if (attempt > 1) {
-                    onLog("  clearing USB pipes…")
-                    s.resetDevice()
-                    delay(RESET_SETTLE_MS)
-                }
+                // No reset and no halt-clear between attempts (2026-09-04, four
+                // sessions): after either, every later send failed, while a
+                // plain fresh open a few seconds later — what the card-import
+                // path does — succeeded every time. So a retry is exactly that:
+                // close, wait, open fresh. A GetDeviceInfo first (session-less,
+                // what libgphoto2 does) proves the link is alive before
+                // OpenSession and names the body in the log.
                 delay(SETTLE_MS)
+                val info = s.getDeviceInfo()
+                onLog("  ${info.manufacturer} ${info.model}".trimEnd())
                 // OpenSession must be the FIRST transaction (TransactionID 0) — the
                 // R6 treats a reused id 0 as a retransmit and never really opens.
                 val rc = s.openSession()
@@ -517,11 +518,10 @@ class UsbEventCaptureController(
                 return s
             } catch (e: Exception) {
                 onLog("  init attempt $attempt failed: ${e.message}")
-                // Don't send CloseSession down a pipe that just stopped answering —
-                // it only burns another 5 s timeout. Reset, then release.
-                runCatching { s.resetDevice() }
+                // Release the interface and connection only; no reset, no
+                // halt-clear (see above). Then give the body a real pause.
                 runCatching { s.close() }
-                delay(RETRY_MS)
+                delay(REOPEN_WAIT_MS)
             }
         }
         return null
@@ -555,7 +555,7 @@ class UsbEventCaptureController(
         const val INIT_ATTEMPTS = 4
         const val RETRY_MS = 1000L
         const val SETTLE_MS = 200L
-        const val RESET_SETTLE_MS = 1500L
+        const val REOPEN_WAIT_MS = 3000L
         const val ERRORS_BEFORE_STOP = 12
         const val BASELINE_ATTEMPTS = 3
         const val MAX_PULL_ATTEMPTS = 3
