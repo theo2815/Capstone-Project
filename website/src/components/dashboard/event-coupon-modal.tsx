@@ -23,10 +23,7 @@ import {
 import type { PhotographerEventSummary } from "@/lib/photographer-mock";
 import { cn } from "@/lib/utils";
 
-type CouponEvent = Pick<
-  PhotographerEventSummary,
-  "id" | "name" | "ownedByMe" | "pricingMode"
->;
+type CouponEvent = Pick<PhotographerEventSummary, "id" | "name" | "pricingMode">;
 
 interface EventCouponModalProps {
   isOpen: boolean;
@@ -47,8 +44,11 @@ export function EventCouponModal({
   initialEventId,
   lockEvent = false,
 }: EventCouponModalProps) {
+  // Every covered event qualifies — created by the photographer or an admin —
+  // except FREE ones: a coupon discounts the photographer's share of a sale,
+  // and a ₱0 event has none. The server repeats both checks.
   const eligibleEvents = useMemo(
-    () => events.filter((event) => event.ownedByMe && event.pricingMode === "paid"),
+    () => events.filter((event) => event.pricingMode !== "free"),
     [events],
   );
   const initial = eligibleEvents.some((event) => event.id === initialEventId)
@@ -151,7 +151,9 @@ export function EventCouponModal({
     <Modal isOpen={isOpen} onClose={onClose} title="Event coupon">
       {eligibleEvents.length === 0 ? (
         <p className="font-sans text-sm text-ink-soft">
-          Create a paid event before adding a coupon.
+          None of your events sell photos yet, so there is nothing to
+          discount. Coupons apply to paid events you have uploaded to or
+          created.
         </p>
       ) : (
         <form onSubmit={handleSubmit} noValidate className="space-y-6">

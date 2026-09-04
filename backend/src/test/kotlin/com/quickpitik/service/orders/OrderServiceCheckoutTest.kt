@@ -35,6 +35,7 @@ import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.CartItemRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.DownloadGrantRepository
+import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
@@ -158,6 +159,7 @@ class OrderServiceCheckoutTest {
                 Mockito.mock(UserRepository::class.java),
                 platform,
                 eventRepository,
+                Mockito.mock(EventPhotographerRepository::class.java),
                 orderRepository,
             ),
             Mockito.mock(PaymongoWebhookService::class.java),

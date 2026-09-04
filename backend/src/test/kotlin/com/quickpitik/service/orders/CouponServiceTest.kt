@@ -9,6 +9,7 @@ import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerCoupon
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventPhotographerId
 import com.quickpitik.entity.EventPricingMode
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.OrderStatus
@@ -19,6 +20,7 @@ import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PhotoRepository
@@ -51,6 +53,7 @@ class CouponServiceTest {
     private lateinit var couponRepository: PhotographerCouponRepository
     private lateinit var photoRepository: PhotoRepository
     private lateinit var eventRepository: EventRepository
+    private lateinit var eventPhotographerRepository: EventPhotographerRepository
     private lateinit var orderRepository: OrderRepository
     private lateinit var settingsRepository: PhotographerSettingsRepository
     private lateinit var userRepository: UserRepository
@@ -61,6 +64,7 @@ class CouponServiceTest {
         couponRepository = Mockito.mock(PhotographerCouponRepository::class.java)
         photoRepository = Mockito.mock(PhotoRepository::class.java)
         eventRepository = Mockito.mock(EventRepository::class.java)
+        eventPhotographerRepository = Mockito.mock(EventPhotographerRepository::class.java)
         orderRepository = Mockito.mock(OrderRepository::class.java)
         settingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
         userRepository = Mockito.mock(UserRepository::class.java)
@@ -76,8 +80,9 @@ class CouponServiceTest {
                 ),
             )
         Mockito.`when`(userRepository.findById(photographerId)).thenReturn(Optional.of(owner()))
-        Mockito.`when`(eventRepository.findByIdAndCreatedByAndDeletedAtIsNull(eventId, photographerId))
-            .thenReturn(event())
+        // Default fixture: an event this photographer created (no coverage row
+        // needed) — the "covered" variants below override findById.
+        Mockito.`when`(eventRepository.findById(eventId)).thenReturn(Optional.of(event()))
         service = CouponService(
             couponRepository,
             photoRepository,
@@ -85,6 +90,7 @@ class CouponServiceTest {
             userRepository,
             PlatformProperties(couponMaxPercent = 50),
             eventRepository,
+            eventPhotographerRepository,
             orderRepository,
         )
     }
@@ -207,18 +213,78 @@ class CouponServiceTest {
     }
 
     @Test
-    fun `foreign and free events cannot receive a coupon`() {
-        val foreign = UUID.randomUUID()
+    fun `an admin event the photographer covers can receive a coupon`() {
+        Mockito.`when`(eventRepository.findById(eventId)).thenReturn(Optional.of(event(createdBy = null)))
+        Mockito.`when`(eventPhotographerRepository.existsById(EventPhotographerId(eventId, photographerId)))
+            .thenReturn(true)
+        Mockito.`when`(couponRepository.existsByCodeAndEventIdIsNotNullAndIdNot(anyArg(), anyArg())).thenReturn(false)
+
+        val dto = service.upsert(photographerId, eventId, UpsertCouponRequest("PHOTO20", 20))
+
+        assertEquals(eventId, dto.eventId)
+        assertEquals("PHOTO20", dto.code)
+    }
+
+    @Test
+    fun `another photographer's owned event is coverable once uploaded to`() {
+        Mockito.`when`(eventRepository.findById(eventId))
+            .thenReturn(Optional.of(event(createdBy = otherPhotographerId)))
+        Mockito.`when`(eventPhotographerRepository.existsById(EventPhotographerId(eventId, photographerId)))
+            .thenReturn(true)
+        Mockito.`when`(couponRepository.existsByCodeAndEventIdIsNotNullAndIdNot(anyArg(), anyArg())).thenReturn(false)
+
+        assertEquals(eventId, service.upsert(photographerId, eventId, UpsertCouponRequest("PHOTO20", 20)).eventId)
+    }
+
+    @Test
+    fun `events the photographer never covered answer not found`() {
+        val unknown = UUID.randomUUID()
+        Mockito.`when`(eventRepository.findById(unknown)).thenReturn(Optional.empty())
         assertFailsWith<NotFoundException> {
-            service.upsert(photographerId, foreign, UpsertCouponRequest("PHOTO20", 20))
+            service.upsert(photographerId, unknown, UpsertCouponRequest("PHOTO20", 20))
         }
 
-        Mockito.`when`(eventRepository.findByIdAndCreatedByAndDeletedAtIsNull(eventId, photographerId))
-            .thenReturn(event(EventPricingMode.FREE))
-        val ex = assertFailsWith<ValidationException> {
+        // Admin event, no event_photographer row for this caller.
+        Mockito.`when`(eventRepository.findById(eventId)).thenReturn(Optional.of(event(createdBy = null)))
+        Mockito.`when`(eventPhotographerRepository.existsById(EventPhotographerId(eventId, photographerId)))
+            .thenReturn(false)
+        assertFailsWith<NotFoundException> {
             service.upsert(photographerId, eventId, UpsertCouponRequest("PHOTO20", 20))
         }
-        assertEquals(ErrorCodes.COUPON_NOT_APPLICABLE, ex.code)
+        assertFailsWith<NotFoundException> { service.get(photographerId, eventId) }
+        assertFailsWith<NotFoundException> { service.delete(photographerId, eventId) }
+
+        // Someone else's owned event the caller never uploaded to.
+        Mockito.`when`(eventRepository.findById(eventId))
+            .thenReturn(Optional.of(event(createdBy = otherPhotographerId)))
+        assertFailsWith<NotFoundException> {
+            service.upsert(photographerId, eventId, UpsertCouponRequest("PHOTO20", 20))
+        }
+
+        // Deleted events are gone even for their creator.
+        Mockito.`when`(eventRepository.findById(eventId))
+            .thenReturn(Optional.of(event().apply { deletedAt = OffsetDateTime.now() }))
+        assertFailsWith<NotFoundException> {
+            service.upsert(photographerId, eventId, UpsertCouponRequest("PHOTO20", 20))
+        }
+    }
+
+    @Test
+    fun `free events cannot receive a coupon, covered or owned`() {
+        Mockito.`when`(eventRepository.findById(eventId)).thenReturn(Optional.of(event(EventPricingMode.FREE)))
+        val owned = assertFailsWith<ValidationException> {
+            service.upsert(photographerId, eventId, UpsertCouponRequest("PHOTO20", 20))
+        }
+        assertEquals(ErrorCodes.COUPON_NOT_APPLICABLE, owned.code)
+
+        Mockito.`when`(eventRepository.findById(eventId))
+            .thenReturn(Optional.of(event(EventPricingMode.FREE, createdBy = null)))
+        Mockito.`when`(eventPhotographerRepository.existsById(EventPhotographerId(eventId, photographerId)))
+            .thenReturn(true)
+        val covered = assertFailsWith<ValidationException> {
+            service.upsert(photographerId, eventId, UpsertCouponRequest("PHOTO20", 20))
+        }
+        assertEquals(ErrorCodes.COUPON_NOT_APPLICABLE, covered.code)
     }
 
     @Test
@@ -287,14 +353,14 @@ class CouponServiceTest {
         it.status = PhotoStatus.LIVE
     }
 
-    private fun event(mode: EventPricingMode = EventPricingMode.PAID) = Event(
+    private fun event(mode: EventPricingMode = EventPricingMode.PAID, createdBy: UUID? = photographerId) = Event(
         id = eventId,
         slug = "event",
         name = "Event",
         date = LocalDate.of(2026, 9, 4),
         location = "Cebu",
         status = EventStatus.ACTIVE,
-        createdBy = photographerId,
+        createdBy = createdBy,
         pricingMode = mode,
     )
 
