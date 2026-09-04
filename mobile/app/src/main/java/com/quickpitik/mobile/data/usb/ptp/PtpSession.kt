@@ -334,7 +334,7 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
     private fun dataInCommandTo(op: Int, sink: OutputStream, vararg params: Int): Long {
         sendCommand(op, *params)
 
-        val first = ByteArray(READ_CHUNK)
+        val first = ByteArray(PULL_CHUNK)
         val n = connection.bulkTransfer(bulkIn, first, first.size, TIMEOUT_MS)
         // Stricter than readContainer's `n < 4`: this path has to parse the
         // whole header before it can decide what to do with the bytes.
@@ -359,7 +359,7 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
         // readContainer stops here iff the first read was short AND nothing more
         // is declared; the negation is the condition to keep reading.
         if (n == first.size || (lengthKnown && total < declared)) {
-            val more = ByteArray(READ_CHUNK)
+            val more = ByteArray(PULL_CHUNK)
             while (true) {
                 if (lengthKnown && total >= declared) break
                 val m = connection.bulkTransfer(bulkIn, more, more.size, TIMEOUT_MS)
@@ -458,6 +458,14 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
     private companion object {
         const val CONTAINER_HEADER = 12
         const val READ_CHUNK = 16384
+        // Streamed object pulls only. 16 KB meant ~640 bulkTransfer JNI round
+        // trips per 10 MB frame and capped the pull at a few MB/s (measured
+        // 2026-09-04: ~10-15 s shutter→LIVE). Bulk reads terminate on the
+        // declared container length, so a large buffer is safe; usbfs URB
+        // size limits went away before minSdk 29. Small responses keep
+        // READ_CHUNK so the 3/s polls don't churn 512 KB allocations.
+        // ponytail: tune on-device; drop to 256 KB if a body short-reads.
+        const val PULL_CHUNK = 512 * 1024
         const val TIMEOUT_MS = 5000
         const val GET_EVENT_TIMEOUT_MS = 1500 // short — empty polls shouldn't hang
         const val MAX_CONTAINER = 256 * 1024 * 1024 // sanity ceiling for one data phase
