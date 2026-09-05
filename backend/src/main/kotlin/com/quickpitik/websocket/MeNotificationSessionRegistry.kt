@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.socket.TextMessage
 import org.springframework.web.socket.WebSocketSession
+import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -35,15 +36,19 @@ class MeNotificationSessionRegistry(
         val message = TextMessage(objectMapper.writeValueAsString(payload))
         val dead = mutableListOf<WebSocketSession>()
         targets.forEach { session ->
+            if (!session.isOpen) {
+                dead.add(session)
+                return@forEach
+            }
             try {
-                if (session.isOpen) {
-                    session.sendMessage(message)
-                } else {
-                    dead.add(session)
-                }
+                // Tomcat permits only one in-flight write per session; a user can have
+                // several open tabs, so serialize sends to each session.
+                synchronized(session) { session.sendMessage(message) }
             } catch (ex: Exception) {
                 log.warn("WebSocket send failed for user {}: {}", userId, ex.message)
-                dead.add(session)
+                // Evict only a genuinely broken session — a transient send race on an
+                // open connection must not drop a healthy tab from the feed.
+                if (!session.isOpen || ex is IOException) dead.add(session)
             }
         }
         targets.removeAll(dead.toSet())

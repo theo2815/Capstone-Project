@@ -62,7 +62,9 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const mode: Mode =
     bibFilter || browseFlag === "1" || isFaceMode ? "browse" : "cockpit";
 
-  const [panelMode, setPanelMode] = useState<SearchPanelMode>("bib");
+  // Selfie leads: bib search is inaccurate for runners, so the hero opens on
+  // face match with bib demoted to a secondary link inside the panel.
+  const [panelMode, setPanelMode] = useState<SearchPanelMode>("selfie");
   const [bibInput, setBibInput] = useState(bibFilter);
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -292,8 +294,11 @@ function CockpitMode({
               className="rounded-2xl bg-surface border border-line shadow-[var(--shadow-lift)] p-8 md:p-10"
               style={{ animation: "fade-up 0.7s 0.05s both", opacity: 0 }}
             >
-              <Kicker as="p" className="mb-5">
+              <Kicker as="p" className="mb-1.5">
                 {event.name}
+              </Kicker>
+              <Kicker as="p" tone="soft" tnum className="mb-5">
+                {(photoCount || event.photoCount).toLocaleString()} photos available · free to search
               </Kicker>
               <h1 className="font-hero text-ink text-5xl md:text-6xl">
                 Find your
@@ -307,8 +312,6 @@ function CockpitMode({
                   onBibChange={onBibChange}
                   onSubmit={handleSubmit}
                   onSwitchToSelfie={() => onPanelModeChange("selfie")}
-                  photoCount={photoCount}
-                  eventPhotoCount={event.photoCount}
                 />
               ) : (
                 <SelfieSearchPanel
@@ -935,6 +938,7 @@ function BrowseMode({
           onClose={() => setSearchOpen(false)}
           onSubmitBib={onSubmitBib}
           onSearchByFaceSuccess={onFaceSearchSuccess}
+          initialMode="selfie"
         />
       )}
 

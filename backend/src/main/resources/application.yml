@@ -44,9 +44,12 @@ spring:
     multipart:
       max-file-size: 25MB
       max-request-size: 25MB
-      # Keep parts in memory (they are read fully into heap anyway) instead of
-      # spooling every upload to java.io.tmpdir first.
-      file-size-threshold: 25MB
+      # Spool photo uploads to java.io.tmpdir instead of buffering them in heap.
+      # At 25MB every 8–20MB original sat fully in memory, so mass concurrent
+      # uploads OOM-killed the container at the first live event (2026-09-05).
+      # Prod also carries SPRING_SERVLET_MULTIPART_FILE_SIZE_THRESHOLD on Railway;
+      # see vault backend/decisions.md 2026-09-05 (event).
+      file-size-threshold: 1MB
 
 server:
   port: ${SERVER_PORT:8080}
