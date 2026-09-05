@@ -50,6 +50,10 @@ data class OrderResponse(
     val redirectUrl: String? = null,
     val couponCode: String? = null,
     val qrPh: QrPhPaymentResponse? = null,
+    // Guest RETURN capability for an order that is already settled when
+    // POST /orders answers (₱0 checkout, replay of a paid key). Null for
+    // signed-in runners and for pending orders (theirs rides in qrPh).
+    val returnToken: String? = null,
 )
 
 data class QrPhPaymentResponse(

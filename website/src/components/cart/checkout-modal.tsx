@@ -346,7 +346,7 @@ export function CheckoutModal({
         // record was lost). Same landing as the polled success.
         setReceipt({
           orderId: order.id,
-          returnToken: order.qrPh?.returnToken ?? null,
+          returnToken: order.returnToken ?? order.qrPh?.returnToken ?? null,
           email: recipientEmail ?? "",
           total: payable,
           itemCount,
@@ -568,9 +568,13 @@ export function CheckoutModal({
               {step === "identify"
                 ? "Where should we send your photos?"
                 : step === "payment"
-                  ? "Review & pay"
+                  ? payable === 0
+                    ? "Review your order"
+                    : "Review & pay"
                   : step === "processing"
-                    ? "Creating your QR code…"
+                    ? payable === 0
+                      ? "Placing your order…"
+                      : "Creating your QR code…"
                     : step === "qr"
                       ? checkUnreachable
                         ? "Check your inbox."
@@ -642,7 +646,7 @@ export function CheckoutModal({
               onBackToCart={isAuthenticated ? onBackToCart : undefined}
             />
           )}
-          {step === "processing" && <ProcessingStep />}
+          {step === "processing" && <ProcessingStep free={payable === 0} />}
           {step === "qr" && qrPayment && checkUnreachable && (
             <UnreachableNotice
               email={qrEmail}
@@ -1115,6 +1119,8 @@ function PaymentStep({
         )}
       </section>
 
+      {/* A ₱0 order (100% giveaway) has nothing to pay with. */}
+      {total > 0 && (
       <section>
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-3">
           Payment method
@@ -1134,18 +1140,27 @@ function PaymentStep({
           </div>
         </div>
       </section>
+      )}
 
       <button
         type="button"
         onClick={onPay}
         className={cn(BTN_PRIMARY, BTN_SIZE.md, "w-full")}
       >
-        {outcome && outcome.kind !== "error" ? "Generate a new QR" : "Generate QR to pay"}{" "}
-        <span className="tnum">{formatPrice(total)}</span> →
+        {total === 0 ? (
+          <>Complete order →</>
+        ) : (
+          <>
+            {outcome && outcome.kind !== "error" ? "Generate a new QR" : "Generate QR to pay"}{" "}
+            <span className="tnum">{formatPrice(total)}</span> →
+          </>
+        )}
       </button>
 
       <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft text-center -mt-3">
-        Nothing is charged until you scan · Watermark removed on download
+        {total === 0
+          ? "Nothing to pay · Watermark removed on download"
+          : "Nothing is charged until you scan · Watermark removed on download"}
       </p>
 
       {onBackToCart && (
@@ -1447,7 +1462,7 @@ function UnreachableNotice({
   );
 }
 
-function ProcessingStep() {
+function ProcessingStep({ free }: { free: boolean }) {
   return (
     <div className="flex-1 min-h-[60vh] flex flex-col items-center justify-center px-8 py-12 text-center">
       <span
@@ -1455,7 +1470,7 @@ function ProcessingStep() {
         aria-hidden="true"
       />
       <p className="font-display text-xl font-medium text-ink mb-2">
-        Creating your QR Ph code…
+        {free ? "Placing your order…" : "Creating your QR Ph code…"}
       </p>
       <p className="font-sans text-sm text-ink-soft max-w-xs">
         Hold tight — this usually takes a few seconds.
@@ -1494,7 +1509,8 @@ function SuccessStep({
           </span>
           <div className="min-w-0">
             <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-1">
-              Payment confirmed{paidAt ? ` · ${formatClock(paidAt)}` : ""}
+              {total === 0 ? "Order confirmed" : "Payment confirmed"}
+              {paidAt ? ` · ${formatClock(paidAt)}` : ""}
             </p>
             <p className="font-display text-xl font-medium text-ink tracking-tight leading-tight">
               <span className="tnum">{itemCount}</span>{" "}

@@ -88,29 +88,14 @@ class PaymongoWebhookService(
         val now = OffsetDateTime.now()
         var ordersFulfilled = 0
         var grantsMinted = 0
-        val justFulfilled = mutableListOf<UUID>()
 
         payments.forEach { payment ->
             payment.providerRef = checkoutSessionId
             providerPaymentId?.takeIf { it.isNotBlank() }?.let { payment.providerPaymentId = it }
-            payment.status = PaymentStatus.SUCCEEDED
-            payment.paidAt = payment.paidAt ?: now
-            paymentRepository.save(payment)
-
-            val order = orderRepository.findByIdForUpdate(payment.orderId) ?: return@forEach
-            if (order.status == OrderStatus.FULFILLED || order.status == OrderStatus.REFUNDED) return@forEach
-
-            order.paidAt = order.paidAt ?: now
-            grantsMinted += mintGrantsIfMissing(order.id, now)
-            transactionMintingService.mintForPaidOrder(order.id)
-            order.status = OrderStatus.FULFILLED
-            orderRepository.save(order)
-            ordersFulfilled++
-            justFulfilled.add(order.id)
-        }
-
-        justFulfilled.forEach { orderId ->
-            eventPublisher.publishEvent(OrderPaidEvent(orderId, checkoutSessionId))
+            fulfill(payment, now)?.let { minted ->
+                grantsMinted += minted
+                ordersFulfilled++
+            }
         }
         log.info(
             "PayMongo cs={} applied - ordersFulfilled={} grantsMinted={}",
@@ -125,6 +110,34 @@ class PaymongoWebhookService(
             "ordersFulfilled" to ordersFulfilled,
             "grantsMinted" to grantsMinted,
         )
+    }
+
+    // Free checkout (2026-09-05): a reservation whose every order totals ₱0
+    // settles here, inside the reservation transaction, with no provider —
+    // the same grants, ledger, FULFILLED flip and receipt as a paid webhook.
+    @Transactional
+    fun settleFree(orderIds: List<UUID>) {
+        val now = OffsetDateTime.now()
+        paymentRepository.findAllByOrderIdInForUpdate(orderIds).forEach { fulfill(it, now) }
+    }
+
+    // Marks the payment settled and fulfils its order once. Returns the
+    // grants minted, or null when the order was already settled.
+    private fun fulfill(payment: Payment, now: OffsetDateTime): Int? {
+        payment.status = PaymentStatus.SUCCEEDED
+        payment.paidAt = payment.paidAt ?: now
+        paymentRepository.save(payment)
+
+        val order = orderRepository.findByIdForUpdate(payment.orderId) ?: return null
+        if (order.status == OrderStatus.FULFILLED || order.status == OrderStatus.REFUNDED) return null
+
+        order.paidAt = order.paidAt ?: now
+        val minted = mintGrantsIfMissing(order.id, now)
+        transactionMintingService.mintForPaidOrder(order.id)
+        order.status = OrderStatus.FULFILLED
+        orderRepository.save(order)
+        eventPublisher.publishEvent(OrderPaidEvent(order.id, payment.providerRef))
+        return minted
     }
 
     @Transactional

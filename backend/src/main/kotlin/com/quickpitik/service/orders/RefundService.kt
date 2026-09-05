@@ -64,9 +64,8 @@ class RefundService(
         val reason = DisputeReason.fromWire(request.reason)
         val note = request.note.trim()
 
-        val orderPhotoIds = orderItemRepository.findByIdOrderId(orderId)
-            .map { it.id.photoId }
-            .toSet()
+        val orderItems = orderItemRepository.findByIdOrderId(orderId)
+        val orderPhotoIds = orderItems.map { it.id.photoId }.toSet()
         val invalid = request.photoIds.toSet() - orderPhotoIds
         if (invalid.isNotEmpty()) {
             throw ValidationException(
@@ -86,6 +85,15 @@ class RefundService(
                 throw ConflictException(
                     code = ErrorCodes.CONFLICT,
                     message = "Photo $photoId has already been refunded",
+                )
+            }
+            // A 100% giveaway charged nothing, so there is nothing to refund.
+            val charged = orderItems.first { it.id.photoId == photoId }
+                .let { it.pricePhpAtPurchase.subtract(it.discountPhp) }
+            if (charged.signum() == 0) {
+                throw ConflictException(
+                    code = ErrorCodes.CONFLICT,
+                    message = "Nothing was charged for photo $photoId",
                 )
             }
             val existing = disputeRepository.findOpenForOrderPhoto(orderId, photoId)

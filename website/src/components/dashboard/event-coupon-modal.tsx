@@ -23,7 +23,10 @@ import {
 import type { PhotographerEventSummary } from "@/lib/photographer-mock";
 import { cn } from "@/lib/utils";
 
-type CouponEvent = Pick<PhotographerEventSummary, "id" | "name" | "pricingMode">;
+type CouponEvent = Pick<
+  PhotographerEventSummary,
+  "id" | "name" | "pricingMode" | "ownedByMe"
+>;
 
 interface EventCouponModalProps {
   isOpen: boolean;
@@ -100,11 +103,21 @@ export function EventCouponModal({
 
   const percent = Number(percentOff);
   const limit = usageLimit === "" ? null : Number(usageLimit);
+  // Free giveaway (2026-09-05): exactly 100% on an event the photographer
+  // created zeroes the price. Anything between the cap and 100 stays out.
+  // The server repeats both checks.
+  const owned = eligibleEvents.some(
+    (event) => event.id === eventId && event.ownedByMe === true,
+  );
+  const giveaway = owned && percent === 100;
+  const percentHint =
+    owned && percent > fees.couponMaxPercent && percent !== 100
+      ? `Between ${fees.couponMaxPercent + 1}% and 99% isn't allowed — use 100% to give the photos away.`
+      : undefined;
   const valid =
     /^[A-Z0-9]{4,16}$/.test(code) &&
     Number.isInteger(percent) &&
-    percent >= 1 &&
-    percent <= fees.couponMaxPercent &&
+    ((percent >= 1 && percent <= fees.couponMaxPercent) || giveaway) &&
     (limit === null ||
       (Number.isInteger(limit) && limit > 0 && limit <= MAX_USAGE_LIMIT));
 
@@ -192,14 +205,19 @@ export function EventCouponModal({
           />
           <AdminTextInput
             id={`${id}-percent`}
-            label={`Discount · 1–${fees.couponMaxPercent}%`}
+            label={
+              owned
+                ? `Discount · 1–${fees.couponMaxPercent}%, or 100% for a free giveaway`
+                : `Discount · 1–${fees.couponMaxPercent}%`
+            }
             type="number"
             inputMode="numeric"
             min={1}
-            max={fees.couponMaxPercent}
+            max={owned ? 100 : fees.couponMaxPercent}
             value={percentOff}
             onChange={setPercentOff}
             inputClassName="tnum"
+            hint={percentHint}
           />
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">

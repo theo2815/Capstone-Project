@@ -70,6 +70,46 @@ class PaymongoWebhookServiceTest {
             .findAllByProviderAndProviderRefForUpdate("paymongo", "pi_test")
     }
 
+    // Free checkout (2026-09-05): a ₱0 reservation settles through the same
+    // fulfilment as a paid webhook, with no provider reference to retain.
+    @Test
+    fun `a free settlement fulfils the order once and publishes the receipt event`() {
+        val order = Order(
+            eventId = UUID.randomUUID(),
+            recipientEmail = "runner@example.com",
+            paymentMethodWire = PaymentMethod.QRPH.wire,
+            totalPhp = BigDecimal.ZERO,
+        )
+        val photoId = UUID.randomUUID()
+        val payment = Payment(orderId = order.id, provider = "paymongo", amountPhp = BigDecimal.ZERO)
+        val orders = Mockito.mock(OrderRepository::class.java)
+        val items = Mockito.mock(OrderItemRepository::class.java)
+        val payments = Mockito.mock(PaymentRepository::class.java)
+        val grants = Mockito.mock(DownloadGrantRepository::class.java)
+        val minting = Mockito.mock(TransactionMintingService::class.java)
+        val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
+        Mockito.`when`(payments.findAllByOrderIdInForUpdate(listOf(order.id))).thenReturn(listOf(payment))
+        Mockito.`when`(orders.findByIdForUpdate(order.id)).thenReturn(order)
+        Mockito.`when`(items.findByIdOrderId(order.id)).thenReturn(
+            listOf(OrderItem(OrderItemId(order.id, photoId), BigDecimal("125.00"), discountPhp = BigDecimal("125.00"))),
+        )
+        Mockito.`when`(grants.findByIdOrderId(order.id)).thenReturn(emptyList())
+        val service = PaymongoWebhookService(
+            orders, items, payments, grants, minting, publisher, Mockito.mock(PaymongoRefundService::class.java),
+        )
+
+        service.settleFree(listOf(order.id))
+        service.settleFree(listOf(order.id))
+
+        assertEquals(PaymentStatus.SUCCEEDED, payment.status)
+        assertEquals(null, payment.providerRef)
+        assertEquals(true, payment.paidAt != null)
+        assertEquals(OrderStatus.FULFILLED, order.status)
+        Mockito.verify(grants, Mockito.times(1)).save(anyArg())
+        Mockito.verify(minting, Mockito.times(1)).mintForPaidOrder(order.id)
+        Mockito.verify(publisher, Mockito.times(1)).publishEvent(OrderPaidEvent(order.id, null))
+    }
+
     private fun paidEvent() = PaymongoWebhookEvent(
         PaymongoEventData(
             attributes = PaymongoEventAttributes(

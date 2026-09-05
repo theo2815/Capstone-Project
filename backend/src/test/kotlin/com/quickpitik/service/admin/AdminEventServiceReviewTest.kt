@@ -181,6 +181,26 @@ class AdminEventServiceReviewTest {
         Mockito.verify(photoRepository, Mockito.never()).updatePriceByEventId(anyArg(), anyArg())
     }
 
+    // Admin ₱0 parity (2026-09-05): a PAID event at ₱0 could be created but
+    // never sold, so zero is refused unless the event is FREE.
+    @Test
+    fun `an admin price edit to zero is refused on a paid event and allowed on a free one`() {
+        val paid = live()
+        val ex = assertFailsWith<ValidationException> {
+            service.update(adminId, paid.id, UpdateAdminEventRequest(pricePerPhoto = BigDecimal.ZERO))
+        }
+        assertEquals("pricePerPhoto", ex.field)
+        assertEquals(BigDecimal("150.00"), paid.pricePerPhoto)
+
+        val free = live().apply {
+            pricingMode = EventPricingMode.FREE
+            pricePerPhoto = BigDecimal.ZERO
+            watermarkPolicy = WatermarkPolicy.OWN
+        }
+        service.update(adminId, free.id, UpdateAdminEventRequest(pricePerPhoto = BigDecimal.ZERO))
+        assertEquals(0, free.pricePerPhoto.signum())
+    }
+
     @Test
     fun `the review queue lists only pending submissions and change requests`() {
         val queue = listOf(submitted(), live().apply { reviewStatus = EventReviewStatus.CHANGE_PENDING })
