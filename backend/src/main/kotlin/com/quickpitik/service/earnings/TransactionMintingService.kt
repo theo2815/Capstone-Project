@@ -77,6 +77,8 @@ class TransactionMintingService(
                 isRefund = false,
             )
             if (existing != null) continue
+            // A 100% giveaway charged nothing: no share, no cut, no sale row.
+            if (item.pricePhpAtPurchase.subtract(item.discountPhp).signum() == 0) continue
 
             // A photographer coupon comes out of the photographer's share only:
             // the platform's cut (list price × cutRate) is identical with or

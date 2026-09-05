@@ -1,28 +1,22 @@
-// Public photographer registry — used to render `/[handle]` and
-// `/[handle]/events/[slug]` for ANY photographer (not just the logged-in one).
-// The current photographer's preview is resolved from `usePhotographerSettingsStore`
-// inside `useResolvedPhotographer` below; everyone else is read from this static
-// list.
-//
-// TODO(backend): replace with `api.get<PhotographerPublic>("/p/{handle}")` once
-// Spring Boot Phase F lands. The PhotographerProfile shape is the rough public
-// view contract — swap CoverSource for a signed S3 URL field.
+// Public photographer API contract plus the few deterministic mock helpers
+// still used by admin-only fallback views.
 
 import type { EventState } from "@/lib/photographer-mock";
 import type { BrandColor } from "@/store/photographer-settings-store";
 import type { MockPhoto } from "@/types/photo";
-import type { EventDetail } from "@/types/event";
+import type { Event, EventDetail } from "@/types/event";
 
 export type CoverSource =
   | { kind: "gradient"; from: string; to: string }
   | { kind: "image"; url: string };
 
 export interface PhotographerEventCoverage {
-  /** matches MOCK_EVENT_DETAILS keys + EventDetail.slug */
   eventSlug: string;
   state: EventState;
   photoCount: number;
   salesCount: number;
+  /** Canonical public event metadata supplied with the coverage row. */
+  event: Event;
   // V46 — the portfolio hides unlisted cards; the share page still resolves
   // its coverage from this list. Optional so the registry seeds stay valid.
   visibility?: "public" | "unlisted";
@@ -32,6 +26,7 @@ export interface PhotographerEventCoverage {
 export interface PhotographerProfile {
   handle: string;
   displayName: string;
+  avatarUrl: string | null;
   brandColor: BrandColor;
   bio: string;
   city: string;
@@ -67,7 +62,9 @@ export function getPhotographerCoverage(
 export function getProfileTotals(
   profile: PhotographerProfile,
 ): { events: number; photos: number; sales: number } {
-  const visibleEvents = profile.events.filter((e) => e.photoCount > 0);
+  const visibleEvents = profile.events.filter(
+    (e) => e.photoCount > 0 && e.visibility !== "unlisted",
+  );
   return {
     events: visibleEvents.length,
     photos: visibleEvents.reduce((sum, e) => sum + e.photoCount, 0),

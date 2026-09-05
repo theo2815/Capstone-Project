@@ -288,6 +288,12 @@ class OrderService(
             )
             order
         }
+        // Nothing to collect (100% giveaways): settle now, in this transaction,
+        // through the same fulfilment as a paid webhook. A ₱0 order beside a
+        // paid one waits for the group's payment like any other sibling.
+        if (orders.all { it.totalPhp.signum() == 0 }) {
+            paymongoWebhookService.settleFree(orders.map { it.id })
+        }
         return CheckoutReservation(orders, photos, events, savedItems)
     }
 
@@ -744,6 +750,10 @@ class OrderService(
             redirectUrl = redirectUrl,
             couponCode = order.couponCode,
             qrPh = qrPh,
+            // A guest whose order settled without a QR (₱0 checkout, or a
+            // replay of a paid one) still needs the receipt link to work.
+            returnToken = order.takeIf { it.userId == null && it.status in SETTLED_ORDER_STATUSES }
+                ?.let { orderAccessTokenService.issue(it, OrderCapability.RETURN) },
         )
     }
 
@@ -753,7 +763,7 @@ class OrderService(
         items: List<OrderItem>,
         photos: Map<UUID, Photo>,
         events: Map<UUID, Event>,
-    ): List<PaymongoLineItem> = items.map { item ->
+    ): List<PaymongoLineItem> = items.filter { it.pricePhpAtPurchase > it.discountPhp }.map { item ->
         val photo = photos.getValue(item.id.photoId)
         val bib = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber?.let { "BIB $it" } ?: "Untagged"
         PaymongoLineItem(

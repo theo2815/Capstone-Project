@@ -144,7 +144,7 @@ fun RunnerGalleryScreen(
 
     // rememberSaveable: mode, panel and the typed bib survive rotation.
     var mode by rememberSaveable { mutableStateOf(GalleryMode.Cockpit) }
-    var panelMode by rememberSaveable { mutableStateOf(SearchPanelMode.Bib) }
+    var panelMode by rememberSaveable { mutableStateOf(SearchPanelMode.Selfie) }
     var bibInput by rememberSaveable { mutableStateOf("") }
     // The bib the last search ran with — drives the browse header + empty copy.
     var submittedBib by rememberSaveable { mutableStateOf("") }
@@ -283,7 +283,10 @@ fun RunnerGalleryScreen(
     }
 
     // System back from the wall returns to the cockpit (website: "← Back").
-    BackHandler(enabled = mode == GalleryMode.Browse) { mode = GalleryMode.Cockpit }
+    BackHandler(enabled = mode == GalleryMode.Browse) {
+        panelMode = SearchPanelMode.Selfie
+        mode = GalleryMode.Cockpit
+    }
 
     val submitBib = {
         val clean = bibInput.trim().uppercase()
@@ -449,8 +452,14 @@ fun RunnerGalleryScreen(
                             newPhotoCount = newPhotoCount,
                             liveState = liveState,
                             cartItemIds = cartItems.map { it.photoId }.toSet(),
-                            onBack = { mode = GalleryMode.Cockpit },
-                            onOpenSearch = { showFindSheet = true },
+                            onBack = {
+                                panelMode = SearchPanelMode.Selfie
+                                mode = GalleryMode.Cockpit
+                            },
+                            onOpenSearch = {
+                                panelMode = SearchPanelMode.Selfie
+                                showFindSheet = true
+                            },
                             onClearFilter = clearFilter,
                             onMyPhotos = { startFaceSearch { viewModel.searchByStoredSelfie() } },
                             onRefundPolicy = { showRefundPolicy = true },

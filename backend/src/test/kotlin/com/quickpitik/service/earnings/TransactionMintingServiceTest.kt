@@ -19,6 +19,7 @@ import java.math.BigDecimal
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 // The single commission multiply in the codebase. A coupon lowers what the
 // photographer keeps by exactly the discount; the platform's share of the
@@ -86,6 +87,17 @@ class TransactionMintingServiceTest {
         val row = minted.single()
         assertEquals(BigDecimal("112.50"), row.amountKeptPhp)
         assertEquals(0, row.discountPhp.signum())
+    }
+
+    // Free checkout (2026-09-05): a 100% giveaway charged nothing, so it
+    // earns nothing and never counts as a sale.
+    @Test
+    fun `a giveaway item mints no sale row`() {
+        stubItems(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("150.00"), discountPhp = BigDecimal("150.00")))
+
+        service.mintForPaidOrder(order.id)
+
+        assertTrue(minted.isEmpty())
     }
 
     private fun stubItems(vararg items: OrderItem) {

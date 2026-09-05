@@ -341,7 +341,7 @@ class AdminEventService(
         // change. Existing carts need no fix-up: CartService renders the live
         // photos.price_php, which is also what OrderService.create charges.
         req.pricePerPhoto?.let { rawPrice ->
-            val newPrice = validatedPrice(rawPrice)
+            val newPrice = validatedPrice(rawPrice, allowZero = event.isFree)
             // A FREE photographer event (V46) has no price; the trio only
             // changes through an approved pricing request.
             if (event.isFree && newPrice.signum() != 0) {
@@ -452,11 +452,14 @@ class AdminEventService(
     // Admin-set per-photo price must be a non-negative peso amount. We
     // strip trailing zeros and clamp to scale 2 so the audit log entries
     // stay readable (avoid "125.00000" creeping in from FormData round-trips).
-    private fun validatedPrice(raw: BigDecimal): BigDecimal {
-        if (raw < BigDecimal.ZERO) {
+    // Admin events are PAID, and a PAID event at ₱0 is unsellable (checkout
+    // needs a positive price) yet not free (isFree keys off pricingMode).
+    // Only a FREE photographer event may carry 0.
+    private fun validatedPrice(raw: BigDecimal, allowZero: Boolean = false): BigDecimal {
+        if (raw.signum() < 0 || (raw.signum() == 0 && !allowZero)) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
-                message = "pricePerPhoto must be ≥ 0",
+                message = if (allowZero) "pricePerPhoto must be ≥ 0" else "pricePerPhoto must be greater than 0",
                 field = "pricePerPhoto",
             )
         }

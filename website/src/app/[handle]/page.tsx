@@ -15,11 +15,10 @@ import { isReservedHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
 import { formatMemberSince } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import type { EventState } from "@/lib/photographer-mock";
-import { getCatalogWithOverrides } from "@/lib/event-catalog";
 import {
   getProfileTotals,
   type CoverSource,
+  type PhotographerEventCoverage,
   type PhotographerProfile,
 } from "@/lib/photographer-registry";
 import {
@@ -142,7 +141,9 @@ function ProfileLayout({
           <AvatarDisc
             name={profile.displayName}
             size="lg"
-            avatarOverride={null}
+            avatarOverride={
+              profile.avatarUrl ? { dataUrl: profile.avatarUrl } : null
+            }
           />
           <div className="flex-1 min-w-0 md:pb-2">
             <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
@@ -284,12 +285,7 @@ function PortfolioSection({
   handle,
   isOwner,
 }: {
-  events: ReadonlyArray<{
-    eventSlug: string;
-    state: EventState;
-    photoCount: number;
-    salesCount: number;
-  }>;
+  events: ReadonlyArray<PhotographerEventCoverage>;
   handle: string;
   isOwner: boolean;
 }) {
@@ -307,7 +303,6 @@ function PortfolioSection({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
           {visibleSlice.map((coverage, index) => {
             const tileEvent = toListEvent(coverage);
-            if (!tileEvent) return null;
             return (
               <EventTile
                 key={coverage.eventSlug}
@@ -333,21 +328,17 @@ function PortfolioSection({
   );
 }
 
-// Build the ListEvent shape EventTile expects from a photographer's coverage
-// row plus the canonical event in EVENT_CATALOG. We override `photoCount`
+// The API coverage row carries the canonical event, so newly created events
+// render without depending on a bundled client catalog. We override `photoCount`
 // with the photographer's slice (e.g. Paksit shot 412 of Cebu Marathon's
 // 1,200 photos) and `state` with the coverage state — everything else
 // (id, slug, name, date, location, city, participantCount, status) flows
-// from the catalog.
-function toListEvent(coverage: {
-  eventSlug: string;
-  state: EventState;
-  photoCount: number;
-}): ListEvent | null {
-  const ce = getCatalogWithOverrides().find((e) => e.slug === coverage.eventSlug);
-  if (!ce) return null;
+// from the event nested in the coverage response.
+function toListEvent(coverage: PhotographerEventCoverage): ListEvent {
+  const location = coverage.event.location;
   return {
-    ...ce,
+    ...coverage.event,
+    city: location.slice(location.lastIndexOf(",") + 1).trim(),
     photoCount: coverage.photoCount,
     state: coverage.state,
   };

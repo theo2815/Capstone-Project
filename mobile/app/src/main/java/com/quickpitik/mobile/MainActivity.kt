@@ -817,13 +817,17 @@ class MainActivity : ComponentActivity() {
                                 route = "photographer/{handle}",
                                 arguments = listOf(navArgument("handle") { type = NavType.StringType }),
                             ) { entry ->
+                                val graphEntry = runnerGraphEntry(navController, entry)
+                                val runnerViewModel: RunnerGalleryViewModel = viewModel(graphEntry)
                                 val publicPhotographerViewModel: PublicPhotographerViewModel = viewModel()
                                 PhotographerPublicProfileScreen(
                                     handle = entry.arguments?.getString("handle"),
                                     viewModel = publicPhotographerViewModel,
                                     onBack = { navController.popBackStack() },
-                                    // Runner context — the per-event gallery is
-                                    // transactional here (web parity).
+                                    onOpenEvent = { event ->
+                                        runnerViewModel.selectEvent(event)
+                                        navController.navigate("gallery")
+                                    },
                                     cartViewModel = cartViewModel,
                                 )
                             }

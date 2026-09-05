@@ -424,6 +424,40 @@ class CouponServiceTest {
         assertEquals(ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED, ex.code)
     }
 
+    // Free giveaway (2026-09-05): exactly 100% is allowed only on a paid
+    // event the photographer created. Covered admin events and other
+    // photographers' events keep the cap, and 51–99 stay rejected everywhere.
+    @Test
+    fun `a 100 percent giveaway is allowed only on a paid event the photographer created`() {
+        assertEquals(100, service.upsert(photographerId, eventId, UpsertCouponRequest("FREE100", 100)).percentOff)
+        for (pct in listOf(51, 99, 101)) {
+            val ex = assertFailsWith<ValidationException> {
+                service.upsert(photographerId, eventId, UpsertCouponRequest("FREE100", pct))
+            }
+            assertEquals("percentOff", ex.field, "pct=$pct")
+        }
+
+        Mockito.`when`(eventPhotographerRepository.existsById(EventPhotographerId(eventId, photographerId)))
+            .thenReturn(true)
+        for (creator in listOf(null, otherPhotographerId)) {
+            Mockito.`when`(eventRepository.findById(eventId)).thenReturn(Optional.of(event(createdBy = creator)))
+            val ex = assertFailsWith<ValidationException> {
+                service.upsert(photographerId, eventId, UpsertCouponRequest("FREE100", 100))
+            }
+            assertEquals("percentOff", ex.field, "creator=$creator")
+        }
+    }
+
+    @Test
+    fun `a 100 percent coupon zeroes the list price while lower percentages keep the share rule`() {
+        val giveaway = PhotographerCoupon(eventId = eventId, photographerId = photographerId, code = "FREE100", percentOff = 100)
+        val photo = photo(photographerId, "125.00")
+
+        assertEquals(BigDecimal("125.00"), service.discountFor(photo, giveaway))
+        assertEquals(0, service.quoteFor(photo, giveaway)!!.price.signum())
+        assertEquals(BigDecimal("46.88"), service.discountFor(photo, coupon("HALF").apply { percentOff = 50 }))
+    }
+
     private fun coupon(
         code: String,
         active: Boolean = true,

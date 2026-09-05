@@ -65,7 +65,7 @@ class CouponService(
     }
 
     fun upsert(photographerId: UUID, eventId: UUID, req: UpsertCouponRequest): CouponDto {
-        requireEligibleCoverage(photographerId, eventId)
+        val event = requireEligibleCoverage(photographerId, eventId)
         val code = normalise(req.code)
         if (!CODE_PATTERN.matches(code)) {
             throw ValidationException(
@@ -75,9 +75,13 @@ class CouponService(
             )
         }
         val max = platformProperties.couponMaxPercent
-        if (req.percentOff !in 1..max) {
+        // Free giveaway (2026-09-05): exactly 100% on a paid event the
+        // photographer created zeroes the list price (see discountFor).
+        // Covered-but-not-owned and admin events keep the cap.
+        val freeGiveaway = req.percentOff == 100 && event.createdBy == photographerId
+        if (!freeGiveaway && req.percentOff !in 1..max) {
             throw ValidationException(
-                message = "percentOff must be between 1 and $max",
+                message = "percentOff must be between 1 and $max, or 100 on an event you created",
                 code = ErrorCodes.VALIDATION_ERROR,
                 field = "percentOff",
             )
@@ -187,8 +191,11 @@ class CouponService(
             photo.photographerId == coupon.photographerId &&
             photo.pricePhp.signum() > 0
 
+    // A 100% giveaway (own paid event only, enforced at upsert) waives the
+    // platform cut too: the runner pays ₱0 and nobody earns anything.
     fun discountFor(photo: Photo, coupon: PhotographerCoupon): BigDecimal =
-        couponDiscount(photo.pricePhp, platformProperties.photographerKeepRate, coupon.percentOff)
+        if (coupon.percentOff == 100) photo.pricePhp
+        else couponDiscount(photo.pricePhp, platformProperties.photographerKeepRate, coupon.percentOff)
 
     // One photo's offer for the DTO layer: null unless the coupon is live for
     // this photo's owner and the photo is priced.
@@ -294,7 +301,7 @@ class CouponService(
         return event
     }
 
-    private fun requireEligibleCoverage(photographerId: UUID, eventId: UUID) {
+    private fun requireEligibleCoverage(photographerId: UUID, eventId: UUID): Event {
         val event = requireCoveredEvent(photographerId, eventId)
         val user = userRepository.findById(photographerId).orElse(null)
             ?: throw NotFoundException(code = ErrorCodes.USER_NOT_FOUND, message = "User not found")
@@ -321,6 +328,7 @@ class CouponService(
                 field = "eventId",
             )
         }
+        return event
     }
 
     companion object {

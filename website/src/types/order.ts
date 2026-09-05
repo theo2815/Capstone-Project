@@ -38,6 +38,10 @@ export interface Order {
     // backend never emits it in production.
     testUrl?: string | null;
   } | null;
+  // Guest return capability for an order that is already settled when
+  // POST /orders answers (₱0 checkout, replay of a paid key). Null for
+  // signed-in runners and for pending orders (theirs rides in qrPh).
+  returnToken?: string | null;
 }
 
 // `price` is the list price; `discount` the coupon's share of it (0 or absent

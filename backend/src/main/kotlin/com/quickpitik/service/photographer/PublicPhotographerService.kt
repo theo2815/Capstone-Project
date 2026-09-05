@@ -23,8 +23,10 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.photos.PhotoService
+import com.quickpitik.service.profile.UserDtoMapper
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
@@ -44,6 +46,8 @@ class PublicPhotographerService(
     private val storageService: com.quickpitik.service.storage.StorageService,
     private val couponService: CouponService,
     private val publicProperties: PublicProperties,
+    private val eventDtoMapper: EventDtoMapper,
+    private val userDtoMapper: UserDtoMapper,
 ) {
     fun getProfile(handle: String): PhotographerProfileDto {
         val normalized = handle.trim().lowercase()
@@ -87,6 +91,7 @@ class PublicPhotographerService(
                 state = deriveEventState(event),
                 photoCount = ep.photoCount,
                 salesCount = ep.salesCount,
+                event = eventDtoMapper.toListDto(event),
                 visibility = event.visibility.wire,
                 pricingMode = event.pricingMode.wire,
             )
@@ -97,6 +102,7 @@ class PublicPhotographerService(
         return PhotographerProfileDto(
             handle = settings.handle ?: normalized,
             displayName = settings.brandName?.takeIf { it.isNotBlank() } ?: user.name,
+            avatarUrl = userDtoMapper.resolveAvatarUrl(user),
             brandColor = settings.brandColor,
             bio = settings.bio,
             city = settings.city,
@@ -143,7 +149,10 @@ class PublicPhotographerService(
         // Every photo on this page belongs to the photographer resolved above,
         // so attribution is a constant — no per-page lookup like PhotoService
         // needs for a mixed event grid.
-        val photographer = PhotographerRef(handle = settings.handle, name = user.name)
+        val photographer = PhotographerRef(
+            handle = settings.handle,
+            name = settings.brandName?.takeIf { it.isNotBlank() } ?: user.name,
+        )
         val coupon = couponService.activeFor(event.id, setOf(settings.userId))[settings.userId]
         // Free event (V46): originals are anyone's — mirror PhotoService.
         val free = event.isFree

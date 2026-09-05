@@ -94,6 +94,7 @@ class OrderServiceCheckoutTest {
     private lateinit var eventRepository: EventRepository
     private lateinit var service: OrderService
     private lateinit var checkoutReconciler: PaymongoCheckoutReconciler
+    private lateinit var webhookService: PaymongoWebhookService
     private lateinit var downloadGrants: DownloadGrantRepository
     private lateinit var storageService: StorageService
     private val platform = PlatformProperties(orderCapabilitySecret = "x".repeat(32))
@@ -114,6 +115,7 @@ class OrderServiceCheckoutTest {
         storageService = Mockito.mock(StorageService::class.java)
         eventRepository = Mockito.mock(EventRepository::class.java)
         checkoutReconciler = Mockito.mock(PaymongoCheckoutReconciler::class.java)
+        webhookService = Mockito.mock(PaymongoWebhookService::class.java)
 
         Mockito.`when`(photoRepository.findAllByIdForUpdate(anyArg())).thenReturn(listOf(photo))
         Mockito.`when`(eventRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(event))
@@ -179,7 +181,7 @@ class OrderServiceCheckoutTest {
                 Mockito.mock(EventPhotographerRepository::class.java),
                 orderRepository,
             ),
-            Mockito.mock(PaymongoWebhookService::class.java),
+            webhookService,
             checkoutReconciler,
             PublicProperties(apiBaseUrl = "https://api.test/api/v1"),
         )
@@ -723,6 +725,121 @@ class OrderServiceCheckoutTest {
         assertEquals(couponA.id, savedItems.single { it.id.photoId == photo.id }.couponId)
         assertEquals(couponC.id, savedItems.single { it.id.photoId == c1.id }.couponId)
         assertEquals(BigDecimal("200.00"), order.totalPhp)
+    }
+
+    // Free checkout (2026-09-05): a 100% giveaway on the photographer's own
+    // event leaves nothing to collect. The reservation settles itself through
+    // the webhook service and the answer is already FULFILLED — no provider
+    // round-trip — and a guest still gets a receipt link.
+    @Test
+    fun `a giveaway checkout settles without the provider and answers fulfilled`() {
+        val owner = UUID.randomUUID()
+        photo.photographerId = owner
+        val giveaway = PhotographerCoupon(eventId = eventId, photographerId = owner, code = "FREE100", percentOff = 100)
+        Mockito.`when`(couponRepository.findActiveByEventIdInForUpdate(setOf(eventId))).thenReturn(listOf(giveaway))
+        Mockito.doAnswer {
+            savedOrders.forEach { it.status = OrderStatus.FULFILLED }
+            null
+        }.`when`(webhookService).settleFree(anyArg())
+
+        val response = service.create(null, request(paymentMethod = "qrph"), key)
+
+        val order = savedOrders.single()
+        assertEquals(0, order.totalPhp.signum())
+        assertEquals(BigDecimal("125.00"), savedItems.single().discountPhp)
+        assertEquals(giveaway.id, savedItems.single().couponId)
+        assertEquals(0, savedPayments.single().amountPhp.signum())
+        Mockito.verify(webhookService).settleFree(listOf(order.id))
+        assertEquals(OrderStatus.FULFILLED, response.status)
+        assertEquals(0, response.totalAmount.signum())
+        assertEquals(null, response.qrPh)
+        assertFalse(response.returnToken.isNullOrBlank())
+        Mockito.verifyNoInteractions(paymongoClient)
+    }
+
+    @Test
+    fun `a giveaway beside a paid photo still charges the paid photo`() {
+        val owner = UUID.randomUUID()
+        photo.photographerId = owner
+        val theirs = Photo(eventId = eventId, s3Key = "photos/theirs.jpg", pricePhp = BigDecimal("150.00"))
+            .also { it.photographerId = UUID.randomUUID() }
+        Mockito.`when`(photoRepository.findAllByIdForUpdate(anyArg())).thenReturn(listOf(photo, theirs))
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo, theirs))
+        val giveaway = PhotographerCoupon(eventId = eventId, photographerId = owner, code = "FREE100", percentOff = 100)
+        Mockito.`when`(couponRepository.findActiveByEventIdInForUpdate(setOf(eventId))).thenReturn(listOf(giveaway))
+        stubProvider()
+
+        service.create(
+            null,
+            request(items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(theirs.id, eventId))),
+            key,
+        )
+
+        assertEquals(BigDecimal("150.00"), savedOrders.single().totalPhp)
+        Mockito.verify(webhookService, Mockito.never()).settleFree(anyArg())
+        // The free photo sends no zero-amount line to the provider.
+        assertEquals(listOf(15000L), lastProviderRequest!!.data.attributes.lineItems.map { it.amount })
+    }
+
+    @Test
+    fun `a giveaway order beside a paid event order waits for the group's payment`() {
+        val owner = UUID.randomUUID()
+        val otherEventId = UUID.randomUUID()
+        val otherEvent = Event(
+            id = otherEventId,
+            slug = "other-event",
+            name = "Other Event",
+            date = LocalDate.of(2026, 9, 1),
+            location = "Cebu City",
+            status = EventStatus.ACTIVE,
+        )
+        photo.photographerId = owner
+        val other = Photo(eventId = otherEventId, s3Key = "photos/other.jpg", pricePhp = BigDecimal("150.00"))
+            .also { it.photographerId = owner }
+        Mockito.`when`(photoRepository.findAllByIdForUpdate(anyArg())).thenReturn(listOf(photo, other))
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo, other))
+        Mockito.`when`(eventRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(event, otherEvent))
+        val giveaway = PhotographerCoupon(eventId = eventId, photographerId = owner, code = "FREE100", percentOff = 100)
+        Mockito.`when`(couponRepository.findActiveByEventIdInForUpdate(setOf(eventId, otherEventId)))
+            .thenReturn(listOf(giveaway))
+        stubProvider()
+
+        service.create(
+            null,
+            request(items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(other.id, otherEventId))),
+            key,
+        )
+
+        assertEquals(setOf(0, 1), savedOrders.map { it.totalPhp.signum() }.toSet())
+        assertTrue(savedOrders.all { it.status == OrderStatus.PENDING })
+        Mockito.verify(webhookService, Mockito.never()).settleFree(anyArg())
+        assertEquals(listOf(15000L), lastProviderRequest!!.data.attributes.lineItems.map { it.amount })
+    }
+
+    @Test
+    fun `replaying a settled giveaway key answers the same fulfilled order`() {
+        val existing = Order(
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = "qrph",
+            status = OrderStatus.FULFILLED,
+            totalPhp = BigDecimal.ZERO,
+            idempotencyKey = key,
+        )
+        Mockito.`when`(
+            orderRepository.findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(email, key),
+        ).thenReturn(listOf(existing))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(listOf(existing.id))).thenReturn(
+            listOf(OrderItem(OrderItemId(existing.id, photo.id), photo.pricePhp, discountPhp = photo.pricePhp)),
+        )
+
+        val response = service.create(null, request(paymentMethod = "qrph"), key)
+
+        assertEquals(existing.id, response.id)
+        assertEquals(OrderStatus.FULFILLED, response.status)
+        assertFalse(response.returnToken.isNullOrBlank())
+        Mockito.verify(webhookService, Mockito.never()).settleFree(anyArg())
+        Mockito.verifyNoInteractions(paymongoClient)
     }
 
     private fun stubProvider() {

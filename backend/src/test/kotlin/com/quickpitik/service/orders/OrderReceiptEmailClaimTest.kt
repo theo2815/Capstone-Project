@@ -26,6 +26,8 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 // Runner-audit "Checkout + webhook + email" #p1. The receipt send used a
 // read-check-write on orders.email_sent_at: load the order, see null, send,
@@ -111,6 +113,48 @@ class OrderReceiptEmailClaimTest {
 
         Mockito.verify(orderRepository, Mockito.never()).claimReceiptSend(anyArg(), anyArg())
         Mockito.verify(resendClient, Mockito.never()).send(anyArg())
+    }
+
+    // Free checkout (2026-09-05): a ₱0 order gets the same receipt; it just
+    // says nothing was paid and shows the list price the coupon waived.
+    @Test
+    fun `a free order's receipt confirms the order and shows the waived price`() {
+        val order = Order(
+            eventId = UUID.randomUUID(),
+            recipientEmail = "runner@test.local",
+            paymentMethodWire = PaymentMethod.QRPH.wire,
+            status = OrderStatus.FULFILLED,
+            totalPhp = BigDecimal("0.00"),
+            couponCode = "FREE100",
+        )
+
+        val html = service().renderHtml(
+            order, "Cebu Marathon", 1, "https://api.test/bundle", BigDecimal("125.00"), BigDecimal("125.00"),
+        )
+
+        assertTrue(html.contains("QuickPitik · Order confirmed"))
+        assertTrue(html.contains("List ₱125.00 · FREE100 −₱125.00 · Total ₱0.00. Nothing was charged."))
+        assertTrue(html.contains("Confirmed · <span"))
+        assertFalse(html.contains("Payment received"))
+    }
+
+    @Test
+    fun `a paid coupon order's receipt keeps the payment wording and adds the discount line`() {
+        val order = Order(
+            eventId = UUID.randomUUID(),
+            recipientEmail = "runner@test.local",
+            paymentMethodWire = PaymentMethod.QRPH.wire,
+            status = OrderStatus.FULFILLED,
+            totalPhp = BigDecimal("106.25"),
+        )
+
+        val html = service().renderHtml(
+            order, "Cebu Marathon", 1, "https://api.test/bundle", BigDecimal("125.00"), BigDecimal("18.75"),
+        )
+
+        assertTrue(html.contains("QuickPitik · Payment received"))
+        assertTrue(html.contains("List ₱125.00 · Photographer discount −₱18.75 · Total ₱106.25."))
+        assertFalse(html.contains("Nothing was charged"))
     }
 
     // ─── fixtures ─────────────────────────────────────────────────────────

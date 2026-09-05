@@ -3,6 +3,35 @@ import { describe, expect, it, vi } from "vitest";
 import { PhotoPreviewCard, type PhotoPreviewItem } from "./photo-preview-card";
 
 describe("PhotoPreviewCard coupon offer", () => {
+  it("credits a verified photographer by public name", async () => {
+    const photo: PhotoPreviewItem = {
+      id: "photo-credit",
+      bib: null,
+      time: "",
+      tone: 0,
+      price: 0,
+      photographerName: "QuickPitik Photographer",
+      photographerHandle: "quickpitikfree",
+    };
+
+    render(
+      <PhotoPreviewCard
+        photo={photo}
+        eventName="NRW Fun Run 2026"
+        index={1}
+        total={1}
+        inCart={false}
+        onClose={vi.fn()}
+        onToggleCart={vi.fn()}
+        onBuyNow={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findAllByText("Photo by")).toHaveLength(2);
+    expect(screen.getAllByRole("link", { name: /QuickPitik Photographer/ })).toHaveLength(2);
+    expect(screen.queryByText("@quickpitikfree")).not.toBeInTheDocument();
+  });
+
   it("shows only the coupon fields supplied by the photo API", async () => {
     const photo: PhotoPreviewItem = {
       id: "photo-1",

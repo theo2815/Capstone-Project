@@ -56,12 +56,6 @@ interface BasePhotoPreviewProps {
   onClose: () => void;
   onPrev?: () => void;
   onNext?: () => void;
-  /**
-   * Set false where the credit would be noise because the surrounding page is
-   * already the photographer's — e.g. their own public gallery. Defaults true;
-   * surfaces whose data simply carries no attribution render nothing anyway.
-   */
-  showPhotographerCredit?: boolean;
 }
 
 interface BrowsePhotoPreviewProps extends BasePhotoPreviewProps {
@@ -134,7 +128,6 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     onClose,
     onPrev,
     onNext,
-    showPhotographerCredit = true,
   } = props;
   const mode = props.mode ?? "browse";
   useScrollLock(true);
@@ -190,7 +183,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     </Kicker>
   );
 
-  const credit = showPhotographerCredit && (
+  const credit = (
     <PhotographerCredit
       handle={photo.photographerHandle}
       name={photo.photographerName}
@@ -510,11 +503,8 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
 
 // Photo credit line in the rail.
 //
-// Both branches are real BE states, not a loading fallback: a photographer's
-// handle is only minted at verification, so an approved-but-unverified
-// photographer has a name and no public profile to link to. Linking anyway
-// would send the runner to /{null}. Legacy rows carry neither field and get
-// no credit at all.
+// The public name is always the visible credit. A verified photographer's
+// name links to their profile; an unverified photographer stays plain text.
 //
 // Stays off `fresh` deliberately — the Buy-now CTA below owns the one accent
 // this viewport is allowed.
@@ -539,7 +529,7 @@ function PhotographerCredit({
           href={`/${handle}`}
           className="text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone rounded-sm"
         >
-          @{handle}
+          {name ?? `@${handle}`}
           <span aria-hidden="true" className="ml-1.5 no-underline">
             →
           </span>

@@ -133,12 +133,14 @@ export function AdminEventFormModal({
   const trimmedName = name.trim();
   const trimmedLocation = location.trim();
   const dateValid = /^\d{4}-\d{2}-\d{2}$/.test(date);
-  // Accept "", "0", "80", "80.5", "80.50" — anything that parses as a
-  // non-negative finite number. Submit coerces to Number; blank means 0.
-  const parsedPrice = parsePrice(price);
+  // Admin events are paid, so the price must be above zero — a ₱0 paid
+  // event could neither sell nor download (2026-09-05). Only a free
+  // photographer event stays at ₱0. The server repeats both rules.
+  const freeEvent = mode === "edit" && event?.pricingMode === "free";
+  const parsedPrice = parsePrice(price, freeEvent);
   const priceValid = parsedPrice !== null;
   const priceHint = !priceValid
-    ? "Enter a non-negative number (e.g. 80 or 80.50)."
+    ? "Enter a price above zero (e.g. 80 or 80.50)."
     : undefined;
   const canSubmit =
     trimmedName.length > 0 &&
@@ -230,7 +232,7 @@ export function AdminEventFormModal({
         value={price}
         onChange={setPrice}
         type="number"
-        min={0}
+        min={freeEvent ? 0 : 1}
         step="0.01"
         inputMode="decimal"
         prefix="₱"
@@ -290,14 +292,13 @@ function formatPriceForInput(value: number | undefined): string {
   return String(value);
 }
 
-// Returns the parsed peso amount or null when the input isn't a valid
-// non-negative finite number. Blank counts as 0 so the admin can leave a
-// "free event" intentionally without typing a zero.
-function parsePrice(raw: string): number | null {
+// Returns the parsed peso amount or null when the input isn't a positive
+// finite number. A free event is the one place ₱0 (or blank) is valid.
+function parsePrice(raw: string, allowZero = false): number | null {
   const trimmed = raw.trim();
-  if (trimmed === "") return 0;
+  if (trimmed === "") return allowZero ? 0 : null;
   const num = Number(trimmed);
-  if (!Number.isFinite(num) || num < 0) return null;
+  if (!Number.isFinite(num) || num < 0 || (num === 0 && !allowZero)) return null;
   return num;
 }
 

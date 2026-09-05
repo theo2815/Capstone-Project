@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.OffsetDateTime
@@ -92,6 +93,8 @@ class OrderReceiptEmailService(
             eventName = event?.name ?: "QuickPitik",
             entitledCount = entitledCount,
             bundleUrl = bundleUrl,
+            listTotal = items.sumOf { it.pricePhpAtPurchase },
+            discountTotal = items.sumOf { it.discountPhp },
         )
         val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
         val subject = buildSubject(event?.name)
@@ -136,13 +139,30 @@ class OrderReceiptEmailService(
         if (eventName != null) "Your QuickPitik receipt · $eventName"
         else "Your QuickPitik receipt"
 
-    private fun renderHtml(
+    internal fun renderHtml(
         order: Order,
         eventName: String,
         entitledCount: Int,
         bundleUrl: String,
+        listTotal: BigDecimal = order.totalPhp,
+        discountTotal: BigDecimal = BigDecimal.ZERO,
     ): String {
         val ref = order.id.toString().take(8).uppercase()
+        // A ₱0 order (100% giveaway) confirms without a payment; the receipt
+        // says so and shows the list price it waived.
+        val free = order.totalPhp.signum() == 0
+        val kicker = if (free) "Order confirmed" else "Payment received"
+        val paidLabel = if (free) "Confirmed" else "Paid"
+        val discountLine = if (discountTotal.signum() > 0) {
+            val code = order.couponCode?.let(::escapeHtml) ?: "Photographer discount"
+            val charged = if (free) " Nothing was charged." else ""
+            """
+          <p style="font-size:14px;line-height:1.6;color:#3a3a3a;margin:-20px 0 28px;font-variant-numeric:tabular-nums;">
+            List ₱${listTotal.toPlainString()} · $code −₱${discountTotal.toPlainString()} · Total ₱${order.totalPhp.toPlainString()}.$charged
+          </p>"""
+        } else {
+            ""
+        }
         val paidAt = (order.paidAt ?: order.createdAt)
             .atZoneSameInstant(DISPLAY_ZONE)
             .format(DATE_FORMATTER)
@@ -161,7 +181,7 @@ class OrderReceiptEmailService(
       <table cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#fafaf6;border-radius:16px;padding:36px 32px;border:1px solid #e5e2d8;">
         <tr><td>
           <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:11px;color:#7a7a7a;margin:0 0 10px;">
-            QuickPitik · Payment received
+            QuickPitik · $kicker
           </p>
           <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:32px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.05;color:#1a1a1a;">
             All yours.
@@ -171,7 +191,7 @@ class OrderReceiptEmailService(
             <strong>${escapeHtml(eventName)}</strong> for
             <strong style="font-variant-numeric:tabular-nums;">$totalPhp</strong>.
           </p>
-
+$discountLine
           <table cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
             <tr><td style="padding:6px 0;">
               <a href="${escapeUrl(bundleUrl)}" download
@@ -191,7 +211,7 @@ class OrderReceiptEmailService(
             Reference · <span style="color:#1a1a1a;font-variant-numeric:tabular-nums;">$ref</span>
           </p>
           <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.25em;font-size:11px;color:#7a7a7a;margin:0;">
-            Paid · <span style="color:#1a1a1a;">${escapeHtml(paidAt)} PHT</span>
+            $paidLabel · <span style="color:#1a1a1a;">${escapeHtml(paidAt)} PHT</span>
           </p>
 
           <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:28px 0 0;">

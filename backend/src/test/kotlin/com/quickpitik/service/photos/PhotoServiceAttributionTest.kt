@@ -210,6 +210,20 @@ class PhotoServiceAttributionTest {
     }
 
     @Test
+    fun `a photo credits the photographer's public brand name`() {
+        val id = UUID.randomUUID()
+        stubPage(listOf(photo(id)))
+        stubPhotographers(
+            listOf(settings(id, handle = "cebu-shots").also { it.brandName = "Finish Line Studio" }),
+            listOf(user(id, name = "Cebu Shots")),
+        )
+
+        val dto = service().listForEvent(eventId, bib = null, pagination = pagination).items.single()
+
+        assertEquals("Finish Line Studio", dto.photographerName)
+    }
+
+    @Test
     fun `an unverified photographer has no handle but still has a name`() {
         // PhotographerSettings.handle is only assigned at verification. A null
         // handle is the "not linkable" signal — the name still renders, as

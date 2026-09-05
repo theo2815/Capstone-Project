@@ -213,6 +213,53 @@ describe("CheckoutModal QRPH", () => {
     expect(usePendingPaymentStore.getState().pending).toMatchObject({ total: 106.25 });
   });
 
+  // Free checkout (2026-09-05): a 100% giveaway quotes the cart to ₱0. The
+  // pay step drops the payment method, the button reads "Complete order",
+  // and a FULFILLED answer lands on success without a QR.
+  it("completes a ₱0 order without a QR step", async () => {
+    http.post.mockImplementation(async (path: string) =>
+      path === "/coupons/preview"
+        ? {
+            code: null,
+            percentOff: null,
+            photographerName: null,
+            photographerHandle: null,
+            items: [{ photoId: "photo-1", price: 125, discount: 125, couponCode: "FREE100", percentOff: 100 }],
+            eligibleCount: 1,
+            discountTotal: 125,
+          }
+        : {
+            id: ORDER_ID,
+            status: "FULFILLED",
+            items: [],
+            totalAmount: 0,
+            paymentMethod: "qrph",
+            createdAt: "2026-09-04T12:00:00Z",
+            returnToken: "return-token",
+          },
+    );
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await user.type(screen.getByLabelText("Email"), "runner@example.com");
+    await user.type(screen.getByLabelText("Confirm email"), "runner@example.com");
+    await user.click(screen.getByRole("button", { name: "Continue →" }));
+
+    expect(await screen.findByRole("button", { name: "Complete order →" })).toBeInTheDocument();
+    expect(screen.queryByText("QR Ph")).not.toBeInTheDocument();
+    expect(screen.getByText("Nothing to pay · Watermark removed on download")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Complete order →" }));
+    expect(await screen.findByText("All yours.")).toBeInTheDocument();
+    expect(screen.getByText(/Order confirmed/)).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /QR Ph payment code/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /View receipt & download/ })).toHaveAttribute(
+      "href",
+      `/orders/return?orderId=${ORDER_ID}&token=return-token`,
+    );
+    expect(useCartStore.getState().items).toHaveLength(0);
+    expect(usePendingPaymentStore.getState().pending).toBeNull();
+  });
+
   it("asks before leaving while a QR is live and ignores Esc under the confirmation", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const onClose = renderModal();
