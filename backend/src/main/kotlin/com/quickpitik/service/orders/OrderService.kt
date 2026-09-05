@@ -6,6 +6,7 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.PlatformProperties
+import com.quickpitik.config.PublicProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.orders.CreateOrderItem
 import com.quickpitik.dto.orders.CreateOrderRequest
@@ -66,6 +67,8 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -95,6 +98,7 @@ class OrderService(
     private val couponService: CouponService,
     private val paymongoWebhookService: PaymongoWebhookService,
     private val checkoutReconciler: PaymongoCheckoutReconciler,
+    private val publicProperties: PublicProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -691,6 +695,7 @@ class OrderService(
         val items = orderItemRepository.findByIdOrderId(order.id)
         val photos = photoRepository.findAllById(items.map { it.id.photoId }).associateBy { it.id }
         val grants = downloadGrantRepository.findByIdOrderId(order.id).associateBy { it.id.photoId }
+        val bundleToken = orderAccessTokenService.issue(order, OrderCapability.BUNDLE)
         return OrderResponse(
             id = order.id,
             status = order.status,
@@ -698,7 +703,7 @@ class OrderService(
                 OrderResponseItem(
                     photoId = item.id.photoId,
                     price = item.pricePhpAtPurchase,
-                    downloadUrl = photos[item.id.photoId]?.let { downloadUrlOf(it, grants[item.id.photoId]) },
+                    downloadUrl = photos[item.id.photoId]?.let { downloadUrlOf(order, it, grants[item.id.photoId], bundleToken) },
                     discount = item.discountPhp,
                 )
             },
@@ -828,6 +833,7 @@ class OrderService(
         val photos = photoRepository.findAllById(photoIds).associateBy { it.id }
         val event = eventRepository.findById(order.eventId).orElse(null)
         val grants = downloadGrantRepository.findByIdOrderId(order.id).associateBy { it.id.photoId }
+        val bundleToken = orderAccessTokenService.issue(order, OrderCapability.BUNDLE)
         return OrderDetailDto(
             id = order.id,
             eventId = order.eventId,
@@ -850,12 +856,12 @@ class OrderService(
                     tone = photo?.tone ?: index,
                     thumbnailUrl = photo?.let(::thumbnailUrlOf),
                     previewUrl = photo?.let { previewUrlOf(it, grants[item.id.photoId]) },
-                    downloadUrl = photo?.let { downloadUrlOf(it, grants[item.id.photoId]) },
+                    downloadUrl = photo?.let { downloadUrlOf(order, it, grants[item.id.photoId], bundleToken) },
                 )
             },
             downloadBundleUrl = null,
             recipientEmail = order.recipientEmail,
-            shareToken = orderAccessTokenService.issue(order, OrderCapability.BUNDLE),
+            shareToken = bundleToken,
             disputes = hydrateDisputesByOrderId(listOf(order.id))[order.id].orEmpty(),
             couponCode = order.couponCode,
             discountTotal = items.sumOf { it.discountPhp },
@@ -874,17 +880,16 @@ class OrderService(
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.runnerDownload)
     }
 
-    private fun downloadUrlOf(photo: Photo, grant: DownloadGrant?): String? {
+    // The per-photo download is our own bundle route narrowed with `photo=`,
+    // NOT a presigned R2 URL (2026-09-05): Meta's in-app browsers append
+    // `fbclid=` to the navigation, which breaks the SigV4 signature. Same
+    // shape as OrderReceiptEmailService.buildBundleUrl.
+    private fun downloadUrlOf(order: Order, photo: Photo, grant: DownloadGrant?, bundleToken: String): String? {
         if (grant == null || grant.grantedUntil.isBefore(OffsetDateTime.now())) return null
-        return storageService.presignedDownloadUrl(
-            photo.s3Key,
-            storageProperties.presignedTtl.runnerDownload,
-            downloadFilenameOf(photo),
-        )
+        val base = publicProperties.apiBaseUrl.trimEnd('/')
+        val token = URLEncoder.encode(bundleToken, StandardCharsets.UTF_8)
+        return "$base/orders/${order.id}/download-bundle?token=$token&photo=${photo.id}"
     }
-
-    private fun downloadFilenameOf(photo: Photo): String =
-        com.quickpitik.service.photos.PhotoFilenames.downloadFilenameOf(photo)
 
     private data class CheckoutReservation(
         val orders: List<Order>,

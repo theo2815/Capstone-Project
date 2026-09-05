@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.PublicProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photographer.CoverSourceDto
 import com.quickpitik.dto.photographer.PhotographerEventCoverageDto
@@ -23,6 +24,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.orders.CouponService
+import com.quickpitik.service.photos.PhotoService
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
@@ -41,6 +43,7 @@ class PublicPhotographerService(
     private val storageProperties: StorageProperties,
     private val storageService: com.quickpitik.service.storage.StorageService,
     private val couponService: CouponService,
+    private val publicProperties: PublicProperties,
 ) {
     fun getProfile(handle: String): PhotographerProfileDto {
         val normalized = handle.trim().lowercase()
@@ -153,15 +156,7 @@ class PublicPhotographerService(
                     photographerResolver = { photographer },
                     couponResolver = { photo -> couponService.quoteFor(photo, coupon) },
                     downloadUrlResolver = { photo ->
-                        if (free) {
-                            storageService.presignedDownloadUrl(
-                                photo.s3Key,
-                                ttl,
-                                com.quickpitik.service.photos.PhotoFilenames.downloadFilenameOf(photo),
-                            )
-                        } else {
-                            null
-                        }
+                        if (free) PhotoService.freeDownloadUrl(publicProperties.apiBaseUrl, photo) else null
                     },
                     free = free,
                 )

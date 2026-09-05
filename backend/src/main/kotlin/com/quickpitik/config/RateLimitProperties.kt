@@ -38,6 +38,10 @@ data class RateLimitProperties(
     // Public token-gated bundle download streams one S3 GET per photo + zip
     // CPU per call.
     val bundleDownload: Policy = Policy(capacity = 6, refillPeriod = Duration.ofMinutes(1)),
+    // Public per-photo download (bundle route with `?photo=`, free-event
+    // originals): one storage GET streamed through, no zip. Sized so a runner
+    // saving a whole order one photo at a time stays under it.
+    val photoDownload: Policy = Policy(capacity = 30, refillPeriod = Duration.ofMinutes(1)),
     // Authenticated small-file uploads (avatar / selfie / photographer cover /
     // watermark / payout QR) share one per-user bucket — selfie uploads can
     // trigger AI quality inference, the rest are storage writes.

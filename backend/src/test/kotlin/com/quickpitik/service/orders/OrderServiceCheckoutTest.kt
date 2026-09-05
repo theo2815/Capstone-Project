@@ -3,6 +3,7 @@ package com.quickpitik.service.orders
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.PlatformProperties
+import com.quickpitik.config.PublicProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.orders.CreateOrderItem
 import com.quickpitik.dto.orders.CreateOrderRequest
@@ -19,12 +20,16 @@ import com.quickpitik.dto.orders.PaymongoPaymentMethodResponse
 import com.quickpitik.dto.orders.PaymongoPaymentMethodResponseEnvelope
 import com.quickpitik.dto.orders.PaymongoPaymentMethodRequest
 import com.quickpitik.dto.orders.PaymongoQrCode
+import com.quickpitik.entity.DownloadGrant
+import com.quickpitik.entity.DownloadGrantId
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Order
 import com.quickpitik.entity.OrderItem
 import com.quickpitik.entity.OrderItemId
+import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.Payment
+import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerCoupon
@@ -51,12 +56,16 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.math.BigDecimal
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class OrderServiceCheckoutTest {
     private val eventId = UUID.randomUUID()
@@ -85,6 +94,9 @@ class OrderServiceCheckoutTest {
     private lateinit var eventRepository: EventRepository
     private lateinit var service: OrderService
     private lateinit var checkoutReconciler: PaymongoCheckoutReconciler
+    private lateinit var downloadGrants: DownloadGrantRepository
+    private lateinit var storageService: StorageService
+    private val platform = PlatformProperties(orderCapabilitySecret = "x".repeat(32))
     private var lastProviderRequest: PaymongoCheckoutSessionRequest? = null
     private val savedOrders = mutableListOf<Order>()
     private val savedItems = mutableListOf<OrderItem>()
@@ -98,7 +110,8 @@ class OrderServiceCheckoutTest {
         photoRepository = Mockito.mock(PhotoRepository::class.java)
         paymongoClient = Mockito.mock(PaymongoClient::class.java)
         couponRepository = Mockito.mock(PhotographerCouponRepository::class.java)
-        val downloadGrants = Mockito.mock(DownloadGrantRepository::class.java)
+        downloadGrants = Mockito.mock(DownloadGrantRepository::class.java)
+        storageService = Mockito.mock(StorageService::class.java)
         eventRepository = Mockito.mock(EventRepository::class.java)
         checkoutReconciler = Mockito.mock(PaymongoCheckoutReconciler::class.java)
 
@@ -133,7 +146,6 @@ class OrderServiceCheckoutTest {
         Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo))
         Mockito.`when`(downloadGrants.findByIdOrderId(anyArg())).thenReturn(emptyList())
 
-        val platform = PlatformProperties(orderCapabilitySecret = "x".repeat(32))
         service = OrderService(
             orderRepository,
             orderItemRepository,
@@ -143,7 +155,7 @@ class OrderServiceCheckoutTest {
             eventRepository,
             Mockito.mock(UserRepository::class.java),
             Mockito.mock(CartItemRepository::class.java),
-            Mockito.mock(StorageService::class.java),
+            storageService,
             StorageProperties(),
             paymongoClient,
             PaymongoProperties(),
@@ -166,7 +178,47 @@ class OrderServiceCheckoutTest {
             ),
             Mockito.mock(PaymongoWebhookService::class.java),
             checkoutReconciler,
+            PublicProperties(apiBaseUrl = "https://api.test/api/v1"),
         )
+    }
+
+    // 2026-09-05: the per-photo download URL is our own bundle route (+ `photo=`),
+    // not a presigned R2 link — Meta's in-app browsers append `fbclid=` to the
+    // navigation and R2 then rejects the SigV4 signature.
+    @Test
+    fun `a granted photo's download URL streams through the backend with the bundle token`() {
+        val order = Order(
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = PaymentMethod.GCASH.wire,
+            status = OrderStatus.PAID,
+            totalPhp = BigDecimal("125.00"),
+        )
+        Mockito.`when`(orderRepository.findById(order.id)).thenReturn(Optional.of(order))
+        savedItems += OrderItem(
+            id = OrderItemId(orderId = order.id, photoId = photo.id),
+            pricePhpAtPurchase = BigDecimal("125.00"),
+        )
+        Mockito.`when`(downloadGrants.findByIdOrderId(order.id)).thenReturn(
+            listOf(
+                DownloadGrant(
+                    id = DownloadGrantId(orderId = order.id, photoId = photo.id),
+                    grantedUntil = OffsetDateTime.now().plusYears(1),
+                ),
+            ),
+        )
+        Mockito.`when`(eventRepository.findById(eventId)).thenReturn(Optional.of(event))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
+        val tokens = OrderAccessTokenService(platform)
+
+        val detail = service.detailByIdAndToken(order.id, tokens.issue(order, OrderCapability.RETURN))
+
+        val url = detail.photos.single().downloadUrl!!
+        assertTrue(url.startsWith("https://api.test/api/v1/orders/${order.id}/download-bundle?token="), url)
+        assertTrue(url.endsWith("&photo=${photo.id}"), url)
+        val token = URLDecoder.decode(url.substringAfter("token=").substringBefore("&"), StandardCharsets.UTF_8)
+        assertEquals(detail.shareToken, token)
+        Mockito.verify(storageService, Mockito.never()).presignedDownloadUrl(anyArg(), anyArg(), anyArg())
     }
 
     @Test

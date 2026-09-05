@@ -50,8 +50,13 @@ class OrderBundleService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
+    // `photoId` narrows the bundle to one entitled photo (2026-09-05): the
+    // per-photo Download button now navigates here instead of to a presigned
+    // R2 URL, because Meta's in-app browsers append `fbclid=` to top-level
+    // navigations and R2 rejects the altered SigV4 signature. Our own route
+    // ignores unknown query params.
     @Transactional(readOnly = true)
-    fun prepare(orderId: UUID, token: String?): BundleSpec {
+    fun prepare(orderId: UUID, token: String?, photoId: UUID? = null): BundleSpec {
         val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
 
         // Anti-IDOR: every failure surfaces NOT_FOUND so an attacker probing
@@ -65,6 +70,7 @@ class OrderBundleService(
         }
 
         val items = orderItemRepository.findByIdOrderId(orderId)
+            .let { all -> if (photoId == null) all else all.filter { it.id.photoId == photoId } }
         if (items.isEmpty()) throw orderNotFound()
 
         val photos = photoRepository.findAllById(items.map { it.id.photoId }).associateBy { it.id }
@@ -114,8 +120,7 @@ class OrderBundleService(
     private fun writeSingleTo(spec: BundleSpec, out: OutputStream) {
         val entry = spec.entries.first()
         try {
-            val bytes = storageService.getBytes(entry.s3Key)
-            out.write(bytes)
+            storageService.open(entry.s3Key).use { it.transferTo(out) }
             out.flush()
         } catch (ex: Exception) {
             // No partial fallback — a single-photo order with one failing

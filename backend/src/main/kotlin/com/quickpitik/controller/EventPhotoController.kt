@@ -19,7 +19,9 @@ import com.quickpitik.service.ratelimit.acquireOrThrow
 import com.quickpitik.service.ratelimit.clientIp
 import com.quickpitik.service.storage.StorageService
 import jakarta.servlet.http.HttpServletRequest
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.http.MediaType
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
@@ -31,6 +33,9 @@ import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.multipart.MultipartFile
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -69,6 +74,32 @@ class EventPhotoController(
             requesterUserId = principal?.userId,
             snapshotAt = snapshotAt,
         )
+    }
+
+    // Free-event original, streamed through the backend (2026-09-05). A
+    // presigned R2 URL handed to a top-level navigation gets `fbclid=`
+    // appended by Meta's in-app browsers and fails its SigV4 check; this
+    // route ignores unknown params. Public: the gate is the event's pricing
+    // mode, enforced in PhotoService.freeDownload. StreamingResponseBody
+    // bypasses ResponseEnvelopeAdvice (same as the order bundle).
+    @GetMapping("/{eventId}/photos/{photoId}/download")
+    fun downloadFree(
+        @PathVariable eventId: UUID,
+        @PathVariable photoId: UUID,
+        request: HttpServletRequest,
+    ): ResponseEntity<StreamingResponseBody> {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_DOWNLOAD, clientIp(request))
+        val download = photoService.freeDownload(eventId, photoId)
+        val encoded = URLEncoder.encode(download.filename, StandardCharsets.UTF_8).replace("+", "%20")
+        val body = StreamingResponseBody { out -> storageService.open(download.s3Key).use { it.transferTo(out) } }
+        return ResponseEntity.ok()
+            .header(HttpHeaders.CONTENT_TYPE, MediaType.IMAGE_JPEG_VALUE)
+            .header(
+                HttpHeaders.CONTENT_DISPOSITION,
+                """attachment; filename="${download.filename}"; filename*=UTF-8''$encoded""",
+            )
+            .header(HttpHeaders.CACHE_CONTROL, "no-store")
+            .body(body)
     }
 
     @PostMapping(

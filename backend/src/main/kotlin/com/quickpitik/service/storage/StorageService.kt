@@ -19,6 +19,11 @@ interface StorageService {
     // would fetch. Throws if the key is missing.
     fun getBytes(key: String): ByteArray
 
+    // Streaming read for downloads that pass through the backend — the
+    // caller copies to the response and closes the stream, so a 10 MB
+    // original never sits on the heap. Throws if the key is missing.
+    fun open(key: String): InputStream
+
     fun delete(key: String)
 
     fun exists(key: String): Boolean

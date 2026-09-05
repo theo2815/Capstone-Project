@@ -75,16 +75,22 @@ class GuestOrderController(
     // Content type + filename come from BundleSpec, which auto-collapses
     // single-photo orders to a raw image/jpeg download instead of a ZIP —
     // the URL is the same; the body and Content-Disposition adapt.
+    //
+    // `?photo=` narrows to one photo (the per-photo Download button). Its own
+    // bucket: a runner saving ten photos one by one must not drain the 6/min
+    // whole-order ZIP budget, least of all behind venue NAT.
     @GetMapping("/{id}/download-bundle")
     fun bundle(
         @PathVariable id: UUID,
         @RequestParam(required = false) token: String?,
+        @RequestParam(required = false) photo: UUID?,
         request: HttpServletRequest,
     ): ResponseEntity<StreamingResponseBody> {
         // Per-IP: public route streaming one S3 GET per photo + zip CPU per
         // call — the token gates access, this bounds resource burn.
-        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_BUNDLE_DOWNLOAD, clientIp(request))
-        val spec = orderBundleService.prepare(orderId = id, token = token)
+        val policy = if (photo == null) Bucket4jRateLimiter.POLICY_BUNDLE_DOWNLOAD else Bucket4jRateLimiter.POLICY_PHOTO_DOWNLOAD
+        rateLimiter.acquireOrThrow(policy, clientIp(request))
+        val spec = orderBundleService.prepare(orderId = id, token = token, photoId = photo)
         val encoded = URLEncoder.encode(spec.filename, StandardCharsets.UTF_8).replace("+", "%20")
         val body = StreamingResponseBody { out -> orderBundleService.writeTo(spec, out) }
         return ResponseEntity.ok()

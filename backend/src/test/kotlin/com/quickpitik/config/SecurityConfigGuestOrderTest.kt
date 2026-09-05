@@ -53,6 +53,22 @@ class SecurityConfigGuestOrderTest {
         )
     }
 
+    // Per-photo downloads add `photo=`; Meta's in-app browsers add `fbclid=`
+    // on top. Both must stay permitted — that tolerance is the whole reason
+    // downloads route through here instead of a presigned URL (2026-09-05).
+    @Test
+    fun `bundle route stays permitted with a photo id and a stray tracking param`() {
+        assertTrue(
+            SecurityConfig.guestOrderGet("/download-bundle")
+                .matches(
+                    get(
+                        "/api/v1/orders/$orderId/download-bundle",
+                        "token=$token&photo=${UUID.randomUUID()}&fbclid=IwZXh0bgNhZW0",
+                    ),
+                ),
+        )
+    }
+
     @Test
     fun `status route is still permitted without a query string`() {
         assertTrue(

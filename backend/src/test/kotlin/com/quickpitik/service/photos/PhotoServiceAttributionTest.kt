@@ -2,6 +2,7 @@ package com.quickpitik.service.photos
 
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.PlatformProperties
+import com.quickpitik.config.PublicProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventPricingMode
@@ -11,6 +12,7 @@ import com.quickpitik.entity.PhotographerCoupon
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
@@ -30,6 +32,7 @@ import java.time.LocalDate
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -71,20 +74,55 @@ class PhotoServiceAttributionTest {
     // Free events (V46): the preview is unmarked and the original is anyone's
     // to download, so the clean + download URLs are minted for every visitor —
     // grant or no grant, signed in or not.
+    //
+    // The download URL is a backend route, not a presigned R2 link (2026-09-05):
+    // Meta's in-app browsers append `fbclid=` to the navigation, which breaks
+    // a SigV4 signature but is ignored by our own controller.
     @Test
     fun `a free event hands every visitor the clean and download URLs`() {
         stubEvent(EventPricingMode.FREE)
-        stubPage(listOf(photo(UUID.randomUUID(), price = "0.00")))
-        Mockito.`when`(storageService.presignedDownloadUrl(anyArg(), anyArg(), anyArg())).thenReturn("https://dl")
+        val photo = photo(UUID.randomUUID(), price = "0.00")
+        stubPage(listOf(photo))
 
         val dto = service().listForEvent(eventId, bib = null, pagination = pagination).items.single()
 
         assertTrue(dto.free)
         assertEquals(0, dto.price.signum())
         assertEquals("https://thumb", dto.cleanUrl)
-        assertEquals("https://dl", dto.downloadUrl)
+        assertEquals("https://api.test/api/v1/events/$eventId/photos/${photo.id}/download", dto.downloadUrl)
         assertNull(dto.couponCode)
+        Mockito.verify(storageService, Mockito.never()).presignedDownloadUrl(anyArg(), anyArg(), anyArg())
         Mockito.verify(downloadGrantRepository, Mockito.never()).findOwnedPhotoIdsByUserAndPhotoIds(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `freeDownload resolves the original key and filename for a live photo of a free event`() {
+        stubEvent(EventPricingMode.FREE)
+        val photo = photo(UUID.randomUUID(), price = "0.00")
+        Mockito.`when`(photoRepository.findById(photo.id)).thenReturn(Optional.of(photo))
+
+        val download = service().freeDownload(eventId, photo.id)
+
+        assertEquals(photo.s3Key, download.s3Key)
+        assertEquals(PhotoFilenames.downloadFilenameOf(photo), download.filename)
+    }
+
+    @Test
+    fun `freeDownload refuses a photo of a paid event`() {
+        stubEvent(EventPricingMode.PAID)
+        val photo = photo(UUID.randomUUID())
+        Mockito.`when`(photoRepository.findById(photo.id)).thenReturn(Optional.of(photo))
+
+        assertFailsWith<NotFoundException> { service().freeDownload(eventId, photo.id) }
+    }
+
+    @Test
+    fun `freeDownload refuses a photo that belongs to another event`() {
+        stubEvent(EventPricingMode.FREE)
+        val stray = Photo(eventId = UUID.randomUUID(), s3Key = "elsewhere.jpg", pricePhp = BigDecimal.ZERO)
+        Mockito.`when`(photoRepository.findById(stray.id)).thenReturn(Optional.of(stray))
+
+        assertFailsWith<NotFoundException> { service().freeDownload(eventId, stray.id) }
     }
 
     @Test
@@ -256,6 +294,8 @@ class PhotoServiceAttributionTest {
             Mockito.mock(OrderRepository::class.java),
         ),
         eventRepository,
+        // Trailing slash on purpose — the builder must not emit `//events`.
+        PublicProperties(apiBaseUrl = "https://api.test/api/v1/"),
     )
 
     private fun stubPage(photos: List<Photo>) {
