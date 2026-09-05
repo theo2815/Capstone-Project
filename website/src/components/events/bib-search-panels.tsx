@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChangeEvent, FormEvent, RefObject } from "react";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
@@ -31,27 +31,21 @@ export function BibPanel({
   onBibChange,
   onSubmit,
   onSwitchToSelfie,
-  photoCount,
-  eventPhotoCount,
   inputRef,
 }: {
   bibInput: string;
   onBibChange: (v: string) => void;
   onSubmit: (e: FormEvent) => void;
   onSwitchToSelfie: () => void;
-  photoCount: number;
-  eventPhotoCount: number;
   inputRef?: RefObject<HTMLInputElement | null>;
 }) {
+  const inputId = useId();
   return (
     <form onSubmit={onSubmit} className="mt-8">
-      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-3">
-        Your bib number
-      </p>
-      <label className="block">
-        <span className="sr-only">Bib number</span>
+      <div className="relative flex items-center rounded-xl border border-line bg-transparent focus-within:border-fresh transition-colors">
         <input
           ref={inputRef}
+          id={inputId}
           type="text"
           name="bib"
           inputMode="text"
@@ -59,10 +53,41 @@ export function BibPanel({
           autoCapitalize="characters"
           value={bibInput}
           onChange={(e) => onBibChange(e.target.value)}
-          placeholder="B-4082"
-          className="block w-full border-b border-line bg-transparent focus:border-fresh outline-none font-mono tracking-[0.14em] text-lg py-3 placeholder:text-slate-soft text-ink"
+          placeholder=" "
+          className="peer block w-full bg-transparent outline-none font-mono tracking-[0.14em] text-lg px-5 pt-6 pb-2 text-ink"
         />
-      </label>
+        <label
+          htmlFor={inputId}
+          className="pointer-events-none absolute left-5 font-sans text-slate-soft transition-all duration-150 top-1/2 -translate-y-1/2 text-lg peer-focus:top-2 peer-focus:translate-y-0 peer-focus:text-sm peer-focus:text-slate peer-[:not(:placeholder-shown)]:top-2 peer-[:not(:placeholder-shown)]:translate-y-0 peer-[:not(:placeholder-shown)]:text-sm peer-[:not(:placeholder-shown)]:text-slate"
+        >
+          Enter your bib number
+        </label>
+        {bibInput && (
+          <button
+            type="button"
+            onClick={() => {
+              onBibChange("");
+              inputRef?.current?.focus();
+            }}
+            aria-label="Clear bib number"
+            className="shrink-0 pl-2 pr-5 text-slate hover:text-ink transition-colors"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              className="size-4"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M3 3 L13 13 M13 3 L3 13"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        )}
+      </div>
       <button
         type="submit"
         className="mt-5 inline-flex items-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors"
@@ -85,18 +110,6 @@ export function BibPanel({
       >
         Match by selfie →
       </button>
-
-      <p className="mt-7 font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
-        <span className="tnum">{photoCount.toLocaleString()}</span>{" "}
-        {photoCount === 1 ? "photo" : "photos"}
-        {eventPhotoCount > photoCount ? (
-          <>
-            {" "}
-            of <span className="tnum">{eventPhotoCount.toLocaleString()}</span>
-          </>
-        ) : null}{" "}
-        · free to search
-      </p>
     </form>
   );
 }
@@ -230,7 +243,7 @@ export function SelfieSearchPanel({
   return (
     <div className="mt-8" style={{ animation: "fade-in 0.3s ease-out both" }}>
       <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-4">
-        Selfie match
+        Selfie match · fastest way
       </p>
 
       <div className="space-y-3">
@@ -342,9 +355,9 @@ export function SelfieSearchPanel({
       <button
         type="button"
         onClick={onSwitchToBib}
-        className="mt-6 inline-flex items-center font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-fresh transition-colors"
+        className="mt-6 w-full inline-flex items-center justify-center rounded-xl border border-line px-6 py-4 font-mono uppercase tracking-[0.14em] text-[13px] text-ink hover:border-line-strong hover:bg-bone-deep transition-colors"
       >
-        ← Use bib instead
+        Search by bib →
       </button>
     </div>
   );

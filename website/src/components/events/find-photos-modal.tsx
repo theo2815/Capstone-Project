@@ -31,6 +31,10 @@ interface FindPhotosModalProps {
    *  Callers without face-mode UI (e.g. /[handle]/events/[slug]) may omit
    *  it; the modal still closes on success. */
   onSearchByFaceSuccess?: (result: EventPhotosResult) => void;
+  /** Which panel opens first. The event cockpit leads with selfie (bib search
+   *  is inaccurate for runners); per-photographer pages stay bib-first.
+   *  Default "bib". */
+  initialMode?: SearchPanelMode;
 }
 
 // Portal-mounted "Find your photos" modal. Reused by `event-cockpit` (event-wide
@@ -45,9 +49,10 @@ export function FindPhotosModal({
   onClose,
   onSubmitBib,
   onSearchByFaceSuccess,
+  initialMode = "bib",
 }: FindPhotosModalProps) {
   const [bibInput, setBibInput] = useState("");
-  const [panelMode, setPanelMode] = useState<SearchPanelMode>("bib");
+  const [panelMode, setPanelMode] = useState<SearchPanelMode>(initialMode);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const bibInputRef = useRef<HTMLInputElement | null>(null);
   const [mounted, setMounted] = useState(false);
@@ -162,8 +167,14 @@ export function FindPhotosModal({
           </svg>
         </button>
         <div className="rounded-2xl bg-bone border border-line shadow-[0_24px_60px_-20px_rgba(17,17,17,0.45)] p-8 md:p-10 max-h-[85vh] overflow-y-auto">
-          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-5">
+          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-1.5">
             {eyebrow}
+          </p>
+          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mb-5">
+            <span className="tnum">
+              {(photoCount || eventPhotoCount).toLocaleString()}
+            </span>{" "}
+            photos available · free to search
           </p>
           <h2 className="font-display text-4xl md:text-5xl font-medium tracking-tight leading-[0.95]">
             Find your
@@ -177,8 +188,6 @@ export function FindPhotosModal({
               onBibChange={setBibInput}
               onSubmit={handleSubmit}
               onSwitchToSelfie={() => setPanelMode("selfie")}
-              photoCount={photoCount}
-              eventPhotoCount={eventPhotoCount}
               inputRef={bibInputRef}
             />
           ) : (
