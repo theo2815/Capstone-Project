@@ -87,6 +87,18 @@ class SecurityConfigGuestOrderTest {
         )
     }
 
+    // Cancel is the one guest POST. Permitted with the token; the GET matcher
+    // must not open it, and it must not open the GET-only siblings.
+    @Test
+    fun `guest cancel is permitted as POST with a token and stays closed to GET`() {
+        val cancel = SecurityConfig.guestOrderRoute(org.springframework.http.HttpMethod.POST, "/cancel")
+        val post = get("/api/v1/orders/$orderId/cancel", "token=$token").apply { method = "POST" }
+        assertTrue(cancel.matches(post))
+        assertFalse(cancel.matches(get("/api/v1/orders/$orderId/cancel", "token=$token")))
+        assertFalse(SecurityConfig.guestOrderGet("/cancel").matches(post))
+        assertFalse(cancel.matches(get("/api/v1/orders/$orderId/refund", "token=$token").apply { method = "POST" }))
+    }
+
     @Test
     fun `a non-uuid id is not permitted`() {
         assertFalse(

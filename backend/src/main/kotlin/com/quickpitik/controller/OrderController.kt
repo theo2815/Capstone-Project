@@ -97,6 +97,19 @@ class OrderController(
         return orderService.statusForUser(userId = principal.userId, orderId = id)
     }
 
+    // Cancel a live QR. One PayMongo retrieve per hit (race check), so it
+    // draws the verify bucket. Returns the order's status afterwards — the
+    // client shows success if the payment won the race.
+    @PostMapping("/me/orders/{id}/cancel")
+    fun cancel(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable id: UUID,
+        request: HttpServletRequest,
+    ): OrderStatusDto {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_ORDER_VERIFY, clientIp(request))
+        return orderService.cancelForUser(userId = principal.userId, orderId = id)
+    }
+
     @PostMapping("/me/orders/{id}/refund")
     fun refund(
         @AuthenticationPrincipal principal: AuthPrincipal,

@@ -13,6 +13,8 @@ export interface PendingPayment {
   // /me/... with the JWT. Branch on this, never on auth state — a guest who
   // logs in mid-checkout still owns a userId-less order.
   returnToken: string | null;
+  // Test-mode simulator link (dev only); persisted so it survives a refresh.
+  testUrl: string | null;
   email: string;
   total: number;
   itemCount: number;

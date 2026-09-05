@@ -3,7 +3,11 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
-import { buildOrderReturnPath, fetchPendingStatus } from "@/lib/api-orders";
+import {
+  buildOrderReturnPath,
+  classifyExpired,
+  fetchPendingStatus,
+} from "@/lib/api-orders";
 import { formatOrderRef } from "@/lib/utils";
 import { useCartStore } from "@/store/cart-store";
 import { usePendingPaymentStore } from "@/store/pending-payment-store";
@@ -65,7 +69,9 @@ export function PendingPaymentWatcher() {
           showToast({
             kind: "info",
             message:
-              "Your QR code expired before a payment was detected — nothing was charged.",
+              classifyExpired(pending.expiresAt) === "failed"
+                ? "Your payment didn't go through — nothing was charged."
+                : "Your QR code expired before a payment was detected — nothing was charged.",
             duration: 8_000,
           });
         } else if (

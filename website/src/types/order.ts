@@ -34,6 +34,9 @@ export interface Order {
     imageUrl: string;
     expiresAt: string;
     returnToken?: string | null;
+    // PayMongo's test-mode simulator for this QR. Null on live keys — the
+    // backend never emits it in production.
+    testUrl?: string | null;
   } | null;
 }
 

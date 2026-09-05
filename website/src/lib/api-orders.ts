@@ -176,6 +176,29 @@ export function fetchPendingStatus(
     : fetchOrderStatusForUser(pending.orderId, opts);
 }
 
+// Runner backs out of a live QR. The backend asks PayMongo once more first,
+// so the returned status is the truth: PAID/FULFILLED means the payment won
+// the race and the caller should show success, not "cancelled".
+export function cancelPendingPayment(
+  pending: { orderId: string; returnToken: string | null },
+): Promise<OrderStatusPayload> {
+  const id = encodeURIComponent(pending.orderId);
+  return pending.returnToken
+    ? api.post<OrderStatusPayload>(
+        `/orders/${id}/cancel?${new URLSearchParams({ token: pending.returnToken })}`,
+      )
+    : api.post<OrderStatusPayload>(`/me/orders/${id}/cancel`);
+}
+
+// The backend records a declined payment and a timed-out QR the same way
+// (EXPIRED). Seen before the QR's own deadline it can only be a failure.
+export function classifyExpired(
+  expiresAt: string,
+  now: number = Date.now(),
+): "expired" | "failed" {
+  return now < new Date(expiresAt).getTime() - 5_000 ? "failed" : "expired";
+}
+
 // Receipt page for a pending/paid record — guests need the token in the URL.
 export function buildOrderReturnPath(
   pending: { orderId: string; returnToken: string | null },

@@ -13,6 +13,7 @@ import org.springframework.http.HttpHeaders
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
@@ -51,6 +52,18 @@ class GuestOrderController(
             return orderService.verifyByIdAndToken(orderId = id, token = token)
         }
         return orderService.statusByIdAndToken(orderId = id, token = token)
+    }
+
+    // Guest cancels a live QR (token-gated like status). Same race rule as
+    // the /me route: one PayMongo retrieve first, so the verify bucket.
+    @PostMapping("/{id}/cancel")
+    fun cancel(
+        @PathVariable id: UUID,
+        @RequestParam(required = false) token: String?,
+        request: HttpServletRequest,
+    ): OrderStatusDto {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_ORDER_VERIFY, clientIp(request))
+        return orderService.cancelByIdAndToken(orderId = id, token = token)
     }
 
     // Hydrated detail for the /orders/return success state. Same shape as

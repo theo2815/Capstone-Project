@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CheckoutModal } from "@/components/cart/checkout-modal";
@@ -35,6 +35,7 @@ function pendingRecord(overrides: Partial<PendingPayment> = {}): PendingPayment 
     imageUrl: "data:image/png;base64,cXJwaA==",
     expiresAt: expiresAt(),
     returnToken: "return-token" as string | null,
+    testUrl: null as string | null,
     email: "runner@example.com",
     total: 125,
     itemCount: 1,
@@ -58,6 +59,7 @@ const tick = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
 async function walkToQr(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("Email"), "runner@example.com");
+  await user.type(screen.getByLabelText("Confirm email"), "runner@example.com");
   await user.click(screen.getByRole("button", { name: "Continue →" }));
   await user.click(screen.getByRole("button", { name: /Generate QR to pay/ }));
   await screen.findByRole("img", { name: /QR Ph payment code/ });
@@ -93,9 +95,12 @@ describe("CheckoutModal QRPH", () => {
   it("offers only QR Ph, persists the pending payment, and only succeeds on a confirmed status", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderModal();
+    expect(screen.getByText(/Step 1 of 4/)).toBeInTheDocument();
     await user.type(screen.getByLabelText("Email"), "runner@example.com");
+    await user.type(screen.getByLabelText("Confirm email"), "runner@example.com");
     await user.click(screen.getByRole("button", { name: "Continue →" }));
 
+    expect(screen.getByText(/Step 2 of 4/)).toBeInTheDocument();
     expect(screen.getByText("QR Ph")).toBeInTheDocument();
     expect(screen.queryByText("GCash")).not.toBeInTheDocument();
     expect(screen.queryByText("Maya")).not.toBeInTheDocument();
@@ -193,7 +198,27 @@ describe("CheckoutModal QRPH", () => {
     expect(usePendingPaymentStore.getState().pending).not.toBeNull();
   });
 
-  it("returns to the payment step with a fresh key when the QR expires", async () => {
+  it("blocks a mismatched Confirm email and accepts a case-insensitive match", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await user.type(screen.getByLabelText("Email"), "runner@example.com");
+    await user.type(screen.getByLabelText("Confirm email"), "runner@exmaple.com");
+    await user.click(screen.getByRole("button", { name: "Continue →" }));
+    expect(screen.getByText("Emails don't match.")).toBeInTheDocument();
+    expect(screen.queryByText("QR Ph")).not.toBeInTheDocument();
+
+    // The label now also carries the error text, so match its start.
+    const confirmField = screen.getByLabelText(/^Confirm email/);
+    await user.clear(confirmField);
+    await user.type(confirmField, "Runner@Example.com");
+    await user.click(screen.getByRole("button", { name: "Continue →" }));
+    expect(screen.getByText("QR Ph")).toBeInTheDocument();
+    expect(screen.getByText("runner@example.com")).toBeInTheDocument();
+  });
+
+  // EXPIRED well before the QR's own deadline can only mean the bank or the
+  // simulator failed the payment — the backend records both the same way.
+  it("reads an early EXPIRED as a failed payment and retries with a fresh key", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderModal();
     await walkToQr(user);
@@ -201,14 +226,118 @@ describe("CheckoutModal QRPH", () => {
 
     http.get.mockResolvedValue({ id: ORDER_ID, status: "EXPIRED", paidAt: null });
     await tick(3000);
-    expect(await screen.findByText(/expired before a payment was detected/)).toBeInTheDocument();
+    expect(await screen.findByText("Payment didn't go through")).toBeInTheDocument();
     expect(screen.getByText(/Nothing was charged/)).toBeInTheDocument();
     expect(usePendingPaymentStore.getState().pending).toBeNull();
 
     http.get.mockResolvedValue(pendingStatus);
-    await user.click(screen.getByRole("button", { name: /Generate QR to pay/ }));
+    await user.click(screen.getByRole("button", { name: /Generate a new QR/ }));
     await screen.findByRole("img", { name: /QR Ph payment code/ });
     expect(http.post.mock.calls[1][2].headers["Idempotency-Key"]).not.toBe(firstKey);
+  });
+
+  it("reads EXPIRED at the QR's deadline as an expired code", async () => {
+    usePendingPaymentStore.setState({
+      pending: pendingRecord({ expiresAt: new Date(Date.now() - 60_000).toISOString() }),
+    });
+    http.get.mockResolvedValue({ id: ORDER_ID, status: "EXPIRED", paidAt: null });
+    renderModal();
+
+    expect(await screen.findByText("Your QR code expired")).toBeInTheDocument();
+    expect(usePendingPaymentStore.getState().pending).toBeNull();
+  });
+
+  it("cancels a live QR after confirmation and lands back on the pay step", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await walkToQr(user);
+    const firstKey = http.post.mock.calls[0][2].headers["Idempotency-Key"];
+    http.post.mockResolvedValue({ id: ORDER_ID, status: "EXPIRED", paidAt: null });
+
+    await user.click(screen.getByRole("button", { name: "Cancel payment" }));
+    await waitFor(() => expect(useConfirmationStore.getState().active).not.toBeNull());
+    expect(useConfirmationStore.getState().active?.config.title).toBe("Cancel this payment?");
+    // Keep waiting: nothing happens.
+    act(() => useConfirmationStore.getState().close(false));
+    await waitFor(() => expect(useConfirmationStore.getState().active).toBeNull());
+    expect(http.post).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("img", { name: /QR Ph payment code/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancel payment" }));
+    await waitFor(() => expect(useConfirmationStore.getState().active).not.toBeNull());
+    act(() => useConfirmationStore.getState().close(true));
+    await waitFor(() =>
+      expect(http.post).toHaveBeenCalledWith(`/orders/${ORDER_ID}/cancel?token=return-token`),
+    );
+    expect(await screen.findByText("Payment cancelled")).toBeInTheDocument();
+    expect(screen.getByText(/Step 2 of 4/)).toBeInTheDocument();
+    expect(usePendingPaymentStore.getState().pending).toBeNull();
+    // The cart is untouched — only the payment attempt was cancelled.
+    expect(useCartStore.getState().items).toHaveLength(1);
+
+    http.post.mockResolvedValue({
+      id: ORDER_ID,
+      status: "PENDING",
+      items: [],
+      totalAmount: 125,
+      paymentMethod: "qrph",
+      createdAt: "2026-09-04T12:00:00Z",
+      qrPh: { imageUrl: "data:image/png;base64,cXJwaA==", expiresAt: expiresAt(), returnToken: "return-token" },
+    });
+    await user.click(screen.getByRole("button", { name: /Generate a new QR/ }));
+    await screen.findByRole("img", { name: /QR Ph payment code/ });
+    const keys = http.post.mock.calls.filter(([p]) => p === "/orders").map((c) => c[2].headers["Idempotency-Key"]);
+    expect(keys[1]).not.toBe(firstKey);
+  });
+
+  it("shows success when the payment wins the race against cancel", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await walkToQr(user);
+    http.post.mockResolvedValue(fulfilledStatus);
+
+    await user.click(screen.getByRole("button", { name: "Cancel payment" }));
+    await waitFor(() => expect(useConfirmationStore.getState().active).not.toBeNull());
+    act(() => useConfirmationStore.getState().close(true));
+
+    expect(await screen.findByText("All yours.")).toBeInTheDocument();
+    expect(screen.queryByText("Payment cancelled")).not.toBeInTheDocument();
+    expect(useCartStore.getState().items).toHaveLength(0);
+    expect(usePendingPaymentStore.getState().pending).toBeNull();
+  });
+
+  it("cancels a signed-in record through the /me route", async () => {
+    usePendingPaymentStore.setState({ pending: pendingRecord({ returnToken: null }) });
+    http.post.mockResolvedValue({ id: ORDER_ID, status: "EXPIRED", paidAt: null });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await screen.findByRole("img", { name: /QR Ph payment code/ });
+
+    await user.click(screen.getByRole("button", { name: "Cancel payment" }));
+    await waitFor(() => expect(useConfirmationStore.getState().active).not.toBeNull());
+    act(() => useConfirmationStore.getState().close(true));
+
+    await waitFor(() => expect(http.post).toHaveBeenCalledWith(`/me/orders/${ORDER_ID}/cancel`));
+    expect(await screen.findByText("Payment cancelled")).toBeInTheDocument();
+  });
+
+  it("shows the PayMongo simulator only when the backend sends a test url", async () => {
+    usePendingPaymentStore.setState({
+      pending: pendingRecord({ testUrl: "https://test.paymongo.com/qrph/pi_x" }),
+    });
+    const first = renderModal();
+    expect(await screen.findByText(/Test mode/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open PayMongo simulator/ })).toHaveAttribute(
+      "href",
+      "https://test.paymongo.com/qrph/pi_x",
+    );
+    void first;
+    cleanup();
+
+    usePendingPaymentStore.setState({ pending: pendingRecord() });
+    renderModal();
+    await screen.findByRole("img", { name: /QR Ph payment code/ });
+    expect(screen.queryByText(/Test mode/)).not.toBeInTheDocument();
   });
 
   it("resumes a persisted QR without creating a new order", async () => {
@@ -234,6 +363,7 @@ describe("CheckoutModal QRPH", () => {
       </QueryClientProvider>,
     );
     await waitFor(() => expect(http.get).toHaveBeenCalledWith(STATUS_PATH));
+    expect(screen.getByText(/Step 2 of 3/)).toBeInTheDocument();
     first.unmount();
 
     vi.clearAllMocks();

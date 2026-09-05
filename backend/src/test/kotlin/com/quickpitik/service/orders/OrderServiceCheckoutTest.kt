@@ -146,7 +146,10 @@ class OrderServiceCheckoutTest {
         Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo))
         Mockito.`when`(downloadGrants.findByIdOrderId(anyArg())).thenReturn(emptyList())
 
-        service = OrderService(
+        service = newService()
+    }
+
+    private fun newService(paymongo: PaymongoProperties = PaymongoProperties()): OrderService = OrderService(
             orderRepository,
             orderItemRepository,
             paymentRepository,
@@ -158,7 +161,7 @@ class OrderServiceCheckoutTest {
             storageService,
             StorageProperties(),
             paymongoClient,
-            PaymongoProperties(),
+            paymongo,
             Mockito.mock(DisputeRepository::class.java),
             Mockito.mock(AdminDecisionLogRepository::class.java),
             platform,
@@ -180,7 +183,6 @@ class OrderServiceCheckoutTest {
             checkoutReconciler,
             PublicProperties(apiBaseUrl = "https://api.test/api/v1"),
         )
-    }
 
     // 2026-09-05: the per-photo download URL is our own bundle route (+ `photo=`),
     // not a presigned R2 link — Meta's in-app browsers append `fbclid=` to the
@@ -337,6 +339,102 @@ class OrderServiceCheckoutTest {
         assertEquals("pi_test", savedPayments.single().providerRef)
         assertEquals(null, response.redirectUrl)
         Mockito.verify(paymongoClient, Mockito.never()).createCheckoutSession(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `qrph test-mode simulator url reaches the client only on a test key`() {
+        stubQrph(testUrl = "https://test.paymongo.com/qrph/pi_test")
+
+        assertEquals("https://test.paymongo.com/qrph/pi_test", service.create(null, request(paymentMethod = "qrph"), key).qrPh?.testUrl)
+
+        savedOrders.clear(); savedItems.clear(); savedPayments.clear()
+        service = newService(PaymongoProperties(secretKey = "sk_live_x"))
+        assertEquals(null, service.create(null, request(paymentMethod = "qrph"), key).qrPh?.testUrl)
+    }
+
+    @Test
+    fun `cancel asks PayMongo first and expires an order that is still pending`() {
+        val userId = UUID.randomUUID()
+        val order = pendingQrphOrder(userId)
+
+        val status = service.cancelForUser(userId, order.id)
+
+        val inOrder = Mockito.inOrder(checkoutReconciler)
+        inOrder.verify(checkoutReconciler).reconcileOrder(order.id)
+        inOrder.verify(checkoutReconciler).expireOrder(order.id)
+        // The mocked reconciler doesn't mutate; the DTO reflects the reload.
+        assertEquals(OrderStatus.PENDING, status.status)
+    }
+
+    @Test
+    fun `cancel loses the race to a payment that just settled`() {
+        val userId = UUID.randomUUID()
+        val order = pendingQrphOrder(userId)
+        Mockito.doAnswer { order.status = OrderStatus.FULFILLED; null }
+            .`when`(checkoutReconciler).reconcileOrder(order.id)
+
+        val status = service.cancelForUser(userId, order.id)
+
+        assertEquals(OrderStatus.FULFILLED, status.status)
+        Mockito.verify(checkoutReconciler, Mockito.never()).expireOrder(anyArg())
+    }
+
+    @Test
+    fun `cancel on a settled order is a plain status read`() {
+        val userId = UUID.randomUUID()
+        val order = pendingQrphOrder(userId).also { it.status = OrderStatus.FULFILLED }
+
+        assertEquals(OrderStatus.FULFILLED, service.cancelForUser(userId, order.id).status)
+        Mockito.verifyNoInteractions(checkoutReconciler)
+    }
+
+    @Test
+    fun `cancel is anti-IDOR like status`() {
+        val order = pendingQrphOrder(UUID.randomUUID())
+
+        assertFailsWith<NotFoundException> { service.cancelForUser(UUID.randomUUID(), order.id) }
+        assertFailsWith<NotFoundException> { service.cancelByIdAndToken(order.id, "not-a-token") }
+        Mockito.verifyNoInteractions(checkoutReconciler)
+    }
+
+    private fun pendingQrphOrder(userId: UUID): Order {
+        val order = Order(
+            userId = userId,
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = PaymentMethod.QRPH.wire,
+            totalPhp = BigDecimal("125.00"),
+        )
+        Mockito.`when`(orderRepository.findById(order.id)).thenReturn(Optional.of(order))
+        return order
+    }
+
+    private fun stubQrph(testUrl: String? = null) {
+        Mockito.`when`(paymentRepository.findByOrderId(anyArg())).thenAnswer { call ->
+            savedPayments.filter { it.orderId == call.getArgument<UUID>(0) }
+        }
+        Mockito.`when`(paymongoClient.createPaymentIntent(anyArg(), anyArg())).thenReturn(
+            PaymongoPaymentIntentResponse(
+                PaymongoPaymentIntentResponseEnvelope(
+                    id = "pi_test",
+                    attributes = PaymongoPaymentIntentResponseAttributes(clientKey = "pi_test_client", status = "awaiting_payment_method"),
+                ),
+            ),
+        )
+        Mockito.`when`(paymongoClient.createPaymentMethod(anyArg()))
+            .thenReturn(PaymongoPaymentMethodResponse(PaymongoPaymentMethodResponseEnvelope("pm_test")))
+        Mockito.`when`(paymongoClient.attachPaymentMethod(anyArg(), anyArg())).thenReturn(
+            PaymongoPaymentIntentResponse(
+                PaymongoPaymentIntentResponseEnvelope(
+                    id = "pi_test",
+                    attributes = PaymongoPaymentIntentResponseAttributes(
+                        status = "awaiting_next_action",
+                        nextAction = PaymongoNextAction(PaymongoQrCode("data:image/png;base64,qr", testUrl)),
+                        updatedAt = OffsetDateTime.now().toEpochSecond(),
+                    ),
+                ),
+            ),
+        )
     }
 
     @Test

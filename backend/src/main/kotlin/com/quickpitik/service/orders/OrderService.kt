@@ -497,6 +497,8 @@ class OrderService(
                 expiresAt = expiresAt,
                 returnToken = primary.takeIf { it.userId == null }
                     ?.let { orderAccessTokenService.issue(it, OrderCapability.RETURN) },
+                testUrl = intent.data.attributes.nextAction?.code?.testUrl
+                    ?.takeIf { paymongoProperties.secretKey.startsWith("sk_test_") },
             ),
         )
     }
@@ -551,6 +553,30 @@ class OrderService(
     fun verifyForUser(userId: UUID, orderId: UUID): OrderStatusDto {
         if (loadForUser(userId, orderId).status == OrderStatus.PENDING) checkoutReconciler.reconcileOrder(orderId)
         return statusDto(loadForUser(userId, orderId))
+    }
+
+    // The runner backs out of a live QR. PayMongo has no cancel for a QRPH
+    // payment intent, so this is local: ask the provider one last time (a
+    // payment that landed a moment ago settles and wins), and only if the
+    // order is still PENDING mark it EXPIRED exactly like a timeout — same
+    // reservation release, same late-webhook safety net. Not @Transactional
+    // for the same reason as verify*. Idempotent: a non-PENDING order is a read.
+    fun cancelByIdAndToken(orderId: UUID, token: String?): OrderStatusDto {
+        cancelIfPending(loadForToken(orderId, token))
+        return statusDto(loadForToken(orderId, token))
+    }
+
+    fun cancelForUser(userId: UUID, orderId: UUID): OrderStatusDto {
+        cancelIfPending(loadForUser(userId, orderId))
+        return statusDto(loadForUser(userId, orderId))
+    }
+
+    private fun cancelIfPending(order: Order) {
+        if (order.status != OrderStatus.PENDING) return
+        checkoutReconciler.reconcileOrder(order.id)
+        if (orderRepository.findById(order.id).orElseThrow { orderNotFound() }.status == OrderStatus.PENDING) {
+            checkoutReconciler.expireOrder(order.id)
+        }
     }
 
     private fun loadForToken(orderId: UUID, token: String?): Order {

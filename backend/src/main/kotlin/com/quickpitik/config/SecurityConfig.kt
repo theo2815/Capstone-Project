@@ -128,6 +128,8 @@ class SecurityConfig(
                 ).permitAll()
                 // Guest order status polling. Service-layer token check enforces auth.
                 auth.requestMatchers(guestOrderGet("/status")).permitAll()
+                // Guest cancel of a live QR — same token gate, in the service layer.
+                auth.requestMatchers(guestOrderRoute(HttpMethod.POST, "/cancel")).permitAll()
                 // Bundle download (token-gated; works for both runners + guests
                 // because a top-level navigation can't carry the JWT).
                 auth.requestMatchers(guestOrderGet("/download-bundle")).permitAll()
@@ -165,7 +167,9 @@ class SecurityConfig(
         // `...$` here rejected the real request, 401'd the guest, and bounced web
         // to /login (mobile hung). `(?:\?.*)?` keeps sibling paths private while
         // permitting the token param.
-        internal fun guestOrderGet(suffix: String): RegexRequestMatcher =
-            RegexRequestMatcher.regexMatcher(HttpMethod.GET, "$GUEST_ORDER_PATH$suffix(?:\\?.*)?\$")
+        internal fun guestOrderGet(suffix: String): RegexRequestMatcher = guestOrderRoute(HttpMethod.GET, suffix)
+
+        internal fun guestOrderRoute(method: HttpMethod, suffix: String): RegexRequestMatcher =
+            RegexRequestMatcher.regexMatcher(method, "$GUEST_ORDER_PATH$suffix(?:\\?.*)?\$")
     }
 }
