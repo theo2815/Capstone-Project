@@ -32,6 +32,7 @@ import {
   BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
+import { FieldError } from "@/components/ui/field-error";
 import type { CartItem } from "@/types/order";
 
 // Poll cadence while a QR is on screen. The plain read is cheap (one row);
@@ -111,10 +112,7 @@ export function CheckoutModal({
   const [step, setStep] = useState<Step>(initialStep);
 
   const [email, setEmail] = useState(authUser?.email ?? "");
-  const [confirmEmail, setConfirmEmail] = useState("");
-  const [errors, setErrors] = useState<{ email?: string; confirm?: string }>(
-    {},
-  );
+  const [errors, setErrors] = useState<{ email?: string }>({});
 
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [qrPayment, setQrPayment] = useState<QrPayment | null>(null);
@@ -147,7 +145,6 @@ export function CheckoutModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    setConfirmEmail("");
     setErrors({});
     setPaymentError(null);
     setQrCheckError(null);
@@ -266,16 +263,14 @@ export function CheckoutModal({
 
   const handleIdentifySubmit = (e: FormEvent) => {
     e.preventDefault();
-    const next: { email?: string; confirm?: string } = {};
     const trimmed = email.trim();
-    const trimmedConfirm = confirmEmail.trim();
-    if (!trimmed) next.email = "Email is required.";
-    else if (!EMAIL_REGEX.test(trimmed)) next.email = "Enter a valid email.";
-    if (!trimmedConfirm) next.confirm = "Please confirm your email.";
-    else if (trimmed.toLowerCase() !== trimmedConfirm.toLowerCase())
-      next.confirm = "Emails don't match.";
-    setErrors(next);
-    if (Object.keys(next).length === 0) {
+    const emailError = !trimmed
+      ? "Email is required."
+      : !EMAIL_REGEX.test(trimmed)
+        ? "Enter a valid email."
+        : undefined;
+    setErrors({ email: emailError });
+    if (!emailError) {
       setEmail(trimmed);
       setStep("payment");
     }
@@ -461,14 +456,14 @@ export function CheckoutModal({
       >
         <header className="flex items-start justify-between gap-3 px-6 md:px-7 pt-6 pb-5 border-b border-line">
           <div className="min-w-0">
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-1.5">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-1.5">
               Checkout
             </p>
             <p className="font-display text-2xl md:text-3xl font-medium text-ink tracking-tight leading-tight">
               {step === "identify"
                 ? "Where should we send them?"
                 : step === "payment"
-                  ? "Pay with QR Ph."
+                  ? "Review & Pay"
                   : step === "processing"
                     ? "Generating your QR…"
                     : step === "qr"
@@ -508,10 +503,8 @@ export function CheckoutModal({
           {step === "identify" && (
             <IdentifyStep
               email={email}
-              confirmEmail={confirmEmail}
               errors={errors}
               onEmailChange={setEmail}
-              onConfirmChange={setConfirmEmail}
               onSubmit={handleIdentifySubmit}
               onBackToCart={onBackToCart}
               resumeUrl={resumeUrl}
@@ -607,19 +600,15 @@ function StepIndicator({
 
 function IdentifyStep({
   email,
-  confirmEmail,
   errors,
   onEmailChange,
-  onConfirmChange,
   onSubmit,
   onBackToCart,
   resumeUrl,
 }: {
   email: string;
-  confirmEmail: string;
-  errors: { email?: string; confirm?: string };
+  errors: { email?: string };
   onEmailChange: (v: string) => void;
-  onConfirmChange: (v: string) => void;
   onSubmit: (e: FormEvent) => void;
   onBackToCart?: () => void;
   resumeUrl: string;
@@ -646,49 +635,27 @@ function IdentifyStep({
         placeholder="you@email.com"
         autoFocus
       />
-      <Field
-        id="checkout-confirm-email"
-        label="Confirm email"
-        type="email"
-        autoComplete="off"
-        value={confirmEmail}
-        onChange={onConfirmChange}
-        error={errors.confirm}
-        placeholder="you@email.com"
-      />
 
-      <button
-        type="submit"
-        className="inline-flex w-full items-center justify-center gap-1.5 bg-fresh hover:bg-fresh-deep text-surface px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
-      >
+      <button type="submit" className={cn(BTN_PRIMARY, BTN_SIZE.md, "w-full")}>
         Continue →
       </button>
 
-      <div className="relative">
-        <div className="absolute inset-0 flex items-center">
-          <span className="w-full border-t border-line" />
-        </div>
-        <div className="relative flex justify-center">
-          <span className="bg-bone px-3 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-            Have an account?
-          </span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
+      <p className="text-center font-sans text-sm text-ink-soft">
+        Have an account?{" "}
         <Link
           href={`${ROUTES.LOGIN}?redirect=${encodeURIComponent(resumeUrl)}`}
-          className="inline-flex items-center justify-center border border-ink hover:bg-ink hover:text-bone text-ink px-4 py-3 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
+          className="font-semibold text-ink underline decoration-line-strong underline-offset-4 transition-colors hover:decoration-fresh"
         >
           Log in
-        </Link>
+        </Link>{" "}
+        or{" "}
         <Link
           href={`${ROUTES.REGISTER}?redirect=${encodeURIComponent(resumeUrl)}`}
-          className="inline-flex items-center justify-center border border-line hover:bg-bone-deep text-ink px-4 py-3 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
+          className="font-semibold text-ink underline decoration-line-strong underline-offset-4 transition-colors hover:decoration-fresh"
         >
           Sign up
         </Link>
-      </div>
+      </p>
 
       {onBackToCart && (
         <button
@@ -745,7 +712,7 @@ function PaymentStep({
   return (
     <div className="px-6 md:px-7 py-6 flex flex-col gap-7">
       <section>
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-2">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-2">
           Order summary
         </p>
         {coupon ? (
@@ -848,33 +815,44 @@ function PaymentStep({
               e.preventDefault();
               onApplyCoupon();
             }}
-            className="flex items-end gap-3"
           >
-            <div className="flex-1 min-w-0">
-              <Field
+            <label
+              htmlFor="coupon-code"
+              className="block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-2"
+            >
+              Coupon code · optional
+            </label>
+            <div className="flex items-stretch gap-2">
+              <input
                 id="coupon-code"
-                label="Coupon code · optional"
                 value={couponInput}
-                onChange={onCouponInputChange}
-                error={couponError ?? undefined}
+                onChange={(e) => onCouponInputChange(e.target.value)}
                 placeholder="From a photographer's photo card"
                 autoComplete="off"
+                aria-invalid={Boolean(couponError)}
+                aria-describedby={couponError ? "coupon-code-err" : undefined}
+                className="h-11 min-w-0 flex-1 rounded-full border border-line bg-surface px-4 font-sans text-sm text-ink outline-none transition-colors placeholder:text-slate-soft focus:border-fresh"
               />
+              <button
+                type="submit"
+                disabled={couponBusy || couponInput.trim().length === 0}
+                className={cn(BTN_SECONDARY, "h-11 shrink-0 px-5 text-sm")}
+              >
+                {couponBusy ? "Checking…" : "Apply"}
+              </button>
             </div>
-            <button
-              type="submit"
-              disabled={couponBusy || couponInput.trim().length === 0}
-              className={cn(BTN_SECONDARY, BTN_SIZE.sm, "shrink-0")}
-            >
-              {couponBusy ? "Checking…" : "Apply"}
-            </button>
+            <FieldError
+              id="coupon-code-err"
+              message={couponError}
+              density="tight"
+            />
           </form>
         )}
       </section>
 
       <section>
         <div className="flex items-baseline justify-between gap-3 mb-2">
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft">
             Send to
           </p>
           {onEditEmail && (
@@ -887,7 +865,7 @@ function PaymentStep({
             </button>
           )}
         </div>
-        <p className="font-sans text-sm text-ink truncate" title={email}>
+        <p className="font-sans text-sm font-semibold text-ink truncate" title={email}>
           {email || "—"}
         </p>
         {isAuthenticated && (
@@ -898,7 +876,7 @@ function PaymentStep({
       </section>
 
       <section>
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-3">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-3">
           Payment method
         </p>
         <div className="rounded-xl border border-fresh bg-bone-deep px-5 py-4 flex items-start gap-4">
@@ -928,7 +906,7 @@ function PaymentStep({
       <button
         type="button"
         onClick={onPay}
-        className="inline-flex w-full items-center justify-center gap-1.5 bg-fresh hover:bg-fresh-deep text-surface px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className={cn(BTN_PRIMARY, BTN_SIZE.md, "w-full")}
       >
         Generate QR to pay <span className="tnum">{formatPrice(total)}</span> →
       </button>
@@ -1090,7 +1068,7 @@ function QrPaymentStep({
 
       {mode === "awaiting" && (
         <section className="rounded-xl border border-line bg-bone-deep px-5 py-4">
-          <p className="font-mono uppercase tracking-[0.14em] text-[13px] text-slate mb-3">
+          <p className="font-mono uppercase tracking-[0.14em] text-[13px] text-ink-soft mb-3">
             How to pay
           </p>
           <ol className="space-y-3 font-sans text-sm leading-relaxed text-ink-soft">
@@ -1240,7 +1218,7 @@ function SuccessStep({
             </svg>
           </span>
           <div className="min-w-0">
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-1">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-1">
               Payment confirmed{paidAt ? ` · ${formatClock(paidAt)}` : ""}
             </p>
             <p className="font-display text-xl font-medium text-ink tracking-tight leading-tight">
@@ -1256,7 +1234,7 @@ function SuccessStep({
       </div>
 
       <div>
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-2">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-2">
           Download links
         </p>
         <p className="font-sans text-sm text-ink-soft leading-relaxed">
@@ -1323,7 +1301,7 @@ function Field({
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <label htmlFor={id} className="block">
-      <span className="block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-2">
+      <span className="block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-2">
         {label}
       </span>
       <input

@@ -58,7 +58,6 @@ const tick = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
 async function walkToQr(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("Email"), "runner@example.com");
-  await user.type(screen.getByLabelText("Confirm email"), "runner@example.com");
   await user.click(screen.getByRole("button", { name: "Continue →" }));
   await user.click(screen.getByRole("button", { name: /Generate QR to pay/ }));
   await screen.findByRole("img", { name: /QR Ph payment code/ });
@@ -95,7 +94,6 @@ describe("CheckoutModal QRPH", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderModal();
     await user.type(screen.getByLabelText("Email"), "runner@example.com");
-    await user.type(screen.getByLabelText("Confirm email"), "runner@example.com");
     await user.click(screen.getByRole("button", { name: "Continue →" }));
 
     expect(screen.getByText("QR Ph")).toBeInTheDocument();
