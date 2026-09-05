@@ -27,14 +27,8 @@ interface FindPhotosModalProps {
   onClose: () => void;
   onSubmitBib: (b: string) => void;
   /** Fired after a successful face match. Receives the EventPhotosResult so
-   *  the caller can render photos directly without re-running the search.
-   *  Callers without face-mode UI (e.g. /[handle]/events/[slug]) may omit
-   *  it; the modal still closes on success. */
-  onSearchByFaceSuccess?: (result: EventPhotosResult) => void;
-  /** Which panel opens first. The event cockpit leads with selfie (bib search
-   *  is inaccurate for runners); per-photographer pages stay bib-first.
-   *  Default "bib". */
-  initialMode?: SearchPanelMode;
+   *  the caller can render photos directly without re-running the search. */
+  onSearchByFaceSuccess: (result: EventPhotosResult) => void;
 }
 
 // Portal-mounted "Find your photos" modal. Reused by `event-cockpit` (event-wide
@@ -49,10 +43,9 @@ export function FindPhotosModal({
   onClose,
   onSubmitBib,
   onSearchByFaceSuccess,
-  initialMode = "bib",
 }: FindPhotosModalProps) {
   const [bibInput, setBibInput] = useState("");
-  const [panelMode, setPanelMode] = useState<SearchPanelMode>(initialMode);
+  const [panelMode, setPanelMode] = useState<SearchPanelMode>("selfie");
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const bibInputRef = useRef<HTMLInputElement | null>(null);
   const [mounted, setMounted] = useState(false);
@@ -195,7 +188,7 @@ export function FindPhotosModal({
               eventSlug={eventSlug}
               onSwitchToBib={() => setPanelMode("bib")}
               onSearchSuccess={(result) => {
-                if (onSearchByFaceSuccess) onSearchByFaceSuccess(result);
+                onSearchByFaceSuccess(result);
                 onClose();
               }}
             />

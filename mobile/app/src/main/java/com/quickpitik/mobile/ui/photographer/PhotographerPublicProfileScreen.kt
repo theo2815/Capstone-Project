@@ -16,9 +16,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -51,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.CoverSourceDto
+import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotographerEventCoverageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
@@ -91,6 +94,7 @@ fun PhotographerPublicProfileScreen(
     handle: String?,
     viewModel: PublicPhotographerViewModel,
     onBack: () -> Unit,
+    onOpenEvent: ((EventDto) -> Unit)? = null,
     cartViewModel: CartViewModel? = null,
     isBrandSettingsLoading: Boolean = false,
     brandSettingsError: String? = null,
@@ -152,8 +156,16 @@ fun PhotographerPublicProfileScreen(
                 }
                 is PublicProfileState.Success -> {
                     val profile = state.profile
+                    val coveredEvents = profile.events.filter { it.visibility != "unlisted" }
                     CoverBanner(cover = profile.cover, brandColor = profile.brandColor, displayName = profile.displayName)
                     Spacer(modifier = Modifier.height(16.dp))
+
+                    PublicProfileAvatar(
+                        avatarUrl = profile.avatarUrl,
+                        displayName = profile.displayName,
+                        brandColor = profile.brandColor,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     Text("@${profile.handle ?: "photographer"}", style = Typography.labelMedium, color = Fresh, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(4.dp))
@@ -174,11 +186,11 @@ fun PhotographerPublicProfileScreen(
                     Spacer(modifier = Modifier.height(20.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
                         StatNumber(
-                            value = "${profile.events.size}",
+                            value = "${coveredEvents.size}",
                             label = "Events",
                         )
                         StatNumber(
-                            value = "%,d".format(profile.events.sumOf { it.photoCount }),
+                            value = "%,d".format(coveredEvents.sumOf { it.photoCount }),
                             label = "Photos",
                         )
                         StatNumber(
@@ -191,13 +203,17 @@ fun PhotographerPublicProfileScreen(
                     Text("EVENTS COVERED", style = Typography.labelMedium, color = Slate)
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    if (profile.events.isEmpty()) {
+                    if (coveredEvents.isEmpty()) {
                         Text("No public events yet.", style = Typography.bodyMedium, color = SlateSoft)
                     } else {
-                        profile.events.forEach { coverage ->
+                        coveredEvents.forEach { coverage ->
                             EventCoverageCard(
                                 coverage = coverage,
-                                onClick = { selectedEventSlug = coverage.eventSlug }
+                                onClick = {
+                                    val event = coverage.event
+                                    if (event != null && onOpenEvent != null) onOpenEvent(event)
+                                    else selectedEventSlug = coverage.eventSlug
+                                }
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                         }
@@ -207,6 +223,36 @@ fun PhotographerPublicProfileScreen(
         }
     }
 }
+}
+
+@Composable
+private fun PublicProfileAvatar(avatarUrl: String?, displayName: String?, brandColor: String?) {
+    Box(
+        modifier = Modifier
+            .size(80.dp)
+            .clip(CircleShape)
+            .background(parseHex(brandColor) ?: Fresh)
+            .border(2.dp, Bone, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        val model = resolveProfileImageUrl(avatarUrl)
+        if (model != null) {
+            AsyncImage(
+                model = model,
+                contentDescription = "${displayName ?: "Photographer"} profile picture",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Text(
+                text = displayName.orEmpty().trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+                    .take(2).joinToString("") { it.first().uppercase() }.ifBlank { "QP" },
+                color = Bone,
+                style = Typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
 }
 
 @Composable
@@ -263,7 +309,7 @@ private fun EventCoverageCard(coverage: PhotographerEventCoverageDto, onClick: (
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(formatSlug(coverage.eventSlug), style = Typography.titleMedium, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.weight(1f))
+            Text(coverage.event?.name ?: formatSlug(coverage.eventSlug), style = Typography.titleMedium, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.weight(1f))
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
@@ -429,8 +475,7 @@ private fun ProfileEventGalleryView(
     }
 
     // The shared runner lightbox replaces the old 220dp AlertDialog "Price:
-    // ₱X / CLOSE" preview — with a pager, the photographer credit suppressed
-    // (we're on their page), and, for a true runner with the event id loaded,
+    // ₱X / CLOSE" preview — with a pager, photographer credit, and, for a true runner with the event id loaded,
     // the full Add-to-cart / Buy-now flow. This is the web's transactional
     // /{handle}/events/[slug] gallery, not just a viewer.
     val preview = selectedPhoto

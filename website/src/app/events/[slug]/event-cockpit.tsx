@@ -25,6 +25,7 @@ import { FindPhotosModal } from "@/components/events/find-photos-modal";
 import { PhotoMosaicTile } from "@/components/events/photo-mosaic-tile";
 import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
+import { FaceEmptyResult } from "@/components/events/face-empty-result";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -126,13 +127,13 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   };
 
   const switchToBrowse = () => {
-    setPanelMode("bib");
+    setPanelMode("selfie");
     setUrlBatch({ bib: null, browse: "1", face: null });
   };
 
   const switchToCockpit = () => {
     setBibInput("");
-    setPanelMode("bib");
+    setPanelMode("selfie");
     setUrlBatch({ bib: null, browse: null, face: null });
   };
 
@@ -938,7 +939,6 @@ function BrowseMode({
           onClose={() => setSearchOpen(false)}
           onSubmitBib={onSubmitBib}
           onSearchByFaceSuccess={onFaceSearchSuccess}
-          initialMode="selfie"
         />
       )}
 
@@ -992,32 +992,6 @@ function GalleryEmptyResult({ eventSlug }: { eventSlug: string }) {
           </p>
         </div>
         <PhotoAlertToggle eventSlug={eventSlug} />
-      </div>
-    </section>
-  );
-}
-
-function FaceEmptyResult({ onClear }: { onClear: () => void }) {
-  return (
-    <section className="px-6 md:px-10 py-16 md:py-24 bg-bone min-h-[40vh] flex items-center">
-      <div className="max-w-2xl mx-auto w-full text-center">
-        <Kicker as="p" className="mb-3">
-          No matches yet
-        </Kicker>
-        <p className="font-display font-extrabold text-3xl md:text-4xl text-ink tracking-tight">
-          We didn&apos;t find your face.
-        </p>
-        <p className="font-sans text-base md:text-lg text-ink-soft mt-4">
-          Try adding another selfie angle, or browse the wall while photos roll
-          in.
-        </p>
-        <button
-          type="button"
-          onClick={onClear}
-          className="mt-7 inline-flex items-center gap-2 bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors"
-        >
-          Browse the wall →
-        </button>
       </div>
     </section>
   );

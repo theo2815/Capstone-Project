@@ -10,6 +10,7 @@ import { PhotoMosaicTile } from "@/components/events/photo-mosaic-tile";
 import { FindPhotosModal } from "@/components/events/find-photos-modal";
 import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
+import { FaceEmptyResult } from "@/components/events/face-empty-result";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,6 +25,7 @@ import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { triggerDownload } from "@/lib/utils";
 import { fetchEventDetail } from "@/lib/api-events";
+import type { EventPhotosResult } from "@/lib/api-photos";
 import {
   fetchPublicPhotographer,
   fetchPublicPhotographerEventPhotos,
@@ -148,29 +150,39 @@ function Gallery({
     parse: (raw) => raw.trim().toUpperCase(),
   });
   const [searchOpen, setSearchOpen] = useState(false);
+  const [faceResult, setFaceResult] = useState<EventPhotosResult | null>(null);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
   const submitBib = (raw: string) => {
     const clean = raw.trim().toUpperCase();
     if (!clean) return;
+    setFaceResult(null);
     setBibFilter(clean);
   };
 
-  const clearBib = () => {
+  const clearSearch = () => {
+    setFaceResult(null);
     setBibFilter("");
   };
 
   const cleanedQuery = bibFilter.replace(/^B-/i, "").trim().toUpperCase();
-  const isFiltered = cleanedQuery.length > 0;
+  const isBibFiltered = cleanedQuery.length > 0;
+  const isFaceFiltered = faceResult !== null;
+  const isFiltered = isBibFiltered || isFaceFiltered;
 
   const visible = useMemo(() => {
-    if (!isFiltered) return photos;
+    if (faceResult) {
+      return faceResult.items.filter(
+        (p) => p.photographerHandle?.toLowerCase() === profile.handle,
+      );
+    }
+    if (!isBibFiltered) return photos;
     return photos.filter((p) => {
       if (!p.bib) return false;
       const num = p.bib.replace(/^B-/, "");
       return num.includes(cleanedQuery);
     });
-  }, [photos, cleanedQuery, isFiltered]);
+  }, [photos, cleanedQuery, isBibFiltered, faceResult, profile.handle]);
 
   useEffect(() => {
     if (previewIndex !== null && previewIndex >= visible.length) {
@@ -215,7 +227,7 @@ function Gallery({
                 // The bib filter is a client view over loaded pages — while
                 // unsearched pages remain (or a fetch is in flight), the
                 // negative isn't known yet.
-                list.hasNextPage || list.isFetching ? (
+                isBibFiltered && (list.hasNextPage || list.isFetching) ? (
                   "Searching…"
                 ) : (
                   "No matches yet."
@@ -243,9 +255,12 @@ function Gallery({
           <p className="font-sans text-base md:text-lg text-ink-soft mt-4 max-w-xl leading-relaxed">
             {isFiltered ? (
               <>
-                Photos from {profile.displayName} matching bib{" "}
-                <span className="font-mono tnum">{bibFilter}</span>. Tap any to
-                add to cart.
+                Photos from {profile.displayName} matching{" "}
+                {isFaceFiltered ? (
+                  "your selfie"
+                ) : (
+                  <>bib <span className="font-mono tnum">{bibFilter}</span></>
+                )}. Tap any to add to cart.
               </>
             ) : (
               <>
@@ -314,14 +329,18 @@ function Gallery({
                 />
               </svg>
               <span className="truncate">
-                {isFiltered ? `Search · ${bibFilter}` : "Find your photos"}
+                {isFaceFiltered
+                  ? "Search · selfie"
+                  : isBibFiltered
+                    ? `Search · ${bibFilter}`
+                    : "Find your photos"}
               </span>
             </Kicker>
             {isFiltered ? (
               <Kicker
                 as="button"
                 type="button"
-                onClick={clearBib}
+                onClick={clearSearch}
                 className="shrink-0 inline-flex items-center gap-2 hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
               >
                 <span>Clear filter</span>
@@ -369,13 +388,15 @@ function Gallery({
             </div>
           ) : photos.length === 0 ? (
             <EmptyGalleryPanel displayName={profile.displayName} />
-          ) : isFiltered && visible.length === 0 && !list.hasNextPage ? (
+          ) : isBibFiltered && visible.length === 0 && !list.hasNextPage ? (
             <BibEmptyResult
               event={event}
               bib={bibFilter}
-              onClear={clearBib}
+              onClear={clearSearch}
               ctaLabel={`Or skim ${profile.displayName}'s gallery →`}
             />
+          ) : isFaceFiltered && visible.length === 0 ? (
+            <FaceEmptyResult onClear={clearSearch} />
           ) : (
             <>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
@@ -391,14 +412,16 @@ function Gallery({
               </div>
               {/* Load-more progresses the whole gallery; when a bib is active
                   the grid above is the filtered view over what's loaded. */}
-              <LoadMoreButton
-                shown={photos.length}
-                total={list.total}
-                increment={PAGE_SIZE.PHOTO_INCREMENT}
-                onLoadMore={list.fetchNextPage}
-                isLoading={list.isFetchingNextPage}
-                countSuffix={isFiltered ? `· BIB ${bibFilter}` : undefined}
-              />
+              {!isFaceFiltered && (
+                <LoadMoreButton
+                  shown={photos.length}
+                  total={list.total}
+                  increment={PAGE_SIZE.PHOTO_INCREMENT}
+                  onLoadMore={list.fetchNextPage}
+                  isLoading={list.isFetchingNextPage}
+                  countSuffix={isBibFiltered ? `· BIB ${bibFilter}` : undefined}
+                />
+              )}
             </>
           )}
         </div>
@@ -414,6 +437,7 @@ function Gallery({
           eventPhotoCount={event.photoCount}
           onClose={() => setSearchOpen(false)}
           onSubmitBib={submitBib}
+          onSearchByFaceSuccess={setFaceResult}
         />
       )}
 
@@ -527,7 +551,7 @@ function PhotoPreviewMount({
   const startExpressCheckout = useUiStore((s) => s.startExpressCheckout);
 
   // Free event (V46): the original is anyone's — owned-mode card, Download
-  // CTA, no cart. The credit stays off: the page is already theirs.
+  // CTA, no cart.
   if (photo.free && photo.downloadUrl) {
     const downloadUrl = photo.downloadUrl;
     return (
@@ -538,7 +562,6 @@ function PhotoPreviewMount({
         eventDate={event.date}
         index={index + 1}
         total={total}
-        showPhotographerCredit={false}
         onClose={onClose}
         onPrev={onPrev}
         onNext={onNext}
@@ -590,10 +613,6 @@ function PhotoPreviewMount({
       eventDate={event.date}
       index={index + 1}
       total={total}
-      // Every photo on this page is this photographer's, and their name is in
-      // the header — crediting each shot back to the page you're standing on
-      // is noise.
-      showPhotographerCredit={false}
       inCart={inCart}
       onClose={onClose}
       onPrev={onPrev}

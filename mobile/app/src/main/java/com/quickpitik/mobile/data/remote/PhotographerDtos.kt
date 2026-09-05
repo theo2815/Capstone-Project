@@ -279,12 +279,16 @@ data class PhotographerEventCoverageDto(
     val eventSlug: String,
     val state: String,
     val photoCount: Int,
-    val salesCount: Int
+    val salesCount: Int,
+    val event: EventDto? = null,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
 )
 
 data class PhotographerProfileDto(
     val handle: String? = null,
     val displayName: String? = null,
+    val avatarUrl: String? = null,
     val brandColor: String? = null,
     val bio: String? = null,
     val city: String? = null,

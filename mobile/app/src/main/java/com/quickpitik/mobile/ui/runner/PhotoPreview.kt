@@ -154,13 +154,13 @@ fun CartItemDto.toPreviewData(): PhotoPreviewData = PhotoPreviewData(
 private fun PhotographerByline(
     name: String,
     handle: String?,
-    onOpen: (String) -> Unit,
+    onOpen: ((String) -> Unit)?,
 ) {
     Row(
         modifier = Modifier
             .clip(BadgeShape)
             .then(
-                if (handle != null) Modifier.clickable { onOpen(handle) } else Modifier,
+                if (handle != null && onOpen != null) Modifier.clickable { onOpen(handle) } else Modifier,
             )
             // One kicker line is ~16dp; the min height keeps the tap target at 48dp.
             .heightIn(min = 48.dp),
@@ -168,9 +168,9 @@ private fun PhotographerByline(
     ) {
         Kicker("Photo by", color = SlateSoft)
         Spacer(modifier = Modifier.width(6.dp))
-        if (handle != null) {
+        if (handle != null && onOpen != null) {
             ArrowLabel(
-                text = "@${handle.uppercase()} →",
+                text = "$name →",
                 color = Ink,
                 style = Typography.labelMedium,
                 iconSize = 12.dp,
@@ -220,9 +220,9 @@ fun PhotoPreview(
     // gallery. Owned resolves it from the runner's purchase grant; OwnerReview
     // from the photographer's own /photos/{id}/download endpoint.
     onDownload: (PhotoPreviewData) -> Unit = {},
-    // Browse mode only — opens the photographer's public profile. Called with a
-    // non-null handle; the byline is not a tap target without one.
-    onOpenPhotographer: (String) -> Unit = {},
+    // Opens the photographer's public profile when the current surface supplies
+    // navigation. The byline stays visible but is not tappable without it.
+    onOpenPhotographer: ((String) -> Unit)? = null,
     mode: PhotoPreviewMode = PhotoPreviewMode.Browse,
     // Browse mode only. False for a PHOTOGRAPHER browsing in runner view
     // (ViewMode): the cart endpoints are RUNNER-role-gated server-side, so the
@@ -444,7 +444,7 @@ fun PhotoPreview(
                             PhotoPreviewMode.LocalReview -> Unit
                         }
                     }
-                    if (mode == PhotoPreviewMode.Browse && activePhoto.photographerName != null) {
+                    if (mode != PhotoPreviewMode.LocalReview && activePhoto.photographerName != null) {
                         PhotographerByline(
                             name = activePhoto.photographerName,
                             handle = activePhoto.photographerHandle,

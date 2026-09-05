@@ -28,7 +28,7 @@ export async function generateMetadata({
   const { slug } = await params;
   const event = await getEventDetail(slug);
   if (!event) return { title: "Event not found" };
-  const description = `Find your photos from ${event.name}. Search by bib, browse the wall.`;
+  const description = `Find your photos from ${event.name}. Search by face or bib, then browse the wall.`;
   return {
     title: event.name,
     description,

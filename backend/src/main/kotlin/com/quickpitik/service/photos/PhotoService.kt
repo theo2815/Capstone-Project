@@ -152,12 +152,15 @@ class PhotoService(
         // attribution and the resolver returns null for them.
         val photographerIds = photos.mapNotNullTo(mutableSetOf()) { it.photographerId }
         if (photographerIds.isEmpty()) return emptyMap()
-        val handles = photographerSettingsRepository.findAllById(photographerIds)
-            .associate { it.userId to it.handle }
+        val settings = photographerSettingsRepository.findAllById(photographerIds)
+            .associateBy { it.userId }
         val names = userRepository.findAllById(photographerIds)
             .associate { it.id to it.name }
         return photographerIds.associateWith { id ->
-            PhotographerRef(handle = handles[id], name = names[id])
+            PhotographerRef(
+                handle = settings[id]?.handle,
+                name = settings[id]?.brandName?.takeIf { it.isNotBlank() } ?: names[id],
+            )
         }
     }
 
