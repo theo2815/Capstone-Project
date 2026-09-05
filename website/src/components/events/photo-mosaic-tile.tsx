@@ -4,8 +4,7 @@ import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image"
 import { useEffect, useState, type MouseEvent } from "react";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
-import { useToast } from "@/hooks/use-toast";
-import { cn, copyToClipboard, triggerDownload } from "@/lib/utils";
+import { cn, triggerDownload } from "@/lib/utils";
 import type { EventDetail } from "@/types/event";
 import type { MockPhoto } from "@/types/photo";
 
@@ -40,7 +39,6 @@ export function PhotoMosaicTile({
   const removeItem = useCartStore((s) => s.removeItem);
   const startExpressCheckout = useUiStore((s) => s.startExpressCheckout);
   const openCheckout = useUiStore((s) => s.openCheckout);
-  const { showToast } = useToast();
 
   const wide = photo.span === "wide";
   const colorIdx = photo.tone % TONE_COLORS.length;
@@ -83,20 +81,6 @@ export function PhotoMosaicTile({
     }
     startExpressCheckout();
     addItem(cartPayload);
-  };
-
-  // The photographer's coupon rides on every one of their tiles so a runner
-  // sees the offer before the lightbox. Ink, not fresh — the grid's single
-  // accent stays reserved for the in-cart state.
-  const handleCopyCoupon = async (e: MouseEvent) => {
-    e.stopPropagation();
-    if (!photo.couponCode) return;
-    const ok = await copyToClipboard(photo.couponCode);
-    showToast(
-      ok
-        ? { kind: "success", message: `Code ${photo.couponCode} copied. Paste it at checkout.` }
-        : { kind: "error", message: "Couldn't copy the code." },
-    );
   };
 
   return (
@@ -158,20 +142,19 @@ export function PhotoMosaicTile({
         </div>
       </button>
       {photo.couponCode && photo.couponPercentOff != null && (
-        <button
-          type="button"
-          onClick={handleCopyCoupon}
-          aria-label={`Copy coupon ${photo.couponCode} for ${photo.couponPercentOff}% off this photographer's photos`}
+        // The photographer's coupon rides on every one of their tiles so a
+        // runner sees the offer before the lightbox. It applies itself at
+        // checkout (2026-09-05), so this is a label, not a control. Ink, not
+        // fresh — the grid's single accent stays reserved for the in-cart state.
+        <span
           className={cn(
-            "absolute top-3 left-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-mono text-[12px] tnum whitespace-nowrap",
+            "absolute top-3 left-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-mono text-[12px] tnum whitespace-nowrap pointer-events-none",
             "bg-ink/85 backdrop-blur-sm text-surface shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)]",
-            "transition-colors duration-200 hover:bg-ink",
-            "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
           )}
         >
           <span>−{photo.couponPercentOff}%</span>
-          <span className="hidden sm:inline">· {photo.couponCode}</span>
-        </button>
+          <span className="hidden sm:inline">· applied at checkout</span>
+        </span>
       )}
       {photo.free && photo.downloadUrl ? (
         // Free event (V46): the original is anyone's — one ink pill, no cart.

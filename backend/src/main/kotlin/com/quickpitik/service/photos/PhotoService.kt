@@ -1,14 +1,17 @@
 package com.quickpitik.service.photos
 
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.PublicProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photos.PhotoDto
 import com.quickpitik.dto.photos.PhotographerRef
 import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
@@ -33,6 +36,7 @@ class PhotoService(
     private val storageProperties: StorageProperties,
     private val couponService: CouponService,
     private val eventRepository: EventRepository,
+    private val publicProperties: PublicProperties,
 ) {
     fun listForEvent(
         eventId: UUID,
@@ -168,14 +172,32 @@ class PhotoService(
     private fun resolveCleanUrl(photo: Photo): String =
         storageService.presignedGetUrl(photo.s3Key, storageProperties.presignedTtl.runnerDownload)
 
-    // Attachment-disposition URL for a free photo's original, same TTL and
-    // filename rule as the order download.
+    // Our own streaming route, not a presigned R2 URL (2026-09-05): Meta's
+    // in-app browsers append `fbclid=` to top-level navigations, which breaks
+    // a SigV4 signature but is ignored by EventPhotoController.
     private fun resolveDownloadUrl(photo: Photo): String =
-        storageService.presignedDownloadUrl(
-            photo.s3Key,
-            storageProperties.presignedTtl.runnerDownload,
-            PhotoFilenames.downloadFilenameOf(photo),
-        )
+        freeDownloadUrl(publicProperties.apiBaseUrl, photo)
+
+    // What the free-download route streams. Every refusal is NOT_FOUND so a
+    // paid event's originals can't be probed by id.
+    fun freeDownload(eventId: UUID, photoId: UUID): FreeDownload {
+        val event = eventRepository.findById(eventId).orElse(null)
+        if (event == null || !event.isFree) throw photoNotFound()
+        val photo = photoRepository.findById(photoId).orElse(null)
+        if (photo == null || photo.eventId != eventId || photo.status != PhotoStatus.LIVE) throw photoNotFound()
+        return FreeDownload(s3Key = photo.s3Key, filename = PhotoFilenames.downloadFilenameOf(photo))
+    }
+
+    private fun photoNotFound() = NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
+
+    data class FreeDownload(val s3Key: String, val filename: String)
+
+    companion object {
+        // One home for the route shape; PublicPhotographerService builds the
+        // same URL for the free public gallery.
+        fun freeDownloadUrl(apiBaseUrl: String, photo: Photo): String =
+            "${apiBaseUrl.trimEnd('/')}/events/${photo.eventId}/photos/${photo.id}/download"
+    }
 
     private fun normalizeBib(raw: String?): String {
         if (raw.isNullOrBlank()) return ""

@@ -18,6 +18,14 @@ interface PhotographerCouponRepository : JpaRepository<PhotographerCoupon, UUID>
     @Query("SELECT c FROM PhotographerCoupon c WHERE c.code = :code AND c.eventId IS NOT NULL")
     fun findScopedByCodeForUpdate(@Param("code") code: String): PhotographerCoupon?
 
+    // Checkout auto-apply: every active coupon of the cart's events, locked so
+    // the usage-limit check serializes with the discounted order's creation
+    // (same lock as findScopedByCodeForUpdate). Expiry and usage are filtered
+    // by the service after the lock is held.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM PhotographerCoupon c WHERE c.eventId IN :eventIds AND c.active = true")
+    fun findActiveByEventIdInForUpdate(@Param("eventIds") eventIds: Collection<UUID>): List<PhotographerCoupon>
+
     @Query(
         value = """
         SELECT pc.*
@@ -28,8 +36,9 @@ interface PhotographerCouponRepository : JpaRepository<PhotographerCoupon, UUID>
           AND (pc.expires_at IS NULL OR pc.expires_at > :now)
           AND (
               pc.usage_limit IS NULL OR pc.usage_limit > (
-                  SELECT COUNT(*) FROM orders o
-                  WHERE o.coupon_id = pc.id AND o.status <> 'EXPIRED'
+                  SELECT COUNT(DISTINCT o.id) FROM orders o
+                  JOIN order_items oi ON oi.order_id = o.id
+                  WHERE oi.coupon_id = pc.id AND o.status <> 'EXPIRED'
               )
           )
         """,

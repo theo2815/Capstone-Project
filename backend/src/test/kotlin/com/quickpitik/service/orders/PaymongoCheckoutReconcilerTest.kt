@@ -137,6 +137,64 @@ class PaymongoCheckoutReconcilerTest {
     }
 
     @Test
+    fun `reconcileOrder expires an intent whose last attachment failed`() {
+        val order = qrphOrder()
+        val payment = Payment(
+            orderId = order.id,
+            provider = "paymongo",
+            providerRef = "pi_test",
+            amountPhp = order.totalPhp,
+            expiresAt = java.time.OffsetDateTime.now().plusMinutes(20),
+        )
+        val client = Mockito.mock(PaymongoClient::class.java)
+        val payments = Mockito.mock(PaymentRepository::class.java)
+        val orders = Mockito.mock(OrderRepository::class.java)
+        val webhooks = Mockito.mock(PaymongoWebhookService::class.java)
+        Mockito.`when`(payments.findByOrderId(order.id)).thenReturn(listOf(payment))
+        Mockito.`when`(payments.findAllByProviderAndProviderRef("paymongo", "pi_test")).thenReturn(listOf(payment))
+        Mockito.`when`(payments.findAllByOrderIdInForUpdate(anyArg())).thenReturn(listOf(payment))
+        Mockito.`when`(orders.findByIdForUpdate(order.id)).thenReturn(order)
+        Mockito.`when`(client.retrievePaymentIntent("pi_test")).thenReturn(
+            PaymongoPaymentIntentResponse(
+                PaymongoPaymentIntentResponseEnvelope(
+                    id = "pi_test",
+                    attributes = PaymongoPaymentIntentResponseAttributes(
+                        status = "awaiting_payment_method",
+                        lastPaymentError = mapOf("code" to "generic_decline"),
+                    ),
+                ),
+            ),
+        )
+        val reconciler = PaymongoCheckoutReconciler(PaymongoProperties(), client, webhooks, payments, orders, testTransactionTemplate())
+
+        reconciler.reconcileOrder(order.id)
+
+        assertEquals(PaymentStatus.FAILED, payment.status)
+        assertEquals(OrderStatus.EXPIRED, order.status)
+        Mockito.verifyNoInteractions(webhooks)
+    }
+
+    @Test
+    fun `expireOrder marks one order the way a timeout would`() {
+        val order = qrphOrder()
+        val payment = Payment(orderId = order.id, provider = "paymongo", providerRef = "pi_test", amountPhp = order.totalPhp)
+        val payments = Mockito.mock(PaymentRepository::class.java)
+        val orders = Mockito.mock(OrderRepository::class.java)
+        val client = Mockito.mock(PaymongoClient::class.java)
+        Mockito.`when`(payments.findAllByOrderIdInForUpdate(anyArg())).thenReturn(listOf(payment))
+        Mockito.`when`(orders.findByIdForUpdate(order.id)).thenReturn(order)
+        val reconciler = PaymongoCheckoutReconciler(
+            PaymongoProperties(), client, Mockito.mock(PaymongoWebhookService::class.java), payments, orders, testTransactionTemplate(),
+        )
+
+        reconciler.expireOrder(order.id)
+
+        assertEquals(PaymentStatus.FAILED, payment.status)
+        assertEquals(OrderStatus.EXPIRED, order.status)
+        Mockito.verifyNoInteractions(client)
+    }
+
+    @Test
     fun `reconcileOrder is a no-op without a pending intent`() {
         val client = Mockito.mock(PaymongoClient::class.java)
         val payments = Mockito.mock(PaymentRepository::class.java)

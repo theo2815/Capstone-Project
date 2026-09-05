@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCartStore } from "@/store/cart-store";
@@ -20,8 +21,11 @@ import { useScrollLock } from "@/lib/scroll-lock";
 import { cn, formatOrderRef, formatPrice, safeUUID } from "@/lib/utils";
 import {
   buildOrderReturnPath,
+  cancelPendingPayment,
+  classifyExpired,
   fetchPendingStatus,
   postOrder,
+  type OrderStatusPayload,
 } from "@/lib/api-orders";
 import { postCouponPreview, type CouponPreview } from "@/lib/api-coupons";
 import { ApiError, formatRetryWait } from "@/lib/api";
@@ -32,6 +36,7 @@ import {
   BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
+import { FieldError } from "@/components/ui/field-error";
 import type { CartItem } from "@/types/order";
 
 // Poll cadence while a QR is on screen. The plain read is cheap (one row);
@@ -44,6 +49,8 @@ const MANUAL_COOLDOWN_MS = 20_000;
 // After this long past "I've paid" with no confirmation the copy switches to
 // "taking longer than usual" — banks usually report back within 10–30 s.
 const SLOW_AFTER_MS = 60_000;
+// The expiry countdown turns amber under this much time left.
+const EXPIRY_WARN_MS = 5 * 60_000;
 
 // "h:mm am/pm" in the runner's locale — QR validity, confirm dialog, paid-at.
 const formatClock = (iso: string) =>
@@ -64,11 +71,20 @@ function buildResumeUrl(pathname: string, sp: URLSearchParams | null): string {
 
 type Step = "identify" | "payment" | "processing" | "qr" | "success";
 
+// Why the runner is back on the pay step. Rendered as one notice above the
+// order summary — the first thing a returning customer reads.
+type Outcome =
+  | { kind: "expired" }
+  | { kind: "failed" }
+  | { kind: "cancelled" }
+  | { kind: "error"; message: string };
+
 interface QrPayment {
   orderId: string;
   imageUrl: string;
   expiresAt: string;
   returnToken: string | null;
+  testUrl: string | null;
 }
 
 // What the success step shows — snapshotted before the cart and the pending
@@ -112,14 +128,15 @@ export function CheckoutModal({
 
   const [email, setEmail] = useState(authUser?.email ?? "");
   const [confirmEmail, setConfirmEmail] = useState("");
-  const [errors, setErrors] = useState<{ email?: string; confirm?: string }>(
-    {},
-  );
+  const [errors, setErrors] = useState<{ email?: string; confirm?: string }>({});
 
-  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [qrPayment, setQrPayment] = useState<QrPayment | null>(null);
   const [qrCheckError, setQrCheckError] = useState<string | null>(null);
   const [checkingPayment, setCheckingPayment] = useState(false);
+  // Cancel in flight: polling pauses and the drawer locks like `processing`,
+  // because the backend is asking PayMongo whether the payment already won.
+  const [cancelling, setCancelling] = useState(false);
   // The return token died (35-min guest window) or the order vanished: we
   // can't poll from here any more, but the backend still emails the receipt.
   const [checkUnreachable, setCheckUnreachable] = useState(false);
@@ -149,8 +166,9 @@ export function CheckoutModal({
     if (!isOpen) return;
     setConfirmEmail("");
     setErrors({});
-    setPaymentError(null);
+    setOutcome(null);
     setQrCheckError(null);
+    setCancelling(false);
     setCheckUnreachable(false);
     setReceipt(null);
     setIdempotencyKey(safeUUID());
@@ -170,6 +188,7 @@ export function CheckoutModal({
         imageUrl: live.imageUrl,
         expiresAt: live.expiresAt,
         returnToken: live.returnToken,
+        testUrl: live.testUrl ?? null,
       });
       setStep("qr");
       return;
@@ -196,7 +215,7 @@ export function CheckoutModal({
   // money may already have moved, so leaving is intentional, never a slip.
   // Leaving keeps the pending record; the cart pill brings the runner back.
   const requestClose = useCallback(async () => {
-    if (step === "processing") return;
+    if (step === "processing" || cancelling) return;
     if (step === "qr" && qrPayment && !checkUnreachable) {
       const ok = await confirm({
         title: "Leave checkout?",
@@ -216,7 +235,7 @@ export function CheckoutModal({
       if (!ok) return;
     }
     onClose();
-  }, [step, qrPayment, checkUnreachable, confirm, qrEmail, onClose]);
+  }, [step, cancelling, qrPayment, checkUnreachable, confirm, qrEmail, onClose]);
 
   // Gated while the confirmation dialog is up so one Esc closes only the
   // topmost layer (ui-pitfalls 2026-05-06 stacked-modal rule).
@@ -264,18 +283,41 @@ export function CheckoutModal({
     if (idempotencyKey) setIdempotencyKey(safeUUID());
   };
 
+  // Auto-apply (2026-09-05): on the pay step the server prices the cart with
+  // every photographer's own live coupon — nothing typed. A typed code
+  // replaces this quote until it is removed; a cart edit re-quotes.
+  const photoIdsKey = items.map((i) => i.photoId).join(",");
+  const typedCode = coupon?.code ?? null;
+  useEffect(() => {
+    if (!isOpen || step !== "payment" || typedCode || !photoIdsKey) return;
+    let cancelled = false;
+    postCouponPreview({ photoIds: photoIdsKey.split(",") })
+      .then((quote) => {
+        if (!cancelled) setCoupon(quote);
+      })
+      .catch(() => {
+        // Display only — the charge is priced server-side regardless.
+        if (!cancelled) setCoupon(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, step, typedCode, photoIdsKey]);
+
   const handleIdentifySubmit = (e: FormEvent) => {
     e.preventDefault();
-    const next: { email?: string; confirm?: string } = {};
     const trimmed = email.trim();
     const trimmedConfirm = confirmEmail.trim();
+    const next: { email?: string; confirm?: string } = {};
     if (!trimmed) next.email = "Email is required.";
     else if (!EMAIL_REGEX.test(trimmed)) next.email = "Enter a valid email.";
-    if (!trimmedConfirm) next.confirm = "Please confirm your email.";
+    // The receipt and download links go nowhere else, so a typo here is the
+    // one mistake the runner can't recover from — hence the second field.
+    if (!trimmedConfirm) next.confirm = "Type your email again to confirm.";
     else if (trimmed.toLowerCase() !== trimmedConfirm.toLowerCase())
       next.confirm = "Emails don't match.";
     setErrors(next);
-    if (Object.keys(next).length === 0) {
+    if (!next.email && !next.confirm) {
       setEmail(trimmed);
       setStep("payment");
     }
@@ -283,10 +325,10 @@ export function CheckoutModal({
 
   const handlePay = async () => {
     if (!idempotencyKey) {
-      setPaymentError("Checkout is still loading. Try again.");
+      setOutcome({ kind: "error", message: "Checkout is still loading. Try again." });
       return;
     }
-    setPaymentError(null);
+    setOutcome(null);
     setStep("processing");
 
     try {
@@ -294,7 +336,8 @@ export function CheckoutModal({
         items: items.map((i) => ({ photoId: i.photoId, eventId: i.eventId })),
         paymentMethod: "qrph",
         recipientEmail: isAuthenticated ? undefined : email,
-        couponCode: coupon?.code,
+        // Only a typed code travels; automatic coupons are the server's call.
+        ...(coupon?.code ? { couponCode: coupon.code } : {}),
         idempotencyKey,
       });
 
@@ -316,7 +359,7 @@ export function CheckoutModal({
         return;
       }
       if (!order.qrPh) {
-        setPaymentError("QR code unavailable. Try again.");
+        setOutcome({ kind: "error", message: "The payment provider didn't return a QR code." });
         setStep("payment");
         return;
       }
@@ -325,6 +368,7 @@ export function CheckoutModal({
         imageUrl: order.qrPh.imageUrl,
         expiresAt: order.qrPh.expiresAt,
         returnToken: order.qrPh.returnToken ?? null,
+        testUrl: order.qrPh.testUrl ?? null,
       };
       setQrPayment(qr);
       setPending({
@@ -336,14 +380,52 @@ export function CheckoutModal({
       });
       setStep("qr");
     } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : "Payment failed. Try again in a moment.";
-      setPaymentError(message);
+      setOutcome({
+        kind: "error",
+        message:
+          err instanceof ApiError
+            ? err.message
+            : "We couldn't reach the payment provider. Try again in a moment.",
+      });
       setStep("payment");
     }
   };
+
+  // A settled status, whichever path delivered it (poll, verify, or a cancel
+  // that lost the race): snapshot the receipt before the cart and the record
+  // are cleared, then land on success.
+  const completeFromStatus = useCallback(
+    (status: OrderStatusPayload, qr: QrPayment) => {
+      const live = usePendingPaymentStore.getState().pending;
+      setReceipt({
+        orderId: qr.orderId,
+        returnToken: qr.returnToken,
+        email: live?.email ?? recipientEmail ?? "",
+        total: live?.total ?? payable,
+        itemCount: live?.itemCount ?? itemCount,
+        paidAt: status.paidAt,
+      });
+      clearCart();
+      clearPending();
+      queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
+      setStep("success");
+    },
+    [clearCart, clearPending, itemCount, payable, queryClient, recipientEmail],
+  );
+
+  // The QR is finished without a payment (expired, declined, or cancelled):
+  // drop the record, mint a fresh key so the next attempt is a new order, and
+  // tell the runner why they're back on the pay step.
+  const resetToPayment = useCallback(
+    (why: Outcome) => {
+      clearPending();
+      setQrPayment(null);
+      setIdempotencyKey(safeUUID());
+      setOutcome(why);
+      setStep("payment");
+    },
+    [clearPending],
+  );
 
   const checkPaymentStatus = useCallback(
     async (opts: { verify?: boolean; manual?: boolean } = {}) => {
@@ -354,27 +436,9 @@ export function CheckoutModal({
         const status = await fetchPendingStatus(qrPayment, { verify: opts.verify });
         setQrCheckError(null);
         if (status.status === "PAID" || status.status === "FULFILLED") {
-          const live = usePendingPaymentStore.getState().pending;
-          setReceipt({
-            orderId: qrPayment.orderId,
-            returnToken: qrPayment.returnToken,
-            email: live?.email ?? recipientEmail ?? "",
-            total: live?.total ?? payable,
-            itemCount: live?.itemCount ?? itemCount,
-            paidAt: status.paidAt,
-          });
-          clearCart();
-          clearPending();
-          queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
-          setStep("success");
+          completeFromStatus(status, qrPayment);
         } else if (status.status === "EXPIRED") {
-          clearPending();
-          setQrPayment(null);
-          setIdempotencyKey(safeUUID());
-          setPaymentError(
-            "That QR code expired before a payment was detected. Nothing was charged — generate a new one to continue.",
-          );
-          setStep("payment");
+          resetToPayment({ kind: classifyExpired(qrPayment.expiresAt) });
         }
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) {
@@ -393,10 +457,46 @@ export function CheckoutModal({
         setCheckingPayment(false);
       }
     },
-    [clearCart, clearPending, itemCount, payable, qrPayment, queryClient, recipientEmail],
+    [clearPending, completeFromStatus, qrPayment, resetToPayment],
   );
 
-  const pollingActive = step === "qr" && qrPayment !== null && !checkUnreachable;
+  const pollingActive =
+    step === "qr" && qrPayment !== null && !checkUnreachable && !cancelling;
+
+  // Cancel is a real question — money may already be moving — and then a
+  // server round-trip: the backend asks PayMongo once more, so a payment
+  // that landed a moment ago wins and we show success instead of "cancelled".
+  const handleCancelPayment = async () => {
+    if (!qrPayment) return;
+    const ok = await confirm({
+      title: "Cancel this payment?",
+      message: (
+        <>
+          The QR code stops being tied to this order and nothing is charged.
+          Already paid? Choose <span className="text-ink">Keep waiting</span>{" "}
+          &mdash; we&rsquo;ll confirm it in a moment.
+        </>
+      ),
+      confirmLabel: "Cancel payment",
+      cancelLabel: "Keep waiting",
+      danger: true,
+    });
+    if (!ok) return;
+    setCancelling(true);
+    setQrCheckError(null);
+    try {
+      const status = await cancelPendingPayment(qrPayment);
+      if (status.status === "PAID" || status.status === "FULFILLED") {
+        completeFromStatus(status, qrPayment);
+      } else {
+        resetToPayment({ kind: "cancelled" });
+      }
+    } catch {
+      setQrCheckError("We couldn't cancel right now. Your QR code is still live — try again.");
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   // Cheap DB read on a fixed cadence for as long as the QR is on screen.
   useEffect(() => {
@@ -450,7 +550,7 @@ export function CheckoutModal({
         type="button"
         onClick={() => void requestClose()}
         aria-label="Close checkout"
-        disabled={step === "processing"}
+        disabled={step === "processing" || cancelling}
         className="absolute inset-0 bg-ink/55 backdrop-blur-sm cursor-default"
         style={{ animation: "fade-in 0.25s ease-out both" }}
       />
@@ -461,22 +561,22 @@ export function CheckoutModal({
       >
         <header className="flex items-start justify-between gap-3 px-6 md:px-7 pt-6 pb-5 border-b border-line">
           <div className="min-w-0">
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-1.5">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-1.5">
               Checkout
             </p>
             <p className="font-display text-2xl md:text-3xl font-medium text-ink tracking-tight leading-tight">
               {step === "identify"
-                ? "Where should we send them?"
+                ? "Where should we send your photos?"
                 : step === "payment"
-                  ? "Pay with QR Ph."
+                  ? "Review & pay"
                   : step === "processing"
-                    ? "Generating your QR…"
+                    ? "Creating your QR code…"
                     : step === "qr"
                       ? checkUnreachable
                         ? "Check your inbox."
                         : paidClaimedAt
                           ? "Confirming your payment."
-                          : "Scan. Pay. Done."
+                          : "Scan to pay."
                     : "All yours."}
             </p>
             <StepIndicator step={step} isAuthenticated={isAuthenticated} />
@@ -484,7 +584,7 @@ export function CheckoutModal({
           <button
             type="button"
             onClick={() => void requestClose()}
-            disabled={step === "processing"}
+            disabled={step === "processing" || cancelling}
             aria-label="Close checkout"
             className="size-9 shrink-0 rounded-full border border-line text-ink hover:bg-bone-deep flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
           >
@@ -521,7 +621,7 @@ export function CheckoutModal({
             <PaymentStep
               email={recipientEmail ?? ""}
               isAuthenticated={isAuthenticated}
-              paymentError={paymentError}
+              outcome={outcome}
               total={payable}
               itemCount={itemCount}
               items={items}
@@ -558,9 +658,11 @@ export function CheckoutModal({
               paidClaimedAt={paidClaimedAt}
               lastManualCheckAt={lastManualCheckAt}
               checking={checkingPayment}
+              cancelling={cancelling}
               checkError={qrCheckError}
               onPaid={handlePaidClaim}
               onCheck={handlePaidClaim}
+              onCancel={() => void handleCancelPayment()}
               onLeaveForEmail={onClose}
             />
           )}
@@ -584,6 +686,8 @@ function StepIndicator({
   step: Step;
   isAuthenticated: boolean;
 }) {
+  // Order carries meaning here — the runner really is walking a sequence —
+  // so the rail is numbered and named, not just coloured bars.
   const steps = isAuthenticated
     ? (["payment", "qr", "success"] as const)
     : (["identify", "payment", "qr", "success"] as const);
@@ -591,19 +695,104 @@ function StepIndicator({
     step === "processing" ? s === "payment" : s === step,
   );
   return (
-    <div className="mt-4 flex items-center gap-1.5" aria-hidden="true">
-      {steps.map((s, i) => (
-        <span
-          key={s}
-          className={cn(
-            "h-[3px] flex-1 max-w-[28px] rounded-full transition-colors duration-300",
-            i <= currentIdx ? "bg-fresh" : "bg-line",
-          )}
-        />
-      ))}
+    <div className="mt-4 flex items-center gap-3">
+      <div className="flex items-center gap-1.5" aria-hidden="true">
+        {steps.map((s, i) => (
+          <span
+            key={s}
+            className={cn(
+              "h-[3px] w-6 rounded-full transition-colors duration-300",
+              i <= currentIdx ? "bg-fresh" : "bg-line",
+            )}
+          />
+        ))}
+      </div>
+      <Kicker as="p" tone="soft" tnum>
+        Step {currentIdx + 1} of {steps.length} · {STEP_LABEL[steps[currentIdx]]}
+      </Kicker>
     </div>
   );
 }
+
+const STEP_LABEL: Record<Exclude<Step, "processing">, string> = {
+  identify: "Contact",
+  payment: "Review & pay",
+  qr: "Pay",
+  success: "Done",
+};
+
+// The one shape every payment outcome takes, wherever it shows: dot, state
+// kicker, headline, one sentence, at most one action. Tones stay inside the
+// existing palette — nothing new for the runner to learn.
+type NoticeTone = "waiting" | "slow" | "neutral" | "error";
+
+const NOTICE_TONE: Record<NoticeTone, { box: string; dot: string }> = {
+  waiting: { box: "border-fresh/40 bg-fresh/10", dot: "bg-fresh animate-pulse" },
+  slow: { box: "border-warning/50 bg-warning/10", dot: "bg-warning animate-pulse" },
+  neutral: { box: "border-line bg-bone-deep", dot: "bg-slate-soft" },
+  error: { box: "border-error/40 bg-error/10", dot: "bg-error" },
+};
+
+function PaymentNotice({
+  tone,
+  kicker,
+  title,
+  children,
+  role,
+}: {
+  tone: NoticeTone;
+  kicker?: string;
+  title: string;
+  children?: ReactNode;
+  role?: "status" | "alert";
+}) {
+  const t = NOTICE_TONE[tone];
+  return (
+    <div
+      role={role}
+      aria-live={role === "alert" ? undefined : "polite"}
+      className={cn("rounded-xl border px-5 py-4 flex items-start gap-3", t.box)}
+    >
+      <span className={cn("mt-1.5 size-2 rounded-full shrink-0", t.dot)} aria-hidden="true" />
+      <div className="min-w-0">
+        {kicker && (
+          <Kicker as="p" tone="soft" tnum className="mb-1">
+            {kicker}
+          </Kicker>
+        )}
+        <p className="font-display text-base font-medium text-ink">{title}</p>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const OUTCOME_COPY: Record<Outcome["kind"], { tone: NoticeTone; kicker: string; title: string; body: string }> = {
+  expired: {
+    tone: "neutral",
+    kicker: "Nothing was charged",
+    title: "Your QR code expired",
+    body: "No payment was detected before it ran out. Generate a new code to pay.",
+  },
+  failed: {
+    tone: "error",
+    kicker: "Nothing was charged",
+    title: "Payment didn't go through",
+    body: "Your bank or e-wallet didn't complete it. Try again, or use a different app.",
+  },
+  cancelled: {
+    tone: "neutral",
+    kicker: "Nothing was charged",
+    title: "Payment cancelled",
+    body: "Your cart is unchanged. Generate a new code whenever you're ready.",
+  },
+  error: {
+    tone: "error",
+    kicker: "Try again",
+    title: "Couldn't create a QR code",
+    body: "",
+  },
+};
 
 function IdentifyStep({
   email,
@@ -631,8 +820,8 @@ function IdentifyStep({
       noValidate
     >
       <p className="font-sans text-sm text-ink-soft leading-relaxed -mt-1">
-        We&apos;ll send your purchase receipt and full-resolution download links
-        to this email.
+        Your receipt and full-resolution download links go to this email and
+        nowhere else — so we ask for it twice.
       </p>
 
       <Field
@@ -654,41 +843,29 @@ function IdentifyStep({
         value={confirmEmail}
         onChange={onConfirmChange}
         error={errors.confirm}
-        placeholder="you@email.com"
+        placeholder="Type it again"
       />
 
-      <button
-        type="submit"
-        className="inline-flex w-full items-center justify-center gap-1.5 bg-fresh hover:bg-fresh-deep text-surface px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
-      >
+      <button type="submit" className={cn(BTN_PRIMARY, BTN_SIZE.md, "w-full")}>
         Continue →
       </button>
 
-      <div className="relative">
-        <div className="absolute inset-0 flex items-center">
-          <span className="w-full border-t border-line" />
-        </div>
-        <div className="relative flex justify-center">
-          <span className="bg-bone px-3 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-            Have an account?
-          </span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
+      <p className="text-center font-sans text-sm text-ink-soft">
+        Have an account?{" "}
         <Link
           href={`${ROUTES.LOGIN}?redirect=${encodeURIComponent(resumeUrl)}`}
-          className="inline-flex items-center justify-center border border-ink hover:bg-ink hover:text-bone text-ink px-4 py-3 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
+          className="font-semibold text-ink underline decoration-line-strong underline-offset-4 transition-colors hover:decoration-fresh"
         >
           Log in
-        </Link>
+        </Link>{" "}
+        or{" "}
         <Link
           href={`${ROUTES.REGISTER}?redirect=${encodeURIComponent(resumeUrl)}`}
-          className="inline-flex items-center justify-center border border-line hover:bg-bone-deep text-ink px-4 py-3 rounded-full font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors"
+          className="font-semibold text-ink underline decoration-line-strong underline-offset-4 transition-colors hover:decoration-fresh"
         >
           Sign up
         </Link>
-      </div>
+      </p>
 
       {onBackToCart && (
         <button
@@ -706,7 +883,7 @@ function IdentifyStep({
 function PaymentStep({
   email,
   isAuthenticated,
-  paymentError,
+  outcome,
   total,
   itemCount,
   items,
@@ -723,7 +900,7 @@ function PaymentStep({
 }: {
   email: string;
   isAuthenticated: boolean;
-  paymentError: string | null;
+  outcome: Outcome | null;
   /** What will be charged — already net of any applied coupon. */
   total: number;
   itemCount: number;
@@ -739,21 +916,38 @@ function PaymentStep({
   onEditEmail?: () => void;
   onBackToCart?: () => void;
 }) {
-  const discountFor = (photoId: string) =>
-    coupon?.items.find((c) => c.photoId === photoId)?.discount ?? null;
+  const quoteFor = (photoId: string) =>
+    coupon?.items.find((c) => c.photoId === photoId) ?? null;
+  // Per-photo rows open up whenever a discount reached the cart or a code was
+  // typed (so "Not covered by this code" has somewhere to show).
+  const showRows = coupon != null && (coupon.code != null || coupon.items.length > 0);
 
   return (
     <div className="px-6 md:px-7 py-6 flex flex-col gap-7">
+      {outcome && (
+        <PaymentNotice
+          tone={OUTCOME_COPY[outcome.kind].tone}
+          kicker={OUTCOME_COPY[outcome.kind].kicker}
+          title={OUTCOME_COPY[outcome.kind].title}
+          role={OUTCOME_COPY[outcome.kind].tone === "error" ? "alert" : "status"}
+        >
+          <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
+            {outcome.kind === "error" ? outcome.message : OUTCOME_COPY[outcome.kind].body}
+          </p>
+        </PaymentNotice>
+      )}
+
       <section>
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-2">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-2">
           Order summary
         </p>
-        {coupon ? (
-          // With a code applied the summary opens up per photo, so the runner
-          // never has to guess which pictures the discount reached.
+        {showRows && coupon ? (
+          // With a discount in play the summary opens up per photo, so the
+          // runner never has to guess which pictures it reached.
           <ul className="rounded-xl border border-line bg-bone-deep divide-y divide-line">
             {items.map((item) => {
-              const discount = discountFor(item.photoId);
+              const quote = quoteFor(item.photoId);
+              const discount = quote?.discount ?? null;
               return (
                 <li key={item.photoId} className="flex items-center gap-3 px-4 py-3">
                   {item.thumbnailUrl ? (
@@ -773,11 +967,13 @@ function PaymentStep({
                         <span className="text-slate-soft"> · {item.eventName}</span>
                       ) : null}
                     </p>
-                    <Kicker as="p" tone="soft" tnum className="truncate">
-                      {discount != null
-                        ? `${coupon.code} · −${formatPrice(discount)}`
-                        : "Not covered by this code"}
-                    </Kicker>
+                    {(quote || coupon.code) && (
+                      <Kicker as="p" tone="soft" tnum className="truncate">
+                        {quote
+                          ? `${quote.couponCode} · −${formatPrice(quote.discount)}`
+                          : "Not covered by this code"}
+                      </Kicker>
+                    )}
                   </div>
                   <div className="text-right shrink-0">
                     {discount != null ? (
@@ -822,13 +1018,16 @@ function PaymentStep({
       </section>
 
       <section>
-        {coupon ? (
+        {coupon?.code ? (
           <div className="rounded-xl border border-line bg-bone px-5 py-4 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="font-mono font-semibold tnum text-ink truncate">{coupon.code}</p>
               <p className="font-sans text-sm text-ink-soft mt-0.5">
                 <span className="tnum">{coupon.percentOff}%</span> off{" "}
-                <span className="tnum">{coupon.eligibleCount}</span> of{" "}
+                <span className="tnum">
+                  {coupon.items.filter((c) => c.couponCode === coupon.code).length}
+                </span>{" "}
+                of{" "}
                 <span className="tnum">{itemCount}</span>{" "}
                 {itemCount === 1 ? "photo" : "photos"}
                 {coupon.photographerName ? ` · photos by ${coupon.photographerName}` : ""}
@@ -848,33 +1047,52 @@ function PaymentStep({
               e.preventDefault();
               onApplyCoupon();
             }}
-            className="flex items-end gap-3"
           >
-            <div className="flex-1 min-w-0">
-              <Field
-                id="coupon-code"
-                label="Coupon code · optional"
-                value={couponInput}
-                onChange={onCouponInputChange}
-                error={couponError ?? undefined}
-                placeholder="From a photographer's photo card"
-                autoComplete="off"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={couponBusy || couponInput.trim().length === 0}
-              className={cn(BTN_SECONDARY, BTN_SIZE.sm, "shrink-0")}
+            {coupon && coupon.items.length > 0 && (
+              // Automatic photographer discounts are already in the rows above;
+              // this line just says so, in case the runner wonders why.
+              <p className="mb-3 font-sans text-sm text-ink-soft">
+                Photographer discounts applied ·{" "}
+                <span className="tnum text-ink">−{formatPrice(coupon.discountTotal)}</span>
+              </p>
+            )}
+            <label
+              htmlFor="coupon-code"
+              className="block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-2"
             >
-              {couponBusy ? "Checking…" : "Apply"}
-            </button>
+              Have a code? · optional
+            </label>
+            <div className="flex items-stretch gap-2">
+              <input
+                id="coupon-code"
+                value={couponInput}
+                onChange={(e) => onCouponInputChange(e.target.value)}
+                placeholder="Coupon code"
+                autoComplete="off"
+                aria-invalid={Boolean(couponError)}
+                aria-describedby={couponError ? "coupon-code-err" : undefined}
+                className="h-11 min-w-0 flex-1 rounded-full border border-line bg-surface px-4 font-sans text-sm text-ink outline-none transition-colors placeholder:text-slate-soft focus:border-fresh"
+              />
+              <button
+                type="submit"
+                disabled={couponBusy || couponInput.trim().length === 0}
+                className={cn(BTN_SECONDARY, "h-11 shrink-0 px-5 text-sm")}
+              >
+                {couponBusy ? "Checking…" : "Apply"}
+              </button>
+            </div>
+            <FieldError
+              id="coupon-code-err"
+              message={couponError}
+              density="tight"
+            />
           </form>
         )}
       </section>
 
       <section>
         <div className="flex items-baseline justify-between gap-3 mb-2">
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft">
             Send to
           </p>
           {onEditEmail && (
@@ -887,7 +1105,7 @@ function PaymentStep({
             </button>
           )}
         </div>
-        <p className="font-sans text-sm text-ink truncate" title={email}>
+        <p className="font-sans text-sm font-semibold text-ink truncate" title={email}>
           {email || "—"}
         </p>
         {isAuthenticated && (
@@ -898,7 +1116,7 @@ function PaymentStep({
       </section>
 
       <section>
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-3">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-3">
           Payment method
         </p>
         <div className="rounded-xl border border-fresh bg-bone-deep px-5 py-4 flex items-start gap-4">
@@ -915,26 +1133,19 @@ function PaymentStep({
             </p>
           </div>
         </div>
-        {paymentError && (
-          <p
-            role="alert"
-            className="mt-3 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-error"
-          >
-            {paymentError}
-          </p>
-        )}
       </section>
 
       <button
         type="button"
         onClick={onPay}
-        className="inline-flex w-full items-center justify-center gap-1.5 bg-fresh hover:bg-fresh-deep text-surface px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className={cn(BTN_PRIMARY, BTN_SIZE.md, "w-full")}
       >
-        Generate QR to pay <span className="tnum">{formatPrice(total)}</span> →
+        {outcome && outcome.kind !== "error" ? "Generate a new QR" : "Generate QR to pay"}{" "}
+        <span className="tnum">{formatPrice(total)}</span> →
       </button>
 
       <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft text-center -mt-3">
-        Secure transaction · Watermark removed on download
+        Nothing is charged until you scan · Watermark removed on download
       </p>
 
       {onBackToCart && (
@@ -964,9 +1175,11 @@ function QrPaymentStep({
   paidClaimedAt,
   lastManualCheckAt,
   checking,
+  cancelling,
   checkError,
   onPaid,
   onCheck,
+  onCancel,
   onLeaveForEmail,
 }: {
   payment: QrPayment;
@@ -975,20 +1188,22 @@ function QrPaymentStep({
   paidClaimedAt: string | null;
   lastManualCheckAt: number;
   checking: boolean;
+  cancelling: boolean;
   checkError: string | null;
   onPaid: () => void;
   onCheck: () => void;
+  onCancel: () => void;
   onLeaveForEmail: () => void;
 }) {
-  // 1 s clock, only while the runner has said they've paid — drives the
-  // elapsed kicker, the slow-tier switch, and the manual-check cooldown.
+  // 1 s clock for the whole QR step — drives the expiry countdown, and once
+  // the runner says they've paid, the elapsed kicker, the slow-tier switch,
+  // and the manual-check cooldown.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!paidClaimedAt) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [paidClaimedAt]);
+  }, []);
 
   const elapsedMs = paidClaimedAt ? now - new Date(paidClaimedAt).getTime() : 0;
   const mode: WaitMode = !paidClaimedAt
@@ -997,6 +1212,8 @@ function QrPaymentStep({
       ? "confirming"
       : "slow";
   const cooldownLeft = Math.max(0, lastManualCheckAt + MANUAL_COOLDOWN_MS - now);
+  const remainingMs = new Date(payment.expiresAt).getTime() - now;
+  const expiringSoon = remainingMs < EXPIRY_WARN_MS;
   const ref = formatOrderRef(payment.orderId);
 
   return (
@@ -1014,10 +1231,20 @@ function QrPaymentStep({
             className="size-[248px] max-w-full object-contain"
           />
         </div>
-        <p className="mt-3 font-mono uppercase tracking-[0.14em] text-[13px] text-slate-soft tnum">
-          Valid until {formatClock(payment.expiresAt)} · One payment only · Ref {ref}
+        <p
+          className={cn(
+            "mt-3 font-mono uppercase tracking-[0.14em] text-[13px] tnum",
+            expiringSoon ? "text-warning" : "text-slate-soft",
+          )}
+        >
+          {remainingMs > 0
+            ? `Expires in ${formatElapsed(remainingMs)}`
+            : `Expired ${formatClock(payment.expiresAt)}`}{" "}
+          · Ref {ref}
         </p>
       </div>
+
+      {payment.testUrl && <TestModePanel testUrl={payment.testUrl} />}
 
       <a
         href={payment.imageUrl}
@@ -1027,70 +1254,55 @@ function QrPaymentStep({
         Save QR code
       </a>
 
-      <div
-        aria-live="polite"
-        className={cn(
-          "rounded-xl border px-5 py-4 flex items-start gap-3",
-          mode === "slow"
-            ? "border-warning/50 bg-warning/10"
-            : "border-fresh/40 bg-fresh/10",
-        )}
+      <PaymentNotice
+        tone={mode === "slow" ? "slow" : "waiting"}
+        kicker={
+          mode === "awaiting"
+            ? undefined
+            : `${mode === "slow" ? "Still confirming" : "Confirming"} · ${formatElapsed(elapsedMs)}`
+        }
+        title={
+          mode === "awaiting"
+            ? "Waiting for your payment"
+            : mode === "confirming"
+              ? "Confirming your payment…"
+              : "Taking longer than usual"
+        }
       >
-        <span
-          className={cn(
-            "mt-1.5 size-2 rounded-full animate-pulse shrink-0",
-            mode === "slow" ? "bg-warning" : "bg-fresh",
-          )}
-          aria-hidden="true"
-        />
-        <div className="min-w-0">
-          {mode !== "awaiting" && (
-            <Kicker as="p" tone="soft" tnum className="mb-1">
-              {mode === "slow" ? "Still confirming" : "Confirming"} · {formatElapsed(elapsedMs)}
-            </Kicker>
-          )}
-          <p className="font-display text-base font-medium text-ink">
-            {mode === "awaiting"
-              ? "Waiting for your payment"
-              : mode === "confirming"
-                ? "Confirming your payment…"
-                : "Taking longer than usual"}
+        {mode === "awaiting" && (
+          <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
+            Scan with your bank or e-wallet app. We check automatically every
+            few seconds — no need to refresh.
           </p>
-          {mode === "awaiting" && (
+        )}
+        {mode === "confirming" && (
+          <>
             <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
-              Scan with your bank or e-wallet app. We check automatically every
-              few seconds — no need to refresh.
+              Banks usually take <span className="tnum">10–30</span> seconds to
+              report back. <span className="font-semibold text-ink">Don&rsquo;t pay again</span>{" "}
+              — your <span className="tnum text-ink">{formatPrice(total)}</span> is tied to
+              Ref <span className="tnum text-ink">{ref}</span>.
             </p>
-          )}
-          {mode === "confirming" && (
-            <>
-              <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
-                Banks usually take <span className="tnum">10–30</span> seconds to
-                report back. <span className="font-semibold text-ink">Don&rsquo;t pay again</span>{" "}
-                — your <span className="tnum text-ink">{formatPrice(total)}</span> is tied to
-                Ref <span className="tnum text-ink">{ref}</span>.
-              </p>
-              <p className="mt-2 font-sans text-sm leading-relaxed text-ink-soft">
-                Safe to refresh or close — we&rsquo;ll pick up where you left off,
-                and your receipt goes to{" "}
-                <span className="text-ink break-all">{email}</span> either way.
-              </p>
-            </>
-          )}
-          {mode === "slow" && (
-            <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
-              Your payment is still safe. If it went through, this page will
-              confirm it and we&rsquo;ll email your download links to{" "}
-              <span className="text-ink break-all">{email}</span> — even if you
-              leave. Please don&rsquo;t pay a second time.
+            <p className="mt-2 font-sans text-sm leading-relaxed text-ink-soft">
+              Safe to refresh or close — we&rsquo;ll pick up where you left off,
+              and your receipt goes to{" "}
+              <span className="text-ink break-all">{email}</span> either way.
             </p>
-          )}
-        </div>
-      </div>
+          </>
+        )}
+        {mode === "slow" && (
+          <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
+            Your payment is still safe. If it went through, this page will
+            confirm it and we&rsquo;ll email your download links to{" "}
+            <span className="text-ink break-all">{email}</span> — even if you
+            leave. Please don&rsquo;t pay a second time.
+          </p>
+        )}
+      </PaymentNotice>
 
       {mode === "awaiting" && (
         <section className="rounded-xl border border-line bg-bone-deep px-5 py-4">
-          <p className="font-mono uppercase tracking-[0.14em] text-[13px] text-slate mb-3">
+          <p className="font-mono uppercase tracking-[0.14em] text-[13px] text-ink-soft mb-3">
             How to pay
           </p>
           <ol className="space-y-3 font-sans text-sm leading-relaxed text-ink-soft">
@@ -1153,7 +1365,48 @@ function QrPaymentStep({
           I&rsquo;ll wait for the email →
         </button>
       )}
+
+      {/* The way out. Quiet on purpose — it sits under the payment actions,
+          never beside them — but always there, so a pending screen is never
+          a trap. Hidden mid-check so it can't race our own poll. */}
+      {!checking && (
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={cancelling}
+          className={cn(BTN_GHOST, BTN_SIZE.sm, "self-center")}
+        >
+          {cancelling ? "Cancelling…" : "Cancel payment"}
+        </button>
+      )}
     </div>
+  );
+}
+
+// Dev only: PayMongo returns this link solely in test mode, and the backend
+// forwards it solely on an sk_test_ key, so this panel cannot render in
+// production. In test mode the QR itself is still a *real* QR Ph code —
+// scanning it moves real money — which is exactly why the panel exists.
+function TestModePanel({ testUrl }: { testUrl: string }) {
+  return (
+    <section className="rounded-xl border border-dashed border-line-strong bg-bone px-5 py-4">
+      <Kicker as="p" tnum className="mb-1">
+        Test mode · PayMongo sandbox
+      </Kicker>
+      <p className="font-sans text-sm leading-relaxed text-ink-soft">
+        Don&rsquo;t scan this code with a real app — it would charge you. Use
+        the simulator to authorize or fail this payment, then come back and tap{" "}
+        <span className="text-ink">I&rsquo;ve paid</span>.
+      </p>
+      <a
+        href={testUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-3 inline-flex")}
+      >
+        Open PayMongo simulator ↗
+      </a>
+    </section>
   );
 }
 
@@ -1240,7 +1493,7 @@ function SuccessStep({
             </svg>
           </span>
           <div className="min-w-0">
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-1">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-1">
               Payment confirmed{paidAt ? ` · ${formatClock(paidAt)}` : ""}
             </p>
             <p className="font-display text-xl font-medium text-ink tracking-tight leading-tight">
@@ -1256,7 +1509,7 @@ function SuccessStep({
       </div>
 
       <div>
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-2">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-2">
           Download links
         </p>
         <p className="font-sans text-sm text-ink-soft leading-relaxed">
@@ -1323,7 +1576,7 @@ function Field({
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <label htmlFor={id} className="block">
-      <span className="block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-2">
+      <span className="block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-2">
         {label}
       </span>
       <input

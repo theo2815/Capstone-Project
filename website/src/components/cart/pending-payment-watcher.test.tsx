@@ -18,6 +18,7 @@ const pending = {
   imageUrl: "data:image/png;base64,cXJwaA==",
   expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
   returnToken: "return-token",
+  testUrl: null,
   email: "runner@example.com",
   total: 125,
   itemCount: 1,

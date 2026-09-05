@@ -60,6 +60,9 @@ class S3StorageService(
         return client.getObjectAsBytes(req).asByteArray()
     }
 
+    override fun open(key: String): InputStream =
+        client.getObject(GetObjectRequest.builder().bucket(props.bucket).key(key).build())
+
     override fun delete(key: String) {
         client.deleteObject(DeleteObjectRequest.builder().bucket(props.bucket).key(key).build())
     }

@@ -13,6 +13,7 @@ import org.springframework.http.HttpHeaders
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
@@ -53,6 +54,18 @@ class GuestOrderController(
         return orderService.statusByIdAndToken(orderId = id, token = token)
     }
 
+    // Guest cancels a live QR (token-gated like status). Same race rule as
+    // the /me route: one PayMongo retrieve first, so the verify bucket.
+    @PostMapping("/{id}/cancel")
+    fun cancel(
+        @PathVariable id: UUID,
+        @RequestParam(required = false) token: String?,
+        request: HttpServletRequest,
+    ): OrderStatusDto {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_ORDER_VERIFY, clientIp(request))
+        return orderService.cancelByIdAndToken(orderId = id, token = token)
+    }
+
     // Hydrated detail for the /orders/return success state. Same shape as
     // `/me/orders/{id}` but gated on the share token (anti-IDOR; failures
     // surface as NOT_FOUND, not 401, so guessing-by-id reveals nothing).
@@ -75,16 +88,22 @@ class GuestOrderController(
     // Content type + filename come from BundleSpec, which auto-collapses
     // single-photo orders to a raw image/jpeg download instead of a ZIP —
     // the URL is the same; the body and Content-Disposition adapt.
+    //
+    // `?photo=` narrows to one photo (the per-photo Download button). Its own
+    // bucket: a runner saving ten photos one by one must not drain the 6/min
+    // whole-order ZIP budget, least of all behind venue NAT.
     @GetMapping("/{id}/download-bundle")
     fun bundle(
         @PathVariable id: UUID,
         @RequestParam(required = false) token: String?,
+        @RequestParam(required = false) photo: UUID?,
         request: HttpServletRequest,
     ): ResponseEntity<StreamingResponseBody> {
         // Per-IP: public route streaming one S3 GET per photo + zip CPU per
         // call — the token gates access, this bounds resource burn.
-        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_BUNDLE_DOWNLOAD, clientIp(request))
-        val spec = orderBundleService.prepare(orderId = id, token = token)
+        val policy = if (photo == null) Bucket4jRateLimiter.POLICY_BUNDLE_DOWNLOAD else Bucket4jRateLimiter.POLICY_PHOTO_DOWNLOAD
+        rateLimiter.acquireOrThrow(policy, clientIp(request))
+        val spec = orderBundleService.prepare(orderId = id, token = token, photoId = photo)
         val encoded = URLEncoder.encode(spec.filename, StandardCharsets.UTF_8).replace("+", "%20")
         val body = StreamingResponseBody { out -> orderBundleService.writeTo(spec, out) }
         return ResponseEntity.ok()

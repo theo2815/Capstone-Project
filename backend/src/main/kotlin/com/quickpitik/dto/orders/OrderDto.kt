@@ -58,6 +58,10 @@ data class QrPhPaymentResponse(
     // Guest status polling uses the purpose-bound capability that formerly
     // travelled in PayMongo's success redirect. Signed-in runners use JWT.
     val returnToken: String? = null,
+    // PayMongo's test-mode simulator page for this QR. Only ever non-null when
+    // the backend runs on an sk_test_ key; live keys never emit it, so the
+    // website's test panel cannot appear in production.
+    val testUrl: String? = null,
 )
 
 // `price` is the list price; `discount` is the coupon's share of it (0 when

@@ -6,6 +6,7 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.PlatformProperties
+import com.quickpitik.config.PublicProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.orders.CreateOrderItem
 import com.quickpitik.dto.orders.CreateOrderRequest
@@ -43,6 +44,7 @@ import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotographerCoupon
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
@@ -66,6 +68,8 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -95,6 +99,7 @@ class OrderService(
     private val couponService: CouponService,
     private val paymongoWebhookService: PaymongoWebhookService,
     private val checkoutReconciler: PaymongoCheckoutReconciler,
+    private val publicProperties: PublicProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -217,20 +222,21 @@ class OrderService(
             return CheckoutReservation(existing, photos, events, items)
         }
 
-        // Fresh checkout only — the replay branches above never re-resolve the
-        // coupon, so a code that expired between attempts cannot strand a
+        // Fresh checkout only — the replay branches above never re-resolve
+        // coupons, so a code that expired between attempts cannot strand a
         // retry whose discount is already persisted on the order rows.
-        val coupon = request.couponCode?.let(couponService::reserveForCheckout)
-        val discounts: Map<UUID, BigDecimal> = if (coupon == null) {
-            emptyMap()
-        } else {
-            photos.values
-                .filter { couponService.eligible(it, coupon) }
-                .associate { it.id to couponService.discountFor(it, coupon) }
-        }
-        if (coupon != null && discounts.isEmpty()) {
+        // Every photographer's live coupon applies to their own photos
+        // automatically (2026-09-05); a typed code is an override for its pair.
+        val manual = request.couponCode?.let(couponService::reserveForCheckout)
+        val auto = couponService.reserveAutoFor(photos.values)
+        val coupons: Map<UUID, PhotographerCoupon> = photos.values
+            .mapNotNull { photo -> couponService.couponFor(photo, manual, auto)?.let { photo.id to it } }
+            .toMap()
+        val discounts: Map<UUID, BigDecimal> =
+            coupons.mapValues { (photoId, coupon) -> couponService.discountFor(photos.getValue(photoId), coupon) }
+        if (manual != null && coupons.none { it.value.id == manual.id }) {
             throw ValidationException(
-                message = "${coupon.code} doesn't apply to any photo in this checkout",
+                message = "${manual.code} doesn't apply to any photo in this checkout",
                 code = ErrorCodes.COUPON_NOT_APPLICABLE,
                 field = "couponCode",
             )
@@ -239,8 +245,10 @@ class OrderService(
         val expiresAt = OffsetDateTime.now().plus(platformProperties.shareTokenTtl)
         val savedItems = mutableListOf<OrderItem>()
         val orders = request.items.groupBy { it.eventId }.map { (eventId, items) ->
-            val appliedCoupon = coupon?.takeIf {
-                items.any { discounts.containsKey(it.photoId) }
+            // Order-level snapshot = the typed code only, on the event order it
+            // reached; automatic coupons live on the items (V50).
+            val appliedCoupon = manual?.takeIf {
+                items.any { coupons[it.photoId]?.id == manual.id }
             }
             val total = items.fold(BigDecimal.ZERO) { sum, item ->
                 sum + photos.getValue(item.photoId).pricePhp - (discounts[item.photoId] ?: BigDecimal.ZERO)
@@ -266,6 +274,7 @@ class OrderService(
                         id = OrderItemId(order.id, item.photoId),
                         pricePhpAtPurchase = photos.getValue(item.photoId).pricePhp,
                         discountPhp = discounts[item.photoId] ?: BigDecimal.ZERO,
+                        couponId = coupons[item.photoId]?.id,
                     ),
                 )
             }
@@ -493,6 +502,8 @@ class OrderService(
                 expiresAt = expiresAt,
                 returnToken = primary.takeIf { it.userId == null }
                     ?.let { orderAccessTokenService.issue(it, OrderCapability.RETURN) },
+                testUrl = intent.data.attributes.nextAction?.code?.testUrl
+                    ?.takeIf { paymongoProperties.secretKey.startsWith("sk_test_") },
             ),
         )
     }
@@ -547,6 +558,30 @@ class OrderService(
     fun verifyForUser(userId: UUID, orderId: UUID): OrderStatusDto {
         if (loadForUser(userId, orderId).status == OrderStatus.PENDING) checkoutReconciler.reconcileOrder(orderId)
         return statusDto(loadForUser(userId, orderId))
+    }
+
+    // The runner backs out of a live QR. PayMongo has no cancel for a QRPH
+    // payment intent, so this is local: ask the provider one last time (a
+    // payment that landed a moment ago settles and wins), and only if the
+    // order is still PENDING mark it EXPIRED exactly like a timeout — same
+    // reservation release, same late-webhook safety net. Not @Transactional
+    // for the same reason as verify*. Idempotent: a non-PENDING order is a read.
+    fun cancelByIdAndToken(orderId: UUID, token: String?): OrderStatusDto {
+        cancelIfPending(loadForToken(orderId, token))
+        return statusDto(loadForToken(orderId, token))
+    }
+
+    fun cancelForUser(userId: UUID, orderId: UUID): OrderStatusDto {
+        cancelIfPending(loadForUser(userId, orderId))
+        return statusDto(loadForUser(userId, orderId))
+    }
+
+    private fun cancelIfPending(order: Order) {
+        if (order.status != OrderStatus.PENDING) return
+        checkoutReconciler.reconcileOrder(order.id)
+        if (orderRepository.findById(order.id).orElseThrow { orderNotFound() }.status == OrderStatus.PENDING) {
+            checkoutReconciler.expireOrder(order.id)
+        }
     }
 
     private fun loadForToken(orderId: UUID, token: String?): Order {
@@ -691,6 +726,7 @@ class OrderService(
         val items = orderItemRepository.findByIdOrderId(order.id)
         val photos = photoRepository.findAllById(items.map { it.id.photoId }).associateBy { it.id }
         val grants = downloadGrantRepository.findByIdOrderId(order.id).associateBy { it.id.photoId }
+        val bundleToken = orderAccessTokenService.issue(order, OrderCapability.BUNDLE)
         return OrderResponse(
             id = order.id,
             status = order.status,
@@ -698,7 +734,7 @@ class OrderService(
                 OrderResponseItem(
                     photoId = item.id.photoId,
                     price = item.pricePhpAtPurchase,
-                    downloadUrl = photos[item.id.photoId]?.let { downloadUrlOf(it, grants[item.id.photoId]) },
+                    downloadUrl = photos[item.id.photoId]?.let { downloadUrlOf(order, it, grants[item.id.photoId], bundleToken) },
                     discount = item.discountPhp,
                 )
             },
@@ -828,6 +864,7 @@ class OrderService(
         val photos = photoRepository.findAllById(photoIds).associateBy { it.id }
         val event = eventRepository.findById(order.eventId).orElse(null)
         val grants = downloadGrantRepository.findByIdOrderId(order.id).associateBy { it.id.photoId }
+        val bundleToken = orderAccessTokenService.issue(order, OrderCapability.BUNDLE)
         return OrderDetailDto(
             id = order.id,
             eventId = order.eventId,
@@ -850,12 +887,12 @@ class OrderService(
                     tone = photo?.tone ?: index,
                     thumbnailUrl = photo?.let(::thumbnailUrlOf),
                     previewUrl = photo?.let { previewUrlOf(it, grants[item.id.photoId]) },
-                    downloadUrl = photo?.let { downloadUrlOf(it, grants[item.id.photoId]) },
+                    downloadUrl = photo?.let { downloadUrlOf(order, it, grants[item.id.photoId], bundleToken) },
                 )
             },
             downloadBundleUrl = null,
             recipientEmail = order.recipientEmail,
-            shareToken = orderAccessTokenService.issue(order, OrderCapability.BUNDLE),
+            shareToken = bundleToken,
             disputes = hydrateDisputesByOrderId(listOf(order.id))[order.id].orEmpty(),
             couponCode = order.couponCode,
             discountTotal = items.sumOf { it.discountPhp },
@@ -874,17 +911,16 @@ class OrderService(
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.runnerDownload)
     }
 
-    private fun downloadUrlOf(photo: Photo, grant: DownloadGrant?): String? {
+    // The per-photo download is our own bundle route narrowed with `photo=`,
+    // NOT a presigned R2 URL (2026-09-05): Meta's in-app browsers append
+    // `fbclid=` to the navigation, which breaks the SigV4 signature. Same
+    // shape as OrderReceiptEmailService.buildBundleUrl.
+    private fun downloadUrlOf(order: Order, photo: Photo, grant: DownloadGrant?, bundleToken: String): String? {
         if (grant == null || grant.grantedUntil.isBefore(OffsetDateTime.now())) return null
-        return storageService.presignedDownloadUrl(
-            photo.s3Key,
-            storageProperties.presignedTtl.runnerDownload,
-            downloadFilenameOf(photo),
-        )
+        val base = publicProperties.apiBaseUrl.trimEnd('/')
+        val token = URLEncoder.encode(bundleToken, StandardCharsets.UTF_8)
+        return "$base/orders/${order.id}/download-bundle?token=$token&photo=${photo.id}"
     }
-
-    private fun downloadFilenameOf(photo: Photo): String =
-        com.quickpitik.service.photos.PhotoFilenames.downloadFilenameOf(photo)
 
     private data class CheckoutReservation(
         val orders: List<Order>,

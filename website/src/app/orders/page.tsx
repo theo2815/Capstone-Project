@@ -493,9 +493,12 @@ function ReceiptRow({
             <p className="font-mono tnum font-medium text-ink text-xl md:text-2xl">
               ₱{total.toLocaleString()}
             </p>
-            {order.couponCode && (order.discountTotal ?? 0) > 0 && (
+            {(order.discountTotal ?? 0) > 0 && (
+              // couponCode is the typed code; automatic photographer coupons
+              // (2026-09-05) leave it empty and show as a plain discount line.
               <Kicker as="p" tone="soft" tnum className="mt-1 whitespace-nowrap">
-                {order.couponCode} · −₱{(order.discountTotal ?? 0).toLocaleString()}
+                {order.couponCode ?? "Photographer discount"} · −₱
+                {(order.discountTotal ?? 0).toLocaleString()}
               </Kicker>
             )}
           </div>

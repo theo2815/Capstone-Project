@@ -262,6 +262,11 @@ app:
     bundle-download:
       capacity: 6
       refill-period: PT1M
+    # Public per-photo download (bundle route with ?photo=, free-event
+    # originals): one storage GET streamed through, no zip.
+    photo-download:
+      capacity: 30
+      refill-period: PT1M
     # Authenticated small-file uploads (avatar / selfie / cover / watermark /
     # payout QR) share one per-user bucket.
     media-upload:

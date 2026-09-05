@@ -14,7 +14,15 @@ import java.time.OffsetDateTime
 import java.util.UUID
 
 interface OrderRepository : JpaRepository<Order, UUID> {
-    fun countByCouponIdAndStatusNot(couponId: UUID, status: OrderStatus): Long
+    // A coupon "use" is one order that reached at least one of its items (V50).
+    @Query(
+        """
+        SELECT COUNT(DISTINCT o.id) FROM Order o
+        WHERE o.status <> :status
+          AND o.id IN (SELECT oi.id.orderId FROM OrderItem oi WHERE oi.couponId = :couponId)
+        """,
+    )
+    fun countUsesExcludingStatus(@Param("couponId") couponId: UUID, @Param("status") status: OrderStatus): Long
 
     fun findByUserIdOrderByPaidAtDescCreatedAtDesc(userId: UUID, pageable: Pageable): Page<Order>
 

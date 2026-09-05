@@ -62,6 +62,9 @@ class PaymongoCheckoutReconciler(
         if (pending.isNotEmpty()) reconcilePaymentIntent(pending)
     }
 
+    // Runner-initiated cancel: same terminal state as a timeout.
+    fun expireOrder(orderId: UUID) = markExpired(listOf(orderId))
+
     private fun reconcilePaymentIntent(payments: List<com.quickpitik.entity.Payment>) {
         val intentId = payments.first().providerRef!!
         val intent = try {
@@ -78,7 +81,13 @@ class PaymongoCheckoutReconciler(
             )
             return
         }
-        if (payments.mapNotNull { it.expiresAt }.minOrNull()?.isBefore(OffsetDateTime.now()) == true) {
+        // A declined / simulator-failed payment drops the intent back to
+        // awaiting_payment_method with last_payment_error set; the QR it was
+        // attached to is spent. Treat it like expiry so the runner is told now
+        // instead of at the QR's deadline.
+        val attrs = intent.data.attributes
+        val failed = attrs.status == "awaiting_payment_method" && attrs.lastPaymentError != null
+        if (failed || payments.mapNotNull { it.expiresAt }.minOrNull()?.isBefore(OffsetDateTime.now()) == true) {
             markExpired(payments.map { it.orderId })
         }
     }

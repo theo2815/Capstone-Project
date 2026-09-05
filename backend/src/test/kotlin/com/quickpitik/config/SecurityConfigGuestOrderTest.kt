@@ -53,6 +53,22 @@ class SecurityConfigGuestOrderTest {
         )
     }
 
+    // Per-photo downloads add `photo=`; Meta's in-app browsers add `fbclid=`
+    // on top. Both must stay permitted — that tolerance is the whole reason
+    // downloads route through here instead of a presigned URL (2026-09-05).
+    @Test
+    fun `bundle route stays permitted with a photo id and a stray tracking param`() {
+        assertTrue(
+            SecurityConfig.guestOrderGet("/download-bundle")
+                .matches(
+                    get(
+                        "/api/v1/orders/$orderId/download-bundle",
+                        "token=$token&photo=${UUID.randomUUID()}&fbclid=IwZXh0bgNhZW0",
+                    ),
+                ),
+        )
+    }
+
     @Test
     fun `status route is still permitted without a query string`() {
         assertTrue(
@@ -69,6 +85,18 @@ class SecurityConfigGuestOrderTest {
             SecurityConfig.guestOrderGet("")
                 .matches(get("/api/v1/orders/$orderId/refund", "token=$token")),
         )
+    }
+
+    // Cancel is the one guest POST. Permitted with the token; the GET matcher
+    // must not open it, and it must not open the GET-only siblings.
+    @Test
+    fun `guest cancel is permitted as POST with a token and stays closed to GET`() {
+        val cancel = SecurityConfig.guestOrderRoute(org.springframework.http.HttpMethod.POST, "/cancel")
+        val post = get("/api/v1/orders/$orderId/cancel", "token=$token").apply { method = "POST" }
+        assertTrue(cancel.matches(post))
+        assertFalse(cancel.matches(get("/api/v1/orders/$orderId/cancel", "token=$token")))
+        assertFalse(SecurityConfig.guestOrderGet("/cancel").matches(post))
+        assertFalse(cancel.matches(get("/api/v1/orders/$orderId/refund", "token=$token").apply { method = "POST" }))
     }
 
     @Test

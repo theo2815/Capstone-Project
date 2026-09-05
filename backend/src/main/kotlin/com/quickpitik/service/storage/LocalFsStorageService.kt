@@ -60,6 +60,8 @@ class LocalFsStorageService(
 
     override fun getBytes(key: String): ByteArray = Files.readAllBytes(resolve(key))
 
+    override fun open(key: String): InputStream = Files.newInputStream(resolve(key))
+
     override fun delete(key: String) {
         Files.deleteIfExists(resolve(key))
     }

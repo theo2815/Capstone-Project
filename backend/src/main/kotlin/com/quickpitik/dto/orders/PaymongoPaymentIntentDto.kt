@@ -75,6 +75,9 @@ data class PaymongoPaymentIntentResponseAttributes(
     @JsonProperty("next_action") val nextAction: PaymongoNextAction? = null,
     val metadata: Map<String, String>? = null,
     @JsonProperty("updated_at") val updatedAt: Long = 0,
+    // Present only when the latest attachment failed (bank declined, test
+    // simulator "fail"). The intent then sits in awaiting_payment_method.
+    @JsonProperty("last_payment_error") val lastPaymentError: Map<String, Any?>? = null,
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

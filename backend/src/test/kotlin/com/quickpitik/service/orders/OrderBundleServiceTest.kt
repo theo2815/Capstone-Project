@@ -22,6 +22,8 @@ import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.math.BigDecimal
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -30,6 +32,7 @@ import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertContentEquals
 import kotlin.test.assertFailsWith
 
 // Runner-flow audit (2026-05-27), "Orders + downloads" item O1.
@@ -106,6 +109,44 @@ class OrderBundleServiceTest {
         assertFailsWith<NotFoundException> { service.prepare(dead.id, token) }
     }
 
+    // 2026-09-05: per-photo downloads ride this endpoint too (`?photo=`), so
+    // the URL the browser navigates to is ours — Meta's in-app browsers append
+    // `fbclid=` to top-level navigations, which 403'd every presigned R2 link.
+    @Test
+    fun `a photo param narrows a multi-photo order to that one photo as a raw jpeg`() {
+        val order = order(tokenExpiresAt = OffsetDateTime.now().plusDays(30))
+        val photos = stub(order, photoCount = 2)
+
+        val spec = service.prepare(order.id, token, photoId = photos[1].id)
+
+        assertEquals(listOf(photos[1].s3Key), spec.entries.map { it.s3Key })
+        assertEquals("image/jpeg", spec.contentType)
+    }
+
+    @Test
+    fun `a photo outside the order is refused as NOT_FOUND`() {
+        val order = order(tokenExpiresAt = OffsetDateTime.now().plusDays(30))
+        stub(order)
+
+        val ex = assertFailsWith<NotFoundException> { service.prepare(order.id, token, photoId = UUID.randomUUID()) }
+
+        assertEquals(ErrorCodes.ORDER_NOT_FOUND, ex.code)
+    }
+
+    @Test
+    fun `a single photo streams from storage instead of buffering the whole object`() {
+        val order = order(tokenExpiresAt = OffsetDateTime.now().plusDays(30))
+        val photo = stub(order).single()
+        val bytes = "jpeg-bytes".toByteArray()
+        Mockito.`when`(storageService.open(photo.s3Key)).thenReturn(ByteArrayInputStream(bytes))
+        val out = ByteArrayOutputStream()
+
+        service.writeTo(service.prepare(order.id, token), out)
+
+        assertContentEquals(bytes, out.toByteArray())
+        Mockito.verify(storageService, Mockito.never()).getBytes(anyArg())
+    }
+
     @Test
     fun `a mismatched token is still refused inside the window`() {
         val order = order(tokenExpiresAt = OffsetDateTime.now().plusDays(30))
@@ -128,30 +169,32 @@ class OrderBundleServiceTest {
         tokenExpiresAt = tokenExpiresAt,
     )
 
-    /** One PAID order, one entitled photo, grant live for another year. */
-    private fun stub(order: Order) {
-        val photo = Photo(
-            eventId = order.eventId,
-            s3Key = "photos/${UUID.randomUUID()}.jpg",
-            pricePhp = BigDecimal("125.00"),
-        )
+    /** One PAID order, `photoCount` entitled photos, grants live for another year. */
+    private fun stub(order: Order, photoCount: Int = 1): List<Photo> {
+        val photos = List(photoCount) {
+            Photo(
+                eventId = order.eventId,
+                s3Key = "photos/${UUID.randomUUID()}.jpg",
+                pricePhp = BigDecimal("125.00"),
+            )
+        }
         Mockito.`when`(orderRepository.findById(order.id)).thenReturn(Optional.of(order))
         Mockito.`when`(orderItemRepository.findByIdOrderId(order.id)).thenReturn(
-            listOf(
+            photos.map { photo ->
                 OrderItem(
                     id = OrderItemId(orderId = order.id, photoId = photo.id),
                     pricePhpAtPurchase = BigDecimal("125.00"),
-                ),
-            ),
+                )
+            },
         )
-        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo))
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(photos)
         Mockito.`when`(downloadGrantRepository.findByIdOrderId(order.id)).thenReturn(
-            listOf(
+            photos.map { photo ->
                 DownloadGrant(
                     id = DownloadGrantId(orderId = order.id, photoId = photo.id),
                     grantedUntil = OffsetDateTime.now().plusYears(1),
-                ),
-            ),
+                )
+            },
         )
         Mockito.`when`(eventRepository.findById(order.eventId)).thenReturn(
             Optional.of(
@@ -164,6 +207,7 @@ class OrderBundleServiceTest {
                 ),
             ),
         )
+        return photos
     }
 
     private fun <T> anyArg(): T = Mockito.any()

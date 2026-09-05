@@ -36,9 +36,11 @@ describe("PhotoMosaicTile coupon badge", () => {
       <PhotoMosaicTile event={event} photo={photo} index={0} onOpen={vi.fn()} />,
     );
 
-    expect(
-      screen.getByRole("button", { name: /Copy coupon RACE20/ }),
-    ).toBeInTheDocument();
+    // Auto-apply (2026-09-05): the chip announces the offer; nothing to copy.
+    expect(screen.getByText("−20%")).toBeInTheDocument();
+    expect(screen.getByText(/applied at checkout/)).toBeInTheDocument();
+    expect(screen.queryByText(/RACE20/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Copy coupon/ })).not.toBeInTheDocument();
 
     rerender(
       <PhotoMosaicTile
@@ -55,8 +57,6 @@ describe("PhotoMosaicTile coupon badge", () => {
       />,
     );
 
-    expect(
-      screen.queryByRole("button", { name: /Copy coupon/ }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/applied at checkout/)).not.toBeInTheDocument();
   });
 });

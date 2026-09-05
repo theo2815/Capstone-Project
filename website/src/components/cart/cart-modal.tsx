@@ -10,6 +10,7 @@ import { fetchEventDetail } from "@/lib/api-events";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn, formatPrice } from "@/lib/utils";
+import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
 import type { CartItem } from "@/types/order";
 import {
   PhotoPreviewCard,
@@ -266,7 +267,7 @@ export function CartModal({
       >
         <header className="flex items-start justify-between gap-3 px-6 md:px-7 pt-6 pb-5 border-b border-line">
           <div>
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-1.5">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-1.5">
               Your cart
             </p>
             <p className="font-display text-2xl md:text-3xl font-medium text-ink tracking-tight leading-tight">
@@ -317,8 +318,8 @@ export function CartModal({
             </ul>
 
             <footer className="border-t border-line bg-bone-deep px-6 md:px-7 py-5 md:py-6">
-              <div className="flex items-baseline justify-between gap-3 mb-4">
-                <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft">
                   Subtotal
                 </span>
                 <span className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight tnum">
@@ -337,7 +338,7 @@ export function CartModal({
                     onClose();
                   }
                 }}
-                className="inline-flex w-full items-center justify-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone-deep"
+                className={cn(BTN_PRIMARY, BTN_SIZE.md, "w-full")}
               >
                 Continue to checkout →
               </button>
@@ -409,7 +410,7 @@ function CartRow({
 
   return (
     <li
-      className="relative px-6 md:px-7 py-5"
+      className="flex items-start gap-4 px-6 md:px-7 py-5"
       style={{
         animation: `fade-up 0.4s ${Math.min(index * 0.04, 0.4)}s both`,
         opacity: 0,
@@ -420,7 +421,7 @@ function CartRow({
         onClick={onPreview}
         aria-label={`Preview ${item.bib ?? "untagged photo"} from ${item.eventName ?? "QuickPitik"}`}
         aria-haspopup="dialog"
-        className="group flex items-start gap-4 w-full text-left rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className="group flex flex-1 min-w-0 items-start gap-4 text-left rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
       >
         <div
           className="relative size-20 shrink-0 rounded-md overflow-hidden transition-transform duration-200 group-hover:-translate-y-0.5"
@@ -432,6 +433,11 @@ function CartRow({
             <img
               src={item.thumbnailUrl}
               alt=""
+              onError={(e) => {
+                // Broken URL → hide the img so the solid tone block shows
+                // instead of the browser's broken-image icon.
+                e.currentTarget.style.display = "none";
+              }}
               className={`absolute inset-0 w-full h-full object-cover ${PROTECTED_IMG_CLASS}`}
               {...PROTECTED_IMG_PROPS}
             />
@@ -460,26 +466,22 @@ function CartRow({
             </p>
           ) : null}
         </div>
-
-        <div className="flex flex-col items-end gap-2 shrink-0">
-          <span className="font-mono text-sm text-ink tnum">
-            {formatPrice(item.price)}
-          </span>
-        </div>
       </button>
 
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove();
-        }}
-        aria-label={`Remove ${item.bib ?? "untagged photo"} from cart`}
-        className="absolute right-6 md:right-7 bottom-5 inline-flex items-center gap-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft hover:text-fresh transition-colors focus:outline-none focus-visible:text-fresh"
-      >
-        <span aria-hidden="true">✕</span>
-        <span>Remove</span>
-      </button>
+      <div className="flex flex-col items-end gap-1.5 shrink-0">
+        <span className="font-mono text-sm text-ink tnum">
+          {formatPrice(item.price)}
+        </span>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${item.bib ?? "untagged photo"} from cart`}
+          className="inline-flex items-center gap-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft hover:text-fresh transition-colors focus:outline-none focus-visible:text-fresh"
+        >
+          <span aria-hidden="true">✕</span>
+          <span>Remove</span>
+        </button>
+      </div>
     </li>
   );
 }

@@ -1,11 +1,12 @@
 "use client";
 
 import Script from "next/script";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { ApiError } from "@/lib/api";
 import { GOOGLE_CLIENT_ID, ROUTES } from "@/lib/constants";
+import { isInAppBrowser } from "@/lib/in-app-browser";
 import { roleHome } from "@/lib/redirect";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +33,13 @@ export function GoogleButton({ disabled }: GoogleButtonProps) {
   const { googleLogin } = useAuth();
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
+  // navigator is client-only, so decide after mount. Rendering the neutral
+  // reserved slot until then keeps SSR and the first client render identical
+  // (no hydration mismatch) and means GIS is never even loaded inside an
+  // in-app browser, where Google refuses the flow.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const inAppBrowser = mounted && isInAppBrowser();
 
   const handleCredential = useCallback(
     async (response: GsiCredentialResponse) => {
@@ -79,12 +87,33 @@ export function GoogleButton({ disabled }: GoogleButtonProps) {
 
   if (!OAUTH_ENABLED) return null;
 
+  // Google blocks OAuth in in-app browsers (Facebook/Messenger/Instagram/…),
+  // where the button walks the runner into a "browser not secure" dead-end.
+  // Skip GIS entirely and point them at a real browser or the email form below.
+  if (inAppBrowser) {
+    return (
+      <div className="rounded-xl border border-line bg-bone-deep/40 px-4 py-3.5 text-center">
+        <p className="kicker text-slate-soft">In-app browser</p>
+        <p className="mt-1.5 font-sans text-sm text-ink-soft">
+          Google sign-in doesn&rsquo;t work here. Open this page in Chrome or
+          Safari (tap the <span aria-hidden>⋯</span> menu &rarr; &ldquo;Open in
+          browser&rdquo;), or use email below. Google-only accounts can set a
+          password via &ldquo;Forgot password?&rdquo; on the login page.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
-      <Script src={GSI_SRC} strategy="afterInteractive" onReady={init} />
-      {/* min-h reserves the GIS button's height so the card doesn't jump
-          when the iframe lands. If the script never loads (ad blocker), the
-          slot stays empty and email/password remains the path — deliberate. */}
+      {/* min-h reserves the GIS button's height so the card doesn't jump when
+          the iframe lands. Before mount, only the reserved slot renders (no
+          GIS script) — the button appears once mounted decides this isn't an
+          in-app browser. If the script never loads (ad blocker), the slot stays
+          empty and email/password remains the path — deliberate. */}
+      {mounted && (
+        <Script src={GSI_SRC} strategy="afterInteractive" onReady={init} />
+      )}
       <div
         ref={containerRef}
         aria-disabled={disabled}

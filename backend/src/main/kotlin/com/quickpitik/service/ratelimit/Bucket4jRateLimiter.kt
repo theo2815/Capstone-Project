@@ -89,6 +89,7 @@ class Bucket4jRateLimiter(
         POLICY_ORDER_VERIFY -> properties.orderVerify
         POLICY_COUPON_PREVIEW -> properties.couponPreview
         POLICY_BUNDLE_DOWNLOAD -> properties.bundleDownload
+        POLICY_PHOTO_DOWNLOAD -> properties.photoDownload
         POLICY_MEDIA_UPLOAD -> properties.mediaUpload
         POLICY_PHOTO_VERIFY -> properties.photoVerify
         // Policies are compile-time constants — an unknown string is a call-site
@@ -111,6 +112,7 @@ class Bucket4jRateLimiter(
         const val POLICY_ORDER_VERIFY = "order-verify"
         const val POLICY_COUPON_PREVIEW = "coupon-preview"
         const val POLICY_BUNDLE_DOWNLOAD = "bundle-download"
+        const val POLICY_PHOTO_DOWNLOAD = "photo-download"
         const val POLICY_MEDIA_UPLOAD = "media-upload"
         const val POLICY_PHOTO_VERIFY = "photo-verify"
 
@@ -130,6 +132,7 @@ class Bucket4jRateLimiter(
             POLICY_ORDER_VERIFY,
             POLICY_COUPON_PREVIEW,
             POLICY_BUNDLE_DOWNLOAD,
+            POLICY_PHOTO_DOWNLOAD,
             POLICY_MEDIA_UPLOAD,
             POLICY_PHOTO_VERIFY,
         )
