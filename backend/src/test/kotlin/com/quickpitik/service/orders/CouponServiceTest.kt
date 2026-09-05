@@ -291,11 +291,106 @@ class CouponServiceTest {
     fun `usage limit rejects a new checkout after its reserved use`() {
         val limited = coupon(code = "ONCE", usageLimit = 1)
         Mockito.`when`(couponRepository.findScopedByCodeForUpdate("ONCE")).thenReturn(limited)
-        Mockito.`when`(orderRepository.countByCouponIdAndStatusNot(limited.id, OrderStatus.EXPIRED)).thenReturn(1)
+        Mockito.`when`(orderRepository.countUsesExcludingStatus(limited.id, OrderStatus.EXPIRED)).thenReturn(1)
 
         val ex = assertFailsWith<ValidationException> { service.reserveForCheckout("ONCE") }
 
         assertEquals(ErrorCodes.COUPON_USAGE_LIMIT_REACHED, ex.code)
+    }
+
+    // Auto-apply (2026-09-05): checkout asks for every live coupon of the
+    // (event, photographer) pairs in the cart. Nothing here throws — a coupon
+    // that can't be redeemed simply isn't applied.
+    @Test
+    fun `reserveAutoFor returns live coupons only for photographer-event pairs in the cart`() {
+        val thirdPhotographerId = UUID.randomUUID()
+        val absentPhotographerId = UUID.randomUUID()
+        val a = coupon(code = "AAAA")
+        val c = coupon(code = "CCCC", owner = thirdPhotographerId)
+        val absent = coupon(code = "DDDD", owner = absentPhotographerId)
+        Mockito.`when`(couponRepository.findActiveByEventIdInForUpdate(setOf(eventId))).thenReturn(listOf(a, c, absent))
+        val cart = listOf(
+            photo(photographerId, "125.00"),
+            photo(photographerId, "125.00"),
+            photo(otherPhotographerId, "150.00"),
+            photo(thirdPhotographerId, "150.00"),
+        )
+
+        val resolved = service.reserveAutoFor(cart)
+
+        assertEquals(
+            mapOf((eventId to photographerId) to a, (eventId to thirdPhotographerId) to c),
+            resolved,
+        )
+    }
+
+    @Test
+    fun `reserveAutoFor skips expired and exhausted coupons silently`() {
+        val exhaustedOwner = UUID.randomUUID()
+        val expired = coupon(code = "OLD", expiresAt = OffsetDateTime.now().minusDays(1))
+        val exhausted = coupon(code = "ONCE", owner = exhaustedOwner, usageLimit = 1)
+        Mockito.`when`(couponRepository.findActiveByEventIdInForUpdate(setOf(eventId)))
+            .thenReturn(listOf(expired, exhausted))
+        Mockito.`when`(orderRepository.countUsesExcludingStatus(exhausted.id, OrderStatus.EXPIRED)).thenReturn(1)
+
+        val resolved = service.reserveAutoFor(
+            listOf(photo(photographerId, "125.00"), photo(exhaustedOwner, "125.00")),
+        )
+
+        assertEquals(emptyMap(), resolved)
+    }
+
+    @Test
+    fun `reserveAutoFor never carries a coupon across events`() {
+        val otherEventId = UUID.randomUUID()
+        Mockito.`when`(couponRepository.findActiveByEventIdInForUpdate(setOf(otherEventId))).thenReturn(emptyList())
+
+        val resolved = service.reserveAutoFor(listOf(photo(photographerId, "125.00", otherEventId)))
+
+        assertEquals(emptyMap(), resolved)
+        Mockito.verify(couponRepository).findActiveByEventIdInForUpdate(setOf(otherEventId))
+    }
+
+    @Test
+    fun `preview without a code prices every photographer's own live coupon`() {
+        val thirdPhotographerId = UUID.randomUUID()
+        val a1 = photo(photographerId, "125.00")
+        val a2 = photo(photographerId, "125.00")
+        val b1 = photo(otherPhotographerId, "150.00")
+        val c1 = photo(thirdPhotographerId, "150.00")
+        val a = coupon(code = "AAAA")
+        val c = coupon(code = "CCCC", owner = thirdPhotographerId)
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(a1, a2, b1, c1))
+        Mockito.`when`(couponRepository.findLiveForEvent(eqArg(eventId), anyArg(), anyArg())).thenReturn(listOf(a, c))
+
+        val preview = service.preview(CouponPreviewRequest(code = null, photoIds = listOf(a1.id, a2.id, b1.id, c1.id)))
+
+        assertEquals(null, preview.code)
+        assertEquals(listOf(a1.id, a2.id, c1.id), preview.items.map { it.photoId })
+        assertEquals(listOf("AAAA", "AAAA", "CCCC"), preview.items.map { it.couponCode })
+        assertEquals(BigDecimal("18.75"), preview.items[0].discount)
+        assertEquals(BigDecimal("22.50"), preview.items[2].discount)
+        assertEquals(BigDecimal("60.00"), preview.discountTotal)
+        assertEquals(3, preview.eligibleCount)
+    }
+
+    @Test
+    fun `preview with a code keeps the other photographers' automatic coupons`() {
+        val thirdPhotographerId = UUID.randomUUID()
+        val a1 = photo(photographerId, "125.00")
+        val c1 = photo(thirdPhotographerId, "150.00")
+        val a = coupon(code = "AAAA")
+        val c = coupon(code = "CCCC", owner = thirdPhotographerId)
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(a1, c1))
+        Mockito.`when`(couponRepository.findByCodeAndEventIdIsNotNull("AAAA")).thenReturn(a)
+        Mockito.`when`(couponRepository.findLiveForEvent(eqArg(eventId), anyArg(), anyArg())).thenReturn(listOf(a, c))
+
+        val preview = service.preview(CouponPreviewRequest(code = "aaaa", photoIds = listOf(a1.id, c1.id)))
+
+        assertEquals("AAAA", preview.code)
+        assertEquals("Aira Santos", preview.photographerName)
+        assertEquals(listOf("AAAA", "CCCC"), preview.items.map { it.couponCode })
+        assertEquals(BigDecimal("41.25"), preview.discountTotal)
     }
 
     @Test
@@ -334,9 +429,10 @@ class CouponServiceTest {
         active: Boolean = true,
         expiresAt: OffsetDateTime? = null,
         usageLimit: Int? = null,
+        owner: UUID = photographerId,
     ) = PhotographerCoupon(
         eventId = eventId,
-        photographerId = photographerId,
+        photographerId = owner,
         code = code,
         percentOff = 20,
         active = active,
@@ -373,4 +469,5 @@ class CouponServiceTest {
     )
 
     private fun <T> anyArg(): T = Mockito.any()
+    private fun <T> eqArg(value: T): T = Mockito.eq(value) ?: value
 }

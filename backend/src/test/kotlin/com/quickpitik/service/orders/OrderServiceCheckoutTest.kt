@@ -653,6 +653,78 @@ class OrderServiceCheckoutTest {
         assertEquals("https://pay.test/cs_test", response.redirectUrl)
     }
 
+    // Auto-apply (2026-09-05). Cart: A1, A2 (photographer A, live coupon),
+    // B1 (photographer B, no coupon), C1 (photographer C, live coupon), all in
+    // one event. No code is typed. Each photo is priced by its own uploader's
+    // coupon and nothing else; one event order carries both coupons per item.
+    @Test
+    fun `each photographer's live coupon applies automatically to their own photos only`() {
+        val a = UUID.randomUUID()
+        val b = UUID.randomUUID()
+        val c = UUID.randomUUID()
+        photo.photographerId = a
+        val a2 = Photo(eventId = eventId, s3Key = "photos/a2.jpg", pricePhp = BigDecimal("125.00")).also { it.photographerId = a }
+        val b1 = Photo(eventId = eventId, s3Key = "photos/b1.jpg", pricePhp = BigDecimal("150.00")).also { it.photographerId = b }
+        val c1 = Photo(eventId = eventId, s3Key = "photos/c1.jpg", pricePhp = BigDecimal("150.00")).also { it.photographerId = c }
+        val cart = listOf(photo, a2, b1, c1)
+        Mockito.`when`(photoRepository.findAllByIdForUpdate(anyArg())).thenReturn(cart)
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(cart)
+        val couponA = PhotographerCoupon(eventId = eventId, photographerId = a, code = "AAAA", percentOff = 20)
+        val couponC = PhotographerCoupon(eventId = eventId, photographerId = c, code = "CCCC", percentOff = 50)
+        Mockito.`when`(couponRepository.findActiveByEventIdInForUpdate(setOf(eventId))).thenReturn(listOf(couponA, couponC))
+        stubProvider()
+
+        val response = service.create(null, request(items = cart.map { CreateOrderItem(it.id, eventId) }), key)
+
+        // A: 125 × 0.75 × 20% = 18.75 each. C: 150 × 0.75 × 50% = 56.25. B: none.
+        val byPhoto = savedItems.associateBy { it.id.photoId }
+        assertEquals(BigDecimal("18.75"), byPhoto.getValue(photo.id).discountPhp)
+        assertEquals(BigDecimal("18.75"), byPhoto.getValue(a2.id).discountPhp)
+        assertEquals(0, byPhoto.getValue(b1.id).discountPhp.signum())
+        assertEquals(BigDecimal("56.25"), byPhoto.getValue(c1.id).discountPhp)
+        assertEquals(couponA.id, byPhoto.getValue(photo.id).couponId)
+        assertEquals(couponA.id, byPhoto.getValue(a2.id).couponId)
+        assertEquals(null, byPhoto.getValue(b1.id).couponId)
+        assertEquals(couponC.id, byPhoto.getValue(c1.id).couponId)
+        val order = savedOrders.single()
+        assertEquals(BigDecimal("456.25"), order.totalPhp)
+        // No code was typed: the order-level snapshot stays empty.
+        assertEquals(null, order.couponCode)
+        assertEquals(null, order.couponId)
+        assertEquals(BigDecimal("456.25"), savedPayments.single().amountPhp)
+        val amounts = lastProviderRequest!!.data.attributes.lineItems.map { it.amount }
+        assertEquals(order.totalPhp.multiply(BigDecimal(100)).toLong(), amounts.sum())
+        assertEquals(null, response.couponCode)
+    }
+
+    @Test
+    fun `a typed code and the automatic coupons apply side by side`() {
+        val a = UUID.randomUUID()
+        val c = UUID.randomUUID()
+        photo.photographerId = a
+        val c1 = Photo(eventId = eventId, s3Key = "photos/c1.jpg", pricePhp = BigDecimal("150.00")).also { it.photographerId = c }
+        Mockito.`when`(photoRepository.findAllByIdForUpdate(anyArg())).thenReturn(listOf(photo, c1))
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo, c1))
+        val couponA = PhotographerCoupon(eventId = eventId, photographerId = a, code = "AAAA", percentOff = 20)
+        val couponC = PhotographerCoupon(eventId = eventId, photographerId = c, code = "CCCC", percentOff = 50)
+        Mockito.`when`(couponRepository.findScopedByCodeForUpdate("AAAA")).thenReturn(couponA)
+        Mockito.`when`(couponRepository.findActiveByEventIdInForUpdate(setOf(eventId))).thenReturn(listOf(couponA, couponC))
+        stubProvider()
+
+        service.create(
+            null,
+            request(items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(c1.id, eventId)), couponCode = "aaaa"),
+            key,
+        )
+
+        val order = savedOrders.single()
+        assertEquals("AAAA", order.couponCode)
+        assertEquals(couponA.id, order.couponId)
+        assertEquals(couponA.id, savedItems.single { it.id.photoId == photo.id }.couponId)
+        assertEquals(couponC.id, savedItems.single { it.id.photoId == c1.id }.couponId)
+        assertEquals(BigDecimal("200.00"), order.totalPhp)
+    }
+
     private fun stubProvider() {
         Mockito.`when`(paymongoClient.createCheckoutSession(anyArg(), anyArg())).thenAnswer { call ->
             lastProviderRequest = call.getArgument(0)

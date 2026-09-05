@@ -26,8 +26,13 @@ describe("PhotoPreviewCard coupon offer", () => {
     };
     const { rerender } = render(<PhotoPreviewCard {...props} photo={photo} />);
 
-    expect(await screen.findAllByText("RACE20")).toHaveLength(2);
-    expect(screen.getAllByText(/20% off/)).toHaveLength(2);
+    // Auto-apply (2026-09-05): the offer row says the discount is applied at
+    // checkout; the code itself is no longer shown or copied.
+    // The rail mounts twice (lg column + mobile strip), as before.
+    expect(await screen.findAllByText(/20% off .* applied at checkout/)).toHaveLength(2);
+    expect(screen.getByText(/−20% · list ₱150/)).toBeInTheDocument();
+    expect(screen.queryByText(/RACE20/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
 
     rerender(
       <PhotoPreviewCard
@@ -36,6 +41,6 @@ describe("PhotoPreviewCard coupon offer", () => {
       />,
     );
 
-    await waitFor(() => expect(screen.queryAllByText("RACE20")).toHaveLength(0));
+    await waitFor(() => expect(screen.queryAllByText(/applied at checkout/)).toHaveLength(0));
   });
 });

@@ -87,8 +87,15 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
             String::class.java,
         )
         assertTrue(columns("orders").containsAll(listOf("coupon_code", "coupon_id")))
-        assertTrue("discount_php" in columns("order_items"))
+        assertTrue(columns("order_items").containsAll(listOf("discount_php", "coupon_id")))
         assertTrue("discount_php" in columns("transactions"))
+        // V50: coupons are attributed per item so two photographers' coupons
+        // can share one event order; usage counts distinct orders through items.
+        val itemCouponFk = jdbcTemplate.queryForObject(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'fk_order_items_coupon'",
+            String::class.java,
+        ).orEmpty()
+        assertTrue(itemCouponFk.contains("REFERENCES photographer_coupons(id) ON DELETE SET NULL"), itemCouponFk)
 
         // V49 replaced the events(id, created_by) FK with one on coverage.
         val coverageConstraint = jdbcTemplate.queryForObject(

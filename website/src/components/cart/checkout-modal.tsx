@@ -283,6 +283,27 @@ export function CheckoutModal({
     if (idempotencyKey) setIdempotencyKey(safeUUID());
   };
 
+  // Auto-apply (2026-09-05): on the pay step the server prices the cart with
+  // every photographer's own live coupon — nothing typed. A typed code
+  // replaces this quote until it is removed; a cart edit re-quotes.
+  const photoIdsKey = items.map((i) => i.photoId).join(",");
+  const typedCode = coupon?.code ?? null;
+  useEffect(() => {
+    if (!isOpen || step !== "payment" || typedCode || !photoIdsKey) return;
+    let cancelled = false;
+    postCouponPreview({ photoIds: photoIdsKey.split(",") })
+      .then((quote) => {
+        if (!cancelled) setCoupon(quote);
+      })
+      .catch(() => {
+        // Display only — the charge is priced server-side regardless.
+        if (!cancelled) setCoupon(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, step, typedCode, photoIdsKey]);
+
   const handleIdentifySubmit = (e: FormEvent) => {
     e.preventDefault();
     const trimmed = email.trim();
@@ -315,7 +336,8 @@ export function CheckoutModal({
         items: items.map((i) => ({ photoId: i.photoId, eventId: i.eventId })),
         paymentMethod: "qrph",
         recipientEmail: isAuthenticated ? undefined : email,
-        couponCode: coupon?.code,
+        // Only a typed code travels; automatic coupons are the server's call.
+        ...(coupon?.code ? { couponCode: coupon.code } : {}),
         idempotencyKey,
       });
 
@@ -894,8 +916,11 @@ function PaymentStep({
   onEditEmail?: () => void;
   onBackToCart?: () => void;
 }) {
-  const discountFor = (photoId: string) =>
-    coupon?.items.find((c) => c.photoId === photoId)?.discount ?? null;
+  const quoteFor = (photoId: string) =>
+    coupon?.items.find((c) => c.photoId === photoId) ?? null;
+  // Per-photo rows open up whenever a discount reached the cart or a code was
+  // typed (so "Not covered by this code" has somewhere to show).
+  const showRows = coupon != null && (coupon.code != null || coupon.items.length > 0);
 
   return (
     <div className="px-6 md:px-7 py-6 flex flex-col gap-7">
@@ -916,12 +941,13 @@ function PaymentStep({
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-2">
           Order summary
         </p>
-        {coupon ? (
-          // With a code applied the summary opens up per photo, so the runner
-          // never has to guess which pictures the discount reached.
+        {showRows && coupon ? (
+          // With a discount in play the summary opens up per photo, so the
+          // runner never has to guess which pictures it reached.
           <ul className="rounded-xl border border-line bg-bone-deep divide-y divide-line">
             {items.map((item) => {
-              const discount = discountFor(item.photoId);
+              const quote = quoteFor(item.photoId);
+              const discount = quote?.discount ?? null;
               return (
                 <li key={item.photoId} className="flex items-center gap-3 px-4 py-3">
                   {item.thumbnailUrl ? (
@@ -941,11 +967,13 @@ function PaymentStep({
                         <span className="text-slate-soft"> · {item.eventName}</span>
                       ) : null}
                     </p>
-                    <Kicker as="p" tone="soft" tnum className="truncate">
-                      {discount != null
-                        ? `${coupon.code} · −${formatPrice(discount)}`
-                        : "Not covered by this code"}
-                    </Kicker>
+                    {(quote || coupon.code) && (
+                      <Kicker as="p" tone="soft" tnum className="truncate">
+                        {quote
+                          ? `${quote.couponCode} · −${formatPrice(quote.discount)}`
+                          : "Not covered by this code"}
+                      </Kicker>
+                    )}
                   </div>
                   <div className="text-right shrink-0">
                     {discount != null ? (
@@ -990,13 +1018,16 @@ function PaymentStep({
       </section>
 
       <section>
-        {coupon ? (
+        {coupon?.code ? (
           <div className="rounded-xl border border-line bg-bone px-5 py-4 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="font-mono font-semibold tnum text-ink truncate">{coupon.code}</p>
               <p className="font-sans text-sm text-ink-soft mt-0.5">
                 <span className="tnum">{coupon.percentOff}%</span> off{" "}
-                <span className="tnum">{coupon.eligibleCount}</span> of{" "}
+                <span className="tnum">
+                  {coupon.items.filter((c) => c.couponCode === coupon.code).length}
+                </span>{" "}
+                of{" "}
                 <span className="tnum">{itemCount}</span>{" "}
                 {itemCount === 1 ? "photo" : "photos"}
                 {coupon.photographerName ? ` · photos by ${coupon.photographerName}` : ""}
@@ -1017,18 +1048,26 @@ function PaymentStep({
               onApplyCoupon();
             }}
           >
+            {coupon && coupon.items.length > 0 && (
+              // Automatic photographer discounts are already in the rows above;
+              // this line just says so, in case the runner wonders why.
+              <p className="mb-3 font-sans text-sm text-ink-soft">
+                Photographer discounts applied ·{" "}
+                <span className="tnum text-ink">−{formatPrice(coupon.discountTotal)}</span>
+              </p>
+            )}
             <label
               htmlFor="coupon-code"
               className="block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink-soft mb-2"
             >
-              Coupon code · optional
+              Have a code? · optional
             </label>
             <div className="flex items-stretch gap-2">
               <input
                 id="coupon-code"
                 value={couponInput}
                 onChange={(e) => onCouponInputChange(e.target.value)}
-                placeholder="From a photographer's photo card"
+                placeholder="Coupon code"
                 autoComplete="off"
                 aria-invalid={Boolean(couponError)}
                 aria-describedby={couponError ? "coupon-code-err" : undefined}

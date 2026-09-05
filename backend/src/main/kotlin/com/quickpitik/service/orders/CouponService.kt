@@ -158,6 +158,29 @@ class CouponService(
         return requireRedeemable(coupon)
     }
 
+    // Auto-apply (2026-09-05): every live coupon of the (event, photographer)
+    // pairs in the cart, locked like reserveForCheckout so the usage-limit
+    // check serializes with the discounted order's creation. Never throws —
+    // a coupon that can't be redeemed simply isn't applied. Keyed by pair, so
+    // a photographer's coupon on one event can never reach their photos in
+    // another, and one photographer's coupon never reaches another's photos.
+    fun reserveAutoFor(photos: Collection<Photo>): Map<Pair<UUID, UUID>, PhotographerCoupon> =
+        autoFor(photos, couponRepository::findActiveByEventIdInForUpdate)
+
+    private fun autoFor(
+        photos: Collection<Photo>,
+        load: (Set<UUID>) -> List<PhotographerCoupon>,
+    ): Map<Pair<UUID, UUID>, PhotographerCoupon> {
+        val pairs = photos.mapNotNull { p -> p.photographerId?.let { p.eventId to it } }.toSet()
+        if (pairs.isEmpty()) return emptyMap()
+        val now = OffsetDateTime.now()
+        return load(pairs.map { it.first }.toSet())
+            .filter { it.eventId != null && it.active && (it.eventId to it.photographerId) in pairs }
+            .filter { it.expiresAt?.isAfter(now) != false }
+            .filter { c -> c.usageLimit?.let { usageCountOf(c) < it } != false }
+            .associateBy { it.eventId!! to it.photographerId }
+    }
+
     // Free (₱0) photos are never eligible — there is no share to discount.
     fun eligible(photo: Photo, coupon: PhotographerCoupon): Boolean =
         photo.eventId == coupon.eventId &&
@@ -178,24 +201,50 @@ class CouponService(
         )
     }
 
+    // The typed code wins for its own pair; every other pair keeps its
+    // automatic coupon. Same precedence as OrderService.reserveCheckout.
+    fun couponFor(photo: Photo, manual: PhotographerCoupon?, auto: Map<Pair<UUID, UUID>, PhotographerCoupon>) =
+        manual?.takeIf { eligible(photo, it) }
+            ?: photo.photographerId?.let { auto[photo.eventId to it] }?.takeIf { eligible(photo, it) }
+
     @Transactional(readOnly = true)
     fun preview(req: CouponPreviewRequest): CouponPreviewDto {
-        val coupon = resolveForCheckout(req.code)
-        val items = photoRepository.findAllById(req.photoIds.distinct())
-            .filter { it.status == PhotoStatus.LIVE && eligible(it, coupon) }
-            .map { CouponPreviewItemDto(photoId = it.id, price = it.pricePhp, discount = discountFor(it, coupon)) }
-        val name = userRepository.findById(coupon.photographerId).orElse(null)?.name
-        if (items.isEmpty()) {
+        val manual = req.code?.takeIf { it.isNotBlank() }?.let(::resolveForCheckout)
+        val photos = photoRepository.findAllById(req.photoIds.distinct()).filter { it.status == PhotoStatus.LIVE }
+        // Read-only quote: no lock, and findLiveForEvent already filters
+        // active / expiry / usage-limit.
+        val auto = autoFor(photos) { eventIds ->
+            eventIds.flatMap { eventId ->
+                couponRepository.findLiveForEvent(
+                    eventId,
+                    photos.filter { it.eventId == eventId }.mapNotNull { it.photographerId }.toSet(),
+                    OffsetDateTime.now(),
+                )
+            }
+        }
+        val items = photos.mapNotNull { photo ->
+            couponFor(photo, manual, auto)?.let { coupon ->
+                CouponPreviewItemDto(
+                    photoId = photo.id,
+                    price = photo.pricePhp,
+                    discount = discountFor(photo, coupon),
+                    couponCode = coupon.code,
+                    percentOff = coupon.percentOff,
+                )
+            }
+        }
+        val name = manual?.let { userRepository.findById(it.photographerId).orElse(null)?.name }
+        if (manual != null && photos.none { eligible(it, manual) }) {
             throw ValidationException(
-                message = "${coupon.code} belongs to ${name ?: "another photographer"}; none of these photos are theirs",
+                message = "${manual.code} belongs to ${name ?: "another photographer"}; none of these photos are theirs",
                 code = ErrorCodes.COUPON_NOT_APPLICABLE,
                 field = "couponCode",
             )
         }
-        val handle = photographerSettingsRepository.findById(coupon.photographerId).orElse(null)?.handle
+        val handle = manual?.let { photographerSettingsRepository.findById(it.photographerId).orElse(null)?.handle }
         return CouponPreviewDto(
-            code = coupon.code,
-            percentOff = coupon.percentOff,
+            code = manual?.code,
+            percentOff = manual?.percentOff,
             photographerName = name,
             photographerHandle = handle,
             items = items,
@@ -229,7 +278,7 @@ class CouponService(
     }
 
     private fun usageCountOf(coupon: PhotographerCoupon): Long =
-        orderRepository.countByCouponIdAndStatusNot(coupon.id, OrderStatus.EXPIRED)
+        orderRepository.countUsesExcludingStatus(coupon.id, OrderStatus.EXPIRED)
 
     // "Covered" is the same predicate PhotographerEventService.getEventDetail
     // uses: the photographer created the event (V46) or has an

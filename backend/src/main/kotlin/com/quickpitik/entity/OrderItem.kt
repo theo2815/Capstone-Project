@@ -32,4 +32,10 @@ class OrderItem(
     // pricePhpAtPurchase − discountPhp, and that is what a refund returns.
     @Column(name = "discount_php", nullable = false, precision = 12, scale = 2)
     var discountPhp: BigDecimal = BigDecimal.ZERO,
+
+    // The coupon that produced discountPhp (V50). Per item because an event
+    // order can hold photos from several photographers, each with their own
+    // coupon; usage limits count distinct orders through this column.
+    @Column(name = "coupon_id")
+    var couponId: UUID? = null,
 )

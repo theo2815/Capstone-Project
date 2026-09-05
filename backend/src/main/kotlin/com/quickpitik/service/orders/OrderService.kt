@@ -44,6 +44,7 @@ import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotographerCoupon
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
@@ -221,20 +222,21 @@ class OrderService(
             return CheckoutReservation(existing, photos, events, items)
         }
 
-        // Fresh checkout only — the replay branches above never re-resolve the
-        // coupon, so a code that expired between attempts cannot strand a
+        // Fresh checkout only — the replay branches above never re-resolve
+        // coupons, so a code that expired between attempts cannot strand a
         // retry whose discount is already persisted on the order rows.
-        val coupon = request.couponCode?.let(couponService::reserveForCheckout)
-        val discounts: Map<UUID, BigDecimal> = if (coupon == null) {
-            emptyMap()
-        } else {
-            photos.values
-                .filter { couponService.eligible(it, coupon) }
-                .associate { it.id to couponService.discountFor(it, coupon) }
-        }
-        if (coupon != null && discounts.isEmpty()) {
+        // Every photographer's live coupon applies to their own photos
+        // automatically (2026-09-05); a typed code is an override for its pair.
+        val manual = request.couponCode?.let(couponService::reserveForCheckout)
+        val auto = couponService.reserveAutoFor(photos.values)
+        val coupons: Map<UUID, PhotographerCoupon> = photos.values
+            .mapNotNull { photo -> couponService.couponFor(photo, manual, auto)?.let { photo.id to it } }
+            .toMap()
+        val discounts: Map<UUID, BigDecimal> =
+            coupons.mapValues { (photoId, coupon) -> couponService.discountFor(photos.getValue(photoId), coupon) }
+        if (manual != null && coupons.none { it.value.id == manual.id }) {
             throw ValidationException(
-                message = "${coupon.code} doesn't apply to any photo in this checkout",
+                message = "${manual.code} doesn't apply to any photo in this checkout",
                 code = ErrorCodes.COUPON_NOT_APPLICABLE,
                 field = "couponCode",
             )
@@ -243,8 +245,10 @@ class OrderService(
         val expiresAt = OffsetDateTime.now().plus(platformProperties.shareTokenTtl)
         val savedItems = mutableListOf<OrderItem>()
         val orders = request.items.groupBy { it.eventId }.map { (eventId, items) ->
-            val appliedCoupon = coupon?.takeIf {
-                items.any { discounts.containsKey(it.photoId) }
+            // Order-level snapshot = the typed code only, on the event order it
+            // reached; automatic coupons live on the items (V50).
+            val appliedCoupon = manual?.takeIf {
+                items.any { coupons[it.photoId]?.id == manual.id }
             }
             val total = items.fold(BigDecimal.ZERO) { sum, item ->
                 sum + photos.getValue(item.photoId).pricePhp - (discounts[item.photoId] ?: BigDecimal.ZERO)
@@ -270,6 +274,7 @@ class OrderService(
                         id = OrderItemId(order.id, item.photoId),
                         pricePhpAtPurchase = photos.getValue(item.photoId).pricePhp,
                         discountPhp = discounts[item.photoId] ?: BigDecimal.ZERO,
+                        couponId = coupons[item.photoId]?.id,
                     ),
                 )
             }

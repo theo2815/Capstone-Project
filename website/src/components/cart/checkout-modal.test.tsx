@@ -24,6 +24,23 @@ vi.mock("next/navigation", () => ({
 }));
 
 const ORDER_ID = "11111111-2222-4333-8444-555555555555";
+// The pay step quotes the cart (POST /coupons/preview) before any order is
+// created, so order-shaped fallbacks are routed by path and order calls are
+// picked out by path rather than by call index.
+const EMPTY_QUOTE = {
+  code: null,
+  percentOff: null,
+  photographerName: null,
+  photographerHandle: null,
+  items: [],
+  eligibleCount: 0,
+  discountTotal: 0,
+};
+const postRoutes = (fallback: unknown) =>
+  http.post.mockImplementation(async (path: string) =>
+    path === "/coupons/preview" ? EMPTY_QUOTE : fallback,
+  );
+const orderCalls = () => http.post.mock.calls.filter(([p]) => p === "/orders");
 const STATUS_PATH = `/orders/${ORDER_ID}/status?token=return-token`;
 const pendingStatus = { id: ORDER_ID, status: "PENDING", paidAt: null };
 const fulfilledStatus = { id: ORDER_ID, status: "FULFILLED", paidAt: "2026-09-04T12:01:00Z" };
@@ -77,7 +94,7 @@ describe("CheckoutModal QRPH", () => {
       syncEnabled: false,
     });
     http.get.mockResolvedValue(pendingStatus);
-    http.post.mockResolvedValue({
+    postRoutes({
       id: ORDER_ID,
       status: "PENDING",
       items: [],
@@ -147,6 +164,53 @@ describe("CheckoutModal QRPH", () => {
     );
     expect(useCartStore.getState().items).toHaveLength(0);
     expect(usePendingPaymentStore.getState().pending).toBeNull();
+  });
+
+  // Auto-apply (2026-09-05): the pay step asks the server how the cart is
+  // priced — no code typed — and the order goes out without one.
+  it("quotes photographer discounts automatically on the pay step", async () => {
+    const order = {
+      id: ORDER_ID,
+      status: "PENDING",
+      items: [],
+      totalAmount: 106.25,
+      paymentMethod: "qrph",
+      createdAt: "2026-09-04T12:00:00Z",
+      qrPh: { imageUrl: "data:image/png;base64,cXJwaA==", expiresAt: expiresAt(), returnToken: "return-token" },
+    };
+    http.post.mockImplementation(async (path: string) =>
+      path === "/coupons/preview"
+        ? {
+            code: null,
+            percentOff: null,
+            photographerName: null,
+            photographerHandle: null,
+            items: [{ photoId: "photo-1", price: 125, discount: 18.75, couponCode: "AAAA", percentOff: 20 }],
+            eligibleCount: 1,
+            discountTotal: 18.75,
+          }
+        : order,
+    );
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await user.type(screen.getByLabelText("Email"), "runner@example.com");
+    await user.type(screen.getByLabelText("Confirm email"), "runner@example.com");
+    await user.click(screen.getByRole("button", { name: "Continue →" }));
+
+    await waitFor(() =>
+      expect(http.post).toHaveBeenCalledWith("/coupons/preview", { photoIds: ["photo-1"] }),
+    );
+    expect(await screen.findByText(/Photographer discounts applied/)).toBeInTheDocument();
+    expect(screen.getByText("AAAA · −₱18.75")).toBeInTheDocument();
+    expect(screen.getAllByText("₱106.25").length).toBeGreaterThan(0);
+    // The typed-code path is still there for a private code.
+    expect(screen.getByLabelText(/Have a code/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Generate QR to pay/ }));
+    await screen.findByRole("img", { name: /QR Ph payment code/ });
+    const orderCall = http.post.mock.calls.find(([path]) => path === "/orders");
+    expect(orderCall?.[1]).not.toHaveProperty("couponCode");
+    expect(usePendingPaymentStore.getState().pending).toMatchObject({ total: 106.25 });
   });
 
   it("asks before leaving while a QR is live and ignores Esc under the confirmation", async () => {
@@ -222,7 +286,7 @@ describe("CheckoutModal QRPH", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderModal();
     await walkToQr(user);
-    const firstKey = http.post.mock.calls[0][2].headers["Idempotency-Key"];
+    const firstKey = orderCalls()[0][2].headers["Idempotency-Key"];
 
     http.get.mockResolvedValue({ id: ORDER_ID, status: "EXPIRED", paidAt: null });
     await tick(3000);
@@ -233,7 +297,7 @@ describe("CheckoutModal QRPH", () => {
     http.get.mockResolvedValue(pendingStatus);
     await user.click(screen.getByRole("button", { name: /Generate a new QR/ }));
     await screen.findByRole("img", { name: /QR Ph payment code/ });
-    expect(http.post.mock.calls[1][2].headers["Idempotency-Key"]).not.toBe(firstKey);
+    expect(orderCalls()[1][2].headers["Idempotency-Key"]).not.toBe(firstKey);
   });
 
   it("reads EXPIRED at the QR's deadline as an expired code", async () => {
@@ -251,8 +315,8 @@ describe("CheckoutModal QRPH", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderModal();
     await walkToQr(user);
-    const firstKey = http.post.mock.calls[0][2].headers["Idempotency-Key"];
-    http.post.mockResolvedValue({ id: ORDER_ID, status: "EXPIRED", paidAt: null });
+    const firstKey = orderCalls()[0][2].headers["Idempotency-Key"];
+    postRoutes({ id: ORDER_ID, status: "EXPIRED", paidAt: null });
 
     await user.click(screen.getByRole("button", { name: "Cancel payment" }));
     await waitFor(() => expect(useConfirmationStore.getState().active).not.toBeNull());
@@ -260,7 +324,7 @@ describe("CheckoutModal QRPH", () => {
     // Keep waiting: nothing happens.
     act(() => useConfirmationStore.getState().close(false));
     await waitFor(() => expect(useConfirmationStore.getState().active).toBeNull());
-    expect(http.post).toHaveBeenCalledTimes(1);
+    expect(orderCalls()).toHaveLength(1);
     expect(screen.getByRole("img", { name: /QR Ph payment code/ })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Cancel payment" }));
@@ -275,7 +339,7 @@ describe("CheckoutModal QRPH", () => {
     // The cart is untouched — only the payment attempt was cancelled.
     expect(useCartStore.getState().items).toHaveLength(1);
 
-    http.post.mockResolvedValue({
+    postRoutes({
       id: ORDER_ID,
       status: "PENDING",
       items: [],
@@ -294,7 +358,7 @@ describe("CheckoutModal QRPH", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderModal();
     await walkToQr(user);
-    http.post.mockResolvedValue(fulfilledStatus);
+    postRoutes(fulfilledStatus);
 
     await user.click(screen.getByRole("button", { name: "Cancel payment" }));
     await waitFor(() => expect(useConfirmationStore.getState().active).not.toBeNull());
@@ -308,7 +372,7 @@ describe("CheckoutModal QRPH", () => {
 
   it("cancels a signed-in record through the /me route", async () => {
     usePendingPaymentStore.setState({ pending: pendingRecord({ returnToken: null }) });
-    http.post.mockResolvedValue({ id: ORDER_ID, status: "EXPIRED", paidAt: null });
+    postRoutes({ id: ORDER_ID, status: "EXPIRED", paidAt: null });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderModal();
     await screen.findByRole("img", { name: /QR Ph payment code/ });

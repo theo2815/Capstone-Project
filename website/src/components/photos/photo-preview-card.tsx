@@ -8,8 +8,7 @@ import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-sty
 import { ZoomableImage } from "@/components/photos/zoomable-image";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { formatRaceDate } from "@/lib/format";
-import { useToast } from "@/hooks/use-toast";
-import { cn, copyToClipboard, formatPrice } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 
 // The lightbox is a photograph on a dark stage with one caption rail beside
 // it. Every fact and every action lives in that rail, top to bottom: event ·
@@ -202,7 +201,6 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
   const offer =
     mode === "browse" && photo.couponCode && photo.couponPercentOff != null ? (
       <CouponOffer
-        code={photo.couponCode}
         percentOff={photo.couponPercentOff}
         handle={photo.photographerHandle}
         name={photo.photographerName}
@@ -428,7 +426,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                 </p>
                 <Kicker as="p" tone="soft" tnum className="mt-1.5">
                   {hasCouponPrice
-                    ? `With ${photo.couponCode} · list ${formatPrice(photo.price)}`
+                    ? `−${photo.couponPercentOff}% · list ${formatPrice(photo.price)}`
                     : "Per photo · download forever"}
                 </Kicker>
               </div>
@@ -553,49 +551,29 @@ function PhotographerCredit({
   );
 }
 
-// The photographer's coupon offer in the rail: the code, whose photos it
-// covers, and a one-tap copy. Ink outline, not fresh — Buy now owns the
-// accent. The BE has already priced it (see couponPrice on the item).
+// The photographer's coupon offer in the rail: how much, whose photos, and
+// that it applies itself at checkout (2026-09-05 — nothing to copy). Ink
+// outline, not fresh — Buy now owns the accent. The BE has already priced it
+// (see couponPrice on the item).
 function CouponOffer({
-  code,
   percentOff,
   handle,
   name,
 }: {
-  code: string;
   percentOff: number;
   handle?: string | null;
   name?: string | null;
 }) {
-  const { showToast } = useToast();
   // The credit line directly above already names the photographer; a full
   // handle here truncates on the 340px rail. Keep the row about the offer.
   const who = handle || name ? "their" : "this photographer's";
 
-  const copy = async () => {
-    const ok = await copyToClipboard(code);
-    showToast(
-      ok
-        ? { kind: "success", message: `Code ${code} copied. Paste it at checkout.` }
-        : { kind: "error", message: "Couldn't copy the code." },
-    );
-  };
-
   return (
-    <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-line bg-bone-deep/60 px-4 py-3">
-      <div className="min-w-0">
-        <p className="font-mono font-semibold tnum text-ink truncate">{code}</p>
-        <Kicker as="p" tone="soft" tnum className="leading-snug">
-          {percentOff}% off {who} photos
-        </Kicker>
-      </div>
-      <button
-        type="button"
-        onClick={() => void copy()}
-        className={cn(BTN_SECONDARY, "shrink-0 px-4 py-2 text-sm min-h-[44px]")}
-      >
-        Copy
-      </button>
+    <div className="mt-3 rounded-xl border border-line bg-bone-deep/60 px-4 py-3">
+      <p className="font-mono font-semibold tnum text-ink">−{percentOff}%</p>
+      <Kicker as="p" tone="soft" tnum className="leading-snug">
+        {percentOff}% off {who} photos · applied at checkout
+      </Kicker>
     </div>
   );
 }
