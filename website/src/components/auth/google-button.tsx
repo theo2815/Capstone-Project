@@ -97,7 +97,8 @@ export function GoogleButton({ disabled }: GoogleButtonProps) {
         <p className="mt-1.5 font-sans text-sm text-ink-soft">
           Google sign-in doesn&rsquo;t work here. Open this page in Chrome or
           Safari (tap the <span aria-hidden>⋯</span> menu &rarr; &ldquo;Open in
-          browser&rdquo;), or just sign in with your email below.
+          browser&rdquo;), or use email below. Google-only accounts can set a
+          password via &ldquo;Forgot password?&rdquo; on the login page.
         </p>
       </div>
     );

@@ -10,21 +10,34 @@ const INSTAGRAM =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Instagram 300.0.0.0.0 (iPhone14,3; iOS 17_0; en_US)";
 const ANDROID_WEBVIEW =
   "Mozilla/5.0 (Linux; Android 13; Pixel 7 Build/TQ2A.230505.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.0.0 Mobile Safari/537.36";
+const IOS_WEBVIEW =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
 
 const CHROME_ANDROID =
   "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 const SAFARI_IOS =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+const CHROME_IOS =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.0.0 Mobile/15E148 Safari/604.1";
 
 describe("isInAppBrowser", () => {
   it("flags embedded webviews that block Google OAuth", () => {
-    for (const ua of [FB_IOS, MESSENGER_ANDROID, INSTAGRAM, ANDROID_WEBVIEW]) {
+    for (const ua of [
+      FB_IOS,
+      MESSENGER_ANDROID,
+      INSTAGRAM,
+      ANDROID_WEBVIEW,
+      IOS_WEBVIEW,
+      "Line/13.0",
+      "Twitter for iPhone",
+      "TikTok 32.0 BytedanceWebview",
+    ]) {
       expect(isInAppBrowser(ua)).toBe(true);
     }
   });
 
   it("passes real mobile browsers where OAuth works", () => {
-    for (const ua of [CHROME_ANDROID, SAFARI_IOS]) {
+    for (const ua of [CHROME_ANDROID, SAFARI_IOS, CHROME_IOS]) {
       expect(isInAppBrowser(ua)).toBe(false);
     }
   });

@@ -8,10 +8,19 @@
 const IN_APP_BROWSER_RE =
   /\bFBAN\b|\bFBAV\b|FB_IAB|Messenger|Instagram|\bLine\b|Twitter|musical_ly|BytedanceWebview|TikTok|;\s?wv\b/i;
 
+const IOS_DEVICE_RE = /\b(?:iPhone|iPad|iPod)\b/i;
+const IOS_BROWSER_RE = /\b(?:Safari|CriOS|FxiOS|EdgiOS|OPiOS)\b/i;
+
 export function isInAppBrowser(
   ua: string | undefined = typeof navigator === "undefined"
     ? undefined
     : navigator.userAgent,
 ): boolean {
-  return ua != null && IN_APP_BROWSER_RE.test(ua);
+  if (!ua) return false;
+  return (
+    IN_APP_BROWSER_RE.test(ua) ||
+    (IOS_DEVICE_RE.test(ua) &&
+      /AppleWebKit/i.test(ua) &&
+      !IOS_BROWSER_RE.test(ua))
+  );
 }
