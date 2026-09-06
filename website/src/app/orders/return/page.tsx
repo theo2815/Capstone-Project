@@ -15,16 +15,20 @@ import {
   fetchOrderDetail,
   fetchGuestOrderDetail,
   fetchOrderStatus,
+  fetchOrderStatusForUser,
   type OrderDetail,
 } from "@/lib/api-orders";
 import type { OrderPhotoDetail, OrderStatus } from "@/types/order";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { savePhoto, showInAppSaveHint } from "@/lib/save-photo";
+import { savePhoto } from "@/lib/save-photo";
 import { isIOS, isInAppBrowser } from "@/lib/in-app-browser";
+import { SavePhotosButton } from "@/components/orders/save-photos-button";
 
-// /orders/return — landing page PayMongo redirects to after hosted checkout.
-// Polls the order until status flips to PAID, then renders an editorial
+// /orders/return — the receipt page. Reached by the "View receipt & download"
+// link on checkout success and the emailed receipt link (both carry
+// ?orderId=&token=); the legacy PayMongo hosted-checkout success_url also points
+// here. Polls the order until status flips to PAID, then renders an editorial
 // receipt: photo cards on the left, receipt details + actions on the right
 // (mobile stacks photo-first). Guests get a "create account" upsell so
 // they keep their photos beyond the email link's 90-day window.
@@ -81,15 +85,27 @@ function ReturnBody() {
         // /me/orders/{id} (rate-limit-exempt) directly.
         let d: OrderDetail | null = null;
         let status: OrderStatus | null = null;
+        // On the final attempt, actively ask PayMongo (verify) before giving
+        // up, so a slow webhook doesn't strand a real payment on the timeout
+        // screen — the same active reconcile the checkout modal uses.
+        const lastAttempt = attempts >= POLL_MAX_ATTEMPTS;
         if (token) {
-          status = (await fetchOrderStatus(orderId, token)).status;
+          status = (await fetchOrderStatus(orderId, token, { verify: lastAttempt })).status;
           if (cancelled) return;
           if (status === "PAID" || status === "FULFILLED") {
             d = await fetchGuestOrderDetail(orderId, token);
           }
         } else if (isAuthenticated) {
-          d = await fetchOrderDetail(orderId);
-          status = d?.status ?? null;
+          if (lastAttempt) {
+            status = (await fetchOrderStatusForUser(orderId, { verify: true })).status;
+            if (cancelled) return;
+            if (status === "PAID" || status === "FULFILLED") {
+              d = await fetchOrderDetail(orderId);
+            }
+          } else {
+            d = await fetchOrderDetail(orderId);
+            status = d?.status ?? null;
+          }
         }
         if (cancelled) return;
         if (d && (status === "PAID" || status === "FULFILLED")) {
@@ -159,36 +175,12 @@ function PaidState({
   const bundleUrl = detail.shareToken
     ? buildOrderBundleUrl(detail.id, detail.shareToken)
     : null;
+  const savablePhotos = detail.photos
+    .filter((p) => p.downloadUrl)
+    .map((p) => ({ url: p.downloadUrl as string }));
   const showDownloadAll = photoCount >= 2 && bundleUrl != null;
-  const [bulkState, setBulkState] = useState<"idle" | "preparing">("idle");
 
-  const handleDownloadAll = () => {
-    if (bulkState === "preparing" || !bundleUrl) return;
-    // In-app webviews can't save the streamed ZIP — send the runner to a real
-    // browser instead of stranding them.
-    if (isInAppBrowser()) {
-      showInAppSaveHint();
-      return;
-    }
-    setBulkState("preparing");
-    // Programmatic <a download> click — same-tab, no navigation. Server's
-    // Content-Disposition makes the browser save the response as a file.
-    const a = document.createElement("a");
-    a.href = bundleUrl;
-    a.rel = "noopener";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    // Reset state after the browser has had time to pick up the download.
-    // The BE may take a few seconds to assemble the first byte (S3 reads +
-    // ZIP entry headers); 5s leaves the spinner visible long enough to
-    // signal "we heard you" without holding the button hostage if the
-    // request silently fails.
-    window.setTimeout(() => setBulkState("idle"), 5000);
-  };
-
-  // When the master Download-all owns the fresh slot, per-photo CTAs demote
+  // When the master Save-all owns the fresh slot, per-photo CTAs demote
   // to ghost so the one-fresh-per-viewport rule holds. Single-photo orders
   // keep per-photo as the primary fresh action — the master button hides.
   const perPhotoVariant: PhotoCardVariant = showDownloadAll ? "ghost" : "primary";
@@ -217,10 +209,10 @@ function PaidState({
             style={{ animation: "fade-up 0.6s 0.15s both", opacity: 0 }}
           >
             {showDownloadAll && (
-              <DownloadAllButton
-                photoCount={photoCount}
-                state={bulkState}
-                onClick={handleDownloadAll}
+              <SavePhotosButton
+                variant="primary"
+                photos={savablePhotos}
+                bundleUrl={bundleUrl}
               />
             )}
             {detail.photos.length > 0 ? (
@@ -404,52 +396,6 @@ function PhotoCard({
   );
 }
 
-function DownloadAllButton({
-  photoCount,
-  state,
-  onClick,
-}: {
-  photoCount: number;
-  state: "idle" | "preparing";
-  onClick: () => void;
-}) {
-  const isPreparing = state === "preparing";
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={isPreparing}
-      aria-live="polite"
-      className={cn(
-        "group inline-flex w-full items-center justify-center gap-2.5 bg-fresh hover:bg-fresh-deep text-surface px-7 py-4 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
-        isPreparing && "opacity-90 cursor-wait hover:bg-fresh",
-      )}
-    >
-      {isPreparing ? (
-        <>
-          <span
-            aria-hidden="true"
-            className="size-3.5 rounded-full border-2 border-bone/40 border-t-bone animate-spin"
-          />
-          <span>Preparing your zip…</span>
-        </>
-      ) : (
-        <>
-          <span
-            aria-hidden="true"
-            className="transition-transform group-hover:translate-y-0.5"
-          >
-            ↓
-          </span>
-          <span>
-            Download all <span className="tnum">{photoCount}</span> photos (.zip)
-          </span>
-        </>
-      )}
-    </button>
-  );
-}
-
 function PhotoCardSkeleton() {
   return (
     <article className="space-y-4">
@@ -547,15 +493,15 @@ function TimeoutState({
     <div className="flex-1 flex items-center justify-center px-6 md:px-10 py-16">
       <div className="max-w-md w-full text-center">
         <Kicker as="p" className="mb-3">
-          Still processing
+          Still confirming
         </Kicker>
         <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-tight mb-4">
-          Your bank is taking a moment.
+          We&rsquo;re still confirming your payment.
         </h1>
         <p className="font-sans text-base text-ink-soft mb-8">
-          PayMongo confirmed your payment, but the receipt hasn&rsquo;t reached
-          us yet. Check your email in a minute &mdash; we&rsquo;ll send the
-          download links the moment it lands.
+          If your payment went through, your receipt and download links are on
+          their way by email &mdash; usually within a minute. If it didn&rsquo;t,
+          nothing was charged. You can check again below.
         </p>
         <button
           type="button"

@@ -10,6 +10,7 @@ const IN_APP_BROWSER_RE =
 
 const IOS_DEVICE_RE = /\b(?:iPhone|iPad|iPod)\b/i;
 const IOS_BROWSER_RE = /\b(?:Safari|CriOS|FxiOS|EdgiOS|OPiOS)\b/i;
+const ANDROID_DEVICE_RE = /\bAndroid\b/i;
 
 export function isInAppBrowser(
   ua: string | undefined = typeof navigator === "undefined"
@@ -36,4 +37,16 @@ export function isIOS(
     : navigator.userAgent,
 ): boolean {
   return ua ? IOS_DEVICE_RE.test(ua) : false;
+}
+
+// True on Android. The bulk "save all" path prefers the share sheet here too:
+// a ZIP on Android lands in Downloads, not the gallery, so sharing to Google
+// Photos is the friendlier save. (Single-photo save stays a plain download on
+// Android — only the multi-photo path needs the sheet.)
+export function isAndroid(
+  ua: string | undefined = typeof navigator === "undefined"
+    ? undefined
+    : navigator.userAgent,
+): boolean {
+  return ua ? ANDROID_DEVICE_RE.test(ua) : false;
 }
