@@ -106,7 +106,11 @@ data class OrderDetailDto(
     val downloadBundleUrl: String? = null,
     val recipientEmail: String = "",
     val shareToken: String? = null,
-    val disputes: List<RunnerDisputeDto> = emptyList()
+    val disputes: List<RunnerDisputeDto> = emptyList(),
+    // Photographer coupon (V45/V47): the code applied at checkout + the summed
+    // per-item discount. `total` is already the charged (net) amount.
+    val couponCode: String? = null,
+    val discountTotal: Double = 0.0,
 )
 
 data class OrderPhotoDetailDto(
