@@ -9,7 +9,12 @@ data class EventDto(
     val bannerUrl: String?,
     val photoCount: Int,
     val participantCount: Int,
-    val status: String // "LIVE", "COMPLETED", etc.
+    val status: String, // "LIVE", "COMPLETED", etc.
+    // Photographer-owned events (V46). Only PUBLIC events reach the list, so
+    // visibility is informational; pricingMode == "free" tells a tile it's free.
+    // Wire is lowercase: visibility public|unlisted, pricingMode paid|free.
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
 )
 
 // GET /events/{slug} — backend dto/events/EventDetailDto. The list DTO above
@@ -32,6 +37,14 @@ data class EventDetailDto(
     val pricePerPhoto: Double = 0.0,
     val bundlePrice: Double? = null,
     val bundleSize: Int? = null,
+    // V46 owned/free events. pricingMode == "free" drives the runner free-download
+    // flow; photographerHandle credits the owner ("Free from @handle"). Lowercase
+    // wire: visibility public|unlisted, pricingMode paid|free, watermarkPolicy
+    // platform|own|none.
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val photographerHandle: String? = null,
 )
 
 data class PhotoDto(
@@ -59,7 +72,20 @@ data class PhotoDto(
     // or the runner lands on /{null}. Both are null on legacy/seed rows that
     // carry no photographerId at all.
     val photographerHandle: String? = null,
-    val photographerName: String? = null
+    val photographerName: String? = null,
+    // Photographer coupon (V45/V47): set only when the photographer has a live
+    // coupon AND the photo has a price. couponPrice is what the runner pays with
+    // the code (list price − discount), computed server-side — mobile never does
+    // money math. Backend PhotoDto has NO eventId (the vault parity note said
+    // otherwise; code wins) — event context comes from the screen, not the photo.
+    val couponCode: String? = null,
+    val couponPercentOff: Int? = null,
+    val couponPrice: Double? = null,
+    // Free event (V46): preview is unmarked and the original is anyone's.
+    // downloadUrl is an attachment URL for the clean file (cleanUrl is also set
+    // for every visitor); both null on paid events unless owned.
+    val free: Boolean = false,
+    val downloadUrl: String? = null
 )
 
 data class SearchByFaceJsonRequest(
@@ -91,4 +117,16 @@ data class RunnerMessageDto(
 data class RunnerMessageFrame(
     val type: String?,
     val message: RunnerMessageDto?,
+)
+
+// POST /public/photos/verify — "Whose photo is this?" reverse attribution (V42).
+// Attribution only; never a photo id/URL. confidence wire: "strong" | "weak" |
+// null. Backend PhotoVerifyResultDto.
+data class PhotoVerifyResultDto(
+    val matched: Boolean,
+    val confidence: String? = null,
+    val photographerName: String? = null,
+    val photographerHandle: String? = null,
+    val eventName: String? = null,
+    val eventDate: String? = null,
 )

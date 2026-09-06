@@ -1044,6 +1044,27 @@ private fun PhotoTile(
                 contentScale = ContentScale.Crop,
             )
         }
+        // Coupon chip (V47): a live photographer coupon on a priced photo.
+        // Top-start so it never collides with the bottom-end cart pills; Ink,
+        // not Fresh — the in-cart pill owns the one accent per viewport.
+        if (showCommerce) {
+            photo.couponPercentOff?.takeIf { it > 0 }?.let { pct ->
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .clip(PillShape)
+                        .background(Ink.copy(alpha = 0.85f))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        text = "−$pct%",
+                        style = NumeralStyle.copy(fontSize = 12.sp),
+                        color = SurfaceWhite,
+                    )
+                }
+            }
+        }
         // No client-side scrim or "PREVIEW" text: the backend bakes the
         // QuickPitik credit + photographer logo into imageUrl.
         // Cart is RUNNER-gated server-side — pills hidden in photographer runner-view.

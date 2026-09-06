@@ -18,7 +18,69 @@ data class PhotographerEventSummaryDto(
     val photoCount: Int,
     val salesCount: Int,
     val revenueKept: Double,
-    val bannerUrl: String? = null
+    val bannerUrl: String? = null,
+    // Photographer-owned events (V46). ownedByMe = the caller created it (and may
+    // upload on any date); the rest are lowercase wire enums, defaults keeping the
+    // pre-V46 admin-event shape safe. pendingChange is the parked pricing trio on
+    // a live event — an untyped JSON blob (Map), matching the backend. reviewStatus:
+    // pending | approved | rejected | change_pending.
+    val ownedByMe: Boolean = false,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val reviewStatus: String = "approved",
+    val reviewNote: String? = null,
+    val pendingChange: Map<String, Any?>? = null,
+)
+
+// POST/PATCH /me/photographer/events response (create/edit owned event, V46).
+// Superset of the summary + editorial fields + pricePerPhoto. Backend
+// PhotographerEventDetailDto.
+data class PhotographerEventDetailDto(
+    val id: String,
+    val slug: String,
+    val name: String,
+    val date: String,
+    val location: String,
+    val bannerUrl: String? = null,
+    val state: String,
+    val photoCount: Int,
+    val salesCount: Int,
+    val revenueKept: Double,
+    val firstUploadAt: String? = null,
+    val lastUploadAt: String? = null,
+    val ownedByMe: Boolean = false,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val reviewStatus: String = "approved",
+    val reviewNote: String? = null,
+    val pendingChange: Map<String, Any?>? = null,
+    val description: String = "",
+    val organizerName: String = "",
+    val pricePerPhoto: Double = 0.0,
+)
+
+// Event coupon (V47) — lives on the event, not Settings.
+// GET/PUT/DELETE /me/photographer/events/{eventId}/coupon. GET data is null when
+// none. Backend CouponDtos.
+data class CouponDto(
+    val eventId: String,
+    val code: String,
+    val percentOff: Int,
+    val active: Boolean,
+    val expiresAt: String? = null,
+    val usageLimit: Int? = null,
+    val usageCount: Long = 0,
+    val updatedAt: String,
+)
+
+data class UpsertCouponRequest(
+    val code: String,
+    val percentOff: Int,
+    val active: Boolean = true,
+    val expiresAt: String? = null,
+    val usageLimit: Int? = null,
 )
 
 data class WeeklyRevenuePointDto(

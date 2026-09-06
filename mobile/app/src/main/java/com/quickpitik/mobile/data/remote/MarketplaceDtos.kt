@@ -46,6 +46,9 @@ data class CreateOrderRequest(
     // at the MobileReturnController bridge, which deep-links back into the app
     // via `quickpitik://` instead of stranding the user on localhost:3000.
     val clientPlatform: String = "android",
+    // Photographer coupon (V45/V47). Validated + priced server-side only; a code
+    // that covers none of the items is 400 COUPON_NOT_APPLICABLE.
+    val couponCode: String? = null,
 )
 
 data class CreateOrderItem(
@@ -55,12 +58,17 @@ data class CreateOrderItem(
 
 data class OrderResponse(
     val id: String,
-    val status: String, // "PENDING", "PAID", etc.
+    val status: String, // PENDING | PAID | FULFILLED | REFUNDED | EXPIRED (UPPERCASE)
     val items: List<OrderResponseItem>,
     val totalAmount: Double,
     val paymentMethod: String,
     val createdAt: String,
-    val redirectUrl: String? = null
+    val redirectUrl: String? = null,
+    val couponCode: String? = null,
+    // ₱0 inline settlement (V46/V50 100% coupon) or a paid-key replay: the order
+    // is already FULFILLED, redirectUrl is null, and this guest RETURN token loads
+    // the receipt without a redirect. Null for signed-in runners and pending orders.
+    val returnToken: String? = null,
 )
 
 data class OrderResponseItem(
@@ -148,4 +156,41 @@ data class RunnerDisputeDto(
     val openedAt: String,
     val resolvedAt: String? = null,
     val withdrawnAt: String? = null
+)
+
+// POST /coupons/preview { photoIds, code? } — server prices coupon-eligible
+// items so mobile never does money math. code optional: omitted = auto-applied
+// photographer coupons; provided = validate + apply the typed override. Public
+// (guest checkout allowed). Backend CouponDtos.
+data class CouponPreviewRequest(
+    val photoIds: List<String>,
+    val code: String? = null,
+)
+
+data class CouponPreviewItemDto(
+    val photoId: String,
+    val price: Double,
+    val discount: Double,
+    val couponCode: String,
+    val percentOff: Int,
+)
+
+// `items` holds discounted photos only; anything absent is full price. The
+// top-level code fields describe the typed code (null when none was typed).
+data class CouponPreviewDto(
+    val code: String? = null,
+    val percentOff: Int? = null,
+    val photographerName: String? = null,
+    val photographerHandle: String? = null,
+    val items: List<CouponPreviewItemDto> = emptyList(),
+    val eligibleCount: Int = 0,
+    val discountTotal: Double = 0.0,
+)
+
+// GET /me/orders/{id}/status + GET /orders/{id}/status (V39 status-only poll).
+// status: PENDING | PAID | FULFILLED | REFUNDED | EXPIRED. Backend OrderStatusDto.
+data class OrderStatusDto(
+    val id: String,
+    val status: String,
+    val paidAt: String? = null,
 )

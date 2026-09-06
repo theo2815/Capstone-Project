@@ -2,6 +2,8 @@ package com.quickpitik.mobile.data.repository
 
 import com.quickpitik.mobile.data.remote.AddCartItemRequest
 import com.quickpitik.mobile.data.remote.CartItemDto
+import com.quickpitik.mobile.data.remote.CouponPreviewDto
+import com.quickpitik.mobile.data.remote.CouponPreviewRequest
 import com.quickpitik.mobile.data.remote.CreateOrderItem
 import com.quickpitik.mobile.data.remote.CreateOrderRequest
 import com.quickpitik.mobile.data.remote.MergeCartItem
@@ -166,10 +168,34 @@ class CartRepositoryImpl : CartRepository {
         }
     }
 
+    override suspend fun previewCoupon(
+        token: String?,
+        photoIds: List<String>,
+        code: String?
+    ): Result<CouponPreviewDto> {
+        if (photoIds.isEmpty()) return Result.failure(Exception("Cart is empty"))
+        return try {
+            val response = api.previewCoupon(
+                token?.let { "Bearer $it" },
+                CouponPreviewRequest(photoIds = photoIds, code = code),
+            )
+            if (response.success && response.data != null) {
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Couldn't apply that coupon"))
+            }
+        } catch (e: Exception) {
+            // parseError surfaces the backend envelope (COUPON_INVALID / EXPIRED /
+            // USAGE_LIMIT_REACHED / NOT_APPLICABLE) instead of a raw HTTP code.
+            Result.failure(Exception(RetrofitClient.parseError(e)))
+        }
+    }
+
     override suspend fun checkout(
         token: String?,
         recipientEmail: String?,
-        paymentMethod: String
+        paymentMethod: String,
+        couponCode: String?
     ): Result<OrderResponse> {
         val currentItems = _cartItems.value
         if (currentItems.isEmpty()) {
@@ -184,14 +210,16 @@ class CartRepositoryImpl : CartRepository {
         // order and rotates the key, mirroring checkout-modal.tsx (key
         // regenerated on method change, reused across retries).
         val fingerprint = currentItems.map { it.photoId }.sorted()
-            .joinToString(",") + "|" + paymentMethod + "|" + (recipientEmail ?: "")
+            .joinToString(",") + "|" + paymentMethod + "|" + (recipientEmail ?: "") +
+            "|" + (couponCode ?: "")
         val idempotencyKey = idempotency?.takeIf { it.first == fingerprint }?.second
             ?: UUID.randomUUID().toString().also { idempotency = fingerprint to it }
 
         val request = CreateOrderRequest(
             items = currentItems.map { CreateOrderItem(it.photoId, it.eventId) },
             paymentMethod = paymentMethod,
-            recipientEmail = recipientEmail
+            recipientEmail = recipientEmail,
+            couponCode = couponCode,
         )
 
         return try {

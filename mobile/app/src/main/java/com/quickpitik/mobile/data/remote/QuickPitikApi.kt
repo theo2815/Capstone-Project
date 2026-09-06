@@ -109,6 +109,47 @@ interface QuickPitikApi {
         @Query("limit") limit: Int = 200
     ): ApiResponseEnvelope<PaginatedResponse<PhotographerEventSummaryDto>>
 
+    // Create an owned event (V46). Multipart: the caller builds the text parts
+    // (title/date/location/organizerName/description/visibility/pricingMode/
+    // pricePerPhoto/watermarkPolicy) + optional cover, because every text field is
+    // a @RequestParam server-side. Lands DRAFT/pending. Backend MePhotographerController.
+    @Multipart
+    @POST("api/v1/me/photographer/events")
+    suspend fun createPhotographerEvent(
+        @Header("Authorization") token: String,
+        @Part parts: List<MultipartBody.Part>
+    ): ApiResponseEnvelope<PhotographerEventDetailDto>
+
+    // Edit an owned event (V46). Same multipart parts (all optional) plus optional
+    // withdrawPendingChange. A live-event pricing edit becomes an admin change-request.
+    @Multipart
+    @PATCH("api/v1/me/photographer/events/{eventId}")
+    suspend fun updatePhotographerEvent(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Part parts: List<MultipartBody.Part>
+    ): ApiResponseEnvelope<PhotographerEventDetailDto>
+
+    // Event coupon (V47) — GET data is null when none; DELETE returns {removed:true}.
+    @GET("api/v1/me/photographer/events/{eventId}/coupon")
+    suspend fun getEventCoupon(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String
+    ): ApiResponseEnvelope<CouponDto>
+
+    @PUT("api/v1/me/photographer/events/{eventId}/coupon")
+    suspend fun upsertEventCoupon(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: UpsertCouponRequest
+    ): ApiResponseEnvelope<CouponDto>
+
+    @DELETE("api/v1/me/photographer/events/{eventId}/coupon")
+    suspend fun deleteEventCoupon(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String
+    ): ApiResponseEnvelope<RemovedResponse>
+
     @GET("api/v1/me/photographer/events/{eventId}/photos")
     suspend fun getPhotographerEventPhotos(
         @Header("Authorization") token: String,
@@ -303,6 +344,14 @@ interface QuickPitikApi {
         @Query("limit") limit: Int = 100
     ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
 
+    // "Whose photo is this?" reverse attribution (V42) — public, multipart, no
+    // bearer. Backend PublicPhotographerController / PhotoVerifyResultDto.
+    @Multipart
+    @POST("api/v1/public/photos/verify")
+    suspend fun verifyPhoto(
+        @Part file: MultipartBody.Part
+    ): ApiResponseEnvelope<PhotoVerifyResultDto>
+
     @GET("api/v1/events")
     suspend fun getPublicEvents(
         @Query("status") status: String = "ACTIVE",
@@ -424,6 +473,31 @@ interface QuickPitikApi {
         @Path("id") orderId: String,
         @Query("token") shareToken: String
     ): ApiResponseEnvelope<OrderDetailDto>
+
+    // Coupon preview (V47) — public, guest checkout allowed. The server prices the
+    // eligible items so mobile shows the discounted total without any money math.
+    @POST("api/v1/coupons/preview")
+    suspend fun previewCoupon(
+        @Header("Authorization") token: String? = null,
+        @Body request: CouponPreviewRequest
+    ): ApiResponseEnvelope<CouponPreviewDto>
+
+    // Status-only poll (V39). verify=true asks PayMongo about a pending intent and
+    // settles/expires it. Authenticated runner return.
+    @GET("api/v1/me/orders/{id}/status")
+    suspend fun getOrderStatus(
+        @Header("Authorization") token: String,
+        @Path("id") orderId: String,
+        @Query("verify") verify: Boolean? = null
+    ): ApiResponseEnvelope<OrderStatusDto>
+
+    // Guest status-only poll — purpose-bound RETURN token, no bearer.
+    @GET("api/v1/orders/{id}/status")
+    suspend fun getGuestOrderStatus(
+        @Path("id") orderId: String,
+        @Query("token") shareToken: String,
+        @Query("verify") verify: Boolean? = null
+    ): ApiResponseEnvelope<OrderStatusDto>
 
 
 

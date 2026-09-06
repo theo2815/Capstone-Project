@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.isPhotographerRole
 import com.quickpitik.mobile.data.remote.CartItemDto
+import com.quickpitik.mobile.data.remote.CouponPreviewDto
 import com.quickpitik.mobile.data.remote.OrderDetailDto
 import com.quickpitik.mobile.data.remote.OrderListItemDto
 import com.quickpitik.mobile.data.remote.OrderResponse
@@ -67,6 +68,20 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     val cartTotal: StateFlow<Double> = repository.cartItems
         .map { items -> items.sumOf { it.price } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    // Coupon preview for the checkout sheet (V47/V50). Null until fetched; the net
+    // the runner is actually charged is cartTotal − discountTotal. code == null →
+    // auto-applied photographer coupons; a typed code overrides. couponPreview.code
+    // is the typed override that produced the current preview — what checkout()
+    // sends on CreateOrderRequest (auto coupons need no code).
+    private val _couponPreview = MutableStateFlow<CouponPreviewDto?>(null)
+    val couponPreview: StateFlow<CouponPreviewDto?> = _couponPreview
+
+    private val _couponError = MutableStateFlow<String?>(null)
+    val couponError: StateFlow<String?> = _couponError
+
+    private val _couponLoading = MutableStateFlow(false)
+    val couponLoading: StateFlow<Boolean> = _couponLoading
 
     private val _checkoutState = MutableStateFlow<CheckoutState>(CheckoutState.Idle)
     val checkoutState: StateFlow<CheckoutState> = _checkoutState
@@ -167,13 +182,45 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Fetch the coupon preview for the current cart. code null/blank → auto
+    // photographer coupons; a typed code validates + overrides. On an invalid
+    // typed code the backend 400s — surface the message and KEEP the previous
+    // preview so the shown total never jumps back up to list price.
+    fun previewCoupon(code: String?) {
+        val photoIds = cartItems.value.map { it.photoId }
+        if (photoIds.isEmpty()) {
+            _couponPreview.value = null
+            return
+        }
+        val token = sessionManager.getAccessToken()
+        viewModelScope.launch {
+            _couponLoading.value = true
+            _couponError.value = null
+            repository.previewCoupon(token, photoIds, code?.takeIf { it.isNotBlank() })
+                .onSuccess { _couponPreview.value = it }
+                .onFailure {
+                    _couponError.value = it.localizedMessage ?: "That code can't be applied."
+                }
+            _couponLoading.value = false
+        }
+    }
+
+    fun resetCoupon() {
+        _couponPreview.value = null
+        _couponError.value = null
+    }
+
     fun checkout(recipientEmail: String?, paymentMethod: String) {
         val token = sessionManager.getAccessToken()
         val email = recipientEmail ?: sessionManager.getUserEmail() ?: ""
-        
+        // Send only a typed override; auto photographer coupons are applied
+        // server-side without a code. couponPreview.code is the typed code that
+        // produced the current preview (null for auto-only).
+        val couponCode = _couponPreview.value?.code
+
         viewModelScope.launch {
             _checkoutState.value = CheckoutState.Loading
-            val result = repository.checkout(token, email, paymentMethod)
+            val result = repository.checkout(token, email, paymentMethod, couponCode)
             result.onSuccess { order ->
                 _checkoutState.value = CheckoutState.Success(order)
             }.onFailure { exception ->
@@ -192,7 +239,10 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         _cartSheetOpen.value = false
         _checkoutSheetOpen.value = true
     }
-    fun closeCheckoutSheet() { _checkoutSheetOpen.value = false }
+    fun closeCheckoutSheet() {
+        _checkoutSheetOpen.value = false
+        resetCoupon()
+    }
     fun triggerExpressCheckout() { _expressCheckoutPending.value = true }
     fun clearExpressCheckout() { _expressCheckoutPending.value = false }
 

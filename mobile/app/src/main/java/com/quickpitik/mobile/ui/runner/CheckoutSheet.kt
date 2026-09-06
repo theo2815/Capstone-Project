@@ -92,11 +92,17 @@ fun CheckoutSheet(
 ) {
     val cartItems by cartViewModel.cartItems.collectAsState()
     val total by cartViewModel.cartTotal.collectAsState()
+    val couponPreview by cartViewModel.couponPreview.collectAsState()
+    val couponError by cartViewModel.couponError.collectAsState()
+    val couponLoading by cartViewModel.couponLoading.collectAsState()
+    val discount = couponPreview?.discountTotal ?: 0.0
+    val net = (total - discount).coerceAtLeast(0.0)
     val checkoutState by cartViewModel.checkoutState.collectAsState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     var emailInput by remember { mutableStateOf(cartViewModel.getLoggedInUserEmail()) }
     var selectedPaymentMethod by remember { mutableStateOf("GCASH") }
+    var couponInput by remember { mutableStateOf("") }
     // Same gate as the website's checkout identify step (EMAIL_REGEX): the
     // receipt + download links go to this address, so a typo is a lost order.
     val emailError = validateEmail(emailInput)
@@ -108,6 +114,10 @@ fun CheckoutSheet(
     val isLoading = checkoutState is CheckoutState.Loading
     val redirectingSuccess =
         (checkoutState as? CheckoutState.Success)?.order?.redirectUrl != null
+
+    // Load the auto-applied photographer coupons for the current cart so the
+    // total shown is what the runner is actually charged, not the list price.
+    LaunchedEffect(Unit) { cartViewModel.previewCoupon(null) }
 
     // Empty-cart settlement (no PayMongo handoff) — fire success immediately.
     LaunchedEffect(checkoutState) {
@@ -317,6 +327,56 @@ fun CheckoutSheet(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
+                // Coupon code (V47/V50). Auto photographer coupons are already
+                // priced into the total below; this field is the optional typed
+                // override. Deliberately not a Fresh element — the pay CTA is the
+                // one accent per the Mobile Design skill.
+                Kicker("Coupon code")
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextField(
+                        value = couponInput,
+                        onValueChange = { couponInput = it.uppercase() },
+                        placeholder = { Text("Optional", color = SlateSoft) },
+                        singleLine = true,
+                        enabled = !isLoading,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = BoneDeep,
+                            unfocusedContainerColor = BoneDeep,
+                            focusedIndicatorColor = Fresh,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            focusedTextColor = Ink,
+                            unfocusedTextColor = InkSoft,
+                        ),
+                        shape = FieldShape,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(
+                        onClick = { cartViewModel.previewCoupon(couponInput) },
+                        enabled = !couponLoading && couponInput.isNotBlank() && !isLoading,
+                    ) {
+                        Text(
+                            text = if (couponLoading) "…" else "Apply",
+                            style = Typography.labelLarge,
+                            color = Ink,
+                        )
+                    }
+                }
+                couponError?.let { err ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = err,
+                        style = Typography.bodySmall,
+                        color = ErrorRed,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
                 QpCard {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -329,6 +389,24 @@ fun CheckoutSheet(
                             color = Ink,
                         )
                     }
+                    if (discount > 0.0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = couponPreview?.code?.let { "Coupon $it" } ?: "Coupon discount",
+                                style = Typography.bodyMedium,
+                                color = Slate,
+                            )
+                            Text(
+                                text = "−₱${"%,.2f".format(discount)}",
+                                style = NumeralStyle.copy(fontSize = 14.sp),
+                                color = Slate,
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -337,7 +415,7 @@ fun CheckoutSheet(
                     ) {
                         Kicker("Total")
                         Text(
-                            text = "₱${"%,.2f".format(total)}",
+                            text = "₱${"%,.2f".format(net)}",
                             style = NumeralStyle.copy(fontSize = 28.sp),
                             color = Ink,
                         )
