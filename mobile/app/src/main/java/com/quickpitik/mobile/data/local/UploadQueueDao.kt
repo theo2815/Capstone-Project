@@ -12,34 +12,42 @@ data class StatusCount(val status: String, val count: Int)
 
 @Dao
 interface UploadQueueDao {
-    @Query("SELECT * FROM upload_queue ORDER BY id ASC")
-    fun getAllRecords(): Flow<List<UploadRecord>>
+    @Query("SELECT * FROM upload_queue WHERE photographerId = :owner AND eventId = :event AND contentHash = :hash AND uploadStatus != 'FAILED' LIMIT 1")
+    suspend fun findContent(owner: String, event: String, hash: String): UploadRecord?
+
+    @Query("SELECT * FROM upload_queue WHERE photographerId = :owner AND uploadStatus = :status AND id > :afterId ORDER BY id ASC LIMIT 24")
+    suspend fun getOwnedRecords(owner: String, status: String, afterId: Long): List<UploadRecord>
+
+    @Query("UPDATE upload_queue SET uploadStatus = 'QUEUED' WHERE photographerId = :owner AND uploadStatus = 'UPLOADING'")
+    suspend fun recoverOwned(owner: String)
+    @Query("SELECT * FROM upload_queue WHERE (:owner IS NULL OR photographerId = :owner) ORDER BY id ASC")
+    fun getAllRecords(owner: String? = null): Flow<List<UploadRecord>>
 
     // The Capture tab observes these three instead of the whole table: at a
     // 1,000-frame event the full-table Flow re-emitted every row on every
     // status flip (millions of row objects on the main dispatcher).
-    @Query("SELECT uploadStatus AS status, COUNT(*) AS count FROM upload_queue GROUP BY uploadStatus")
-    fun getStatusCounts(): Flow<List<StatusCount>>
+    @Query("SELECT uploadStatus AS status, COUNT(*) AS count FROM upload_queue WHERE (:owner IS NULL OR photographerId = :owner) GROUP BY uploadStatus")
+    fun getStatusCounts(owner: String? = null): Flow<List<StatusCount>>
 
-    @Query("SELECT * FROM upload_queue ORDER BY id DESC LIMIT :limit")
-    fun getRecentRecords(limit: Int): Flow<List<UploadRecord>>
+    @Query("SELECT * FROM upload_queue WHERE (:owner IS NULL OR photographerId = :owner) ORDER BY id DESC LIMIT :limit")
+    fun getRecentRecords(limit: Int, owner: String? = null): Flow<List<UploadRecord>>
 
-    @Query("SELECT errorMessage FROM upload_queue WHERE uploadStatus = 'FAILED' ORDER BY id DESC LIMIT 1")
-    fun getLatestFailedMessage(): Flow<String?>
+    @Query("SELECT errorMessage FROM upload_queue WHERE uploadStatus = 'FAILED' AND (:owner IS NULL OR photographerId = :owner) ORDER BY id DESC LIMIT 1")
+    fun getLatestFailedMessage(owner: String? = null): Flow<String?>
 
     // Pruning the COMPLETED ledger: rows older than an event's upload window
     // can never dedupe a re-import (the backend would refuse the upload
     // anyway), so their thumbnails and rows are dead weight.
-    @Query("SELECT filePath FROM upload_queue WHERE uploadStatus = 'COMPLETED' AND captureTimestamp < :before")
-    suspend fun getCompletedPathsBefore(before: Long): List<String>
+    @Query("SELECT filePath FROM upload_queue WHERE uploadStatus = 'COMPLETED' AND captureTimestamp < :before AND (:owner IS NULL OR photographerId = :owner)")
+    suspend fun getCompletedPathsBefore(before: Long, owner: String? = null): List<String>
 
-    @Query("DELETE FROM upload_queue WHERE uploadStatus = 'COMPLETED' AND captureTimestamp < :before")
-    suspend fun deleteCompletedBefore(before: Long): Int
+    @Query("DELETE FROM upload_queue WHERE uploadStatus = 'COMPLETED' AND captureTimestamp < :before AND (:owner IS NULL OR photographerId = :owner)")
+    suspend fun deleteCompletedBefore(before: Long, owner: String? = null): Int
 
     // Newest first, so a just-shot live frame uploads ahead of an old
     // card-import backlog instead of waiting behind it.
-    @Query("SELECT * FROM upload_queue WHERE uploadStatus = :status ORDER BY id DESC")
-    suspend fun getRecordsWithStatus(status: String): List<UploadRecord>
+    @Query("SELECT * FROM upload_queue WHERE uploadStatus = :status AND (:owner IS NULL OR photographerId = :owner) ORDER BY id DESC")
+    suspend fun getRecordsWithStatus(status: String, owner: String? = null): List<UploadRecord>
 
     @Query("SELECT * FROM upload_queue WHERE id = :id LIMIT 1")
     suspend fun getRecordById(id: Long): UploadRecord?
@@ -65,9 +73,9 @@ interface UploadQueueDao {
     /** Sends every FAILED row back through the queue with a fresh retry budget. */
     @Query(
         "UPDATE upload_queue SET uploadStatus = 'QUEUED', retryCount = 0, " +
-            "errorMessage = NULL WHERE uploadStatus = 'FAILED'"
+            "errorMessage = NULL WHERE uploadStatus = 'FAILED' AND (:owner IS NULL OR photographerId = :owner)"
     )
-    suspend fun requeueFailed(): Int
+    suspend fun requeueFailed(owner: String? = null): Int
 
     /**
      * Records for [eventId] that should block a card photo from being re-imported:
@@ -76,8 +84,8 @@ interface UploadQueueDao {
      * a transient backend hiccup.
      */
     @Query(
-        "SELECT * FROM upload_queue WHERE eventId = :eventId AND " +
+        "SELECT * FROM upload_queue WHERE eventId = :eventId AND (:owner IS NULL OR photographerId = :owner) AND " +
             "uploadStatus IN ('QUEUED', 'UPLOADING', 'COMPLETED')"
     )
-    suspend fun getActiveOrCompletedForEvent(eventId: String): List<UploadRecord>
+    suspend fun getActiveOrCompletedForEvent(eventId: String, owner: String? = null): List<UploadRecord>
 }

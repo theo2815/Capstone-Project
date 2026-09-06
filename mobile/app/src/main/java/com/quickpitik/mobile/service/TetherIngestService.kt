@@ -14,82 +14,86 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.quickpitik.mobile.MainActivity
 import com.quickpitik.mobile.data.local.TetherEvents
+import com.quickpitik.mobile.data.usb.CameraIngestCoordinator
+import com.quickpitik.mobile.data.usb.ShutterWatchState
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 
-/**
- * Keeps the process alive for the duration of a USB ingest — the live shutter
- * watch or a card import.
- *
- * **It does not own the ingest loop.** The loop stays in
- * `PhotographerDashboardViewModel.viewModelScope`, and that is deliberate: the
- * ViewModel is scoped to the `dashboard` nav entry, which is only popped on
- * logout, so it comfortably outlives a shoot. What actually kills a pocketed
- * phone's shoot is the *process* being cached — Android 12+ freezes cached
- * processes, so the coroutine is never cancelled, it simply stops being
- * scheduled. A `connectedDevice` foreground service is the documented fix for
- * exactly that, and it costs a fraction of the churn of relocating the loop.
- *
- * Three jobs, nothing more:
- *  1. hold the process in the foreground for as long as bytes are moving,
- *  2. hold a partial wakelock so the CPU doesn't suspend with the screen off
- *     (a foreground service alone does NOT keep the CPU awake),
- *  3. give the photographer a glanceable status and a Stop control in the shade.
- *
- * The caller supplies the notification text, so this class knows nothing about
- * cameras, handles or capture counts.
- */
+/** Owns camera coroutine lifetime, the notification and wake lock. */
 class TetherIngestService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val coordinator by lazy { CameraIngestCoordinator.get(this) }
+    private var foreground = false
+
+    override fun onCreate() {
+        super.onCreate()
+        coordinator.attach()
+        scope.launch {
+            combine(coordinator.watch, coordinator.cardBusy) { state, busy -> state to busy }.collect { (state, busy) ->
+                if (foreground) {
+                    val notice = when (state) {
+                        is ShutterWatchState.Watching -> state.pauseReason ?: if (state.reconnecting)
+                            "Reconnecting to camera..." else "${state.captureCount} photos saved on phone"
+                        ShutterWatchState.Starting -> "Starting camera..."
+                        ShutterWatchState.Stopping -> "Finishing camera transfer..."
+                        else -> null
+                    }
+                    if (notice != null) showNotice(notice)
+                    else if (!busy) stopSelf()
+                }
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                // The shade's Stop button. The controllers live in the
-                // ViewModel, so all we can do is say so and stand down; the VM
-                // ends whichever flow is running, which drives the state that
-                // would have stopped us anyway.
+                coordinator.stopWatch()
                 TetherEvents.raiseStopRequested()
-                stopSelf()
+                if (!coordinator.isWatching && !coordinator.cardBusy.value) stopSelf()
             }
-            ACTION_START, ACTION_UPDATE -> {
+            ACTION_START, ACTION_UPDATE, ACTION_WATCH -> {
                 val notice = intent.getStringExtra(EXTRA_NOTICE) ?: DEFAULT_NOTICE
-                ensureChannel()
-                // Re-calling startForeground on an already-foreground service is
-                // how the text gets updated — there is no separate update call.
-                //
-                // Android 14+ only permits the connectedDevice type while the
-                // app holds a live USB device grant. The instant the cable is
-                // pulled that grant is gone, and the very next notice update
-                // ("reconnecting…") makes this call throw SecurityException —
-                // which crashed the whole process mid-shoot (device-verified
-                // 2026-09-02). The service is a lifeline, not the owner of the
-                // ingest loop, so losing it must never take the loop down:
-                // stand down quietly and let the next USB attach restart us.
                 try {
-                    ServiceCompat.startForeground(
-                        this,
-                        NOTIFICATION_ID,
-                        buildNotification(notice),
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-                    )
+                    showNotice(notice)
+                    acquireWakeLock()
+                    if (intent.action == ACTION_START)
+                        coordinator.beginCard(scope, intent.getLongExtra("card_generation", -1))
+                    if (intent.action == ACTION_WATCH) {
+                        val owner = intent.getStringExtra("owner") ?: return START_NOT_STICKY
+                        val event = intent.getStringExtra("event") ?: return START_NOT_STICKY
+                        coordinator.beginWatch(scope, owner, event, intent.getLongExtra("generation", -1))
+                    }
+                    if (!coordinator.isWatching && !coordinator.cardBusy.value) stopSelf()
                 } catch (e: RuntimeException) {
-                    // SecurityException (no USB grant) or the API 31+
-                    // ForegroundServiceStartNotAllowedException (backgrounded).
+                    coordinator.startFailed()
                     stopSelf()
-                    return START_NOT_STICKY
                 }
-                acquireWakeLock()
             }
         }
-        // NOT sticky. The coroutine that actually pulls frames lives in the
-        // ViewModel, so a service the system restarts on its own would post a
-        // notification claiming work that no longer exists.
         return START_NOT_STICKY
     }
 
+    private fun showNotice(notice: String) {
+        ensureChannel()
+        if (!foreground) {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(notice),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            foreground = true
+        } else {
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .notify(NOTIFICATION_ID, buildNotification(notice))
+        }
+    }
+
     override fun onDestroy() {
+        coordinator.detach()
+        scope.cancel()
         releaseWakeLock()
         super.onDestroy()
     }
@@ -154,6 +158,7 @@ class TetherIngestService : Service() {
     }
 
     companion object {
+        const val ACTION_WATCH = "com.quickpitik.mobile.tether.WATCH"
         const val ACTION_START = "com.quickpitik.mobile.tether.START"
         const val ACTION_UPDATE = "com.quickpitik.mobile.tether.UPDATE"
         const val ACTION_STOP = "com.quickpitik.mobile.tether.STOP"

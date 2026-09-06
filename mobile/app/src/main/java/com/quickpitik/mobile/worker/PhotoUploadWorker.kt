@@ -18,6 +18,9 @@ import com.quickpitik.mobile.data.remote.DirectUploadCommitRequest
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.UploadedPhotoDto
 import okhttp3.Request
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -43,24 +46,25 @@ class PhotoUploadWorker(
         // request spend a wasted 401 round-trip before the authenticator's
         // already-refreshed branch healed it — once per photo, on a queue that
         // can be hundreds long.
-        sessionManager.getAccessToken() ?: return Result.failure()
+        // A signed-out no-op must not fail/cancel successors already appended by a new login.
+        sessionManager.getAccessToken() ?: return Result.success()
+        val owner = sessionManager.getUserEmail() ?: return Result.success()
 
         // 2. Requeue rows a killed process left stuck in UPLOADING. Safe: the
         // backend answers a same-event re-upload of bytes it already has with
         // an idempotent 200; a cross-event duplicate is a terminal 409 handled
-        // below. Only one worker runs at a time (unique work, KEEP), so these
+        // below. Only one worker runs at a time (one unique work chain), so these
         // rows can't belong to a live sibling.
-        database.uploadQueueDao().getRecordsWithStatus("UPLOADING")
-            .forEach { database.uploadQueueDao().updateStatus(it.id, "QUEUED", null) }
+        database.uploadQueueDao().recoverOwned(owner)
 
         // 2b. Prune the COMPLETED ledger. Rows older than any event's upload
         // window can't dedupe a re-import any more (the backend refuses such
         // uploads), so drop them and their thumbnails — this is what keeps the
         // spool at MBs over a season instead of growing forever.
         val cutoff = System.currentTimeMillis() - COMPLETED_TTL_MS
-        database.uploadQueueDao().getCompletedPathsBefore(cutoff)
+        database.uploadQueueDao().getCompletedPathsBefore(cutoff, owner)
             .forEach { runCatching { File(it).delete() } }
-        database.uploadQueueDao().deleteCompletedBefore(cutoff)
+        database.uploadQueueDao().deleteCompletedBefore(cutoff, owner)
 
         val hasFailures = AtomicBoolean(false)
         // Set on the first connection-level failure. Every record after that
@@ -85,20 +89,14 @@ class PhotoUploadWorker(
         val pacer = Pacer()
         val inFlight = java.util.concurrent.atomic.AtomicInteger(0)
 
-        // 3. Drain until the queue is empty. Re-querying after each batch picks
-        // up rows inserted mid-run (live capture enqueues while uploads are in
-        // flight) — this is what lets runSyncEngine() use ExistingWorkPolicy.KEEP
-        // and still miss nothing. The `attempted` filter gives each record at
-        // most ONE attempt per run, so rows that settleFailure() requeued wait
-        // for the next run (scheduled by Result.retry() with backoff) and the
-        // loop always terminates.
-        val attempted = HashSet<Long>()
+        // Increasing IDs drain new arrivals without an unbounded SQL IN list.
+        // Requeued earlier rows wait for the next scheduled run, with backoff.
+        var afterId = 0L
         while (true) {
-            val batch = database.uploadQueueDao()
-                .getRecordsWithStatus("QUEUED")
-                .filter { it.id !in attempted }
+            if (sessionManager.getUserEmail() != owner) return Result.success()
+            val batch = database.uploadQueueDao().getOwnedRecords(owner, "QUEUED", afterId)
             if (batch.isEmpty()) break
-            batch.forEach { attempted.add(it.id) }
+            afterId = batch.last().id
             coroutineScope {
                 for (record in batch) {
                     launch {
@@ -128,6 +126,8 @@ class PhotoUploadWorker(
         offline: AtomicBoolean,
         pacer: Pacer,
     ) {
+        currentCoroutineContext().ensureActive()
+        if (sessionManager.getUserEmail() != record.photographerId) return
         if (offline.get()) {
             // Budget untouched, row stays QUEUED for the next run.
             hasFailures.set(true)
@@ -150,17 +150,22 @@ class PhotoUploadWorker(
         // survives to a run made after the photographer signs back in.
         val token = sessionManager.getAccessToken()
         if (token == null) {
-            settleFailure(record, false, "Signed out.", database, hasFailures)
+            settleFailure(record, false, "Signed out.", database, hasFailures, transport = true)
             return
         }
 
+        if (sessionManager.getUserEmail() != record.photographerId) {
+            database.uploadQueueDao().updateStatus(record.id, "QUEUED", "Sign in to the account that captured this photo.")
+            return
+        }
         val uploadStart = System.currentTimeMillis()
         try {
             // Direct-to-storage first (bytes go phone → R2, never through the
             // backend); null means "not available here", so fall back to the
             // classic multipart POST the backend has always accepted.
-            val responseEnvelope = tryDirectUpload(file, token, record.eventId)
+            val responseEnvelope = tryDirectUpload(file, token, record.eventId, record.photographerId)
                 ?: run {
+                    requireOwner(record.photographerId)
                     val requestFile = file.asRequestBody("image/jpeg".toMediaTypeOrNull())
                     val body = MultipartBody.Part.createFormData(
                         "file", // Must match backend @RequestPart("file") parameter name
@@ -214,6 +219,7 @@ class PhotoUploadWorker(
                     ?.any { it.code in TERMINAL_UPLOAD_ERROR_CODES } == true
                 settleFailure(record, terminal, errorMsg, database, hasFailures)
             }
+        } catch (e: CancellationException) { throw e
         } catch (e: Exception) {
             val uploadMs = System.currentTimeMillis() - uploadStart
             if (BuildConfig.DEBUG) {
@@ -260,7 +266,9 @@ class PhotoUploadWorker(
         file: File,
         token: String,
         eventId: String,
+        owner: String,
     ): ApiResponseEnvelope<UploadedPhotoDto>? {
+        requireOwner(owner)
         val contentType = "image/jpeg"
         val hash = sha256Hex(file)
         val begin = try {
@@ -280,6 +288,8 @@ class PhotoUploadWorker(
                 val url = plan.uploadUrl ?: return null
                 val photoId = plan.photoId ?: return null
                 val key = plan.key ?: return null
+                requireOwner(owner)
+                currentCoroutineContext().ensureActive()
                 val put = Request.Builder()
                     .url(url)
                     .put(file.asRequestBody(contentType.toMediaTypeOrNull()))
@@ -289,6 +299,8 @@ class PhotoUploadWorker(
                 } catch (e: java.io.IOException) {
                     false
                 }
+                currentCoroutineContext().ensureActive()
+                requireOwner(owner)
                 if (!stored) return null
                 RetrofitClient.apiService.commitDirectUpload(
                     "Bearer $token",
@@ -298,6 +310,11 @@ class PhotoUploadWorker(
             }
             else -> null
         }
+    }
+
+    private fun requireOwner(owner: String) {
+        if (SessionManager.getInstance(applicationContext).getUserEmail() != owner)
+            throw java.io.IOException("Account changed; this photo is paused for its owner.")
     }
 
     private fun sha256Hex(file: File): String {

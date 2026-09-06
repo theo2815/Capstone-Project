@@ -1,227 +1,70 @@
 package com.quickpitik.mobile.data.usb.ptp
 
-import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
-import android.hardware.usb.UsbDeviceConnection
-import android.hardware.usb.UsbEndpoint
-import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
-import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/** Thrown for any PTP transport / protocol failure. */
-class PtpException(message: String) : Exception(message)
-
-/**
- * Minimal pure-Kotlin PTP transport over Android USB host. Enough to handshake
- * with a tethered camera (GetDeviceInfo / OpenSession) and report what it
- * supports. The capture loop (Canon EOS_GetEvent polling → GetObject → the
- * existing upload queue) builds on this once the probe confirms the body's
- * capabilities.
- *
- * Not thread-safe — drive it from a single background coroutine. Construction
- * opens + claims the still-image interface and throws if the device can't be
- * opened (e.g. USB permission not granted yet).
- */
-class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
-
-    private val iface: UsbInterface = findStillImageInterface(device)
-        ?: throw PtpException("No USB still-image (PTP) interface on ${device.deviceName}")
-    private val bulkIn: UsbEndpoint
-    private val bulkOut: UsbEndpoint
-    private val interruptIn: UsbEndpoint?
-    private val connection: UsbDeviceConnection
-    private var transactionId = 0
+/** One exclusively owned PTP session. All callers use the same checked framing. */
+class PtpSession internal constructor(private val transport: PtpTransport) : Closeable {
+    constructor(manager: UsbManager, device: UsbDevice) : this(AndroidPtpTransport(manager, device))
+    private val wire = PtpWire(transport)
     private var sessionOpen = false
+    private var closed = false
+    val hasInterruptEndpoint get() = transport.hasInterruptEndpoint
+    val isUsable get() = wire.usable && !closed
+    fun checkCancellation(check: () -> Unit) { wire.checkCancelled = check }
+    fun allowUnknownObjectLength() { wire.allowUnknownObjectLength = true }
 
-    val hasInterruptEndpoint: Boolean get() = interruptIn != null
+    fun getDeviceInfo(): PtpDeviceInfo = PtpDeviceInfo.parse(wire.data(Ptp.OP_GET_DEVICE_INFO))
 
-    init {
-        var inEp: UsbEndpoint? = null
-        var outEp: UsbEndpoint? = null
-        var intEp: UsbEndpoint? = null
-        for (i in 0 until iface.endpointCount) {
-            val ep = iface.getEndpoint(i)
-            when (ep.type) {
-                UsbConstants.USB_ENDPOINT_XFER_BULK ->
-                    if (ep.direction == UsbConstants.USB_DIR_IN) inEp = ep else outEp = ep
-                UsbConstants.USB_ENDPOINT_XFER_INT ->
-                    if (ep.direction == UsbConstants.USB_DIR_IN) intEp = ep
-            }
-        }
-        bulkIn = inEp ?: throw PtpException("No bulk-IN endpoint")
-        bulkOut = outEp ?: throw PtpException("No bulk-OUT endpoint")
-        interruptIn = intEp
-
-        connection = manager.openDevice(device)
-            ?: throw PtpException("openDevice failed (USB permission not granted?)")
-        if (!connection.claimInterface(iface, true)) {
-            connection.close()
-            throw PtpException("claimInterface failed")
-        }
-    }
-
-    /** GetDeviceInfo handshake — valid before a session is opened. */
-    fun getDeviceInfo(): PtpDeviceInfo {
-        sendCommand(Ptp.OP_GET_DEVICE_INFO)
-        val data = readContainer()
-        val type = containerType(data)
-        if (type != Ptp.TYPE_DATA) throw PtpException("GetDeviceInfo: expected data, got type $type")
-        checkOk(readContainer(), "GetDeviceInfo")
-        return PtpDeviceInfo.parse(data.copyOfRange(CONTAINER_HEADER, data.size))
-    }
-
-    /** Open a PTP session; returns the raw response code so the caller can react. */
     fun openSession(sessionId: Int = 1): Int {
-        // Per spec the OpenSession transaction carries TransactionID 0; the first
-        // operation after it is 1. GetDeviceInfo (outside a session) also used 0.
-        transactionId = 0
-        sendCommand(Ptp.OP_OPEN_SESSION, sessionId)
-        val rc = responseCode(readContainer())
-        if (rc == Ptp.RC_OK || rc == Ptp.RC_SESSION_ALREADY_OPEN) sessionOpen = true
-        return rc
+        wire.transactionId = 0
+        val code = wire.response(Ptp.OP_OPEN_SESSION, sessionId)
+        sessionOpen = code == Ptp.RC_OK || code == Ptp.RC_SESSION_ALREADY_OPEN
+        return code
     }
 
-    /** Close the current PTP session (best-effort — used to clear stale state). */
     fun closeSession() {
-        sendCommand(Ptp.OP_CLOSE_SESSION)
-        readContainer()
+        PtpWire.requireOk(wire.response(Ptp.OP_CLOSE_SESSION))
         sessionOpen = false
     }
 
-    // ── Canon EOS tether operations ─────────────────────────────────────────────
-    // EOS bodies don't push captures on the interrupt endpoint; after entering
-    // remote + event mode the host polls EOS_GetEvent and pulls each new object.
-
-    fun eosSetRemoteMode(mode: Int) = simpleCommand(Ptp.OP_EOS_SET_REMOTE_MODE, mode)
-    fun eosSetEventMode(mode: Int) = simpleCommand(Ptp.OP_EOS_SET_EVENT_MODE, mode)
-    fun eosKeepDeviceOn() = simpleCommand(Ptp.OP_EOS_KEEP_DEVICE_ON)
-    fun eosTransferComplete(handle: Long) = simpleCommand(Ptp.OP_EOS_TRANSFER_COMPLETE, handle.toInt())
-    /** Simple one-shot release (no half/full press semantics) — least state. */
-    fun eosRemoteRelease() = simpleCommand(Ptp.OP_EOS_REMOTE_RELEASE)
-    fun eosRemoteReleaseOn(pressType: Int, extra: Int = 0) =
-        simpleCommand(Ptp.OP_EOS_REMOTE_RELEASE_ON, pressType, extra)
-    fun eosRemoteReleaseOff(pressType: Int) =
-        simpleCommand(Ptp.OP_EOS_REMOTE_RELEASE_OFF, pressType)
-
-    /**
-     * Tell the body where a capture goes (EOS SetDevicePropValueEx). Setting the
-     * destination to "host" is what makes a host-triggered shot get reported +
-     * transferred — without it the camera fires but never notifies us.
-     */
-    fun eosSetCaptureDestination(dest: Int) {
-        // EOS prop-set payload: [UINT32 totalSize][UINT32 propCode][UINT32 value].
-        val payload = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
-        payload.putInt(12)
-        payload.putInt(Ptp.EOS_DPC_CAPTURE_DESTINATION)
-        payload.putInt(dest)
-        dataOutCommand(Ptp.OP_EOS_SET_DEVICE_PROP_VALUE_EX, payload.array())
-    }
-
-    /**
-     * Poll the EOS event queue, tolerant of the "no events" case.
-     *
-     * When its queue is empty the R6 doesn't send a normal data phase — it stalls
-     * the bulk-IN endpoint, which reads as -1 and (if unhandled) wedges the pipe so
-     * the next command can't even be sent. So: send GetEvent; if no data phase
-     * arrives, clear the endpoint halt, drain the response, and return empty bytes
-     * (the caller parses zero events and keeps polling). A real event yields a data
-     * container we return for parsing.
-     */
-    fun eosGetEvent(): ByteArray {
-        try {
-            sendCommand(Ptp.OP_EOS_GET_EVENT)
-        } catch (e: Exception) {
-            clearHalt(bulkOut)
-            sendCommand(Ptp.OP_EOS_GET_EVENT) // one retry after clearing the OUT halt
-        }
-        val data = readContainerOrNull(GET_EVENT_TIMEOUT_MS)
-        if (data == null) {
-            clearHalt(bulkIn)
-            readContainerOrNull(GET_EVENT_TIMEOUT_MS) // drain the response phase, ignore
-            return ByteArray(0)
-        }
-        if (containerType(data) != Ptp.TYPE_DATA) {
-            return ByteArray(0) // got the response directly (no data) = no events
-        }
-        readContainerOrNull(GET_EVENT_TIMEOUT_MS) // response after data, ignore
-        return data.copyOfRange(CONTAINER_HEADER, data.size)
-    }
-
-    /** Download a full object (the captured JPEG) by its handle. */
-    fun eosGetObject(handle: Long): ByteArray = dataInCommand(Ptp.OP_EOS_GET_OBJECT, handle.toInt())
-
-    // ── Standard PTP card reading (the Zno-style path — primary tether) ─────────
-    // After OpenSession, enumerate the memory card and pull objects with the plain
-    // standard ops. This is the universal, rock-solid corner of PTP — it works on
-    // essentially every camera, unlike the EOS remote-capture extension — and lets
-    // us catch each shot the photographer takes with no host trigger and no Live
-    // View. (The same ops the OS uses to "import from camera".)
-
-    /** All storage IDs on the camera (usually one or two card slots). */
-    fun getStorageIds(): List<Long> =
-        parseUint32Array(dataInCommand(Ptp.OP_GET_STORAGE_IDS))
-
-    /**
-     * Object handles on a storage. `format` 0 = all formats; `assoc` 0 = all
-     * objects regardless of folder (the camera also returns folder associations —
-     * the caller filters those out via [getObjectInfo]).
-     */
+    fun eosSetRemoteMode(mode: Int) = simple(Ptp.OP_EOS_SET_REMOTE_MODE, mode)
+    fun eosSetEventMode(mode: Int) = simple(Ptp.OP_EOS_SET_EVENT_MODE, mode)
+    fun eosKeepDeviceOn() = simple(Ptp.OP_EOS_KEEP_DEVICE_ON)
+    fun eosTransferComplete(handle: Long) = simple(Ptp.OP_EOS_TRANSFER_COMPLETE, handle.toInt())
+    fun eosRemoteRelease() = simple(Ptp.OP_EOS_REMOTE_RELEASE)
+    fun eosRemoteReleaseOn(pressType: Int, extra: Int = 0) = simple(Ptp.OP_EOS_REMOTE_RELEASE_ON, pressType, extra)
+    fun eosRemoteReleaseOff(pressType: Int) = simple(Ptp.OP_EOS_REMOTE_RELEASE_OFF, pressType)
+    fun eosSetCaptureDestination(dest: Int) = wire.sendData(
+        Ptp.OP_EOS_SET_DEVICE_PROP_VALUE_EX,
+        ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(12).putInt(Ptp.EOS_DPC_CAPTURE_DESTINATION).putInt(dest).array(),
+    )
+    fun eosGetEvent(): ByteArray = wire.data(Ptp.OP_EOS_GET_EVENT)
+    fun eosGetObject(handle: Long): ByteArray = wire.data(Ptp.OP_EOS_GET_OBJECT, handle.toInt())
+    fun getStorageIds(): List<Long> = parseUint32Array(wire.data(Ptp.OP_GET_STORAGE_IDS))
     fun getObjectHandles(storageId: Long, format: Int = 0, assoc: Long = 0): List<Long> =
-        parseUint32Array(
-            dataInCommand(Ptp.OP_GET_OBJECT_HANDLES, storageId.toInt(), format, assoc.toInt())
-        )
-
-    /** Metadata for one object (format + size + filename) — see [PtpObjectInfo]. */
+        parseUint32Array(wire.data(Ptp.OP_GET_OBJECT_HANDLES, storageId.toInt(), format, assoc.toInt()))
     fun getObjectInfo(handle: Long): PtpObjectInfo =
-        PtpObjectInfo.parse(dataInCommand(Ptp.OP_GET_OBJECT_INFO, handle.toInt()))
+        PtpObjectInfo.parse(wire.data(Ptp.OP_GET_OBJECT_INFO, handle.toInt()))
+    fun getObject(handle: Long): ByteArray = wire.data(Ptp.OP_GET_OBJECT, handle.toInt())
+    fun getObjectTo(handle: Long, sink: OutputStream, expectedSize: Long? = null): Long =
+        wire.objectTo(Ptp.OP_GET_OBJECT, handle, sink, expectedSize)
+    fun eosGetObjectTo(handle: Long, sink: OutputStream, expectedSize: Long? = null): Long =
+        wire.objectTo(Ptp.OP_EOS_GET_OBJECT, handle, sink, expectedSize)
+    fun getThumb(handle: Long): ByteArray = wire.data(Ptp.OP_GET_THUMB, handle.toInt())
+    private fun simple(op: Int, vararg params: Int) = PtpWire.requireOk(wire.response(op, *params))
 
-    /** Download a full object (the JPEG bytes) by handle, standard op. */
-    fun getObject(handle: Long): ByteArray = dataInCommand(Ptp.OP_GET_OBJECT, handle.toInt())
-
-    /**
-     * Streaming twin of [getObject] — writes the JPEG straight into [sink]
-     * instead of returning it. Returns the number of payload bytes written.
-     *
-     * The buffered variants above build the whole file in a doubling
-     * ByteArrayOutputStream and then copy it again to strip the header, so a
-     * 25 MB frame costs ~3× its size in transient heap, once per photo, in a
-     * tight loop. Bulk pulls go through here; every small op (ObjectInfo,
-     * Thumb, StorageIDs, GetEvent) stays on the buffered path where the copy
-     * is free and the code is camera-verified.
-     */
-    fun getObjectTo(handle: Long, sink: OutputStream): Long =
-        dataInCommandTo(Ptp.OP_GET_OBJECT, sink, handle.toInt())
-
-    /** Streaming twin of [eosGetObject] — see [getObjectTo]. */
-    fun eosGetObjectTo(handle: Long, sink: OutputStream): Long =
-        dataInCommandTo(Ptp.OP_EOS_GET_OBJECT, sink, handle.toInt())
-
-    /**
-     * Download the camera-rendered thumbnail JPEG for [handle]. Size is camera-
-     * defined (typically 160x120 / 240x160) so this comes back in a single
-     * data phase and is fast enough to fetch for every visible row during the
-     * browse scan. Not every body supports this op — caller should runCatching
-     * and fall back to a placeholder.
-     */
-    fun getThumb(handle: Long): ByteArray = dataInCommand(Ptp.OP_GET_THUMB, handle.toInt())
-
-    /** Parse a PTP AUINT32 array payload: `[UINT32 count][count × UINT32]`. */
     private fun parseUint32Array(data: ByteArray): List<Long> {
-        if (data.size < 4) return emptyList()
+        if (data.size < 4) throw PtpException("Truncated PTP array.")
         val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
         val count = bb.int
-        val out = ArrayList<Long>(count.coerceIn(0, (data.size - 4) / 4))
-        var p = 4
-        repeat(count) {
-            if (p + 4 > data.size) return@repeat
-            out.add(bb.getInt(p).toLong() and 0xFFFFFFFFL)
-            p += 4
-        }
-        return out
+        if (count < 0 || count > 100_000 || count > bb.remaining() / 4) throw PtpException("Invalid PTP array count.")
+        return List(count) { bb.int.toLong() and 0xffffffffL }
     }
 
     /** Human-readable capability dump driving the Tether Console probe button. */
@@ -250,247 +93,18 @@ class PtpSession(manager: UsbManager, device: UsbDevice) : Closeable {
         }.trim()
     }
 
-    // ── transport ─────────────────────────────────────────────────────────────
 
-    private fun sendCommand(op: Int, vararg params: Int) {
-        val len = CONTAINER_HEADER + params.size * 4
-        val buf = ByteBuffer.allocate(len).order(ByteOrder.LITTLE_ENDIAN)
-        buf.putInt(len)
-        buf.putShort(Ptp.TYPE_COMMAND.toShort())
-        buf.putShort(op.toShort())
-        buf.putInt(transactionId)
-        for (p in params) buf.putInt(p)
-        val arr = buf.array()
-        val t0 = System.currentTimeMillis()
-        val sent = connection.bulkTransfer(bulkOut, arr, arr.size, TIMEOUT_MS)
-        transactionId++
-        // Elapsed ms tells a stalled pipe (fails in ~0 ms) from a silent body
-        // (fails at the timeout) — the field log is all a release build has.
-        if (sent < 0) throw PtpException("send op 0x%04X failed after %d ms".format(op, System.currentTimeMillis() - t0))
-    }
-
-    /** Send a command that has no data phase; verify the response is OK. */
-    private fun simpleCommand(op: Int, vararg params: Int) {
-        sendCommand(op, *params)
-        checkOk(readContainer(), "op 0x%04X".format(op))
-    }
-
-    /** Send a command with a host→device data phase (e.g. SetDevicePropValueEx). */
-    private fun dataOutCommand(op: Int, payload: ByteArray, vararg params: Int) {
-        val txid = transactionId
-        // Command phase.
-        val clen = CONTAINER_HEADER + params.size * 4
-        val cbuf = ByteBuffer.allocate(clen).order(ByteOrder.LITTLE_ENDIAN)
-        cbuf.putInt(clen)
-        cbuf.putShort(Ptp.TYPE_COMMAND.toShort())
-        cbuf.putShort(op.toShort())
-        cbuf.putInt(txid)
-        for (p in params) cbuf.putInt(p)
-        if (connection.bulkTransfer(bulkOut, cbuf.array(), clen, TIMEOUT_MS) < 0) {
-            throw PtpException("op 0x%04X cmd send failed".format(op))
-        }
-        // Data phase — same TransactionID as the command.
-        val dlen = CONTAINER_HEADER + payload.size
-        val dbuf = ByteBuffer.allocate(dlen).order(ByteOrder.LITTLE_ENDIAN)
-        dbuf.putInt(dlen)
-        dbuf.putShort(Ptp.TYPE_DATA.toShort())
-        dbuf.putShort(op.toShort())
-        dbuf.putInt(txid)
-        dbuf.put(payload)
-        if (connection.bulkTransfer(bulkOut, dbuf.array(), dlen, TIMEOUT_MS) < 0) {
-            throw PtpException("op 0x%04X data send failed".format(op))
-        }
-        transactionId++
-        checkOk(readContainer(), "op 0x%04X".format(op))
-    }
-
-    /**
-     * Send a command with a device→host data phase and return the data payload
-     * (bytes after the 12-byte header). If the device skips the data phase and
-     * answers with the response directly, returns an empty array.
-     */
-    private fun dataInCommand(op: Int, vararg params: Int): ByteArray {
-        sendCommand(op, *params)
-        val first = readContainer()
-        if (containerType(first) != Ptp.TYPE_DATA) {
-            val rc = responseCode(first)
-            if (rc != Ptp.RC_OK) throw PtpException("op 0x%04X resp 0x%04X (no data)".format(op, rc))
-            return ByteArray(0)
-        }
-        checkOk(readContainer(), "op 0x%04X".format(op))
-        return first.copyOfRange(CONTAINER_HEADER, first.size)
-    }
-
-    /**
-     * Streaming twin of [dataInCommand]: sends [op], then writes the device→host
-     * data phase straight into [sink]. Returns the payload bytes written — 0
-     * when the device skipped the data phase and answered with a response.
-     *
-     * The framing rules below are deliberately a COPY of [readContainer]'s, not
-     * a shared refactor. Those rules (short-packet termination, Canon's
-     * 0xFFFFFFFF unknown-length phase) were established against real hardware,
-     * and every small op still depends on them — they must keep running on
-     * byte-for-byte the same code while this path is unverified on a camera.
-     * If streaming misbehaves on the R6, reverting is a one-line change at the
-     * two bulk-pull call sites, not a transport rollback.
-     */
-    private fun dataInCommandTo(op: Int, sink: OutputStream, vararg params: Int): Long {
-        sendCommand(op, *params)
-
-        val first = ByteArray(PULL_CHUNK)
-        val n = connection.bulkTransfer(bulkIn, first, first.size, TIMEOUT_MS)
-        // Stricter than readContainer's `n < 4`: this path has to parse the
-        // whole header before it can decide what to do with the bytes.
-        if (n < CONTAINER_HEADER) {
-            throw PtpException("op 0x%04X short/failed read (%d bytes)".format(op, n))
-        }
-
-        if (containerType(first) != Ptp.TYPE_DATA) {
-            val rc = responseCode(first)
-            // An OK with no data phase is bogus for an object pull (seen on a
-            // Canon 2026-09-04 after a card import); name it instead of
-            // returning 0 so the field log says what actually came back.
-            throw PtpException(
-                "op 0x%04X resp 0x%04X, no data (type %d, %d bytes)"
-                    .format(op, rc, containerType(first), n)
-            )
-        }
-
-        val declared = ByteBuffer.wrap(first, 0, 4).order(ByteOrder.LITTLE_ENDIAN).int
-        val lengthKnown = declared in CONTAINER_HEADER..MAX_CONTAINER
-        // `total` counts CONTAINER bytes (header included) so the termination
-        // test matches readContainer's exactly; `written` is what the caller got.
-        var total = n
-        sink.write(first, CONTAINER_HEADER, n - CONTAINER_HEADER)
-        var written = (n - CONTAINER_HEADER).toLong()
-
-        // readContainer stops here iff the first read was short AND nothing more
-        // is declared; the negation is the condition to keep reading.
-        if (n == first.size || (lengthKnown && total < declared)) {
-            val more = ByteArray(PULL_CHUNK)
-            while (true) {
-                if (lengthKnown && total >= declared) break
-                val m = connection.bulkTransfer(bulkIn, more, more.size, TIMEOUT_MS)
-                if (m <= 0) break
-                sink.write(more, 0, m)
-                total += m
-                written += m
-                if (!lengthKnown && m < more.size) break // short packet ends the phase
-            }
-        }
-
-        checkOk(readContainer(), "op 0x%04X".format(op))
-        return written
-    }
-
-    /**
-     * Read one full PTP container. PTP ends a data phase either by reaching the
-     * length declared in the 12-byte header OR via a short/zero USB packet. We
-     * honour both: small responses (DeviceInfo, GetEvent) finish on the first
-     * short read; a full JPEG via GetObject loops until the declared length;
-     * Canon's occasional 0xFFFFFFFF "unknown length" phase loops until a short
-     * packet arrives.
-     */
-    private fun readContainer(timeoutMs: Int = TIMEOUT_MS): ByteArray {
-        val first = ByteArray(READ_CHUNK)
-        val t0 = System.currentTimeMillis()
-        val n = connection.bulkTransfer(bulkIn, first, first.size, timeoutMs)
-        if (n < 4) throw PtpException("short/failed read ($n bytes after ${System.currentTimeMillis() - t0} ms)")
-        val declared = ByteBuffer.wrap(first, 0, 4).order(ByteOrder.LITTLE_ENDIAN).int
-        val lengthKnown = declared in CONTAINER_HEADER..MAX_CONTAINER
-        val out = ByteArrayOutputStream(if (lengthKnown) declared else maxOf(n, READ_CHUNK))
-        out.write(first, 0, n)
-        // A first read shorter than our buffer means a short packet ended the
-        // transfer — done — unless the declared length says more is still coming.
-        if (n < first.size && !(lengthKnown && out.size() < declared)) {
-            return out.toByteArray()
-        }
-        while (true) {
-            if (lengthKnown && out.size() >= declared) break
-            val more = ByteArray(READ_CHUNK)
-            val m = connection.bulkTransfer(bulkIn, more, more.size, timeoutMs)
-            if (m <= 0) break
-            out.write(more, 0, m)
-            if (!lengthKnown && m < more.size) break // short packet ends the phase
-        }
-        return out.toByteArray()
-    }
-
-    /** [readContainer] that yields null instead of throwing (for tolerant polls). */
-    private fun readContainerOrNull(timeoutMs: Int = TIMEOUT_MS): ByteArray? =
-        runCatching { readContainer(timeoutMs) }.getOrNull()
-
-    /**
-     * Clear a stalled (halted) endpoint via CLEAR_FEATURE(ENDPOINT_HALT):
-     * bmRequestType 0x02 (host→device, standard, recipient = endpoint),
-     * bRequest 1, wValue 0, wIndex = endpoint address.
-     */
-    private fun clearHalt(ep: UsbEndpoint) {
-        runCatching { connection.controlTransfer(0x02, 1, 0, ep.address, null, 0, 1000) }
-    }
-
-    /**
-     * USB Still Image Capture class "Device Reset Request" (bmRequestType 0x21 =
-     * host→device, class, recipient interface; bRequest 0x66) followed by a
-     * halt-clear on both bulk pipes. This is what libgphoto2 sends when a body
-     * stops answering. Device-observed 2026-09-02 on the R6: after an unclean
-     * drop, or straight after a card import, OpenSession returned OK but the
-     * next command got no reply and every later bulk-OUT timed out until the
-     * cable was pulled — a camera-side PTP stall that only a reset clears.
-     * Best-effort; the caller retries the open afterwards.
-     */
-    fun resetDevice() {
-        // 2026-09-04, four sessions on the R-series body: the class Device Reset
-        // (0x21/0x66) never recovered a silent OpenSession and every attempt
-        // after it failed at the bulk-OUT send itself — it wedges the pipe. Only
-        // a camera power-cycle clears that state, so this is now halt-clears
-        // only; the request is kept out deliberately.
-        clearHalt(bulkOut)
-        clearHalt(bulkIn)
-        sessionOpen = false
-    }
-
-    private fun containerType(c: ByteArray): Int =
-        ByteBuffer.wrap(c, 4, 2).order(ByteOrder.LITTLE_ENDIAN).short.toInt() and 0xFFFF
-
-    private fun responseCode(c: ByteArray): Int =
-        ByteBuffer.wrap(c, 6, 2).order(ByteOrder.LITTLE_ENDIAN).short.toInt() and 0xFFFF
-
-    private fun checkOk(resp: ByteArray, what: String) {
-        val rc = responseCode(resp)
-        if (rc != Ptp.RC_OK) throw PtpException("$what response 0x%04X".format(rc))
-    }
+    /** Legacy probes must reopen instead of issuing speculative USB reset requests. */
+    fun resetDevice() = close()
 
     override fun close() {
-        runCatching { if (sessionOpen) sendCommand(Ptp.OP_CLOSE_SESSION) }
-        runCatching { readContainer() } // drain the CloseSession response, best-effort
-        runCatching { connection.releaseInterface(iface) }
-        runCatching { connection.close() }
-    }
-
-    private companion object {
-        const val CONTAINER_HEADER = 12
-        const val READ_CHUNK = 16384
-        // Streamed object pulls only. 16 KB meant ~640 bulkTransfer JNI round
-        // trips per 10 MB frame and capped the pull at a few MB/s (measured
-        // 2026-09-04: ~10-15 s shutter→LIVE). Bulk reads terminate on the
-        // declared container length, so a large buffer is safe; usbfs URB
-        // size limits went away before minSdk 29. Small responses keep
-        // READ_CHUNK so the 3/s polls don't churn 512 KB allocations.
-        // ponytail: tune on-device; drop to 256 KB if a body short-reads.
-        // 2026-09-04 A/B: 512 KB coincided with GetObject answering OK-with-no-data
-        // on the R6 after a card import; back to 16 KB until that is proven unrelated.
-        const val PULL_CHUNK = 16384
-        const val TIMEOUT_MS = 5000
-        const val GET_EVENT_TIMEOUT_MS = 1500 // short — empty polls shouldn't hang
-        const val MAX_CONTAINER = 256 * 1024 * 1024 // sanity ceiling for one data phase
-
-        fun findStillImageInterface(device: UsbDevice): UsbInterface? {
-            for (i in 0 until device.interfaceCount) {
-                val iface = device.getInterface(i)
-                if (iface.interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE) return iface
-            }
-            return null
+        if (closed) return
+        wire.checkCancelled = {}
+        try {
+            if (sessionOpen && wire.usable) runCatching { closeSession() }
+        } finally {
+            closed = true
+            transport.close()
         }
     }
 }

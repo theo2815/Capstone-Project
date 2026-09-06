@@ -2,6 +2,8 @@ package com.quickpitik.mobile.data.usb.ptp
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 
@@ -59,25 +61,13 @@ class UsbCardBrowseController(
             return
         }
 
-        val session = try {
-            PtpSession(manager, device).also { s ->
-                val rc = s.openSession()
-                if (rc != Ptp.RC_OK && rc != Ptp.RC_SESSION_ALREADY_OPEN) {
-                    runCatching { s.close() }
-                    emit(Progress.Failed(MSG_SESSION_REJECTED))
-                    return
-                }
-            }
-        } catch (e: PtpException) {
-            emit(Progress.Failed(MSG_OPEN_FAILED))
-            return
-        } catch (e: Exception) {
-            emit(Progress.Failed(MSG_OPEN_FAILED))
-            return
-        }
+        val camera = try { CameraDrivers.open(manager, device) }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { emit(Progress.Failed(e.message ?: MSG_OPEN_FAILED)); return }
+        val session = camera.session
 
         try {
-            val handles = collectHandles(session)
+            val handles = camera.handles()
             if (handles.isEmpty()) {
                 emit(Progress.Done(emptyList()))
                 return
@@ -86,14 +76,16 @@ class UsbCardBrowseController(
             val photos = ArrayList<CardPhoto>()
             for ((idx, handle) in handles.withIndex()) {
                 if (!currentCoroutineContext().isActive) return
-                val info = runCatching { session.getObjectInfo(handle) }.getOrNull()
+                val info = camera.objectInfo(handle)
                 // Folders and RAW stay off the list — only JPEGs are uploadable.
-                if (info != null && !info.isAssociation && info.isJpeg) {
+                if (!info.isAssociation && info.isJpeg) {
                     photos.add(
                         CardPhoto(
                             handle = handle,
                             filename = info.filename.ifBlank { defaultName(handle) },
                             sizeBytes = info.compressedSize,
+                            cameraKey = camera.cameraKey,
+                            objectInfo = info,
                         )
                     )
                 }
@@ -105,9 +97,11 @@ class UsbCardBrowseController(
             // Best-effort per handle — some bodies don't expose GetThumb for
             // every file; a miss keeps the placeholder tile. Newest-first order
             // means the frames the photographer actually wants fill in first.
+            if (!camera.capabilities.thumbnails) return
             val withThumbs = photos.toMutableList()
             for ((i, photo) in photos.withIndex()) {
                 if (!currentCoroutineContext().isActive) return
+                if (!session.isUsable) break
                 val thumb = runCatching { session.getThumb(photo.handle) }
                     .getOrNull()
                     ?.takeIf { it.isNotEmpty() }
@@ -116,30 +110,12 @@ class UsbCardBrowseController(
                 if ((i + 1) % THUMB_BATCH == 0) emit(Progress.Thumbnails(withThumbs.toList()))
             }
             emit(Progress.Thumbnails(withThumbs.toList()))
+        } catch (e: CancellationException) { throw e
         } catch (e: Exception) {
-            emit(Progress.Failed(MSG_READ_FAILED))
+            emit(Progress.Failed(e.message ?: MSG_READ_FAILED))
         } finally {
-            runCatching { session.close() }
+            runCatching { camera.close() }
         }
-    }
-
-    /** Union of object handles across every storage, with the wildcard fallback. */
-    private fun collectHandles(session: PtpSession): List<Long> {
-        val all = LinkedHashSet<Long>()
-        for (sid in runCatching { session.getStorageIds() }.getOrDefault(emptyList())) {
-            runCatching { session.getObjectHandles(sid) }.getOrNull()?.let(all::addAll)
-        }
-        if (all.isEmpty()) {
-            // Some bodies prefer the "all stores" wildcard (0xFFFFFFFF).
-            runCatching { session.getObjectHandles(0xFFFFFFFFL) }.getOrNull()?.let(all::addAll)
-        }
-        // Canon increments object handles — ascending = capture order, so
-        // descending puts the freshly-shot photos at the TOP of the import
-        // list. That's what the photographer expects after a session: the
-        // last 5 frames they remember taking are visible without scrolling
-        // through 200 earlier shots. Selection / dedupe / import are all
-        // keyed by handle, so the reorder is purely cosmetic.
-        return all.sortedDescending()
     }
 
     private fun defaultName(handle: Long): String = "IMG_%08X.jpg".format(handle)
@@ -169,7 +145,11 @@ data class CardPhoto(
     val filename: String,
     val sizeBytes: Long,
     val thumbnailBytes: ByteArray? = null,
+    val cameraKey: String = "",
+    val objectInfo: PtpObjectInfo? = null,
 ) {
+    val sourceKey: String? get() = objectInfo?.sourceKey(cameraKey, handle)
+
     // ByteArray's default equals/hashCode are identity-based, which breaks
     // LazyColumn diffing if a CardPhoto ever gets reconstructed. Override to
     // make `data class` semantics stable — we only ever compare by handle in

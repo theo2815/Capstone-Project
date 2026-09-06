@@ -13,6 +13,33 @@ fun isPhotographerRole(raw: String?): Boolean =
 
 class SessionManager private constructor(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private var authGeneration = 0L
+    private val accessTokens = LinkedHashSet<String>()
+    data class AuthSession(val owner: String, val generation: Long)
+
+    @Synchronized
+    fun authSnapshot(token: String): AuthSession? {
+        if (token != getAccessToken() && token !in accessTokens) return null
+        return getUserEmail()?.let { AuthSession(it, authGeneration) }
+    }
+
+    @Synchronized
+    fun isCurrent(snapshot: AuthSession) = snapshot.generation == authGeneration && snapshot.owner == getUserEmail()
+
+    @Synchronized
+    fun refreshIfCurrent(snapshot: AuthSession, token: String, refresh: String?): Boolean {
+        if (!isCurrent(snapshot)) return false
+        updateTokens(token, refresh)
+        return true
+    }
+
+    @Synchronized
+    fun clearIfCurrent(snapshot: AuthSession): Boolean {
+        if (!isCurrent(snapshot)) return false
+        clearSession()
+        return true
+    }
 
     companion object {
         private const val PREF_NAME = "quickpitik_session"
@@ -42,6 +69,7 @@ class SessionManager private constructor(context: Context) {
         }
     }
 
+    @Synchronized
     fun saveSession(
         token: String,
         role: String,
@@ -50,6 +78,8 @@ class SessionManager private constructor(context: Context) {
         avatarUrl: String? = null,
         refreshToken: String? = null,
     ) {
+        authGeneration++
+        accessTokens.clear()
         prefs.edit().apply {
             putString(KEY_ACCESS_TOKEN, token)
             putString(KEY_REFRESH_TOKEN, refreshToken)
@@ -72,7 +102,10 @@ class SessionManager private constructor(context: Context) {
     // cached role/name/email/avatar (its params are required), and the refresh
     // response isn't a reliable place to re-derive them — a locally edited name
     // would be silently reverted. TokenAuthenticator calls this instead.
+    @Synchronized
     fun updateTokens(accessToken: String, refreshToken: String?) {
+        getAccessToken()?.let(accessTokens::add)
+        while (accessTokens.size > 8) accessTokens.remove(accessTokens.first())
         prefs.edit().apply {
             putString(KEY_ACCESS_TOKEN, accessToken)
             if (refreshToken != null) putString(KEY_REFRESH_TOKEN, refreshToken)
@@ -112,7 +145,13 @@ class SessionManager private constructor(context: Context) {
         return prefs.getString(KEY_USER_AVATAR, null)
     }
 
+    @Synchronized
     fun clearSession() {
+        authGeneration++
+        accessTokens.clear()
+        appContext.getSharedPreferences("quickpitik_tether", Context.MODE_PRIVATE).edit()
+            .remove("watch_active_event").remove("watch_owner").remove("watch_event_snapshot").apply()
+        appContext.stopService(android.content.Intent(appContext, com.quickpitik.mobile.service.TetherIngestService::class.java))
         prefs.edit().clear().apply()
     }
 }

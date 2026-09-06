@@ -1,5 +1,7 @@
 package com.quickpitik.mobile.ui.photographer
 
+import com.quickpitik.mobile.data.usb.ShutterWatchState
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring

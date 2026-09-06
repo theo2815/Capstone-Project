@@ -1,5 +1,8 @@
 package com.quickpitik.mobile.ui.photographer
 
+import com.quickpitik.mobile.data.usb.ShutterWatchState
+import com.quickpitik.mobile.ui.theme.WarningOrange
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -145,6 +148,7 @@ private fun TetherConsoleView(
 ) {
     val activeEvent by viewModel.activeEvent.collectAsState()
     val queueStats by viewModel.queueStats.collectAsState()
+    val cameraRecovery by viewModel.cameraRecovery.collectAsState()
     val cameraState by viewModel.cameraConnectionState.collectAsState()
     val watchState by viewModel.shutterWatchState.collectAsState()
     val scrollState = rememberScrollState()
@@ -175,7 +179,7 @@ private fun TetherConsoleView(
                         imageUrl = File(record.filePath).toURI().toString(),
                         eventName = activeEvent?.name,
                         // dslr_import_<ts>_<original> → <original>; other spool names as-is.
-                        caption = "${File(record.filePath).name.split('_', limit = 4).getOrNull(3) ?: File(record.filePath).name} · " +
+                        caption = "${record.originalFilename ?: File(record.filePath).name} · " +
                             when (record.uploadStatus) {
                                 "COMPLETED" -> "synced"
                                 "UPLOADING" -> "uploading"
@@ -296,6 +300,16 @@ private fun TetherConsoleView(
                     viewModel.browseCameraCard()
                 }
             )
+            is CameraConnectionState.PermissionRequired -> CameraConnectPrompt(
+                isSearching = false,
+                onRescan = { viewModel.refreshCameraConnection() },
+                message = if (cam.denied) "USB access was denied. Tap Allow USB access to try again."
+                    else "Allow QuickPitik to access ${cam.deviceName} in the Android USB permission prompt.",
+                action = "Allow USB access",
+            )
+            is CameraConnectionState.Unavailable -> CameraConnectPrompt(
+                isSearching = false, onRescan = { viewModel.refreshCameraConnection() }, message = cam.message,
+            )
             CameraConnectionState.Searching,
             CameraConnectionState.Disconnected -> CameraConnectPrompt(
                 isSearching = cam is CameraConnectionState.Searching,
@@ -303,6 +317,16 @@ private fun TetherConsoleView(
             )
         }
 
+        if (cameraRecovery.pending > 0) {
+            QpCard(modifier = Modifier.fillMaxWidth()) {
+                Text("${cameraRecovery.pending} camera photos waiting for recovery", color = Ink, style = Typography.titleSmall)
+                Text(cameraRecovery.error ?: "Pending files remain on the camera until they are saved on this phone.",
+                    color = Slate, style = Typography.bodyMedium)
+                GhostCta(text = "Retry camera transfers", onClick = { viewModel.retryCameraTransfers() },
+                    enabled = cameraState is CameraConnectionState.Connected && watchState !is ShutterWatchState.Stopping,
+                    modifier = Modifier.fillMaxWidth())
+            }
+        }
         if (notificationsDenied) NotificationsOffNote()
 
         // 2b. Manual card-import sheet — mounted whenever a browse is live.
@@ -442,6 +466,8 @@ private fun TetherConsoleView(
 private fun CameraConnectPrompt(
     isSearching: Boolean,
     onRescan: () -> Unit,
+    message: String = "Connect your camera using a data-capable USB cable and select PTP / Photo Import or its supported PC tether mode.",
+    action: String = "Re-scan USB",
 ) {
     QpCard(modifier = Modifier.fillMaxWidth()) {
         StatusChip(
@@ -458,7 +484,7 @@ private fun CameraConnectPrompt(
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = "Mobile uploads run through a tethered camera. Phone-gallery uploads live on the website.",
+            text = message,
             color = Slate,
             style = Typography.bodyMedium,
             lineHeight = 20.sp
@@ -480,22 +506,19 @@ private fun CameraConnectPrompt(
         Divider(color = Line)
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Wi-Fi row — coming soon.
-        ConnectMethodRow(
-            method = "Wi-Fi",
-            body = "Wireless FTP tethering — point your camera's built-in FTP at the phone. In development.",
-            trailing = {
-                StatusChip(text = "Coming soon", tone = StatusTone.Neutral)
-            }
-        )
-
-        Spacer(modifier = Modifier.height(20.dp))
         GhostCta(
-            text = "Re-scan USB",
+            text = action,
             onClick = onRescan,
             modifier = Modifier.fillMaxWidth()
         )
     }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun CameraPermissionRequiredPreview() {
+    CameraConnectPrompt(isSearching = false, onRescan = {},
+        message = "USB access was denied. Allow access to connect this camera.", action = "Allow USB access")
 }
 
 @Composable
@@ -537,7 +560,7 @@ private fun CameraConnectedCard(
     latestCaptureFile: File? = null,
 ) {
     val watchBusy = watchState is ShutterWatchState.Starting ||
-        watchState is ShutterWatchState.Watching
+        watchState is ShutterWatchState.Watching || watchState is ShutterWatchState.Stopping
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -612,8 +635,8 @@ private fun CameraConnectedCard(
                         text = "Start auto-upload",
                         onClick = onStartWatch,
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = canStartWatch && state !is ShutterWatchState.Starting,
-                        loading = state is ShutterWatchState.Starting,
+                        enabled = canStartWatch && state !is ShutterWatchState.Starting && state !is ShutterWatchState.Stopping,
+                        loading = state is ShutterWatchState.Starting || state is ShutterWatchState.Stopping,
                     )
                     Text(
                         text = if (!canStartWatch) {
@@ -664,7 +687,9 @@ private fun ShutterWatchLiveCard(
         // A dropped cable is a pause, not a failure — the count keeps standing
         // and the controller is already reopening the session, so this reads as
         // a state change on the same card rather than an error.
-        if (state.reconnecting) {
+        if (state.pauseReason != null) {
+            Text(state.pauseReason, color = WarningOrange, style = Typography.bodyMedium)
+        } else if (state.reconnecting) {
             StatusChip(text = "Auto-upload · reconnecting", tone = StatusTone.Warning)
         } else {
             StatusChip(text = "Auto-upload · live", tone = StatusTone.Approved)
@@ -676,7 +701,7 @@ private fun ShutterWatchLiveCard(
             color = Ink
         )
         Spacer(modifier = Modifier.height(2.dp))
-        Kicker(text = "Captured this session", color = SlateSoft)
+        Kicker(text = "Saved on phone this session", color = SlateSoft)
         if (state.reconnecting) {
             Spacer(modifier = Modifier.height(10.dp))
             Text(

@@ -54,6 +54,23 @@ class UploadQueueDaoTest {
     @After
     fun tearDown() = db.close()
 
+    @Test fun `cursor drains more than a thousand photos without retrying earlier rows`() = runTest {
+        repeat(1005) { dao.insertRecord(record()) }
+        dao.insertRecord(record().copy(photographerId = "other@example.com"))
+        var cursor = 0L
+        val visited = mutableListOf<Long>()
+        while (true) {
+            val batch = dao.getOwnedRecords("shooter@example.com", "QUEUED", cursor)
+            if (batch.isEmpty()) break
+            assertTrue(batch.size <= 24)
+            visited.addAll(batch.map { it.id })
+            cursor = batch.last().id
+        }
+        assertEquals(1005, visited.size)
+        assertEquals(1005, visited.toSet().size)
+        assertEquals(24, dao.getOwnedRecords("shooter@example.com", "QUEUED", 0).size)
+    }
+
     @Test
     fun `insert autogenerates an id and round-trips every column`() = runTest {
         val id = dao.insertRecord(record(filePath = "/cache/DSC_0001.jpg"))

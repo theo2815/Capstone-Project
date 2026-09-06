@@ -65,7 +65,7 @@ data class PtpDeviceInfo(
         // PTP UINT16 array: UINT32 count, then count UINT16 elements.
         private fun ByteBuffer.u16Array(): List<Int> {
             val count = int
-            if (count <= 0) return emptyList()
+            if (count < 0 || count > 65536 || count > remaining() / 2) throw PtpException("Invalid PTP capability count.")
             return ArrayList<Int>(count).apply { repeat(count) { add(u16()) } }
         }
 
@@ -75,6 +75,7 @@ data class PtpDeviceInfo(
         private fun ByteBuffer.ptpString(): String {
             val len = get().toInt() and 0xFF
             if (len == 0) return ""
+            if (len > remaining() / 2) throw PtpException("Truncated PTP string.")
             val sb = StringBuilder(len)
             for (i in 0 until len) {
                 val code = short.toInt() and 0xFFFF

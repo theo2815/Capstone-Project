@@ -2,22 +2,14 @@ package com.quickpitik.mobile.ui.photographer
 
 import android.app.Application
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.net.Uri
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.MAX_UPLOAD_BYTES
 import com.quickpitik.mobile.data.local.AppDatabase
@@ -25,31 +17,35 @@ import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.TetherEvents
 import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.local.UploadSpool
-import java.util.concurrent.TimeUnit
 import com.quickpitik.mobile.data.readAtMost
 import com.quickpitik.mobile.data.remote.EarningsOverviewDto
 import com.quickpitik.mobile.data.remote.PayoutBalanceDto
-import com.quickpitik.mobile.data.remote.PhotoExistsRequest
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerMessageFrame
 import com.quickpitik.mobile.data.remote.PhotographerTransactionDto
 import com.quickpitik.mobile.data.remote.QpWebSocket
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.WsState
-import com.quickpitik.mobile.data.usb.CameraConnectionManager
+import com.quickpitik.mobile.data.usb.CameraIngestCoordinator
+import com.quickpitik.mobile.data.usb.ShutterWatchState
+import com.quickpitik.mobile.worker.PhotoUploadScheduler
 import com.quickpitik.mobile.data.usb.CameraConnectionState
 import com.quickpitik.mobile.data.usb.ptp.CardPhoto
 import com.quickpitik.mobile.data.usb.ptp.UsbCardBrowseController
 import com.quickpitik.mobile.data.usb.ptp.UsbCardImportController
-import com.quickpitik.mobile.data.usb.ptp.UsbEventCaptureController
-import com.quickpitik.mobile.service.TetherIngestService
 import com.quickpitik.mobile.ui.runner.canUploadToEvent
 import com.quickpitik.mobile.worker.PhotoUploadWorker
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
+import com.quickpitik.mobile.data.local.CameraRecoverySummary
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -201,32 +197,6 @@ sealed class CardBrowseState {
     data class Error(val message: String) : CardBrowseState()
 }
 
-/**
- * UI-side state for live auto-upload ("shutter watch"): the photographer shoots
- * on the tethered camera and every JPEG flows into the upload queue. `Idle`
- * shows the start CTA; `Watching` is the live session with its rolling log.
- */
-sealed class ShutterWatchState {
-    object Idle : ShutterWatchState()
-    object Starting : ShutterWatchState()
-    data class Watching(
-        val captureCount: Int,
-        val lastCaptureName: String?,
-        /** Rolling tail of controller log lines (max [WATCH_LOG_LINES], newest last). */
-        val recentLog: List<String>,
-        /**
-         * The camera link dropped and the controller is reopening it. Still
-         * [Watching] rather than [Error] on purpose: the shoot is paused, not
-         * over, and the state is what keeps the foreground service (and its
-         * wakelock) alive while we wait for the camera to come back.
-         */
-        val reconnecting: Boolean = false,
-    ) : ShutterWatchState()
-    /** [recentLog] = the controller's last lines, so a release build (no logcat) still shows WHY. */
-    data class Error(val message: String, val recentLog: List<String> = emptyList()) : ShutterWatchState()
-}
-
-private const val WATCH_LOG_LINES = 12
 // Newest rows the Capture tab observes for its strip (the screen shows ≤30).
 private const val RECENT_RECORDS_LIMIT = 200
 // Prefs key: event id of a live shutter watch, so a relaunch after process
@@ -236,8 +206,8 @@ private const val WATCH_ACTIVE_EVENT_KEY = "watch_active_event"
 class PhotographerDashboardViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application)
     private val sessionManager = SessionManager.getInstance(application)
-    private val workManager = WorkManager.getInstance(application)
-    private val cameraManager = CameraConnectionManager(application)
+    private val coordinator = CameraIngestCoordinator.get(application)
+    private val cameraManager = coordinator.cameraManager
     val cameraConnectionState: StateFlow<CameraConnectionState> = cameraManager.state
 
     private val _eventsState = MutableStateFlow<EventsState>(EventsState.Loading)
@@ -248,6 +218,21 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     private val _activeEvent = MutableStateFlow<PhotographerEventSummaryDto?>(null)
     val activeEvent: StateFlow<PhotographerEventSummaryDto?> = _activeEvent
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val cameraRecovery: StateFlow<CameraRecoverySummary> = _activeEvent.flatMapLatest { event ->
+        if (event == null) flowOf(CameraRecoverySummary())
+        else database.cameraTransferDao().observeRecovery(sessionManager.getUserEmail().orEmpty(), event.id)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CameraRecoverySummary())
+
+    fun retryCameraTransfers() {
+        val event = _activeEvent.value ?: return
+        val owner = sessionManager.getUserEmail() ?: return
+        viewModelScope.launch {
+            database.cameraTransferDao().retry(owner, event.id)
+            if (!coordinator.isWatching) startShutterWatch()
+        }
+    }
+
 
     private val _queueStats = MutableStateFlow(QueueStats())
     val queueStats: StateFlow<QueueStats> = _queueStats
@@ -323,42 +308,15 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     val cardBrowseState: StateFlow<CardBrowseState> = _cardBrowseState
     private var browseJob: Job? = null
 
-    // Increment 4 D — handles that succeeded in any import during this VM
-    // lifetime. Re-browsing the same card shows them as "Imported" so the
-    // photographer can't accidentally re-pull. Reset when the camera detaches
-    // (handle space is per-storage; a different body has its own counter).
-    private var sessionImportedHandles: Set<Long> = emptySet()
-
     // Increment 4 F — runs alongside an import; if the camera goes Disconnected
     // while we're Importing, cancels the import job and surfaces a friendly
     // Error before the next getObject() would have thrown a cryptic IO error.
     private var disconnectWatcherJob: Job? = null
 
-    // Live auto-upload ("shutter watch"). Unlike browse/import, this HOLDS a
-    // PTP session in EOS event mode for the whole shooting session — which is
-    // exactly why it must never run at the same time as the card flow (both
-    // force-claim the same USB interface).
-    private val shutterWatchController = UsbEventCaptureController(
-        manager = cameraManager.manager,
-        deviceProvider = { cameraManager.connectedCameraDevice() },
-    )
-    private val _shutterWatchState = MutableStateFlow<ShutterWatchState>(ShutterWatchState.Idle)
+    private val _shutterWatchState = coordinator.watch
     val shutterWatchState: StateFlow<ShutterWatchState> = _shutterWatchState
-    private var shutterWatchJob: Job? = null
-    private var shutterWatchDetachJob: Job? = null
 
-    // Rolling log tail behind ShutterWatchState. Only mutated from the
-    // controller's single coroutine (onLog/onStarted are sequential there),
-    // so a plain var is safe.
-    private var watchLogTail: List<String> = emptyList()
-
-    // One low-storage warning per watch session (reset in startShutterWatch).
-    @Volatile
-    private var lowStorageWarned = false
-
-    // Highest camera object handle successfully handled per event. Lets the
-    // next Start catch up on frames shot while auto-upload was stopped instead
-    // of silently re-baselining them away (14 frames lost that way 2026-09-02).
+    // Account-bound resume intent; individual pending objects live in Room.
     private val tetherPrefs by lazy {
         getApplication<Application>().getSharedPreferences("quickpitik_tether", Context.MODE_PRIVATE)
     }
@@ -371,32 +329,37 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         fetchBrandSettings()
         observeInboxPush()
         cameraManager.start()
-        observeCameraDetach()
-        observeIngestForService()
         observeNotificationStopRequests()
         observeWatchResume()
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                sessionManager.getUserEmail()?.let { coordinator.store.recover(it) }
+                runSyncEngine()
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                _cardBrowseState.value = CardBrowseState.Error(e.message ?: "Pending camera photos need recovery. Free phone storage and retry.")
+            }
+        }
     }
 
-    /**
-     * Auto-resume after process death. If the app was killed mid-shoot (OOM,
-     * a crash, the user swiping it away), the prefs flag written by
-     * [startShutterWatch] survives while the coroutine did not. The first time
-     * this VM sees the events loaded AND a camera connected, it re-selects that
-     * event and restarts the watch — the catch-up logic then pulls whatever was
-     * shot in between. One-shot; a deliberate Stop or a normal logout clears
-     * the flag so this never surprises anyone.
-     */
+    /** Restore the event snapshot offline; a running service keeps its original destination. */
     private fun observeWatchResume() {
         val eventId = tetherPrefs.getString(WATCH_ACTIVE_EVENT_KEY, null) ?: return
+        val owner = sessionManager.getUserEmail() ?: return
+        if (tetherPrefs.getString("watch_owner", null) != owner) return
+        val saved = runCatching {
+            com.google.gson.Gson().fromJson(tetherPrefs.getString("watch_event_snapshot", null), PhotographerEventSummaryDto::class.java)
+        }.getOrNull()?.takeIf { it.id == eventId }
+        if (saved != null) _activeEvent.value = saved
         viewModelScope.launch {
             val ready = combine(_eventsState, cameraManager.state) { events, cam ->
-                (events as? EventsState.Success)?.events?.firstOrNull { it.id == eventId }
+                (saved ?: (events as? EventsState.Success)?.events?.firstOrNull { it.id == eventId })
                     ?.takeIf { cam is CameraConnectionState.Connected }
             }.first { it != null } ?: return@launch
-            if (_shutterWatchState.value !is ShutterWatchState.Idle) return@launch
-            if (_activeEvent.value?.id != ready.id) selectEvent(ready)
-            appendWatchLog("Resuming auto-upload for ${ready.name} after the app was interrupted.")
-            startShutterWatch()
+            if (tetherPrefs.getString(WATCH_ACTIVE_EVENT_KEY, null) != eventId ||
+                tetherPrefs.getString("watch_owner", null) != sessionManager.getUserEmail()) return@launch
+            _activeEvent.value = ready
+            if (_shutterWatchState.value is ShutterWatchState.Idle) startShutterWatch()
         }
     }
 
@@ -434,75 +397,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     fun disconnectInbox() = inboxSocket.close()
 
-    /**
-     * Keeps [TetherIngestService] running for exactly as long as bytes are
-     * moving off the camera, and feeds it the shade copy.
-     *
-     * Driven off the two ingest states rather than sprinkled through the six
-     * start / stop / error / detach paths: those paths already write the states
-     * read here, so none of them needed an edit, and there is no ref-count to
-     * get wrong when the watch and the card flow hand off to each other.
-     */
-    private fun observeIngestForService() {
-        viewModelScope.launch {
-            combine(_shutterWatchState, _cardBrowseState) { watch, card ->
-                ingestNotice(watch, card)
-            }
-                .distinctUntilChanged()
-                .collect { notice ->
-                    if (notice == null) stopIngestService() else startOrUpdateIngestService(notice)
-                }
-        }
-    }
-
-    /**
-     * Shade copy for the ingest currently in flight, or null when none is.
-     *
-     * [CardBrowseState.Loaded] and [CardBrowseState.ImportDone] are deliberately
-     * null: the sheet is open but no USB I/O is running — the photographer is
-     * choosing photos. Holding a foreground notification while someone reads a
-     * list is user-hostile, and it's the pattern Play policy flags.
-     */
-    private fun ingestNotice(watch: ShutterWatchState, card: CardBrowseState): String? = when {
-        watch is ShutterWatchState.Starting -> "Starting auto-upload…"
-        // Deliberately still a notice, so the service and its wakelock stay up
-        // across the outage. Letting the process go cached here is exactly what
-        // would stop us ever noticing the camera came back.
-        watch is ShutterWatchState.Watching && watch.reconnecting ->
-            "Auto-upload paused · reconnecting to camera…"
-        watch is ShutterWatchState.Watching -> {
-            val n = watch.captureCount
-            "Auto-upload live · $n photo${if (n == 1) "" else "s"} sent"
-        }
-        card is CardBrowseState.Opening -> "Reading camera card…"
-        card is CardBrowseState.Scanning -> "Reading camera card · ${card.seen} of ${card.total}"
-        card is CardBrowseState.Importing -> "Importing photos · ${card.seen} of ${card.total}"
-        else -> null
-    }
-
-    private fun startOrUpdateIngestService(notice: String) {
-        val context = getApplication<Application>()
-        val intent = Intent(context, TetherIngestService::class.java)
-            .setAction(TetherIngestService.ACTION_START)
-            .putExtra(TetherIngestService.EXTRA_NOTICE, notice)
-        // Every first start follows a tap on the Capture tab, so the app is in
-        // the foreground and API 31+'s background-start rule is satisfied; later
-        // calls target an already-foreground service. runCatching is the
-        // backstop — a ForegroundServiceStartNotAllowedException must never take
-        // down a live shoot, and losing the lifeline beats crashing out of it.
-        runCatching { ContextCompat.startForegroundService(context, intent) }
-    }
-
-    private fun stopIngestService() {
-        val context = getApplication<Application>()
-        context.stopService(Intent(context, TetherIngestService::class.java))
-    }
-
-    /**
-     * "Stop" in the notification shade. The service holds no reference to the
-     * controllers, so it raises a signal and we end whichever flow is live.
-     * [closeCardImport] is a no-op when the card flow is already idle.
-     */
+    /** The service handles live Stop itself; close a manual import when the shade requests Stop. */
     private fun observeNotificationStopRequests() {
         viewModelScope.launch {
             TetherEvents.stopRequested.collect {
@@ -516,27 +411,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
-    /**
-     * Reset the dedupe set whenever the camera detaches — handles are per-
-     * storage so a fresh body gets its own counter starting at 1. Carries
-     * Increment 4 D (dedupe) correctness when the photographer swaps bodies.
-     */
-    private fun observeCameraDetach() {
-        viewModelScope.launch {
-            cameraManager.state.collect { state ->
-                if (state is CameraConnectionState.Disconnected) {
-                    sessionImportedHandles = emptySet()
-                }
-            }
-        }
-    }
-
     override fun onCleared() {
-        // Logging out mid-ingest tears down this ViewModel and its coroutines;
-        // without this the shade would keep a notification claiming a shoot is
-        // still running.
-        stopIngestService()
-        cameraManager.stop()
         inboxSocket.release()
         super.onCleared()
     }
@@ -846,13 +721,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     fun clearCouponMessage() { _couponActionMessage.value = null }
 
     fun selectEvent(event: PhotographerEventSummaryDto?) {
-        // A live watch is bound to the event it started with — switching away
-        // (or backing out to the picker) must stop it, or frames would keep
-        // queueing to the old event's snapshot.
         if (event?.id != _activeEvent.value?.id &&
-            (_shutterWatchState.value is ShutterWatchState.Starting ||
-                _shutterWatchState.value is ShutterWatchState.Watching)
-        ) {
+            (coordinator.isWatching || tetherPrefs.contains(WATCH_ACTIVE_EVENT_KEY))) {
             stopShutterWatch()
         }
         _activeEvent.value = event
@@ -903,9 +773,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         viewModelScope.launch {
             val dao = database.uploadQueueDao()
             combine(
-                dao.getStatusCounts(),
-                dao.getRecentRecords(RECENT_RECORDS_LIMIT),
-                dao.getLatestFailedMessage(),
+                dao.getStatusCounts(sessionManager.getUserEmail().orEmpty()),
+                dao.getRecentRecords(RECENT_RECORDS_LIMIT, sessionManager.getUserEmail().orEmpty()),
+                dao.getLatestFailedMessage(sessionManager.getUserEmail().orEmpty()),
             ) { counts, recent, latestError -> Triple(counts, recent, latestError) }
                 .collectLatest { (counts, recent, latestError) ->
                 if (counts.isEmpty()) {
@@ -950,42 +820,20 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
-    fun runSyncEngine() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
+    fun runSyncEngine() = PhotoUploadScheduler.enqueue(getApplication())
 
-        val syncRequest = OneTimeWorkRequestBuilder<PhotoUploadWorker>()
-            .setConstraints(constraints)
-            // Linear 10 s, not the default exponential 30 s → 5 h: during a
-            // race a backend blip must cost seconds of drain, not hours.
-            .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS)
-            .build()
-
-        // Unique + KEEP: only one sync worker ever runs, so two workers can't
-        // race the same QUEUED snapshot and double-upload. KEEP is enough
-        // because the worker drains the queue in a loop — rows inserted while
-        // it runs are picked up by its next pass. Residual race (a row landing
-        // in the worker's final ms while KEEP swallows the kick) is covered by
-        // the live path's per-capture kicks and the visible "Run sync engine"
-        // button; APPEND_OR_REPLACE would close it fully if ever needed.
-        workManager.enqueueUniqueWork(
-            "photo-upload-sync",
-            ExistingWorkPolicy.KEEP,
-            syncRequest,
-        )
-    }
-
-    /**
-     * Wipes every FAILED row from the sync queue. A HTTP 500 batch on
-     * 2026-05-28 left 46 stale rows that the user just wanted gone — root
-     * cause (which server-side exception fired) was deferred to a future
-     * backend session. Files on disk are intentionally left to the OS cache
-     * reaper; we don't own arbitrary filePaths and touching them is risky.
-     */
+    /** Remove this account's failed upload rows and their app-owned files. */
     fun clearFailedUploads() {
         viewModelScope.launch {
-            database.uploadQueueDao().deleteByStatus("FAILED")
+            val owner = sessionManager.getUserEmail() ?: return@launch
+            val dao = database.uploadQueueDao()
+            for (record in dao.getRecordsWithStatus("FAILED", owner)) {
+                val file = File(record.filePath)
+                val app = getApplication<Application>()
+                if (file.canonicalPath.startsWith(app.filesDir.canonicalPath + File.separator) ||
+                    file.canonicalPath.startsWith(app.cacheDir.canonicalPath + File.separator)) file.delete()
+                dao.deleteRecordById(record.id)
+            }
         }
     }
 
@@ -997,7 +845,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
      */
     fun retryFailedUploads() {
         viewModelScope.launch {
-            database.uploadQueueDao().requeueFailed()
+            database.uploadQueueDao().requeueFailed(sessionManager.getUserEmail().orEmpty())
             runSyncEngine()
         }
     }
@@ -1191,13 +1039,19 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
      * then settles into Loaded or Error. Re-entrancy is a no-op while a run is
      * already going so the photographer can't double-tap into two sessions.
      */
+    private suspend fun runCameraCard(block: suspend () -> Unit) {
+        try { coordinator.runCard {
+            sessionManager.getUserEmail()?.let { coordinator.store.recover(it) }
+            block()
+        } } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { _cardBrowseState.value = CardBrowseState.Error(e.message ?: "Could not start the camera service. Allow USB access and retry.") }
+    }
+
     fun browseCameraCard() {
         // The live watch holds the USB interface — a second PtpSession would
         // force-claim it out from under the running session (belt to the UI's
         // disabled Import CTA).
-        if (_shutterWatchState.value is ShutterWatchState.Starting ||
-            _shutterWatchState.value is ShutterWatchState.Watching
-        ) return
+        if (coordinator.isWatching || coordinator.cardBusy.value) return
         if (_cardBrowseState.value !is CardBrowseState.Idle &&
             _cardBrowseState.value !is CardBrowseState.Error
         ) return
@@ -1207,84 +1061,43 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         val activeEventId = _activeEvent.value?.id
         browseJob?.cancel()
         browseJob = viewModelScope.launch(Dispatchers.IO) {
-            // Persistent-dedupe set: original filenames of records already in
-            // the local upload queue for THIS event (QUEUED/UPLOADING/COMPLETED).
-            // Survives app restarts so re-plugging a card after the worker drained
-            // doesn't re-show the same photos as importable. Backend is FROZEN
-            // per Build Mandate — no cross-device round-trip here.
-            val persistentlyImportedFilenames: Set<String> =
-                if (activeEventId.isNullOrBlank()) emptySet()
-                else database.uploadQueueDao()
-                    .getActiveOrCompletedForEvent(activeEventId)
-                    .mapNotNullTo(HashSet()) { extractOriginalCardFilename(it.filePath) }
-
-            // "New since you last shot here": frames above this event's live
-            // watch high-water mark are pre-selected, so the common post-race
-            // import is one tap. Same handle-family rule as the controller.
-            val highWater = activeEventId
-                ?.let { tetherPrefs.getLong("hw_$it", -1L) }
-                ?.takeIf { it >= 0 }
-
-            cardBrowseController.browse { progress ->
-                when (progress) {
-                    is UsbCardBrowseController.Progress.Opening ->
-                        _cardBrowseState.value = CardBrowseState.Opening
-                    is UsbCardBrowseController.Progress.Scanning ->
-                        _cardBrowseState.value = CardBrowseState.Scanning(progress.seen, progress.total)
-                    is UsbCardBrowseController.Progress.Done -> {
-                        // Two paths to "Imported": (a) in-session handle dedupe
-                        // (camera handle space, resets on detach) and (b) Room-
-                        // persistent filename dedupe (this event, this device).
-                        val imported = progress.photos
-                            .filter { p ->
-                                p.handle in sessionImportedHandles ||
-                                    p.filename in persistentlyImportedFilenames
-                            }
-                            .mapTo(HashSet()) { it.handle }
-                        val preselected = if (highWater == null) emptySet() else progress.photos
-                            .filter { p ->
-                                p.handle !in imported && p.handle > highWater &&
-                                    (p.handle ushr 16) == (highWater ushr 16)
-                            }
-                            .mapTo(HashSet()) { it.handle }
-                        _cardBrowseState.value = CardBrowseState.Loaded(
-                            photos = progress.photos,
-                            selectedHandles = preselected,
-                            importedHandles = imported,
-                        )
-                    }
-                    is UsbCardBrowseController.Progress.Thumbnails -> {
-                        // Only refresh the list the photographer is still looking
-                        // at; if they've moved on to importing, the bytes are moot.
-                        val current = _cardBrowseState.value as? CardBrowseState.Loaded
-                        if (current != null) {
-                            _cardBrowseState.value = current.copy(
+            val importedSources = if (activeEventId == null) emptySet() else database.uploadQueueDao()
+                .getActiveOrCompletedForEvent(activeEventId, sessionManager.getUserEmail().orEmpty())
+                .mapNotNullTo(HashSet()) { it.sourceKey }
+            runCameraCard {
+                cardBrowseController.browse { progress ->
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    when (progress) {
+                        is UsbCardBrowseController.Progress.Opening ->
+                            _cardBrowseState.value = CardBrowseState.Opening
+                        is UsbCardBrowseController.Progress.Scanning ->
+                            _cardBrowseState.value = CardBrowseState.Scanning(progress.seen, progress.total)
+                        is UsbCardBrowseController.Progress.Done -> {
+                            val imported = progress.photos.filter { it.sourceKey in importedSources }.mapTo(HashSet()) { it.handle }
+                            val preselected = emptySet<Long>()
+                            _cardBrowseState.value = CardBrowseState.Loaded(
                                 photos = progress.photos,
-                                thumbsVersion = current.thumbsVersion + 1,
+                                selectedHandles = preselected,
+                                importedHandles = imported,
                             )
                         }
+                        is UsbCardBrowseController.Progress.Thumbnails -> {
+                            // Only refresh the list the photographer is still looking
+                            // at; if they've moved on to importing, the bytes are moot.
+                            val current = _cardBrowseState.value as? CardBrowseState.Loaded
+                            if (current != null) {
+                                _cardBrowseState.value = current.copy(
+                                    photos = progress.photos,
+                                    thumbsVersion = current.thumbsVersion + 1,
+                                )
+                            }
+                        }
+                        is UsbCardBrowseController.Progress.Failed ->
+                            _cardBrowseState.value = CardBrowseState.Error(progress.message)
                     }
-                    is UsbCardBrowseController.Progress.Failed ->
-                        _cardBrowseState.value = CardBrowseState.Error(progress.message)
                 }
             }
         }
-    }
-
-    /**
-     * Recover the original camera filename (e.g. `R6T_1083.JPG`) from the cache
-     * file path the import flow writes: `<cacheDir>/dslr_import_<ts>_<original>`.
-     * Returns null for cache files written by other paths (`simulated_dslr_*`,
-     * `gallery_upload_*`) so they don't pollute card-dedupe.
-     */
-    private fun extractOriginalCardFilename(filePath: String): String? {
-        val name = File(filePath).name
-        if (!name.startsWith("dslr_import_")) return null
-        // Format: dslr_import_<timestamp>_<original> — original may itself
-        // contain underscores (Canon's R6T_1083.JPG), so split with limit=4
-        // and take the 4th piece intact.
-        val parts = name.split('_', limit = 4)
-        return if (parts.size == 4 && parts[3].isNotBlank()) parts[3] else null
     }
 
     /**
@@ -1333,17 +1146,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         _cardBrowseState.value = current.copy(selectedHandles = emptySet())
     }
 
-    /**
-     * Increment 3 — pull the selected handles off the card, write each JPEG to
-     * the app cache, enqueue an `UploadRecord`, and kick the existing
-     * `PhotoUploadWorker` once everything is queued. Same persistence pattern
-     * as `simulatePhotoCapture`, so the existing sync-queue UI surfaces the
-     * uploads with no further changes.
-     *
-     * Per-photo failures don't abort the run; the summary reports the tally.
-     * `closeCardImport()` will flush partial imports if the user dismisses
-     * mid-flight.
-     */
+    /** Persist the selected batch, stream each JPEG, and schedule every durable upload. */
     fun importSelectedCardPhotos() {
         val loaded = _cardBrowseState.value as? CardBrowseState.Loaded ?: return
         val selected = loaded.photos.filter {
@@ -1363,26 +1166,12 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         runImport(allPhotos = done.photos, toImport = toRetry)
     }
 
-    /**
-     * Shared import path used by both the initial import and the retry-failed
-     * action. [allPhotos] is the full card list — preserved on ImportDone so
-     * retry-failed can be re-triggered repeatedly without re-browsing.
-     *
-     * Side effects: starts the [UsbCardImportController] on `Dispatchers.IO`,
-     * runs the [disconnectWatcherJob] in parallel (Increment 4 F), and on Done
-     * kicks the [PhotoUploadWorker] when anything queued. Also folds the run's
-     * succeeded handles into [sessionImportedHandles] so future browse Loaded
-     * states mark them as Imported (Increment 4 D).
-     */
+    /** Import a selected snapshot after the previous browse has released its USB session. */
     private fun runImport(allPhotos: List<CardPhoto>, toImport: List<CardPhoto>) {
         val activeEvent = _activeEvent.value ?: return
         if (toImport.isEmpty()) return
 
-        val photographerId = sessionManager.getUserEmail() ?: "unknown"
-
-        // recordId → SHA-256, filled as frames land. Consumed once at the end
-        // by the dedup pre-flight below.
-        val importedHashes = mutableMapOf<Long, String>()
+        val photographerId = sessionManager.getUserEmail() ?: return
 
         // The browse may still be streaming thumbnails over the same USB
         // interface; it must have released the session before import claims it.
@@ -1408,54 +1197,62 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
 
         browseJob = viewModelScope.launch(Dispatchers.IO) {
-            priorBrowse?.join()
-            cardImportController.import(
-                photos = toImport,
-                emit = { progress ->
-                    _cardBrowseState.value = when (progress) {
-                        is UsbCardImportController.Progress.Started ->
-                            CardBrowseState.Importing(
-                                seen = 0,
-                                total = progress.total,
-                                succeeded = 0,
-                                failed = 0,
+            val watcher = disconnectWatcherJob
+            try {
+                priorBrowse?.join()
+                runCameraCard {
+                    coordinator.store.selectForImport(toImport.map { photo ->
+                        coordinator.store.transfer(photographerId, activeEvent.id, photo.cameraKey, photo.handle,
+                            requireNotNull(photo.objectInfo) { "Browse the camera card again." })
+                    })
+                    cardImportController.import(
+                        photos = toImport,
+                        emit = { progress ->
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            _cardBrowseState.value = when (progress) {
+                                is UsbCardImportController.Progress.Started ->
+                                    CardBrowseState.Importing(
+                                        seen = 0,
+                                        total = progress.total,
+                                        succeeded = 0,
+                                        failed = 0,
+                                    )
+                                is UsbCardImportController.Progress.Each ->
+                                    CardBrowseState.Importing(
+                                        seen = progress.seen,
+                                        total = progress.total,
+                                        succeeded = progress.succeededHandles.size,
+                                        failed = progress.failedHandles.size,
+                                    )
+                                is UsbCardImportController.Progress.Done -> {
+                                    CardBrowseState.ImportDone(
+                                        photos = allPhotos,
+                                        succeededHandles = progress.succeededHandles,
+                                        failedHandles = progress.failedHandles,
+                                    )
+                                }
+                                is UsbCardImportController.Progress.Failed ->
+                                    CardBrowseState.Error(progress.message)
+                            }
+                        },
+                        onFailed = { photo, message ->
+                            coordinator.store.fail(coordinator.store.transfer(photographerId, activeEvent.id,
+                                photo.cameraKey, photo.handle, requireNotNull(photo.objectInfo)), message)
+                        },
+                        onPulled = { photo, writeTo ->
+                            persistCapturedJpeg(
+                                photo,
+                                activeEvent.id,
+                                photographerId,
+                                writeTo,
                             )
-                        is UsbCardImportController.Progress.Each ->
-                            CardBrowseState.Importing(
-                                seen = progress.seen,
-                                total = progress.total,
-                                succeeded = progress.succeededHandles.size,
-                                failed = progress.failedHandles.size,
-                            )
-                        is UsbCardImportController.Progress.Done -> {
-                            sessionImportedHandles = sessionImportedHandles + progress.succeededHandles
-                            CardBrowseState.ImportDone(
-                                photos = allPhotos,
-                                succeededHandles = progress.succeededHandles,
-                                failedHandles = progress.failedHandles,
-                            )
-                        }
-                        is UsbCardImportController.Progress.Failed ->
-                            CardBrowseState.Error(progress.message)
-                    }
-                },
-                onPulled = { photo, writeTo ->
-                    persistCapturedJpeg(
-                        photo.filename,
-                        activeEvent.id,
-                        photographerId,
-                        writeTo,
-                    ) { recordId, hash -> importedHashes[recordId] = hash }
-                },
-            )
-            // Tear down the watcher (whether we finished cleanly or the watcher
-            // already cancelled us) so it doesn't outlive the import.
-            disconnectWatcherJob?.cancel()
-            disconnectWatcherJob = null
-
-            // Drop anything the backend already holds BEFORE the worker starts,
-            // so duplicate bytes never go over the wire.
-            dropAlreadyUploaded(activeEvent.id, importedHashes)
+                        },
+                    )
+                }
+            } finally {
+                watcher?.cancel()
+                if (disconnectWatcherJob === watcher) disconnectWatcherJob = null
+            }
 
             // Kick the upload worker if anything actually queued.
             val finalState = _cardBrowseState.value
@@ -1465,302 +1262,38 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
-    /**
-     * Dedup pre-flight (backend Phase 2, `POST …/photos/exists`). Asks which of
-     * the just-imported hashes the backend already holds and de-queues the ones
-     * already stored against THIS event, so their bytes are never uploaded.
-     *
-     * Mobile already dedupes twice locally — in-session PTP handles, and a
-     * Room-persistent per-event filename check. This closes the case neither
-     * catches: the same bytes arriving under a different filename, or a card
-     * re-imported after the app's data was cleared. The website has run this
-     * pre-flight since 2026-06-02; mobile was the only client without it.
-     *
-     * `different_event` is deliberately left queued. That upload will 409, and
-     * `PhotoUploadWorker` already treats `PHOTO_DUPLICATE_DIFFERENT_EVENT` as
-     * terminal — the photographer should see it failed rather than have the
-     * frame silently vanish, because uploading it to the wrong event is a real
-     * mistake worth surfacing.
-     *
-     * Best-effort: any failure leaves everything queued, which is exactly the
-     * behaviour before this existed.
-     */
-    private suspend fun dropAlreadyUploaded(eventId: String, hashes: Map<Long, String>) {
-        if (hashes.isEmpty()) return
-        val token = sessionManager.getAccessToken() ?: return
-        try {
-            // Backend caps the list at 500 per request.
-            val skipped = ArrayList<Long>()
-            // recordId → name of the event that already holds these bytes.
-            val elsewhere = HashMap<Long, String?>()
-            hashes.entries.chunked(500).forEach { chunk ->
-                val response = RetrofitClient.apiService.checkPhotosExist(
-                    "Bearer $token",
-                    eventId,
-                    PhotoExistsRequest(hashes = chunk.map { it.value }),
-                )
-                val byHash = response.data?.results.orEmpty().associateBy { it.hash }
-                for ((recordId, hash) in chunk) {
-                    when (byHash[hash]?.status) {
-                        "same_event" -> skipped.add(recordId)
-                        "different_event" -> elsewhere[recordId] = byHash[hash]?.eventName
-                    }
-                }
-            }
-            val dao = database.uploadQueueDao()
-            for (recordId in skipped) {
-                // Delete the cached file too — nothing will read it now.
-                dao.getRecordById(recordId)?.let { runCatching { File(it.filePath).delete() } }
-                dao.deleteRecordById(recordId)
-            }
-            // The upload would 409 (terminal) anyway — device-verified 2026-09-02:
-            // two 1.5 MB frames went up the wire twice each just to be rejected.
-            // Settle them FAILED now, with the same reason the backend would give,
-            // so the photographer sees WHY without paying for the round trip.
-            for ((recordId, eventName) in elsewhere) {
-                dao.updateStatus(
-                    recordId,
-                    "FAILED",
-                    "Skipped — already in your event '${eventName ?: "another event"}', so it wasn't uploaded twice.",
-                )
-            }
-            if (BuildConfig.DEBUG) {
-                android.util.Log.i(
-                    "QP/UPLOAD-PERF",
-                    "dedup pre-flight skipped=${skipped.size} elsewhere=${elsewhere.size} of ${hashes.size}",
-                )
-            }
-        } catch (e: Exception) {
-            // Offline or a backend hiccup — keep everything queued. The upload
-            // path stays correct without this; it is only an optimisation.
-            if (BuildConfig.DEBUG) {
-                android.util.Log.w("QP/UPLOAD-PERF", "dedup pre-flight failed: ${e.message}")
-            }
-        }
-    }
-
-    /**
-     * Write a pulled JPEG to the app cache and enqueue an [UploadRecord] for
-     * [PhotoUploadWorker]. Shared by manual card import and live auto-upload.
-     * The cache name keeps the `dslr_import_<ts>_<original>` convention so
-     * [extractOriginalCardFilename]'s per-event dedupe also recognizes frames
-     * that arrived via the live watch — they render as "Imported" in the card
-     * browse sheet instead of being offered for a second pull.
-     */
+    /** Persist through the same validated transfer store used by the live service. */
     private suspend fun persistCapturedJpeg(
-        originalFilename: String,
+        photo: CardPhoto,
         eventId: String,
-        photographerId: String,
+        owner: String,
         writeTo: (OutputStream) -> Unit,
-        // Receives (queued record id, SHA-256 of the bytes) for each frame that
-        // lands. Card import collects these to run one dedup pre-flight for the
-        // whole batch; the live shutter path passes null (one frame at a time
-        // is not a batch, and it already dedupes on handle).
-        hashSink: ((Long, String) -> Unit)? = null,
     ): Boolean {
-        val persistStart = System.currentTimeMillis()
-        val app = getApplication<Application>()
-        // Refuse to pull onto a nearly-full phone: a frame that can't be written
-        // whole is worse than one left on the card, where card import can still
-        // fetch it once space is freed. Warned once per watch, not per frame.
-        if (!UploadSpool.hasRoom(app)) {
-            if (!lowStorageWarned) {
-                lowStorageWarned = true
-                appendWatchLog(
-                    "Phone storage is nearly full — pausing pulls from the camera. Free up " +
-                        "space, then use Import from camera card to fetch the frames left behind."
-                )
-            }
-            return false
-        }
-        val unique = "dslr_import_${System.currentTimeMillis()}_$originalFilename"
-        // filesDir spool, not cacheDir — the OS may evict cache before upload.
-        val file = File(UploadSpool.dir(app), unique)
-        return try {
-            // The PTP read happens inside here, streaming straight to disk, so
-            // a frame never exists whole in memory. The digest rides the same
-            // stream, so hashing costs no extra pass over the bytes.
-            val digest = java.security.MessageDigest.getInstance("SHA-256")
-            file.outputStream().buffered().use { out ->
-                writeTo(java.security.DigestOutputStream(out, digest))
-            }
-            // An empty file means the camera handed over nothing (an object
-            // still being written to the card, typically). Leave no orphan and
-            // report failure so the caller retries the handle.
-            if (file.length() == 0L) {
-                file.delete()
-                return false
-            }
-            val recordId = database.uploadQueueDao().insertRecord(
-                UploadRecord(
-                    filePath = file.absolutePath,
-                    eventId = eventId,
-                    photographerId = photographerId,
-                    captureTimestamp = System.currentTimeMillis(),
-                    uploadStatus = "QUEUED",
-                )
-            )
-            hashSink?.invoke(recordId, digest.digest().joinToString("") { "%02x".format(it) })
-            val persistMs = System.currentTimeMillis() - persistStart
-            if (BuildConfig.DEBUG) {
-                android.util.Log.i(
-                    "QP/UPLOAD-PERF",
-                    "persist file=$originalFilename bytes=${file.length()} ms=$persistMs",
-                )
-            }
-            true
-        } catch (e: Exception) {
-            // Streaming means a mid-transfer failure leaves a partial file
-            // behind; the buffered version could never produce one. Nothing
-            // was queued, so the file has no owner — drop it.
-            runCatching { file.delete() }
-            false
-        }
+        val info = requireNotNull(photo.objectInfo) { "Browse the camera card again." }
+        check(sessionManager.getUserEmail() == owner) { "Sign in to the account that selected these photos." }
+        val record = coordinator.store.transfer(owner, eventId, photo.cameraKey, photo.handle, info)
+        coordinator.store.save(record, writeTo)
+        runSyncEngine()
+        return true
     }
 
-    /**
-     * Live auto-upload: hold a PTP session in EOS event mode and pipe every
-     * shutter press through [persistCapturedJpeg] → [PhotoUploadWorker]. The
-     * event is snapshotted at start; [selectEvent] stops the watch on a real
-     * switch so frames can't leak into the wrong event.
-     */
     fun startShutterWatch() {
-        // Cheap state gates, re-checked here even though the UI disables the CTA.
-        val current = _shutterWatchState.value
-        if (current is ShutterWatchState.Starting || current is ShutterWatchState.Watching) return
-        // The card browse/import flow owns the USB interface while active —
-        // two PtpSessions force-claiming the same interface corrupt each other.
-        if (_cardBrowseState.value !is CardBrowseState.Idle &&
-            _cardBrowseState.value !is CardBrowseState.Error
-        ) return
+        if (coordinator.isWatching || coordinator.cardBusy.value || browseJob?.isCompleted == false) return
+        if (_cardBrowseState.value !is CardBrowseState.Idle && _cardBrowseState.value !is CardBrowseState.Error) return
         if (cameraConnectionState.value !is CameraConnectionState.Connected) return
         val event = _activeEvent.value ?: return
+        val owner = sessionManager.getUserEmail() ?: return
         if (!canUploadToEvent(event.date)) {
             _shutterWatchState.value = ShutterWatchState.Error("This event's upload window has closed.")
             return
         }
-
-        val eventId = event.id
-        val photographerId = sessionManager.getUserEmail() ?: "unknown"
-        watchLogTail = emptyList()
-        lowStorageWarned = false
-        val highWaterKey = "hw_$eventId"
-        // ponytail: keyed by event only, not by camera body/card. A different
-        // card with higher handles could trigger a catch-up of up to the
-        // controller's cap; the backend's same-event hash dedupe makes that
-        // bandwidth, never duplicates. Add a camera key if it ever bites.
-        val catchUpAfter = tetherPrefs.getLong(highWaterKey, -1L).takeIf { it >= 0 }
-        tetherPrefs.edit().putString(WATCH_ACTIVE_EVENT_KEY, eventId).apply()
-        _shutterWatchState.value = ShutterWatchState.Starting
-
-        // Detach watcher. It no longer CANCELS the watch: the controller now
-        // reopens a dropped session itself (its deviceProvider already returns
-        // null while detached), so a knocked cable is a pause, not the end of
-        // the shoot. All this does is flush what's queued and surface the pause
-        // immediately, rather than waiting for the controller's own detection.
-        shutterWatchDetachJob?.cancel()
-        shutterWatchDetachJob = viewModelScope.launch {
-            cameraManager.state.collect { camState ->
-                if (camState !is CameraConnectionState.Disconnected) return@collect
-                _shutterWatchState.update { s ->
-                    if (s is ShutterWatchState.Watching) s.copy(reconnecting = true) else s
-                }
-                runSyncEngine() // flush what's queued
-            }
-        }
-
-        shutterWatchJob?.cancel()
-        // Blocking bulkTransfer I/O — must live on Dispatchers.IO (cancellation
-        // is only observed at the controller's delay() points).
-        shutterWatchJob = viewModelScope.launch(Dispatchers.IO) {
-            try {
-                shutterWatchController.run(
-                    catchUpAfter = catchUpAfter,
-                    onHighWater = { handle -> tetherPrefs.edit().putLong(highWaterKey, handle).apply() },
-                    onLog = { line -> appendWatchLog(line) },
-                    onStarted = {
-                        _shutterWatchState.value = ShutterWatchState.Watching(
-                            captureCount = 0,
-                            lastCaptureName = null,
-                            recentLog = watchLogTail,
-                        )
-                    },
-                    // Fires only after onStarted, so captureCount is never reset
-                    // by a reconnect — the count is for the whole shoot.
-                    onReconnecting = { reconnecting ->
-                        _shutterWatchState.update { s ->
-                            if (s is ShutterWatchState.Watching) s.copy(reconnecting = reconnecting) else s
-                        }
-                    },
-                    onCapture = { filename, writeTo ->
-                        val ok = persistCapturedJpeg(filename, eventId, photographerId, writeTo)
-                        if (ok) {
-                            _shutterWatchState.update { s ->
-                                if (s is ShutterWatchState.Watching) {
-                                    s.copy(captureCount = s.captureCount + 1, lastCaptureName = filename)
-                                } else s
-                            }
-                            runSyncEngine() // per-frame kick; unique KEEP makes this free
-                        }
-                        ok
-                    },
-                )
-            } finally {
-                // Runs on cancellation too — everything here is non-suspending.
-                // runSyncEngine() must be called directly: a withContext(Main)
-                // would throw inside a cancelled coroutine.
-                // Any orderly end (Stop, logout, the controller giving up) clears
-                // the resume flag; only a dead process leaves it behind.
-                tetherPrefs.edit().remove(WATCH_ACTIVE_EVENT_KEY).apply()
-                shutterWatchDetachJob?.cancel()
-                shutterWatchDetachJob = null
-                _shutterWatchState.update { s ->
-                    when (s) {
-                        // stopShutterWatch/detach set Idle/Error BEFORE cancelling,
-                        // so reaching here in Starting/Watching means the controller
-                        // ended on its own — surface that instead of a silent reset.
-                        is ShutterWatchState.Starting -> ShutterWatchState.Error(
-                            "The camera isn't answering over USB. Switch the camera off and on " +
-                                "(a replug alone doesn't clear this), wait a few seconds, then try again.",
-                            watchLogTail,
-                        )
-                        is ShutterWatchState.Watching -> ShutterWatchState.Error(
-                            "Auto-upload stopped unexpectedly — check the cable and start again. Pulled photos keep uploading.",
-                            watchLogTail,
-                        )
-                        else -> s
-                    }
-                }
-                runSyncEngine() // end-of-session flush
-            }
-        }
+        tetherPrefs.edit().putString("watch_event_snapshot", com.google.gson.Gson().toJson(event)).apply()
+        coordinator.requestWatch(owner, event.id)
     }
 
     fun stopShutterWatch() {
-        // Idle FIRST: the job's finally reads this state after cancellation is
-        // delivered, so ordering it before cancel() is what makes a manual stop
-        // land on Idle instead of the finally's "stopped unexpectedly" Error.
-        _shutterWatchState.value = ShutterWatchState.Idle
-        // Observed at the controller's next delay(); an in-flight bulkTransfer
-        // finishes or times out (≤5 s) first.
-        shutterWatchJob?.cancel()
-        shutterWatchJob = null
-        shutterWatchDetachJob?.cancel()
-        shutterWatchDetachJob = null
-        runSyncEngine() // flush anything persisted but not yet kicked
-    }
-
-    /**
-     * Fold a controller log line into the rolling tail (and live state), and
-     * mirror it to logcat — the R6 verification protocol reads the full stream
-     * via `adb logcat -s QP/TETHER` while the screen shows only the tail.
-     */
-    private fun appendWatchLog(line: String) {
-        if (BuildConfig.DEBUG) android.util.Log.i("QP/TETHER", line)
-        watchLogTail = (watchLogTail + line).takeLast(WATCH_LOG_LINES)
-        _shutterWatchState.update { s ->
-            if (s is ShutterWatchState.Watching) s.copy(recentLog = watchLogTail) else s
-        }
+        coordinator.stopWatch()
+        runSyncEngine()
     }
 
     fun simulatePhotoCapture() {

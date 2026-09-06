@@ -21,5 +21,6 @@ object UploadSpool {
     fun dir(context: Context): File =
         File(context.filesDir, "upload-spool").also { it.mkdirs() }
 
-    fun hasRoom(context: Context): Boolean = dir(context).usableSpace >= MIN_FREE_BYTES
+    fun hasRoom(context: Context, incomingBytes: Long = 0): Boolean =
+        dir(context).usableSpace - incomingBytes.coerceAtLeast(0) >= MIN_FREE_BYTES
 }

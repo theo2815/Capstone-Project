@@ -179,12 +179,12 @@ class PhotoUploadWorkerTest {
         )
 
     @Test
-    fun `signed out fails the run and leaves the queue untouched`() = runTest {
+    fun `signed out leaves the queue and scheduled successors eligible for later login`() = runTest {
         val id = enqueue()
 
         val result = runWorker()
 
-        assertTrue(result is ListenableWorker.Result.Failure)
+        assertTrue(result is ListenableWorker.Result.Success)
         // Untouched matters: the frames must survive to a run made after the
         // photographer signs back in, not be marked failed on their behalf.
         assertEquals("QUEUED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
@@ -230,6 +230,24 @@ class PhotoUploadWorkerTest {
 
         assertTrue(result is ListenableWorker.Result.Success)
         assertTrue(db.uploadQueueDao().getRecordsWithStatus("QUEUED").isEmpty())
+    }
+
+    @Test
+    fun `another account cannot drain or recover the previous owners queue`() = runTest {
+        val queued = enqueue()
+        val uploading = enqueue(status = "UPLOADING")
+        session.saveSession("other-token", "PHOTOGRAPHER", "Other", "other@example.com")
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+        assertEquals("QUEUED", db.uploadQueueDao().getRecordById(queued)?.uploadStatus)
+        assertEquals("UPLOADING", db.uploadQueueDao().getRecordById(uploading)?.uploadStatus)
+    }
+
+    @Test
+    fun `bounded batches drain beyond the first 24 records`() = runTest {
+        signIn()
+        repeat(30) { enqueue() }
+        runWorker()
+        assertEquals(30, db.uploadQueueDao().getRecordsWithStatus("FAILED").size)
     }
 
     // ---- upload path (MockWebServer) ----

@@ -154,6 +154,7 @@ object RetrofitClient {
     private val okHttpClient by lazy {
         OkHttpClient.Builder()
             .apply { if (BuildConfig.DEBUG) addInterceptor(loggingInterceptor) }
+            .addInterceptor(SessionAuthInterceptor(SessionManager.getInstance(appContext)))
             .authenticator(TokenAuthenticator(SessionManager.getInstance(appContext)))
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
