@@ -4,7 +4,8 @@ import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image"
 import { useEffect, useState, type MouseEvent } from "react";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
-import { cn, triggerDownload } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { savePhoto } from "@/lib/save-photo";
 import type { EventDetail } from "@/types/event";
 import type { MockPhoto } from "@/types/photo";
 
@@ -162,7 +163,7 @@ export function PhotoMosaicTile({
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            triggerDownload(photo.downloadUrl!);
+            void savePhoto(photo.downloadUrl!);
           }}
           aria-label={`Download ${photo.bib ?? "untagged photo"} for free`}
           className={cn(

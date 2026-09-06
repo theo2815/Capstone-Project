@@ -44,6 +44,8 @@ import {
 } from "@/lib/format";
 import { ApiError } from "@/lib/api";
 import { cn, formatPrice } from "@/lib/utils";
+import { savePhoto, showInAppSaveHint } from "@/lib/save-photo";
+import { isInAppBrowser } from "@/lib/in-app-browser";
 import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
 
 // Programmatic anchor click — direct hit to the presigned S3 URL avoids the
@@ -393,6 +395,12 @@ function ReceiptRow({
 
   function handleDownloadAll() {
     if (!bundleUrl) return;
+    // In-app webviews can't save the streamed ZIP (and it's too heavy to pull
+    // into memory for a share) — tell the runner how to open a real browser.
+    if (isInAppBrowser()) {
+      showInAppSaveHint();
+      return;
+    }
     // Server sets the real Content-Disposition (single-photo orders come
     // back as image/jpeg, multi as application/zip). The hint here only
     // matters if the response somehow omits the header — keep it honest
@@ -438,15 +446,18 @@ function ReceiptRow({
   function handleDownloadOne(id: string) {
     const photo = detail?.photos.find((p) => p.id === id);
     if (!photo?.downloadUrl) return;
-    // The backend bakes Content-Disposition: attachment + filename INTO the
-    // signed downloadUrl (LocalFs query params / S3 response-content-disposition)
-    // so mobile Safari (which ignores cross-origin `<a download>`) and desktop
-    // both save instead of navigating. Appending our own params here would
-    // break the SigV4 signature under S3/R2 — don't.
-    triggerDownload(photo.downloadUrl);
-    showToast({
-      kind: "success",
-      message: `Downloading ${id.replace(/^mock-/, "")}…`,
+    // The backend bakes Content-Disposition: attachment INTO the streamed
+    // response, so normal browsers save instead of navigating. In-app webviews
+    // ignore that header, so `savePhoto` routes them to the native share sheet
+    // (or a how-to-save hint). The "Downloading…" toast only fits the plain
+    // anchor path — the share sheet / hint is its own feedback.
+    void savePhoto(photo.downloadUrl).then((result) => {
+      if (result === "downloaded") {
+        showToast({
+          kind: "success",
+          message: `Downloading ${id.replace(/^mock-/, "")}…`,
+        });
+      }
     });
   }
 

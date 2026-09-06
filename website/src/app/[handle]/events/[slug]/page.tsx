@@ -23,7 +23,7 @@ import { useUiStore } from "@/store/ui-store";
 import { isReservedHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
-import { triggerDownload } from "@/lib/utils";
+import { savePhoto } from "@/lib/save-photo";
 import { fetchEventDetail } from "@/lib/api-events";
 import type { EventPhotosResult } from "@/lib/api-photos";
 import {
@@ -566,7 +566,7 @@ function PhotoPreviewMount({
         onPrev={onPrev}
         onNext={onNext}
         footnote="Free · yours to keep"
-        onDownload={() => triggerDownload(downloadUrl)}
+        onDownload={() => void savePhoto(downloadUrl)}
       />
     );
   }
