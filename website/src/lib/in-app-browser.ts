@@ -24,3 +24,16 @@ export function isInAppBrowser(
       !IOS_BROWSER_RE.test(ua))
   );
 }
+
+// True on iPhone / iPad / iPod. Used to prefer the native share sheet, whose
+// "Save Image" is the only route into the iOS camera roll — a plain download on
+// iOS Safari lands in the Files app instead. (iPadOS Safari's desktop-mode UA
+// drops the "iPad" token and reads as a Mac; that falls back to the plain
+// download, which is acceptable.)
+export function isIOS(
+  ua: string | undefined = typeof navigator === "undefined"
+    ? undefined
+    : navigator.userAgent,
+): boolean {
+  return ua ? IOS_DEVICE_RE.test(ua) : false;
+}

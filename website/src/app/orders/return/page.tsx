@@ -21,7 +21,7 @@ import type { OrderPhotoDetail, OrderStatus } from "@/types/order";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { savePhoto, showInAppSaveHint } from "@/lib/save-photo";
-import { isInAppBrowser } from "@/lib/in-app-browser";
+import { isIOS, isInAppBrowser } from "@/lib/in-app-browser";
 
 // /orders/return — landing page PayMongo redirects to after hosted checkout.
 // Polls the order until status flips to PAID, then renders an editorial
@@ -369,10 +369,10 @@ function PhotoCard({
           href={downloadUrl}
           download
           onClick={(e) => {
-            // Real browsers save via the anchor. In-app webviews ignore it and
-            // just render the photo inline, so intercept them to the share
-            // sheet / hint instead.
-            if (isInAppBrowser()) {
+            // Desktop / Android save via the anchor. In-app webviews (render
+            // inline) and iOS Safari (a download lands in Files, not Photos) go
+            // through savePhoto → the native share sheet instead.
+            if (isInAppBrowser() || isIOS()) {
               e.preventDefault();
               void savePhoto(downloadUrl);
             }
