@@ -12,6 +12,9 @@ data class PlatformProperties(
     // share. Whatever the value, the platform cut on a sale never moves.
     val couponMaxPercent: Int = 50,
     // Upper bound for emailed bundle capabilities and migrated legacy tokens.
+    // The user-facing "works for 90 days" copy is hardcoded to this default —
+    // if you change it, update the receipt email (OrderReceiptEmailService) and
+    // the website /orders/return page copy too.
     val shareTokenTtl: Duration = Duration.ofDays(90),
     // Long enough for a 30-minute QRPH payment plus webhook/polling delay.
     val orderReturnTtl: Duration = Duration.ofMinutes(35),

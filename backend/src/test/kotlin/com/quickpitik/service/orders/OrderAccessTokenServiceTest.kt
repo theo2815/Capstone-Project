@@ -51,6 +51,22 @@ class OrderAccessTokenServiceTest {
         assertFalse(service.isValid(order, "wrong", OrderCapability.BUNDLE))
     }
 
+    @Test
+    fun `a receipt-return token is a valid RETURN capability that outlives the bounce TTL`() {
+        val order = order() // tokenExpiresAt = now + 1 day
+        val token = service.issueReceiptReturn(order)
+
+        assertTrue(service.isValid(order, token, OrderCapability.RETURN))
+        assertFalse(service.isValid(order, token, OrderCapability.BUNDLE))
+        // Its embedded expiry tracks order.tokenExpiresAt (~1 day), not the
+        // 35-minute orderReturnTtl a plain issue(RETURN) would impose.
+        val expiresAt = token.split('.')[3].toLong()
+        assertTrue(
+            expiresAt > OffsetDateTime.now().plusHours(1).toEpochSecond(),
+            "expiry $expiresAt should be well beyond the 35-minute RETURN TTL",
+        )
+    }
+
     private fun order(legacyHash: String? = null) = Order(
         id = UUID.randomUUID(),
         eventId = UUID.randomUUID(),

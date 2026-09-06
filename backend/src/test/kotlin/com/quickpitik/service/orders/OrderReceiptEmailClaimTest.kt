@@ -1,8 +1,9 @@
 package com.quickpitik.service.orders
 
-import com.quickpitik.config.PublicProperties
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.ResendProperties
 import com.quickpitik.config.PlatformProperties
+import com.quickpitik.dto.email.ResendSendEmailRequest
 import com.quickpitik.dto.email.ResendSendEmailResponse
 import com.quickpitik.entity.DownloadGrant
 import com.quickpitik.entity.DownloadGrantId
@@ -157,6 +158,30 @@ class OrderReceiptEmailClaimTest {
         assertFalse(html.contains("Nothing was charged"))
     }
 
+    // The email's action button must open the in-app /orders/return page (which
+    // runs the mobile-safe save flow), not the raw download-bundle API.
+    @Test
+    fun `receipt button links to the in-app receipt page, not the raw download API`() {
+        val order = stubReadyOrder()
+        stubClaimResult(order, won = true)
+        var sent: ResendSendEmailRequest? = null
+        Mockito.`when`(resendClient.send(anyArg())).thenAnswer { inv ->
+            sent = inv.getArgument<ResendSendEmailRequest>(0)
+            ResendSendEmailResponse(id = "re_123")
+        }
+
+        service().sendReceiptIfPending(order.id)
+
+        val html = sent?.html ?: error("receipt was not sent")
+        assertTrue(html.contains("orders/return?orderId=${order.id}"), html)
+        assertTrue(html.contains("token="), html)
+        assertFalse(html.contains("/download-bundle"), "email must not link the raw download API")
+        assertFalse(
+            Regex("""<a\b[^>]*\bdownload\b""").containsMatchIn(html),
+            "the page link must not carry a download attribute",
+        )
+    }
+
     // ─── fixtures ─────────────────────────────────────────────────────────
 
     private fun service() = OrderReceiptEmailService(
@@ -166,7 +191,7 @@ class OrderReceiptEmailClaimTest {
         downloadGrantRepository,
         resendClient,
         ResendProperties(),
-        PublicProperties(),
+        PaymongoProperties(),
         OrderAccessTokenService(PlatformProperties()),
     )
 

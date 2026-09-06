@@ -27,7 +27,7 @@ import { isIOS, isInAppBrowser } from "@/lib/in-app-browser";
 // Polls the order until status flips to PAID, then renders an editorial
 // receipt: photo cards on the left, receipt details + actions on the right
 // (mobile stacks photo-first). Guests get a "create account" upsell so
-// they keep their photos beyond the email link's 7-day window.
+// they keep their photos beyond the email link's 90-day window.
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_MAX_ATTEMPTS = 30; // 60s
@@ -280,10 +280,10 @@ function PaidState({
                   <>
                     We&rsquo;ve also emailed these links to{" "}
                     <span className="text-ink">{recipientEmail}</span>. They
-                    work for <span className="tnum">7</span> days.
+                    work for <span className="tnum">90</span> days.
                   </>
                 ) : (
-                  <>The download links above work for 7 days.</>
+                  <>The download links above work for 90 days.</>
                 )}
               </p>
             </div>

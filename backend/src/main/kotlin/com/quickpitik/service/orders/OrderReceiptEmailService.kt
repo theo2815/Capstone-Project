@@ -1,6 +1,6 @@
 package com.quickpitik.service.orders
 
-import com.quickpitik.config.PublicProperties
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.ResendProperties
 import com.quickpitik.dto.email.ResendSendEmailRequest
 import com.quickpitik.entity.Order
@@ -42,7 +42,7 @@ class OrderReceiptEmailService(
     private val downloadGrantRepository: DownloadGrantRepository,
     private val resendClient: ResendClient,
     private val resendProperties: ResendProperties,
-    private val publicProperties: PublicProperties,
+    private val paymongoProperties: PaymongoProperties,
     private val orderAccessTokenService: OrderAccessTokenService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -83,16 +83,13 @@ class OrderReceiptEmailService(
         }
 
         val event = eventRepository.findById(order.eventId).orElse(null)
-        val bundleUrl = buildBundleUrl(
-            orderId,
-            orderAccessTokenService.issue(order, OrderCapability.BUNDLE),
-        )
+        val receiptUrl = buildReceiptUrl(order)
 
         val html = renderHtml(
             order = order,
             eventName = event?.name ?: "QuickPitik",
             entitledCount = entitledCount,
-            bundleUrl = bundleUrl,
+            ctaUrl = receiptUrl,
             listTotal = items.sumOf { it.pricePhpAtPurchase },
             discountTotal = items.sumOf { it.discountPhp },
         )
@@ -143,7 +140,7 @@ class OrderReceiptEmailService(
         order: Order,
         eventName: String,
         entitledCount: Int,
-        bundleUrl: String,
+        ctaUrl: String,
         listTotal: BigDecimal = order.totalPhp,
         discountTotal: BigDecimal = BigDecimal.ZERO,
     ): String {
@@ -169,8 +166,8 @@ class OrderReceiptEmailService(
         val photoWord = if (entitledCount == 1) "photo" else "photos"
         val totalPhp = "₱${order.totalPhp.toPlainString()}"
         val buttonLabel =
-            if (entitledCount == 1) "Download your photo  ↓"
-            else "Download all $entitledCount photos (.zip)  ↓"
+            if (entitledCount == 1) "Get your photo  ↓"
+            else "Get your $entitledCount photos  ↓"
 
         return """
 <!DOCTYPE html>
@@ -194,7 +191,7 @@ class OrderReceiptEmailService(
 $discountLine
           <table cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
             <tr><td style="padding:6px 0;">
-              <a href="${escapeUrl(bundleUrl)}" download
+              <a href="${escapeUrl(ctaUrl)}"
                  style="display:inline-block;background:#3b8c5f;color:#fafaf6;
                         text-decoration:none;padding:16px 32px;border-radius:999px;
                         font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
@@ -215,7 +212,7 @@ $discountLine
           </p>
 
           <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:28px 0 0;">
-            Tap the button to save the ZIP to your device. iOS Files and Android both unzip on tap. The link works as long as you keep this email.
+            Tap the button to open your receipt and save your photos. The link works for 90 days.
           </p>
         </td></tr>
       </table>
@@ -228,10 +225,21 @@ $discountLine
         """.trimIndent()
     }
 
-    private fun buildBundleUrl(orderId: UUID, shareToken: String): String {
-        val base = publicProperties.apiBaseUrl.trimEnd('/')
-        val token = URLEncoder.encode(shareToken, StandardCharsets.UTF_8)
-        return "$base/orders/$orderId/download-bundle?token=$token"
+    // The receipt CTA opens the in-app /orders/return page (the same page +
+    // URL shape PayMongo's success_url uses) instead of the raw download-bundle
+    // API, so the download runs through the website's polished, mobile-safe
+    // save flow. Always carries the token — an email can't rely on an
+    // authenticated browser — and uses a long-lived RETURN token so the link
+    // survives as long as the order (order.tokenExpiresAt), not the 35-minute
+    // PayMongo-bounce TTL.
+    private fun buildReceiptUrl(order: Order): String {
+        val base = paymongoProperties.successUrl.trimEnd('/')
+        val separator = if (base.contains("?")) "&" else "?"
+        val token = URLEncoder.encode(
+            orderAccessTokenService.issueReceiptReturn(order),
+            StandardCharsets.UTF_8,
+        )
+        return "${base}${separator}orderId=${order.id}&token=$token"
     }
 
     private fun escapeHtml(s: String): String = s
