@@ -44,20 +44,9 @@ import {
 } from "@/lib/format";
 import { ApiError } from "@/lib/api";
 import { cn, formatPrice } from "@/lib/utils";
-import { savePhoto, showInAppSaveHint } from "@/lib/save-photo";
-import { isInAppBrowser } from "@/lib/in-app-browser";
+import { savePhoto } from "@/lib/save-photo";
+import { SavePhotosButton } from "@/components/orders/save-photos-button";
 import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
-
-// Programmatic anchor click — direct hit to the presigned S3 URL avoids the
-// CORS-on-fetch trap. Same idiom for per-photo + bundle.
-function triggerDownload(url: string, filename?: string) {
-  if (typeof document === "undefined") return;
-  const a = document.createElement("a");
-  a.href = url;
-  if (filename) a.download = filename;
-  a.rel = "noopener";
-  a.click();
-}
 
 const JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "spend", label: "Spend" },
@@ -392,26 +381,13 @@ function ReceiptRow({
     detail?.shareToken && detail?.id
       ? buildOrderBundleUrl(detail.id, detail.shareToken)
       : null;
-
-  function handleDownloadAll() {
-    if (!bundleUrl) return;
-    // In-app webviews can't save the streamed ZIP (and it's too heavy to pull
-    // into memory for a share) — tell the runner how to open a real browser.
-    if (isInAppBrowser()) {
-      showInAppSaveHint();
-      return;
-    }
-    // Server sets the real Content-Disposition (single-photo orders come
-    // back as image/jpeg, multi as application/zip). The hint here only
-    // matters if the response somehow omits the header — keep it honest
-    // to the count so a fallback save doesn't misname the file.
-    const hintExt = photoCount === 1 ? "jpg" : "zip";
-    triggerDownload(bundleUrl, `${order.id}.${hintExt}`);
-    showToast({
-      kind: "success",
-      message: `Preparing ${photoCount} photo${photoCount === 1 ? "" : "s"}…`,
-    });
-  }
+  const savablePhotos = useMemo(
+    () =>
+      (detail?.photos ?? [])
+        .filter((p) => p.downloadUrl)
+        .map((p) => ({ url: p.downloadUrl as string })),
+    [detail?.photos],
+  );
 
   async function handleCancelRequest(disputeId: string) {
     const ok = await confirm({
@@ -554,14 +530,11 @@ function ReceiptRow({
           )}
           <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3">
             {photoCount > 0 && bundleUrl && (
-              <button
-                type="button"
-                onClick={handleDownloadAll}
-                className="font-display text-base font-bold border border-ink text-ink hover:bg-ink hover:text-surface py-3 px-6 rounded-full transition-colors inline-flex items-center gap-2"
-              >
-                {photoCount === 1 ? "Download photo" : "Download all"}
-                <span aria-hidden="true">↓</span>
-              </button>
+              <SavePhotosButton
+                variant="secondary"
+                photos={savablePhotos}
+                bundleUrl={bundleUrl}
+              />
             )}
             {canRequest ? (
               <button
@@ -734,6 +707,7 @@ function labelForPaymentMethod(method: string): string {
     card: "Card",
     paymaya: "PayMaya",
     grabpay: "GrabPay",
+    qrph: "QR Ph",
   };
   return map[method.toLowerCase()] ?? method;
 }

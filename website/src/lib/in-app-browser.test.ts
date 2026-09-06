@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isInAppBrowser } from "./in-app-browser";
+import { isAndroid, isInAppBrowser } from "./in-app-browser";
 
 // Real-world UA shapes. Sources: the app strings each embedded browser appends.
 const FB_IOS =
@@ -44,5 +44,19 @@ describe("isInAppBrowser", () => {
 
   it("is false when the UA is unknown (SSR)", () => {
     expect(isInAppBrowser(undefined)).toBe(false);
+  });
+});
+
+describe("isAndroid", () => {
+  it("flags Android devices (bulk save prefers the share sheet there)", () => {
+    for (const ua of [CHROME_ANDROID, MESSENGER_ANDROID, ANDROID_WEBVIEW]) {
+      expect(isAndroid(ua)).toBe(true);
+    }
+  });
+
+  it("is false off Android and for an unknown UA", () => {
+    for (const ua of [SAFARI_IOS, CHROME_IOS, FB_IOS, undefined]) {
+      expect(isAndroid(ua)).toBe(false);
+    }
   });
 });

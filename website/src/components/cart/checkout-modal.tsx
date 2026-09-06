@@ -29,6 +29,8 @@ import {
 } from "@/lib/api-orders";
 import { postCouponPreview, type CouponPreview } from "@/lib/api-coupons";
 import { ApiError, formatRetryWait } from "@/lib/api";
+import { isInAppBrowser, isIOS } from "@/lib/in-app-browser";
+import { saveQrCode } from "@/lib/save-photo";
 import { Kicker } from "@/components/ui/kicker";
 import {
   BTN_GHOST,
@@ -525,6 +527,21 @@ export function CheckoutModal({
     const timer = window.setTimeout(() => void checkPaymentStatus({ verify: true }), delay);
     return () => window.clearTimeout(timer);
   }, [checkPaymentStatus, pollingActive, qrPayment]);
+
+  // Returning from the bank/e-wallet app (tab re-shown) verifies once, actively,
+  // so a payment that settled while we were backgrounded flips to success right
+  // away instead of on the next poll or the 60 s server sweep. In-app webviews
+  // suspend JS timers while backgrounded, so the interval poll alone lags here.
+  useEffect(() => {
+    if (!pollingActive) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void checkPaymentStatus({ verify: true });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [checkPaymentStatus, pollingActive]);
 
   const handlePaidClaim = () => {
     markPaid();
@@ -1230,6 +1247,10 @@ function QrPaymentStep({
   const remainingMs = new Date(payment.expiresAt).getTime() - now;
   const expiringSoon = remainingMs < EXPIRY_WARN_MS;
   const ref = formatOrderRef(payment.orderId);
+  // Client-only (this step never renders on the server), so reading navigator
+  // here is safe — no hydration mismatch. Drives both the QR-save routing and
+  // the webview guidance below.
+  const inApp = isInAppBrowser();
 
   return (
     <div className="px-6 md:px-7 py-6 flex flex-col gap-6">
@@ -1264,10 +1285,36 @@ function QrPaymentStep({
       <a
         href={payment.imageUrl}
         download={`quickpitik-qrph-${payment.orderId}.png`}
+        onClick={(e) => {
+          // In-app webviews can't save an inline data-URI image, and iOS Safari
+          // drops it in Files not Photos — route those through the share sheet
+          // so the runner can get the QR out to scan on another device.
+          if (inApp || isIOS()) {
+            e.preventDefault();
+            void saveQrCode(
+              payment.imageUrl,
+              `quickpitik-qrph-${payment.orderId}.png`,
+            );
+          }
+        }}
         className={cn(BTN_SECONDARY, BTN_SIZE.md, "w-full justify-center")}
       >
         Save QR code
       </a>
+
+      {inApp && mode === "awaiting" && (
+        <div className="rounded-xl border border-line bg-bone-deep/40 px-4 py-3.5">
+          <p className="kicker text-slate-soft">In-app browser</p>
+          <p className="mt-1.5 font-sans text-sm leading-relaxed text-ink-soft">
+            Scanning this code with the same phone is hard. Tap{" "}
+            <span className="text-ink">Save QR code</span> and scan it from
+            another device, or open this page in Chrome or Safari (tap the{" "}
+            <span aria-hidden>⋯</span> menu &rarr; &ldquo;Open in browser&rdquo;).
+            Your receipt goes to{" "}
+            <span className="text-ink break-all">{email}</span> either way.
+          </p>
+        </div>
+      )}
 
       <PaymentNotice
         tone={mode === "slow" ? "slow" : "waiting"}

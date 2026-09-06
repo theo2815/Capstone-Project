@@ -483,4 +483,26 @@ describe("CheckoutModal QRPH", () => {
     renderModal();
     await waitFor(() => expect(http.get).toHaveBeenCalledWith(`/me/orders/${ORDER_ID}/status`));
   });
+
+  // Returning from the bank/e-wallet app (webview timers were suspended)
+  // verifies once, actively, instead of waiting for the next poll or the sweep.
+  it("re-verifies with PayMongo when the tab returns to the foreground", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await walkToQr(user);
+    // Let the initial plain poll settle so the in-flight guard is clear.
+    await tick(50);
+    expect(
+      http.get.mock.calls.some(([p]) => String(p).endsWith("&verify=true")),
+    ).toBe(false);
+
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await waitFor(() =>
+      expect(
+        http.get.mock.calls.some(([p]) => String(p).endsWith("&verify=true")),
+      ).toBe(true),
+    );
+  });
 });
