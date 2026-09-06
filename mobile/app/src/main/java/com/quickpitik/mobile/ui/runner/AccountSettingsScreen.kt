@@ -81,7 +81,8 @@ import com.quickpitik.mobile.ui.theme.Typography
 @Composable
 fun AccountSettingsScreen(
     viewModel: ProfileViewModel,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    onOpenVerify: () -> Unit = {},
 ) {
     val name by viewModel.profileName.collectAsState()
     val email by viewModel.profileEmail.collectAsState()
@@ -705,7 +706,22 @@ fun AccountSettingsScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Icon(Icons.Default.Info, contentDescription = null, tint = Fresh, modifier = Modifier.size(16.dp))
-                                Kicker("04 · About & Policies")
+                                Kicker("04 · Tools & policies")
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onOpenVerify() }
+                                    .padding(vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Whose photo is this?", style = Typography.bodyMedium, color = Ink, fontWeight = FontWeight.Medium)
+                                    Text("Check which photographer shot a race photo", style = Typography.bodySmall, color = SlateSoft)
+                                }
+                                ArrowLabel("Check →", color = Slate, style = Typography.labelMedium)
                             }
 
                             Row(

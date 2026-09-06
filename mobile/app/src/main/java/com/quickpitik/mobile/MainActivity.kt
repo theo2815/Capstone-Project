@@ -111,6 +111,8 @@ import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
 import com.quickpitik.mobile.ui.runner.RunnerGalleryViewModel
 import com.quickpitik.mobile.ui.runner.RunnerInboxViewModel
 import com.quickpitik.mobile.ui.runner.SavedEventsViewModel
+import com.quickpitik.mobile.ui.runner.VerifyScreen
+import com.quickpitik.mobile.ui.runner.VerifyViewModel
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.Ink
@@ -124,7 +126,7 @@ import com.quickpitik.mobile.ui.theme.Slate
 // "photographer/{handle}" and the auth routes belong to NEITHER role set —
 // they are shared surfaces.
 private val RUNNER_ROUTES = setOf(
-    "events", "gallery", "profile", "settings",
+    "events", "gallery", "profile", "settings", "verify",
     // The receipt route carries the optional guest ?token=; the registered
     // pattern (and thus currentRoute) includes it, so match it exactly (F5) —
     // the bare "orders/return/{orderId}" had dropped out of the guard.
@@ -899,8 +901,19 @@ class MainActivity : ComponentActivity() {
                                 AccountSettingsScreen(
                                     viewModel = profileViewModel,
                                     onLogout = runnerLogout,
+                                    onOpenVerify = { navController.navigate("verify") },
                                 )
                             }
+                                composable("verify") { entry ->
+                                    val verifyViewModel: VerifyViewModel = viewModel(entry)
+                                    VerifyScreen(
+                                        viewModel = verifyViewModel,
+                                        onBack = { navController.popBackStack() },
+                                        onOpenPhotographer = { handle ->
+                                            navController.navigate("photographer/$handle")
+                                        },
+                                    )
+                                }
                             composable(
                                 route = "orders?orderId={orderId}",
                                 arguments = listOf(
