@@ -65,6 +65,8 @@ fun PhotographerEventsScreen(
     modifier: Modifier = Modifier,
     onOpenShare: (PhotographerEventSummaryDto) -> Unit = {},
     onSyncEvent: (PhotographerEventSummaryDto) -> Unit = {},
+    onCreateEvent: () -> Unit = {},
+    onEditEvent: (PhotographerEventSummaryDto) -> Unit = {},
 ) {
     val eventsState by viewModel.eventsState.collectAsState()
     val publicEventsState by viewModel.publicEventsState.collectAsState()
@@ -76,6 +78,7 @@ fun PhotographerEventsScreen(
     val isPending = currentStatus == "pending"
     var showSetupAlert by remember { mutableStateOf(false) }
     var alertIsPending by remember { mutableStateOf(false) }
+    var couponEvent by remember { mutableStateOf<PhotographerEventSummaryDto?>(null) }
     val today = remember { LocalDate.now() }
 
     val guardAction: (() -> Unit) -> Unit = { action ->
@@ -91,6 +94,15 @@ fun PhotographerEventsScreen(
         StudioSetupRequiredDialog(
             isPending = alertIsPending,
             onDismiss = { showSetupAlert = false },
+        )
+    }
+
+    couponEvent?.let { ev ->
+        EventCouponSheet(
+            eventId = ev.id,
+            eventName = ev.name,
+            viewModel = viewModel,
+            onDismiss = { couponEvent = null },
         )
     }
 
@@ -134,6 +146,14 @@ fun PhotographerEventsScreen(
                 },
             )
         } else {
+            // Create owned event (V46) — gated on approved like every studio action.
+            GhostCta(
+                text = "＋ Create an event",
+                onClick = { guardAction(onCreateEvent) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
             // Name filter — web EventFilterBar parity (its date dropdown is
             // covered by the status chips below; the search is what's needed
             // to find one event in a long roster).
@@ -248,25 +268,35 @@ fun PhotographerEventsScreen(
                         contentPadding = PaddingValues(bottom = 24.dp),
                     ) {
                         items(visible, key = { it.id }) { event ->
-                            // Per-event variant — picked from the same client-side
-                            // lifecycle as the bucket. The filter union (OPEN+PAST →
-                            // COMPLETED) does NOT change the card variant; each row
-                            // still renders against its own state.
-                            when (deriveEventState(event.date, today)) {
-                                EventState.LIVE -> LiveEventCard(
-                                    event = event,
-                                    isActive = activeEvent?.id == event.id,
-                                    onSync = { guardAction { onSyncEvent(event) } },
-                                    onOpenShare = { guardAction { onOpenShare(event) } },
-                                )
-                                EventState.UPCOMING -> UpcomingEventCard(
-                                    event = event,
-                                    today = today,
-                                )
-                                EventState.OPEN, EventState.PAST -> CompletedEventCard(
-                                    event = event,
-                                    onOpenShare = { guardAction { onOpenShare(event) } },
-                                )
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                // Per-event variant — picked from the same client-side
+                                // lifecycle as the bucket. The filter union (OPEN+PAST →
+                                // COMPLETED) does NOT change the card variant; each row
+                                // still renders against its own state.
+                                when (deriveEventState(event.date, today)) {
+                                    EventState.LIVE -> LiveEventCard(
+                                        event = event,
+                                        isActive = activeEvent?.id == event.id,
+                                        onSync = { guardAction { onSyncEvent(event) } },
+                                        onOpenShare = { guardAction { onOpenShare(event) } },
+                                    )
+                                    EventState.UPCOMING -> UpcomingEventCard(
+                                        event = event,
+                                        today = today,
+                                    )
+                                    EventState.OPEN, EventState.PAST -> CompletedEventCard(
+                                        event = event,
+                                        onOpenShare = { guardAction { onOpenShare(event) } },
+                                    )
+                                }
+                                // Owned events (V46): review chip + edit/coupon controls.
+                                if (event.ownedByMe) {
+                                    OwnedEventControls(
+                                        event = event,
+                                        onEdit = { guardAction { onEditEvent(event) } },
+                                        onCoupon = { guardAction { couponEvent = event } },
+                                    )
+                                }
                             }
                         }
                 }
@@ -521,6 +551,46 @@ private fun CompletedEventCard(
                 modifier = Modifier.size(20.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun OwnedEventControls(
+    event: PhotographerEventSummaryDto,
+    onEdit: () -> Unit,
+    onCoupon: () -> Unit,
+) {
+    val (chipText, chipTone) = when (event.reviewStatus) {
+        "pending" -> "In review" to StatusTone.Warning
+        "rejected" -> "Changes needed" to StatusTone.Danger
+        "change_pending" -> "Pricing change pending" to StatusTone.Warning
+        else -> "Approved" to StatusTone.Approved
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        StatusChip(text = chipText.uppercase(), tone = chipTone)
+        Spacer(modifier = Modifier.weight(1f))
+        TextButton(onClick = onEdit) {
+            Text("Edit", style = Typography.bodyMedium, color = Ink, fontWeight = FontWeight.Medium)
+        }
+        if (event.pricingMode != "free") {
+            TextButton(onClick = onCoupon) {
+                Text("Coupon", style = Typography.bodyMedium, color = Ink, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+    if (event.reviewStatus == "rejected" && !event.reviewNote.isNullOrBlank()) {
+        Text(
+            text = event.reviewNote!!,
+            style = Typography.bodySmall,
+            color = SlateSoft,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
     }
 }
 

@@ -130,6 +130,14 @@ interface QuickPitikApi {
         @Part parts: List<MultipartBody.Part>
     ): ApiResponseEnvelope<PhotographerEventDetailDto>
 
+    // Edit prefill (V46): full owned-event detail (description/organizerName/
+    // pricePerPhoto) the list summary omits. Backend PhotographerEventDetailDto.
+    @GET("api/v1/me/photographer/events/{eventId}")
+    suspend fun getPhotographerEventDetail(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String
+    ): ApiResponseEnvelope<PhotographerEventDetailDto>
+
     // Event coupon (V47) — GET data is null when none; DELETE returns {removed:true}.
     @GET("api/v1/me/photographer/events/{eventId}/coupon")
     suspend fun getEventCoupon(

@@ -86,6 +86,7 @@ import com.quickpitik.mobile.ui.photographer.EventsState
 import com.quickpitik.mobile.ui.photographer.PhotographerCaptureScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
 import com.quickpitik.mobile.ui.photographer.PhotographerEarningsScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerEventFormScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerEventShareScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerEventsScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerFloatingBottomNav
@@ -681,6 +682,12 @@ class MainActivity : ComponentActivity() {
                                                 vm.selectEvent(ev)
                                                 studioNavigate("studio/capture")
                                             },
+                                            onCreateEvent = {
+                                                navController.navigate("studio/event-form")
+                                            },
+                                            onEditEvent = { ev ->
+                                                navController.navigate("studio/event-form?eventId=${ev.id}")
+                                            },
                                         )
                                     }
                                 }
@@ -732,6 +739,25 @@ class MainActivity : ComponentActivity() {
                                                 onBack = { navController.popBackStack() },
                                             )
                                         }
+                                    }
+                                }
+                                composable(
+                                    route = "studio/event-form?eventId={eventId}",
+                                    arguments = listOf(navArgument("eventId") {
+                                        type = NavType.StringType
+                                        nullable = true
+                                        defaultValue = null
+                                    }),
+                                ) { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    val eventId = entry.arguments?.getString("eventId")
+                                    StudioTheme {
+                                        PhotographerEventFormScreen(
+                                            viewModel = vm,
+                                            eventId = eventId,
+                                            onBack = { navController.popBackStack() },
+                                            onSaved = { navController.popBackStack() },
+                                        )
                                     }
                                 }
                                 composable("studio/profile-preview") { entry ->

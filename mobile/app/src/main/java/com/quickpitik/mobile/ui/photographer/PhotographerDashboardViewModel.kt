@@ -94,6 +94,37 @@ sealed class VerificationUiState {
     data class Error(val message: String) : VerificationUiState()
 }
 
+// Photographer-owned event authoring (V46).
+sealed class EventFormState {
+    object Idle : EventFormState()
+    object Submitting : EventFormState()
+    data class Success(val event: com.quickpitik.mobile.data.remote.PhotographerEventDetailDto) : EventFormState()
+    data class Error(val message: String) : EventFormState()
+}
+
+sealed class CouponUiState {
+    object Loading : CouponUiState()
+    // coupon == null → none set yet (backend answers success + null data).
+    data class Loaded(val coupon: com.quickpitik.mobile.data.remote.CouponDto?) : CouponUiState()
+    data class Error(val message: String) : CouponUiState()
+}
+
+// Only-changed fields are non-null (create sends all; edit diffs). Strings map
+// straight to the multipart @RequestParam parts; coverUri is a content:// Uri.
+data class OwnedEventFormInput(
+    val title: String? = null,
+    val date: String? = null,
+    val location: String? = null,
+    val organizerName: String? = null,
+    val description: String? = null,
+    val visibility: String? = null,
+    val pricingMode: String? = null,
+    val pricePerPhoto: String? = null,
+    val watermarkPolicy: String? = null,
+    val withdrawPendingChange: Boolean = false,
+    val coverUri: String? = null,
+)
+
 sealed class SharePhotosState {
     object Loading : SharePhotosState()
     data class Success(val photos: List<com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto>) : SharePhotosState()
@@ -226,6 +257,17 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     private val _verificationState = MutableStateFlow<VerificationUiState>(VerificationUiState.Loading)
     val verificationState: StateFlow<VerificationUiState> = _verificationState
+
+    // Owned-event authoring (V46).
+    private val _eventFormState = MutableStateFlow<EventFormState>(EventFormState.Idle)
+    val eventFormState: StateFlow<EventFormState> = _eventFormState
+    // Edit prefill: full detail (description/organizer/price) the list summary lacks.
+    private val _eventEditTarget = MutableStateFlow<com.quickpitik.mobile.data.remote.PhotographerEventDetailDto?>(null)
+    val eventEditTarget: StateFlow<com.quickpitik.mobile.data.remote.PhotographerEventDetailDto?> = _eventEditTarget
+    private val _couponState = MutableStateFlow<CouponUiState>(CouponUiState.Loading)
+    val couponState: StateFlow<CouponUiState> = _couponState
+    private val _couponActionMessage = MutableStateFlow<String?>(null)
+    val couponActionMessage: StateFlow<String?> = _couponActionMessage
 
     private val _payoutActionState = MutableStateFlow<String?>(null)
     val payoutActionState: StateFlow<String?> = _payoutActionState
@@ -661,6 +703,147 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 _publicEventsState.value = EventsState.Error(e.localizedMessage ?: "Failed to connect to server.")
             }
         }
+
+    // --- Owned-event authoring (V46) ---
+
+    // eventId == null → create (POST); else edit (PATCH, only the non-null fields
+    // in `input` are sent). On success refetch the list so review chips update.
+    fun submitEvent(eventId: String?, input: OwnedEventFormInput) {
+        viewModelScope.launch {
+            _eventFormState.value = EventFormState.Submitting
+            val token = sessionManager.getAccessToken()
+            if (token == null) {
+                _eventFormState.value = EventFormState.Error("No valid session. Please log in again.")
+                return@launch
+            }
+            try {
+                val parts = buildEventParts(input)
+                val response = if (eventId == null) {
+                    RetrofitClient.apiService.createPhotographerEvent("Bearer $token", parts)
+                } else {
+                    RetrofitClient.apiService.updatePhotographerEvent("Bearer $token", eventId, parts)
+                }
+                if (response.success && response.data != null) {
+                    _eventFormState.value = EventFormState.Success(response.data)
+                    fetchEvents()
+                } else {
+                    _eventFormState.value = EventFormState.Error(response.error ?: "Couldn't save the event.")
+                }
+            } catch (e: Exception) {
+                _eventFormState.value = EventFormState.Error(RetrofitClient.parseError(e))
+            }
+        }
+    }
+
+    private fun buildEventParts(input: OwnedEventFormInput): List<MultipartBody.Part> {
+        val parts = mutableListOf<MultipartBody.Part>()
+        fun text(name: String, value: String?) {
+            if (value != null) parts.add(MultipartBody.Part.createFormData(name, value))
+        }
+        text("title", input.title)
+        text("date", input.date)
+        text("location", input.location)
+        text("organizerName", input.organizerName)
+        text("description", input.description)
+        text("visibility", input.visibility)
+        text("pricingMode", input.pricingMode)
+        text("pricePerPhoto", input.pricePerPhoto)
+        text("watermarkPolicy", input.watermarkPolicy)
+        if (input.withdrawPendingChange) {
+            parts.add(MultipartBody.Part.createFormData("withdrawPendingChange", "true"))
+        }
+        input.coverUri?.let { uri ->
+            val bytes = getApplication<Application>().contentResolver
+                .openInputStream(android.net.Uri.parse(uri))?.use { it.readBytes() }
+            if (bytes != null) {
+                val body = bytes.toRequestBody("image/jpeg".toMediaTypeOrNull(), 0, bytes.size)
+                parts.add(MultipartBody.Part.createFormData("cover", "cover.jpg", body))
+            }
+        }
+        return parts
+    }
+
+    fun loadEventDetail(eventId: String) {
+        viewModelScope.launch {
+            _eventEditTarget.value = null
+            val token = sessionManager.getAccessToken() ?: return@launch
+            try {
+                val response = RetrofitClient.apiService.getPhotographerEventDetail("Bearer $token", eventId)
+                if (response.success && response.data != null) _eventEditTarget.value = response.data
+            } catch (_: Exception) {
+                // Non-fatal: the form falls back to the list-summary prefill.
+            }
+        }
+    }
+
+    fun resetEventForm() {
+        _eventFormState.value = EventFormState.Idle
+        _eventEditTarget.value = null
+    }
+
+    fun loadCoupon(eventId: String) {
+        viewModelScope.launch {
+            _couponState.value = CouponUiState.Loading
+            val token = sessionManager.getAccessToken()
+            if (token == null) {
+                _couponState.value = CouponUiState.Error("No valid session.")
+                return@launch
+            }
+            try {
+                val response = RetrofitClient.apiService.getEventCoupon("Bearer $token", eventId)
+                _couponState.value = CouponUiState.Loaded(response.data)
+            } catch (e: Exception) {
+                _couponState.value = CouponUiState.Error(RetrofitClient.parseError(e))
+            }
+        }
+    }
+
+    fun saveCoupon(
+        eventId: String,
+        code: String,
+        percentOff: Int,
+        active: Boolean,
+        expiresAt: String?,
+        usageLimit: Int?,
+    ) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            try {
+                val response = RetrofitClient.apiService.upsertEventCoupon(
+                    "Bearer $token",
+                    eventId,
+                    com.quickpitik.mobile.data.remote.UpsertCouponRequest(
+                        code = code,
+                        percentOff = percentOff,
+                        active = active,
+                        expiresAt = expiresAt,
+                        usageLimit = usageLimit,
+                    ),
+                )
+                if (response.success && response.data != null) {
+                    _couponState.value = CouponUiState.Loaded(response.data)
+                } else {
+                    _couponActionMessage.value = response.error ?: "Couldn't save the coupon."
+                }
+            } catch (e: Exception) {
+                _couponActionMessage.value = RetrofitClient.parseError(e)
+            }
+        }
+    }
+
+    fun deleteCoupon(eventId: String) {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            try {
+                RetrofitClient.apiService.deleteEventCoupon("Bearer $token", eventId)
+                _couponState.value = CouponUiState.Loaded(null)
+            } catch (e: Exception) {
+                _couponActionMessage.value = RetrofitClient.parseError(e)
+            }
+        }
+    }
+
+    fun clearCouponMessage() { _couponActionMessage.value = null }
 
     fun selectEvent(event: PhotographerEventSummaryDto?) {
         // A live watch is bound to the event it started with — switching away
