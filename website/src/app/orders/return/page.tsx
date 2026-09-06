@@ -20,6 +20,8 @@ import {
 import type { OrderPhotoDetail, OrderStatus } from "@/types/order";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { savePhoto, showInAppSaveHint } from "@/lib/save-photo";
+import { isInAppBrowser } from "@/lib/in-app-browser";
 
 // /orders/return — landing page PayMongo redirects to after hosted checkout.
 // Polls the order until status flips to PAID, then renders an editorial
@@ -162,6 +164,12 @@ function PaidState({
 
   const handleDownloadAll = () => {
     if (bulkState === "preparing" || !bundleUrl) return;
+    // In-app webviews can't save the streamed ZIP — send the runner to a real
+    // browser instead of stranding them.
+    if (isInAppBrowser()) {
+      showInAppSaveHint();
+      return;
+    }
     setBulkState("preparing");
     // Programmatic <a download> click — same-tab, no navigation. Server's
     // Content-Disposition makes the browser save the response as a file.
@@ -360,6 +368,15 @@ function PhotoCard({
         <a
           href={downloadUrl}
           download
+          onClick={(e) => {
+            // Real browsers save via the anchor. In-app webviews ignore it and
+            // just render the photo inline, so intercept them to the share
+            // sheet / hint instead.
+            if (isInAppBrowser()) {
+              e.preventDefault();
+              void savePhoto(downloadUrl);
+            }
+          }}
           className={cn(
             "group inline-flex w-full items-center justify-center gap-2 px-6 py-3.5 rounded-full font-display font-bold text-[15px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
             variant === "primary"
