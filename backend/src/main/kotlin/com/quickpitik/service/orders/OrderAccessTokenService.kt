@@ -31,6 +31,21 @@ class OrderAccessTokenService(
             OrderCapability.RETURN -> minOf(order.tokenExpiresAt, OffsetDateTime.now().plus(properties.orderReturnTtl))
             OrderCapability.BUNDLE -> order.tokenExpiresAt
         }
+        return signedToken(order, capability, expiresAt)
+    }
+
+    // RETURN token for the receipt email — valid as long as the order's bundle
+    // link (order.tokenExpiresAt, ~90d), not the 35-min orderReturnTtl: the
+    // email is opened hours or days after checkout, long after the PayMongo
+    // bounce window closes.
+    fun issueReceiptReturn(order: Order): String =
+        signedToken(order, OrderCapability.RETURN, order.tokenExpiresAt)
+
+    private fun signedToken(
+        order: Order,
+        capability: OrderCapability,
+        expiresAt: OffsetDateTime,
+    ): String {
         val payload = "v1.${capability.wire}.${order.id}.${expiresAt.toEpochSecond()}"
         return "$payload.${sign(payload)}"
     }
