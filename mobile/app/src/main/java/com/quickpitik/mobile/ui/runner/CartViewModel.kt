@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 sealed class CheckoutState {
     object Idle : CheckoutState()
@@ -376,39 +377,86 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
             _orderReturnState.value = OrderReturnState.Failed("Please log in to view this order.")
             return
         }
+        val isGuest = !shareToken.isNullOrBlank()
         viewModelScope.launch {
             var attempts = 0
             while (attempts < POLL_MAX_ATTEMPTS) {
                 attempts++
                 _orderReturnState.value = OrderReturnState.Polling(attempts)
-                val result = if (!shareToken.isNullOrBlank()) {
-                    repository.getGuestOrderDetail(orderId, shareToken)
+                // V39: poll status-only (lighter than full detail). On the last
+                // attempt, ask PayMongo to actively settle/expire a stuck pending
+                // intent (?verify=true) rather than just timing out.
+                val verify = attempts == POLL_MAX_ATTEMPTS
+                val statusResult = if (isGuest) {
+                    repository.getGuestOrderStatus(orderId, shareToken!!, verify)
                 } else {
-                    repository.getOrderDetail(token!!, orderId)
+                    repository.getOrderStatus(token!!, orderId, verify)
                 }
 
-                result.onSuccess { order ->
-                    when (order.status?.uppercase()) {
-                        "PAID", "FULFILLED" -> {
-                            repository.clearCart(token)
-                            _orderReturnState.value = OrderReturnState.Paid(order)
-                            return@launch
+                val terminal = statusResult.fold(
+                    onSuccess = { status ->
+                        when (status.status.uppercase()) {
+                            "PAID", "FULFILLED" -> {
+                                repository.clearCart(token)
+                                hydrateReturnDetail(orderId, token, shareToken)
+                                true
+                            }
+                            "EXPIRED" -> {
+                                _orderReturnState.value = OrderReturnState.Failed(
+                                    "This payment session expired. Start checkout again if you still want the photos."
+                                )
+                                true
+                            }
+                            "REFUNDED" -> {
+                                _orderReturnState.value = OrderReturnState.Failed(
+                                    "This order was refunded. Check your email or open it from Orders."
+                                )
+                                true
+                            }
+                            else -> false // PENDING — keep polling
                         }
-                        "REFUNDED" -> {
+                    },
+                    onFailure = { e ->
+                        // A fresh order can 404 briefly on read lag — tolerate the
+                        // first couple of polls; past that a 404 is a definite
+                        // not-found, so fail fast instead of spinning 60s (F7).
+                        if (attempts >= 3 && (e as? HttpException)?.code() == 404) {
                             _orderReturnState.value = OrderReturnState.Failed(
-                                "This order was refunded. Check your email or open it from /orders."
+                                "We couldn't find that order. Open it from Orders."
                             )
-                            return@launch
+                            true
+                        } else {
+                            false // transient (visibility lag / BE hiccup) — keep polling
                         }
-                        else -> { /* still pending — keep polling */ }
-                    }
-                }
-                // Transient errors (token visibility lag, BE hiccup) are expected
-                // during the first few polls — swallow and keep going.
+                    },
+                )
+                if (terminal) return@launch
                 delay(POLL_INTERVAL_MS)
             }
             _orderReturnState.value = OrderReturnState.Timeout
         }
+    }
+
+    // Fetch the full order once after a terminal PAID/FULFILLED — a status poll
+    // carries no photos/download URLs, and the receipt needs them.
+    private suspend fun hydrateReturnDetail(orderId: String, token: String?, shareToken: String?) {
+        val detail = when {
+            !shareToken.isNullOrBlank() -> repository.getGuestOrderDetail(orderId, shareToken)
+            token != null -> repository.getOrderDetail(token, orderId)
+            else -> null
+        }
+        detail
+            ?.onSuccess { _orderReturnState.value = OrderReturnState.Paid(it) }
+            ?.onFailure {
+                _orderReturnState.value = OrderReturnState.Failed(
+                    it.localizedMessage ?: "Payment received — open the receipt from Orders."
+                )
+            }
+            ?: run {
+                _orderReturnState.value = OrderReturnState.Failed(
+                    "Payment received — open the receipt from Orders."
+                )
+            }
     }
 
     fun resetOrderReturnState() {

@@ -10,6 +10,7 @@ import com.quickpitik.mobile.data.remote.MergeCartItem
 import com.quickpitik.mobile.data.remote.MergeCartRequest
 import com.quickpitik.mobile.data.remote.OrderDetailDto
 import com.quickpitik.mobile.data.remote.OrderListItemDto
+import com.quickpitik.mobile.data.remote.OrderStatusDto
 import com.quickpitik.mobile.data.remote.OrderResponse
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.RefundRequest
@@ -280,6 +281,41 @@ class CartRepositoryImpl : CartRepository {
                 Result.success(response.data)
             } else {
                 Result.failure(Exception(response.error ?: "Failed to load order detail"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun getOrderStatus(
+        token: String,
+        orderId: String,
+        verify: Boolean,
+    ): Result<OrderStatusDto> {
+        return try {
+            val response = api.getOrderStatus("Bearer $token", orderId, if (verify) true else null)
+            if (response.success && response.data != null) {
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Failed to load order status"))
+            }
+        } catch (e: Exception) {
+            // Raw exception preserved so pollOrderReturn can detect a 404 (fail fast).
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun getGuestOrderStatus(
+        orderId: String,
+        shareToken: String,
+        verify: Boolean,
+    ): Result<OrderStatusDto> {
+        return try {
+            val response = api.getGuestOrderStatus(orderId, shareToken, if (verify) true else null)
+            if (response.success && response.data != null) {
+                Result.success(response.data)
+            } else {
+                Result.failure(Exception(response.error ?: "Failed to load order status"))
             }
         } catch (e: Exception) {
             Result.failure(e)
