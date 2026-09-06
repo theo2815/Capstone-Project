@@ -114,6 +114,8 @@ import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.SurfaceWhite
 import com.quickpitik.mobile.ui.theme.Typography
 import com.quickpitik.mobile.ui.theme.rememberQpHaptic
+import com.quickpitik.mobile.data.download.PhotoDownloader
+import android.widget.Toast
 import kotlinx.coroutines.launch
 
 // The runner Event page — a phone-sized port of the website's events/[slug]
@@ -219,6 +221,28 @@ fun RunnerGalleryScreen(
     // Live selfie capture (camera) + gallery pick — a MediaStore URI handed to
     // TakePicture(), then face-search the bytes.
     val context = LocalContext.current
+
+    // Free-event photos (V46) download the clean original straight to the gallery
+    // — no cart, no checkout. Toast feedback (it also shows over the lightbox
+    // Dialog, where a screen snackbar wouldn't).
+    // ponytail: Toast, not a snackbar host — snackbar is the polish upgrade if
+    // this screen ever grows a Scaffold host.
+    val downloadFree: (PhotoDto) -> Unit = { photo ->
+        val url = photo.downloadUrl
+        if (url.isNullOrBlank()) {
+            Toast.makeText(context, "This photo isn't ready to download yet.", Toast.LENGTH_SHORT).show()
+        } else {
+            scope.launch {
+                val filename = PhotoDownloader.buildFilename(photo.id, photo.bib)
+                when (val res = PhotoDownloader.saveToGallery(context, url, filename)) {
+                    is PhotoDownloader.Result.Saved ->
+                        Toast.makeText(context, "Saved to gallery · ${res.displayName}", Toast.LENGTH_SHORT).show()
+                    is PhotoDownloader.Result.Failed ->
+                        Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
     var pendingSelfieUri by remember { mutableStateOf<Uri?>(null) }
     fun startFaceSearch(run: () -> Unit) {
         faceSearchError = null
@@ -490,6 +514,7 @@ fun RunnerGalleryScreen(
                                     }
                                 }
                             },
+                            onDownload = downloadFree,
                             alertCard = if (isTrueRunner) photoAlertCard else null,
                         )
                     }
@@ -506,11 +531,15 @@ fun RunnerGalleryScreen(
         val allPhotos = (searchState as? PhotosSearchState.Success)?.photos.orEmpty()
         val previewPhotos = allPhotos.map { it.toPreviewData(activeEvent?.name) }
         val currentIndex = previewPhotos.indexOfFirst { it.id == photo.id }
+        // Free event (V46): reuse the Owned lightbox (clean image + Download CTA,
+        // no cart/buy) since every photo is free to keep.
+        val isFreeSet = allPhotos.isNotEmpty() && allPhotos.all { it.free }
 
         if (currentIndex >= 0) {
             PhotoPreview(
                 photos = previewPhotos,
                 currentIndex = currentIndex,
+                mode = if (isFreeSet) PhotoPreviewMode.Owned else PhotoPreviewMode.Browse,
                 commerceEnabled = isTrueRunner,
                 isInCart = { previewData ->
                     cartItems.any { it.photoId == previewData.id }
@@ -542,6 +571,9 @@ fun RunnerGalleryScreen(
                         cartViewModel.addToCart(targetPhoto, event.id, event.slug, event.name)
                     }
                     selectedPhotoForDetail = null
+                },
+                onDownload = { previewData ->
+                    allPhotos.firstOrNull { it.id == previewData.id }?.let(downloadFree)
                 },
                 onOpenPhotographer = { handle ->
                     // Close the lightbox first — otherwise device-back from the
@@ -740,6 +772,7 @@ private fun BrowseScreen(
     onToggleCart: (PhotoDto, Boolean) -> Unit,
     onBuyNow: (PhotoDto, Boolean) -> Unit,
     onBuyAll: (List<PhotoDto>) -> Unit,
+    onDownload: (PhotoDto) -> Unit,
     alertCard: (@Composable () -> Unit)?,
 ) {
     val isBibFilter = isFiltered && submittedBib.isNotEmpty()
@@ -823,18 +856,21 @@ private fun BrowseScreen(
                     // (cart is RUNNER-gated server-side). Inline under the
                     // sticky bar rather than pinned to the bottom, where the
                     // floating cart pill already lives.
-                    if (isFiltered && isTrueRunner) {
+                    // Buy-all runs over PAID photos only — a free event (V46) has
+                    // nothing to buy (each free photo shows its own Download pill).
+                    val paidPhotos = photos.filter { !it.free }
+                    if (isFiltered && isTrueRunner && paidPhotos.isNotEmpty()) {
                         item(key = "buy-all") {
-                            val allInCart = photos.all { it.id in cartItemIds }
-                            val bulkTotal = photos.sumOf { it.price }
+                            val allInCart = paidPhotos.all { it.id in cartItemIds }
+                            val bulkTotal = paidPhotos.sumOf { it.price }
                             PrimaryCta(
                                 text = when {
-                                    allInCart -> "Added · ${photos.size} in cart ✓"
-                                    photos.size == 1 -> "Buy 1 · ₱${"%,.0f".format(bulkTotal)} →"
-                                    else -> "Buy all ${photos.size} · ₱${"%,.0f".format(bulkTotal)} →"
+                                    allInCart -> "Added · ${paidPhotos.size} in cart ✓"
+                                    paidPhotos.size == 1 -> "Buy 1 · ₱${"%,.0f".format(bulkTotal)} →"
+                                    else -> "Buy all ${paidPhotos.size} · ₱${"%,.0f".format(bulkTotal)} →"
                                 },
                                 enabled = !allInCart,
-                                onClick = { onBuyAll(photos) },
+                                onClick = { onBuyAll(paidPhotos) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 4.dp),
@@ -862,6 +898,7 @@ private fun BrowseScreen(
                                         onToggleCart(photo, inCart)
                                     },
                                     onBuyNow = { onBuyNow(photo, inCart) },
+                                    onDownload = { onDownload(photo) },
                                     modifier = Modifier.weight(1f),
                                 )
                             }
@@ -1026,6 +1063,7 @@ private fun PhotoTile(
     onOpen: () -> Unit,
     onToggleCart: () -> Unit,
     onBuyNow: () -> Unit,
+    onDownload: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -1069,28 +1107,46 @@ private fun PhotoTile(
         // QuickPitik credit + photographer logo into imageUrl.
         // Cart is RUNNER-gated server-side — pills hidden in photographer runner-view.
         if (showCommerce) {
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                // Fresh marks only the in-cart state so a full wall doesn't
-                // flood the accent; Buy is the heavier ink pill.
-                TileActionPill(
-                    label = if (inCart) "✓ Cart" else "+ Cart",
-                    background = if (inCart) Fresh else SurfaceWhite.copy(alpha = 0.95f),
-                    foreground = if (inCart) SurfaceWhite else Ink,
-                    border = if (inCart) Color.Transparent else LineStrong,
-                    onClick = onToggleCart,
-                )
-                TileActionPill(
-                    label = "Buy →",
-                    background = Ink.copy(alpha = 0.85f),
-                    foreground = SurfaceWhite,
-                    border = Color.Transparent,
-                    onClick = onBuyNow,
-                )
+            if (photo.free) {
+                // Free event (V46): download the original, no cart/checkout.
+                // Fresh is free here — no in-cart pill competes for the accent.
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp),
+                ) {
+                    TileActionPill(
+                        label = "Download ↓",
+                        background = Fresh,
+                        foreground = SurfaceWhite,
+                        border = Color.Transparent,
+                        onClick = onDownload,
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    // Fresh marks only the in-cart state so a full wall doesn't
+                    // flood the accent; Buy is the heavier ink pill.
+                    TileActionPill(
+                        label = if (inCart) "✓ Cart" else "+ Cart",
+                        background = if (inCart) Fresh else SurfaceWhite.copy(alpha = 0.95f),
+                        foreground = if (inCart) SurfaceWhite else Ink,
+                        border = if (inCart) Color.Transparent else LineStrong,
+                        onClick = onToggleCart,
+                    )
+                    TileActionPill(
+                        label = "Buy →",
+                        background = Ink.copy(alpha = 0.85f),
+                        foreground = SurfaceWhite,
+                        border = Color.Transparent,
+                        onClick = onBuyNow,
+                    )
+                }
             }
         }
     }
