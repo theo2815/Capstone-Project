@@ -29,6 +29,9 @@ docs/api-keys.md
 # Claude Code local permission state (per-developer)
 .claude/settings.local.json
 
+# Claude Code scheduler singleton lock — rewritten every session, never shared
+.claude/scheduled_tasks.lock
+
 # ML Models (downloaded at build/start time)
 # Ignore the directory's CONTENTS, not the directory itself: git cannot
 # re-include a file whose parent directory is excluded, so `ai-api/models/` +
