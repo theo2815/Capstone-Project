@@ -124,6 +124,14 @@ data class PhotographerPayoutDto(
 
 data class PayoutBalanceDto(
     val unpaidBalance: Double,
+    // Earned but still inside the clearing window — not yet withdrawable.
+    // Defaulted for GSON back-compat with older backends that omit it.
+    val clearing: Double = 0.0,
+    // Tied up in an open request (pending/approved/processing/held).
+    val reserved: Double = 0.0,
+    // ISO timestamp; non-null while a recent payout-account change still bars
+    // requests. The wallet shows a paused banner + disables Request until it passes.
+    val accountCooldownUntil: String? = null,
     val minimum: Double,
     val hasOpenRequest: Boolean,
     val openRequest: PhotographerPayoutDto?,

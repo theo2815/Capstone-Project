@@ -72,6 +72,7 @@ import com.quickpitik.mobile.ui.theme.SparklineBarShape
 import com.quickpitik.mobile.ui.theme.StatusChip
 import com.quickpitik.mobile.ui.theme.StatusTone
 import com.quickpitik.mobile.ui.theme.Typography
+import com.quickpitik.mobile.ui.theme.WarningOrange
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -444,6 +445,54 @@ private fun WalletSlab(
             style = NumeralStyle.copy(fontSize = 32.sp, fontWeight = FontWeight.SemiBold),
             color = Ink,
         )
+
+        // Clearing — earned but still inside the hold window (web billing 6a
+        // parity). Reserved is shown implicitly by the open-request block below.
+        if (balance.clearing > 0.0) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(text = "Clearing", color = Slate, style = Typography.bodySmall)
+                Text(
+                    text = "₱%,.2f".format(balance.clearing),
+                    style = NumeralStyle.copy(fontSize = 13.sp),
+                    color = Slate,
+                )
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "New sales become withdrawable after a short clearing hold.",
+                color = SlateSoft,
+                style = Typography.bodySmall,
+            )
+        }
+
+        // Post-account-change cooldown — requests are paused; disable the CTA and
+        // explain why (backend surfaces accountCooldownUntil).
+        val cooldownActive = balance.accountCooldownUntil?.let { isFutureIso(it) } == true
+        if (cooldownActive) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(BadgeShape)
+                    .background(WarningOrange.copy(alpha = 0.08f))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                Kicker(text = "Payouts paused", color = WarningOrange)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "After a recent payout-account change, requests are paused " +
+                        "until ${balance.accountCooldownUntil?.take(10) ?: ""}.",
+                    color = Slate,
+                    style = Typography.bodySmall,
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(16.dp))
 
         val hasOpen = balance.hasOpenRequest || balance.openRequest != null
@@ -465,7 +514,7 @@ private fun WalletSlab(
                     else -> "Request payout"
                 },
                 onClick = { confirmRequest = true },
-                enabled = canWithdraw && !isProcessing,
+                enabled = canWithdraw && !isProcessing && !cooldownActive,
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -505,12 +554,13 @@ private fun OpenRequestBlock(
     val status = openRequest?.status?.uppercase() ?: "PENDING_REVIEW"
     val tone = when (status) {
         "HELD" -> StatusTone.Danger
-        "APPROVED" -> StatusTone.Approved
+        "APPROVED", "PROCESSING" -> StatusTone.Approved
         else -> StatusTone.Warning
     }
     val statusLabel = when (status) {
         "HELD" -> "Payout · held"
         "APPROVED" -> "Payout · approved"
+        "PROCESSING" -> "Payout · processing"
         else -> "Payout · pending"
     }
 
@@ -541,14 +591,14 @@ private fun OpenRequestBlock(
                 style = Typography.bodySmall,
             )
         }
-        // A HELD request can be withdrawn so a corrected one can be filed —
-        // web WithdrawPayoutModal parity, confirm-gated (it hard-deletes the
-        // cycle).
+        // A HELD request can be cancelled so a corrected one can be filed — web
+        // parity, confirm-gated. Backend soft-cancels (status → cancelled; the
+        // row is kept for the audit trail) and frees the reserved balance.
         if (status == "HELD" && openRequest != null) {
             var confirmWithdraw by remember { mutableStateOf(false) }
             Spacer(modifier = Modifier.height(12.dp))
             GhostCta(
-                text = if (processing) "Withdrawing…" else "Withdraw request",
+                text = if (processing) "Cancelling…" else "Cancel request",
                 enabled = !processing,
                 onClick = { confirmWithdraw = true },
                 modifier = Modifier.fillMaxWidth(),
@@ -556,17 +606,17 @@ private fun OpenRequestBlock(
             if (confirmWithdraw) {
                 AlertDialog(
                     onDismissRequest = { confirmWithdraw = false },
-                    title = { Text("Withdraw this request?", color = Ink, fontWeight = FontWeight.Bold) },
+                    title = { Text("Cancel this request?", color = Ink, fontWeight = FontWeight.Bold) },
                     text = {
                         Text(
-                            text = "The held request is deleted and your balance is freed — you can file a new request right away.",
+                            text = "The held request is cancelled (kept for your records) and your balance is freed — you can file a new request right away.",
                             color = Slate,
                             style = Typography.bodyMedium,
                         )
                     },
                     confirmButton = {
                         PrimaryCta(
-                            text = "Withdraw",
+                            text = "Cancel request",
                             onClick = {
                                 confirmWithdraw = false
                                 onWithdraw(openRequest.id)
@@ -827,6 +877,18 @@ private fun formatWeekLabel(weekOf: String): String = try {
     formatter.format(date)
 } catch (e: Exception) {
     weekOf
+}
+
+// Whether an ISO timestamp is still in the future (device-local compare — the
+// cooldown is a coarse ~24h window, and the backend enforces the real cutoff on
+// request anyway). Conservative on parse failure: not-future, so the CTA stays
+// enabled and the server's 409 surfaces if it's genuinely still on cooldown.
+private fun isFutureIso(iso: String): Boolean = try {
+    val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
+    val date = parser.parse(iso.substring(0, 19))
+    date != null && date.after(Date())
+} catch (e: Exception) {
+    false
 }
 
 private fun formatIsoTimestamp(isoString: String): String = try {
