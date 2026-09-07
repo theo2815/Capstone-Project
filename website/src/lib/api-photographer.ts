@@ -131,6 +131,8 @@ export interface PhotographerEventPhotosArgs {
   offset?: number;
   limit?: number;
   order?: "newest" | "oldest";
+  /** true → the Deleted Photos (trash) list; false/omitted → active gallery. */
+  deleted?: boolean;
 }
 
 export async function fetchPhotographerEventPhotos(
@@ -141,6 +143,7 @@ export async function fetchPhotographerEventPhotos(
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? 120));
   if (args.order) p.set("order", args.order);
+  if (args.deleted) p.set("deleted", "true");
   return api.get<PaginatedResponse<PhotographerLibraryPhoto>>(
     `/me/photographer/events/${encodeURIComponent(eventId)}/photos?${p.toString()}`,
   );
@@ -156,6 +159,68 @@ export async function fetchPhotographerPhotoDownload(
 ): Promise<PhotographerDownloadResponse | null> {
   return api.get<PhotographerDownloadResponse>(
     `/me/photographer/photos/${encodeURIComponent(photoId)}/download`,
+  );
+}
+
+// ── Photo library management (V52) ────────────────────────────────────────
+// Trash / restore / permanent-delete are bulk endpoints; the per-photo action
+// in the UI just sends a one-element list. Ownership + event scoping are
+// enforced server-side, so a foreign id is silently ignored.
+//   POST /me/photographer/events/{id}/photos/trash            { photoIds } → { affected }
+//   POST /me/photographer/events/{id}/photos/restore          { photoIds } → { affected }
+//   POST /me/photographer/events/{id}/photos/permanent-delete { photoIds } → { deleted, blockedSold }
+//   POST /me/photographer/events/{id}/download-bundle                      → { url, expiresAt }
+
+export async function trashPhotographerPhotos(
+  eventId: string,
+  photoIds: string[],
+): Promise<{ affected: number }> {
+  return api.post<{ affected: number }>(
+    `/me/photographer/events/${encodeURIComponent(eventId)}/photos/trash`,
+    { photoIds },
+  );
+}
+
+export async function restorePhotographerPhotos(
+  eventId: string,
+  photoIds: string[],
+): Promise<{ affected: number }> {
+  return api.post<{ affected: number }>(
+    `/me/photographer/events/${encodeURIComponent(eventId)}/photos/restore`,
+    { photoIds },
+  );
+}
+
+export interface PermanentDeleteResult {
+  /** Photo ids actually purged (row + R2 objects gone). */
+  deleted: string[];
+  /** Photo ids refused because they've been sold — kept so buyers can still
+   *  download them. */
+  blockedSold: string[];
+}
+
+export async function permanentDeletePhotographerPhotos(
+  eventId: string,
+  photoIds: string[],
+): Promise<PermanentDeleteResult> {
+  return api.post<PermanentDeleteResult>(
+    `/me/photographer/events/${encodeURIComponent(eventId)}/photos/permanent-delete`,
+    { photoIds },
+  );
+}
+
+export interface PhotographerBundleResponse {
+  /** Short-lived tokened URL to navigate to for the ZIP of all active photos. */
+  url: string;
+  expiresAt: string;
+}
+
+export async function preparePhotographerBundle(
+  eventId: string,
+): Promise<PhotographerBundleResponse> {
+  return api.post<PhotographerBundleResponse>(
+    `/me/photographer/events/${encodeURIComponent(eventId)}/download-bundle`,
+    {},
   );
 }
 

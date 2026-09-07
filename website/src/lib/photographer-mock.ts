@@ -155,6 +155,9 @@ export interface PhotographerLibraryPhoto {
    *  /events/[slug]?browse=1). Null while the BE hasn't responded or for
    *  legacy mock-generated rows that never carried one. */
   thumbnailUrl?: string | null;
+  /** Soft-delete timestamp (V52); non-null = in the photographer's trash.
+   *  Null on the active tab, set on the Deleted Photos tab. */
+  deletedAt?: string | null;
 }
 
 function hashStr(s: string): number {

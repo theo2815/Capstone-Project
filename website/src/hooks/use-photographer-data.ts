@@ -110,15 +110,26 @@ export function usePhotographerEventDetail(
   };
 }
 
-export function usePhotographerEventPhotos(eventId: string | null) {
+export function usePhotographerEventPhotos(
+  eventId: string | null,
+  opts: { deleted?: boolean; enabled?: boolean } = {},
+) {
+  const deleted = opts.deleted ?? false;
   return useInfiniteList<PhotographerLibraryPhoto>({
-    queryKey: ["photographer", "events", eventId, "photos"],
+    // Active and Deleted (trash) are separate cached lists for the same event.
+    queryKey: [
+      "photographer",
+      "events",
+      eventId,
+      "photos",
+      deleted ? "deleted" : "active",
+    ],
     fetchPage: (offset, limit) =>
       eventId
-        ? fetchPhotographerEventPhotos(eventId, { offset, limit })
+        ? fetchPhotographerEventPhotos(eventId, { offset, limit, deleted })
         : Promise.resolve({ items: [], total: 0, offset, limit }),
     limit: PAGE_SIZE.PHOTO_INCREMENT,
-    enabled: !!eventId,
+    enabled: !!eventId && (opts.enabled ?? true),
     staleTime: EVENTS_STALE_MS,
   });
 }

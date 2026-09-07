@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
 import { EventCouponModal } from "@/components/dashboard/event-coupon-modal";
@@ -13,13 +13,17 @@ import {
   type PhotoPreviewItem,
 } from "@/components/photos/photo-preview-card";
 import {
+  BTN_DANGER,
   BTN_GHOST,
+  BTN_PRIMARY,
   BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
+import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Modal } from "@/components/ui/modal";
 import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
+import { useConfirmation } from "@/hooks/use-confirmation";
 import {
   usePhotographerEventDetail,
   usePhotographerEventPhotos,
@@ -27,6 +31,10 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   fetchPhotographerPhotoDownload,
+  permanentDeletePhotographerPhotos,
+  preparePhotographerBundle,
+  restorePhotographerPhotos,
+  trashPhotographerPhotos,
   updateMyEvent,
   type PhotographerEventDetail,
 } from "@/lib/api-photographer";
@@ -70,7 +78,6 @@ export default function FocusedSharePage() {
   const { detail: liveDetail, isMissing } = usePhotographerEventDetail(
     id ?? null,
   );
-  const livePhotos = usePhotographerEventPhotos(id ?? null);
   // Owned-event controls (V46): edit modal + withdraw of a parked pricing
   // change. Hooks stay above the early returns.
   const [editOpen, setEditOpen] = useState(false);
@@ -179,26 +186,13 @@ export default function FocusedSharePage() {
     </>
   ) : null;
 
-  // A covered event with nothing uploaded yet is a normal state, not an error.
-  // The events list filters to photoCount > 0, so this is only reachable by
-  // deep link or bookmark — and it used to 404, which reads as "your event is
-  // gone." ShareHeroBand is deliberately omitted: handing the photographer a
-  // public gallery URL to post would send runners to a blank page.
-  if (liveDetail.photoCount === 0) {
-    return (
-      <main className="bg-bone text-ink min-h-screen flex flex-col">
-        <SiteHeader />
-        <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
-          <BackChip />
-          <Hero event={event} />
-          {ownedUi}
-          {couponUi}
-          {uploadsOpen && <NoPhotosYet eventId={event.id} />}
-        </div>
-      </main>
-    );
-  }
-
+  // One page for every state. An owned event that is pending/rejected keeps
+  // uploads and the gallery closed (the OwnedBand explains why). Once uploads
+  // are open the library carries BOTH the Active gallery and the Deleted
+  // Photos tab — so a photographer who trashed everything can still reach and
+  // restore their photos. ShareHeroBand is held back until there is at least
+  // one active photo: a public gallery URL with nothing behind it dead-ends
+  // the photographer's followers.
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col">
       <SiteHeader />
@@ -208,14 +202,14 @@ export default function FocusedSharePage() {
         {ownedUi}
         {couponUi}
         {uploadsOpen && (
-          <ShareHeroBand event={event} handle={liveDetail.handle ?? null} />
+          <>
+            {liveDetail.photoCount > 0 && (
+              <ShareHeroBand event={event} handle={liveDetail.handle ?? null} />
+            )}
+            <Stats photographer={photographer} />
+            <PhotoLibrary event={event} eventId={liveDetail.id} />
+          </>
         )}
-        <Stats photographer={photographer} />
-        <PhotoGrid
-          event={event}
-          photographer={photographer}
-          livePhotos={livePhotos}
-        />
       </div>
     </main>
   );
@@ -682,39 +676,170 @@ function Stats({ photographer }: { photographer: PhotographerEventSummary }) {
   );
 }
 
-function PhotoGrid({
+// Active + Deleted photo library. Tabs switch between the live gallery and the
+// per-event trash. "Select" enters a touch-friendly selection mode (no hover
+// affordances, so it works on a phone) whose bulk bar trashes / restores /
+// permanently deletes; "Download all" streams a ZIP of active originals. Tap a
+// tile (outside select mode) to open the owned-mode lightbox + single download.
+function PhotoLibrary({
   event,
-  photographer,
-  livePhotos,
+  eventId,
 }: {
   event: ListEvent;
-  photographer: PhotographerEventSummary;
-  livePhotos: ReturnType<typeof usePhotographerEventPhotos>;
+  eventId: string;
 }) {
-  // Flattened server pages loaded so far; Load-more fetches the next page.
-  const photos = livePhotos.items;
-  // The event's canonical total (event_photographer.photo_count) drives the
-  // header stat; the paginator uses the photos endpoint's own total so
-  // Load-more reaches every LIVE photo.
-  const total = photographer.photoCount;
-
   const { showToast } = useToast();
+  const { confirm } = useConfirmation();
+  const queryClient = useQueryClient();
+
+  const [section, setSection] = useState<"active" | "deleted">("active");
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
-  const handleOpen = useCallback((i: number) => setOpenIndex(i), []);
-  const handleClose = useCallback(() => setOpenIndex(null), []);
-  const handlePrev = useCallback(() => {
-    setOpenIndex((i) => (i === null || i === 0 ? i : i - 1));
+  const active = usePhotographerEventPhotos(eventId, { deleted: false });
+  // Only fetch the trash when its tab is open — most visits never touch it.
+  const trash = usePhotographerEventPhotos(eventId, {
+    deleted: true,
+    enabled: section === "deleted",
+  });
+  const list = section === "active" ? active : trash;
+  const photos = list.items;
+
+  // Broad but correct: refreshes the detail (photoCount), both photo lists,
+  // and the events list card — all keyed under ["photographer","events"].
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["photographer", "events"] });
+
+  function switchSection(next: "active" | "deleted") {
+    if (next === section) return;
+    setSection(next);
+    setSelecting(false);
+    setSelected(new Set());
+    setOpenIndex(null);
+  }
+
+  function exitSelect() {
+    setSelecting(false);
+    setSelected(new Set());
+  }
+
+  const toggle = useCallback((photoId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(photoId)) next.delete(photoId);
+      else next.add(photoId);
+      return next;
+    });
   }, []);
-  // Navigate within the photos loaded so far; the arrow extends as more pages
-  // land via Load-more.
-  const handleNext = useCallback(() => {
-    setOpenIndex((i) => (i === null || i >= photos.length - 1 ? i : i + 1));
-  }, [photos.length]);
-  const handleDownload = useCallback(async () => {
+
+  const toggleAll = () =>
+    setSelected((prev) =>
+      prev.size === photos.length
+        ? new Set()
+        : new Set(photos.map((p) => p.id)),
+    );
+
+  async function runTrashOrRestore(kind: "trash" | "restore") {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setBusy(true);
+    try {
+      if (kind === "trash") await trashPhotographerPhotos(eventId, ids);
+      else await restorePhotographerPhotos(eventId, ids);
+      await invalidate();
+      exitSelect();
+      const n = ids.length;
+      showToast({
+        kind: "success",
+        message:
+          kind === "trash"
+            ? `${n} photo${n > 1 ? "s" : ""} moved to Deleted.`
+            : `${n} photo${n > 1 ? "s" : ""} restored.`,
+      });
+    } catch {
+      showToast({ kind: "error", message: "Something went wrong. Try again." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runPermanent() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    const n = ids.length;
+    const ok = await confirm({
+      title: `Permanently delete ${n} photo${n > 1 ? "s" : ""}?`,
+      message:
+        "This can't be undone — the original files are removed from storage. Photos that have already sold are kept so their buyers can still download them.",
+      confirmLabel: "Delete forever",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const res = await permanentDeletePhotographerPhotos(eventId, ids);
+      await invalidate();
+      exitSelect();
+      const del = res.deleted.length;
+      const blocked = res.blockedSold.length;
+      showToast(
+        blocked > 0
+          ? {
+              kind: "info",
+              message: `${del} deleted · ${blocked} kept (already sold — buyers keep access).`,
+            }
+          : {
+              kind: "success",
+              message: `${del} photo${del > 1 ? "s" : ""} permanently deleted.`,
+            },
+      );
+    } catch {
+      showToast({ kind: "error", message: "Couldn't delete. Try again." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDownloadAll() {
+    setDownloading(true);
+    try {
+      const { url } = await preparePhotographerBundle(eventId);
+      // Top-level navigation to the tokened ZIP; the server sends
+      // Content-Disposition: attachment, so the browser downloads without
+      // leaving the page (same shape as the order-bundle download).
+      const a = document.createElement("a");
+      a.href = url;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast({ kind: "success", message: "Preparing your ZIP…" });
+    } catch {
+      showToast({
+        kind: "error",
+        message: "Couldn't start the download. Try again.",
+      });
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  // Lightbox (view + single-photo download), disabled while selecting.
+  const handleClose = useCallback(() => setOpenIndex(null), []);
+  const handlePrev = useCallback(
+    () => setOpenIndex((i) => (i === null || i === 0 ? i : i - 1)),
+    [],
+  );
+  const handleNext = useCallback(
+    () =>
+      setOpenIndex((i) => (i === null || i >= photos.length - 1 ? i : i + 1)),
+    [photos.length],
+  );
+  const handleDownloadSingle = useCallback(async () => {
     const photoId = openIndex !== null ? photos[openIndex]?.id : undefined;
     if (!photoId) return;
-    // Signed-URL fetch + programmatic <a download> click (Q-015, 5-min TTL).
     try {
       const result = await fetchPhotographerPhotoDownload(photoId);
       if (result?.url) {
@@ -727,12 +852,7 @@ function PhotoGrid({
         showToast({ kind: "success", message: "Download started." });
         return;
       }
-      // Resolved without a URL (backend 404 / grant missing). Only thrown
-      // errors reach the catch, so without this the click is a silent no-op.
-      showToast({
-        kind: "error",
-        message: "Download unavailable — try again.",
-      });
+      showToast({ kind: "error", message: "Download unavailable — try again." });
     } catch (err) {
       console.error("[photographer/download] failed", err);
       showToast({ kind: "error", message: "Download failed. Try again." });
@@ -752,44 +872,109 @@ function PhotoGrid({
       }
     : null;
 
+  const gridClass =
+    "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]";
+
   return (
     <section>
-      <div className="flex items-baseline justify-between border-b border-line pb-4 mb-6 gap-4">
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
-          Uploaded photos
-        </p>
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
-          <span className="text-ink">{total.toLocaleString()}</span> total
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4 mb-6">
+        <div role="tablist" aria-label="Photo library" className="flex gap-2">
+          <TabPill
+            active={section === "active"}
+            onClick={() => switchSection("active")}
+          >
+            Active
+          </TabPill>
+          <TabPill
+            active={section === "deleted"}
+            onClick={() => switchSection("deleted")}
+          >
+            Deleted
+          </TabPill>
+        </div>
+        {!selecting && (
+          <div className="flex items-center gap-2">
+            {section === "active" && list.total > 0 && (
+              <button
+                type="button"
+                onClick={handleDownloadAll}
+                disabled={downloading}
+                className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+              >
+                {downloading ? "Preparing…" : "Download all"}
+              </button>
+            )}
+            {photos.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelecting(true)}
+                className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+              >
+                Select
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
-        {/* First photos page loads in parallel with the detail — show tile
-            skeletons instead of a silent blank grid under the "N total"
-            header. */}
-        {livePhotos.isLoading
-          ? Array.from({ length: 8 }, (_, i) => (
-              <Skeleton key={i} className="h-full w-full rounded-xl" />
-            ))
-          : photos.map((photo, i) => (
-              <PhotoTile
-                key={photo.id}
-                photo={photo}
-                index={i}
-                onOpen={() => handleOpen(i)}
-              />
-            ))}
-      </div>
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum mb-6">
+        <span className="text-ink">{list.total.toLocaleString()}</span>{" "}
+        {section === "active" ? "uploaded" : "in Deleted"}
+      </p>
 
-      <LoadMoreButton
-        shown={photos.length}
-        total={livePhotos.total}
-        increment={PAGE_SIZE.PHOTO_INCREMENT}
-        onLoadMore={livePhotos.fetchNextPage}
-        isLoading={livePhotos.isFetchingNextPage}
-      />
+      {list.isLoading ? (
+        <div className={gridClass}>
+          {Array.from({ length: 8 }, (_, i) => (
+            <Skeleton key={i} className="h-full w-full rounded-xl row-span-2" />
+          ))}
+        </div>
+      ) : photos.length === 0 ? (
+        section === "active" ? (
+          <NoPhotosYet eventId={event.id} />
+        ) : (
+          <EmptyTrash />
+        )
+      ) : (
+        <div className={gridClass}>
+          {photos.map((photo, i) => (
+            <PhotoTile
+              key={photo.id}
+              photo={photo}
+              index={i}
+              selecting={selecting}
+              selected={selected.has(photo.id)}
+              onOpen={() => setOpenIndex(i)}
+              onToggle={() => toggle(photo.id)}
+            />
+          ))}
+        </div>
+      )}
 
-      {previewItem && openIndex !== null && (
+      {photos.length > 0 && (
+        <LoadMoreButton
+          shown={photos.length}
+          total={list.total}
+          increment={PAGE_SIZE.PHOTO_INCREMENT}
+          onLoadMore={list.fetchNextPage}
+          isLoading={list.isFetchingNextPage}
+        />
+      )}
+
+      {selecting && (
+        <SelectionBar
+          section={section}
+          count={selected.size}
+          allSelected={photos.length > 0 && selected.size === photos.length}
+          busy={busy}
+          onToggleAll={toggleAll}
+          onTrash={() => runTrashOrRestore("trash")}
+          onRestore={() => runTrashOrRestore("restore")}
+          onPermanent={runPermanent}
+          onDone={exitSelect}
+        />
+      )}
+
+      {!selecting && previewItem && openIndex !== null && (
         <PhotoPreviewCard
           mode="owned"
           photo={previewItem}
@@ -800,21 +985,157 @@ function PhotoGrid({
           onClose={handleClose}
           onPrev={openIndex > 0 ? handlePrev : undefined}
           onNext={openIndex < photos.length - 1 ? handleNext : undefined}
-          onDownload={handleDownload}
+          onDownload={handleDownloadSingle}
         />
       )}
     </section>
   );
 }
 
+function TabPill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 transition-colors",
+        active
+          ? "bg-ink text-bone border border-ink"
+          : "bg-bone text-slate border border-line hover:text-ink hover:border-ink",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function EmptyTrash() {
+  return (
+    <section className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
+      <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
+        Nothing in Deleted.
+      </p>
+      <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
+        Photos you delete land here first. Restore them any time, or remove them
+        for good once you&apos;re sure.
+      </p>
+    </section>
+  );
+}
+
+// Sticky bulk-action bar for select mode. Mirrors AdminPayoutBulkBar's recipe;
+// on the Deleted tab, Restore is the one fresh accent while the bar is up.
+function SelectionBar({
+  section,
+  count,
+  allSelected,
+  busy,
+  onToggleAll,
+  onTrash,
+  onRestore,
+  onPermanent,
+  onDone,
+}: {
+  section: "active" | "deleted";
+  count: number;
+  allSelected: boolean;
+  busy: boolean;
+  onToggleAll: () => void;
+  onTrash: () => void;
+  onRestore: () => void;
+  onPermanent: () => void;
+  onDone: () => void;
+}) {
+  return (
+    <div
+      role="region"
+      aria-label="Bulk photo actions"
+      className="fixed inset-x-4 bottom-4 lg:left-auto lg:right-8 lg:bottom-6 lg:max-w-xl z-40 rounded-2xl border border-ink bg-bone shadow-2xl px-4 md:px-6 py-4 animate-[fade-up_0.2s_ease-out_both]"
+    >
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3 min-w-0">
+          <Kicker as="p">
+            <span className="tnum">{count}</span> selected
+          </Kicker>
+          <button
+            type="button"
+            onClick={onToggleAll}
+            className={cn(BTN_GHOST, BTN_SIZE.sm, "px-2")}
+          >
+            {allSelected ? "Clear" : "Select all"}
+          </button>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {section === "active" ? (
+            <button
+              type="button"
+              onClick={onTrash}
+              disabled={busy || count === 0}
+              className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+            >
+              {busy ? "Working…" : `Delete ${count}`}
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onRestore}
+                disabled={busy || count === 0}
+                className={cn(
+                  BTN_PRIMARY,
+                  BTN_SIZE.sm,
+                  "disabled:hover:bg-fresh",
+                )}
+              >
+                {busy ? "Working…" : `Restore ${count}`}
+              </button>
+              <button
+                type="button"
+                onClick={onPermanent}
+                disabled={busy || count === 0}
+                className={cn(BTN_DANGER, BTN_SIZE.sm)}
+              >
+                Delete forever
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={onDone}
+            className={cn(BTN_GHOST, BTN_SIZE.sm, "px-3")}
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PhotoTile({
   photo,
   index,
+  selecting,
+  selected,
   onOpen,
+  onToggle,
 }: {
   photo: PhotographerLibraryPhoto;
   index: number;
+  selecting: boolean;
+  selected: boolean;
   onOpen: () => void;
+  onToggle: () => void;
 }) {
   const colorIdx = photo.tone % TONE_COLORS.length;
   const wide = photo.span === "wide";
@@ -829,16 +1150,27 @@ function PhotoTile({
     >
       <button
         type="button"
-        onClick={onOpen}
-        aria-haspopup="dialog"
-        aria-label={`Open photo ${index + 1}`}
+        onClick={selecting ? onToggle : onOpen}
+        aria-haspopup={selecting ? undefined : "dialog"}
+        aria-pressed={selecting ? selected : undefined}
+        aria-label={
+          selecting
+            ? `${selected ? "Deselect" : "Select"} photo ${index + 1}`
+            : `Open photo ${index + 1}`
+        }
         className="block w-full h-full text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
       >
         {/* Tone-color background acts as a placeholder while the watermarked
             JPEG decodes — once `thumbnailUrl` loads, object-cover fills the
             entire tile and the placeholder is hidden behind it. */}
         <div
-          className="relative overflow-hidden rounded-xl h-full transition-transform duration-300 group-hover:-translate-y-[2px]"
+          className={cn(
+            "relative overflow-hidden rounded-xl h-full transition-transform duration-300",
+            !selecting && "group-hover:-translate-y-[2px]",
+            selecting &&
+              selected &&
+              "ring-2 ring-ink ring-offset-2 ring-offset-bone",
+          )}
           style={{ backgroundColor: TONE_COLORS[colorIdx] }}
         >
           {photo.thumbnailUrl && (
@@ -850,6 +1182,31 @@ function PhotoTile({
               draggable={false}
               loading="lazy"
             />
+          )}
+          {selecting && (
+            <span
+              aria-hidden="true"
+              className={cn(
+                "absolute top-2 left-2 size-6 rounded-full border flex items-center justify-center transition-colors",
+                selected
+                  ? "bg-ink border-ink text-surface"
+                  : "bg-bone/70 border-line text-transparent backdrop-blur-sm",
+              )}
+            >
+              <svg
+                viewBox="0 0 20 20"
+                className="size-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+              >
+                <path
+                  d="M4 10l4 4 8-9"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
           )}
           {photo.salesCount > 0 && (
             <span className="absolute bottom-2 right-2 font-mono uppercase tracking-[0.14em] text-[8px] text-bone tnum bg-ink/40 px-1.5 py-0.5 rounded-full backdrop-blur-sm">
