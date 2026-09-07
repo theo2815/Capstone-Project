@@ -5,12 +5,15 @@ import com.quickpitik.config.PlatformProperties
 import com.quickpitik.entity.PayoutAccount
 import com.quickpitik.entity.PayoutAccountAudit
 import com.quickpitik.entity.PayoutCycle
+import com.quickpitik.entity.PayoutCycleStatus
+import com.quickpitik.entity.PayoutStatusHistory
 import com.quickpitik.entity.PayoutMethod
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
+import com.quickpitik.repository.PayoutStatusHistoryRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.TransactionRepository
 import org.junit.jupiter.api.BeforeEach
@@ -39,6 +42,8 @@ class PayoutRequestServiceBalanceTest {
     private lateinit var photographerSettingsRepository: PhotographerSettingsRepository
     private lateinit var payoutAccountRepository: PayoutAccountRepository
     private lateinit var payoutAccountAuditRepository: PayoutAccountAuditRepository
+    private lateinit var payoutStatusHistoryRepository: PayoutStatusHistoryRepository
+    private lateinit var payoutStatusRecorder: PayoutStatusRecorder
     private val platformProperties = PlatformProperties()
 
     private val photographerId = UUID.randomUUID()
@@ -52,6 +57,8 @@ class PayoutRequestServiceBalanceTest {
         photographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
         payoutAccountRepository = Mockito.mock(PayoutAccountRepository::class.java)
         payoutAccountAuditRepository = Mockito.mock(PayoutAccountAuditRepository::class.java)
+        payoutStatusHistoryRepository = Mockito.mock(PayoutStatusHistoryRepository::class.java)
+        payoutStatusRecorder = PayoutStatusRecorder(payoutStatusHistoryRepository)
     }
 
     private fun service() = PayoutRequestService(
@@ -60,6 +67,7 @@ class PayoutRequestServiceBalanceTest {
         photographerSettingsRepository,
         payoutAccountRepository,
         payoutAccountAuditRepository,
+        payoutStatusRecorder,
         platformProperties,
     )
 
@@ -213,5 +221,30 @@ class PayoutRequestServiceBalanceTest {
         val until = service().getBalance(photographerId).accountCooldownUntil
 
         assertTrue(until != null && until.isAfter(OffsetDateTime.now()), "expected a future cooldown-until, was $until")
+    }
+
+    @Test
+    fun `request records a pending status-history entry`() {
+        stubSums(cleared = "600", lifetime = "1000", paid = "0", reserved = "0")
+        noOpenRequest()
+        Mockito.`when`(payoutAccountRepository.findByUserIdAndIsPrimaryTrue(photographerId))
+            .thenReturn(
+                PayoutAccount(
+                    userId = photographerId,
+                    method = PayoutMethod.GCASH,
+                    accountNumber = "09171234567",
+                    accountName = "Juan Dela Cruz",
+                ),
+            )
+        Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.empty())
+        Mockito.`when`(payoutCycleRepository.countByPhotographerId(photographerId)).thenReturn(0L)
+        Mockito.`when`(transactionRepository.countSalesWindow(anyArg(), anyArg(), anyArg())).thenReturn(3L)
+        Mockito.`when`(payoutCycleRepository.save(anyArg<PayoutCycle>())).thenAnswer { it.getArgument(0) }
+
+        service().request(photographerId)
+
+        val captor = ArgumentCaptor.forClass(PayoutStatusHistory::class.java)
+        Mockito.verify(payoutStatusHistoryRepository).save(captor.capture())
+        assertEquals(PayoutCycleStatus.PENDING.wire, captor.value.toStatus)
     }
 }

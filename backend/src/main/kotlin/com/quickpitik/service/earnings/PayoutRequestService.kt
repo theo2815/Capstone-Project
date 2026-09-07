@@ -53,6 +53,7 @@ class PayoutRequestService(
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val payoutAccountRepository: PayoutAccountRepository,
     private val payoutAccountAuditRepository: PayoutAccountAuditRepository,
+    private val payoutStatusRecorder: PayoutStatusRecorder,
     private val platformProperties: PlatformProperties,
 ) {
 
@@ -164,8 +165,8 @@ class PayoutRequestService(
         cycle.status = PayoutCycleStatus.PENDING
         cycle.settledAt = null
 
-        return try {
-            payoutCycleRepository.save(cycle).toDto()
+        val saved = try {
+            payoutCycleRepository.save(cycle)
         } catch (ex: DataIntegrityViolationException) {
             // Lost the race: the partial unique index uq_payout_open_per_photographer
             // rejected a second concurrent open cycle. Same outcome as the findFirst
@@ -176,6 +177,14 @@ class PayoutRequestService(
                 message = "You already have an open payout request",
             )
         }
+        payoutStatusRecorder.record(
+            cycleId = saved.id,
+            from = null,
+            to = PayoutCycleStatus.PENDING,
+            actorType = "photographer",
+            actorId = photographerId,
+        )
+        return saved.toDto()
     }
 
     fun withdraw(photographerId: UUID, cycleId: String) {
@@ -197,6 +206,13 @@ class PayoutRequestService(
         // the reservation and frees the photographer to request again.
         cycle.status = PayoutCycleStatus.CANCELLED
         payoutCycleRepository.save(cycle)
+        payoutStatusRecorder.record(
+            cycleId = cycle.id,
+            from = PayoutCycleStatus.HELD,
+            to = PayoutCycleStatus.CANCELLED,
+            actorType = "photographer",
+            actorId = photographerId,
+        )
     }
 
     private data class Balances(

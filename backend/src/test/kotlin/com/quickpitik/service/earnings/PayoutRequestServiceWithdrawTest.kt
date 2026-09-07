@@ -4,14 +4,17 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
+import com.quickpitik.entity.PayoutStatusHistory
 import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
+import com.quickpitik.repository.PayoutStatusHistoryRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.TransactionRepository
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import java.time.LocalDate
 import java.util.UUID
@@ -30,6 +33,8 @@ class PayoutRequestServiceWithdrawTest {
     private lateinit var photographerSettingsRepository: PhotographerSettingsRepository
     private lateinit var payoutAccountRepository: PayoutAccountRepository
     private lateinit var payoutAccountAuditRepository: PayoutAccountAuditRepository
+    private lateinit var payoutStatusHistoryRepository: PayoutStatusHistoryRepository
+    private lateinit var payoutStatusRecorder: PayoutStatusRecorder
 
     private val photographerId = UUID.randomUUID()
     private val cycleId = "PAY-JUANDC-001"
@@ -43,6 +48,8 @@ class PayoutRequestServiceWithdrawTest {
         photographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
         payoutAccountRepository = Mockito.mock(PayoutAccountRepository::class.java)
         payoutAccountAuditRepository = Mockito.mock(PayoutAccountAuditRepository::class.java)
+        payoutStatusHistoryRepository = Mockito.mock(PayoutStatusHistoryRepository::class.java)
+        payoutStatusRecorder = PayoutStatusRecorder(payoutStatusHistoryRepository)
     }
 
     private fun service() = PayoutRequestService(
@@ -51,6 +58,7 @@ class PayoutRequestServiceWithdrawTest {
         photographerSettingsRepository,
         payoutAccountRepository,
         payoutAccountAuditRepository,
+        payoutStatusRecorder,
         PlatformProperties(),
     )
 
@@ -89,6 +97,9 @@ class PayoutRequestServiceWithdrawTest {
         assertEquals(PayoutCycleStatus.CANCELLED, held.status)
         Mockito.verify(payoutCycleRepository).save(held)
         Mockito.verify(payoutCycleRepository, Mockito.never()).delete(anyArg())
+        val captor = ArgumentCaptor.forClass(PayoutStatusHistory::class.java)
+        Mockito.verify(payoutStatusHistoryRepository).save(captor.capture())
+        assertEquals(PayoutCycleStatus.CANCELLED.wire, captor.value.toStatus)
     }
 
     @Test
