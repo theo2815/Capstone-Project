@@ -3,10 +3,12 @@ package com.quickpitik.service.earnings
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.entity.PayoutAccount
+import com.quickpitik.entity.PayoutAccountAudit
 import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutMethod
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -18,10 +20,12 @@ import org.mockito.Mockito
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import java.math.BigDecimal
+import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 // Phase 1 — the withdrawable balance is reservation- and clearing-aware:
 //   available = max(0, cleared − paid − reserved)
@@ -34,6 +38,7 @@ class PayoutRequestServiceBalanceTest {
     private lateinit var transactionRepository: TransactionRepository
     private lateinit var photographerSettingsRepository: PhotographerSettingsRepository
     private lateinit var payoutAccountRepository: PayoutAccountRepository
+    private lateinit var payoutAccountAuditRepository: PayoutAccountAuditRepository
     private val platformProperties = PlatformProperties()
 
     private val photographerId = UUID.randomUUID()
@@ -46,6 +51,7 @@ class PayoutRequestServiceBalanceTest {
         transactionRepository = Mockito.mock(TransactionRepository::class.java)
         photographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
         payoutAccountRepository = Mockito.mock(PayoutAccountRepository::class.java)
+        payoutAccountAuditRepository = Mockito.mock(PayoutAccountAuditRepository::class.java)
     }
 
     private fun service() = PayoutRequestService(
@@ -53,6 +59,7 @@ class PayoutRequestServiceBalanceTest {
         transactionRepository,
         photographerSettingsRepository,
         payoutAccountRepository,
+        payoutAccountAuditRepository,
         platformProperties,
     )
 
@@ -179,5 +186,32 @@ class PayoutRequestServiceBalanceTest {
 
         assertEquals(ErrorCodes.PAYOUT_REQUEST_OPEN, ex.code)
         assertEquals(HttpStatus.CONFLICT, ex.status)
+    }
+
+    @Test
+    fun `request is blocked during the payout-account cooldown`() {
+        // Balance + account are fine; the recent payout-account change bars the
+        // request (a compromised account can't change-bank-then-withdraw).
+        stubSums(cleared = "1000", lifetime = "1000", paid = "0", reserved = "0")
+        noOpenRequest()
+        Mockito.`when`(payoutAccountAuditRepository.existsByUserIdAndCreatedAtAfter(anyArg(), anyArg()))
+            .thenReturn(true)
+
+        val ex = assertFailsWith<ApiException> { service().request(photographerId) }
+
+        assertEquals(ErrorCodes.PAYOUT_ACCOUNT_COOLDOWN, ex.code)
+    }
+
+    @Test
+    fun `getBalance surfaces the account cooldown-until after a recent change`() {
+        stubSums(cleared = "1000", lifetime = "1000", paid = "0", reserved = "0")
+        noOpenRequest()
+        Mockito.`when`(payoutAccountRepository.findByUserIdAndIsPrimaryTrue(photographerId)).thenReturn(null)
+        Mockito.`when`(payoutAccountAuditRepository.findFirstByUserIdOrderByCreatedAtDesc(photographerId))
+            .thenReturn(PayoutAccountAudit(userId = photographerId, action = "update", createdAt = OffsetDateTime.now()))
+
+        val until = service().getBalance(photographerId).accountCooldownUntil
+
+        assertTrue(until != null && until.isAfter(OffsetDateTime.now()), "expected a future cooldown-until, was $until")
     }
 }

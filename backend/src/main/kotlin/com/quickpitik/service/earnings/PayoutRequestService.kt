@@ -11,6 +11,7 @@ import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -51,6 +52,7 @@ class PayoutRequestService(
     private val transactionRepository: TransactionRepository,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val payoutAccountRepository: PayoutAccountRepository,
+    private val payoutAccountAuditRepository: PayoutAccountAuditRepository,
     private val platformProperties: PlatformProperties,
 ) {
 
@@ -64,10 +66,17 @@ class PayoutRequestService(
         // Same lookup request() uses to enforce PAYOUT_NO_ACCOUNT — surfacing it
         // here lets the FE gate on the authoritative DB state, not its store.
         val primary = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(photographerId)
+        // Surface the post-account-change cooldown so the FE can explain the hold
+        // instead of letting the photographer hit request() and get a 409.
+        val cooldownUntil = payoutAccountAuditRepository
+            .findFirstByUserIdOrderByCreatedAtDesc(photographerId)
+            ?.createdAt?.plus(platformProperties.payoutAccountCooldown)
+            ?.takeIf { it.isAfter(OffsetDateTime.now()) }
         return PayoutBalanceDto(
             unpaidBalance = balances.available,
             clearing = balances.clearing,
             reserved = balances.reserved,
+            accountCooldownUntil = cooldownUntil,
             minimum = MINIMUM,
             hasOpenRequest = open != null,
             openRequest = open?.toDto(),
@@ -93,6 +102,17 @@ class PayoutRequestService(
                 status = HttpStatus.CONFLICT,
                 code = ErrorCodes.PAYOUT_REQUEST_OPEN,
                 message = "You already have an open payout request",
+            )
+        }
+
+        // Anti-fraud cooldown: a recent payout-account change bars requests, so a
+        // compromised account can't change the destination and withdraw at once.
+        val cooldownStart = OffsetDateTime.now().minus(platformProperties.payoutAccountCooldown)
+        if (payoutAccountAuditRepository.existsByUserIdAndCreatedAtAfter(photographerId, cooldownStart)) {
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.PAYOUT_ACCOUNT_COOLDOWN,
+                message = "Payout is on a short hold after a recent payout-account change. Try again later.",
             )
         }
 

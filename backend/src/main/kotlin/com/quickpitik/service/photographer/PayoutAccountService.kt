@@ -7,10 +7,12 @@ import com.quickpitik.dto.photographer.PatchPayoutRequest
 import com.quickpitik.dto.photographer.PayoutAccountDto
 import com.quickpitik.dto.photographer.toDto
 import com.quickpitik.entity.PayoutAccount
+import com.quickpitik.entity.PayoutAccountAudit
 import com.quickpitik.entity.PayoutMethod
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
@@ -29,6 +31,7 @@ import javax.imageio.ImageIO
 @Transactional
 class PayoutAccountService(
     private val payoutAccountRepository: PayoutAccountRepository,
+    private val payoutAccountAuditRepository: PayoutAccountAuditRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
 ) {
@@ -60,12 +63,14 @@ class PayoutAccountService(
                 isPrimary = isFirst,
             ),
         )
+        recordChange(userId, "create", method, newNumber = accountNumber)
         return saved.toDto(qrUrl = null, qrUploadedAt = null)
     }
 
     fun patch(userId: UUID, id: UUID, req: PatchPayoutRequest): PayoutAccountDto {
         val account = payoutAccountRepository.findByIdAndUserId(id, userId)
             ?: throw NotFoundException(code = ErrorCodes.PAYOUT_NOT_FOUND, message = "Payout account not found")
+        val oldNumber = account.accountNumber
         req.accountNumber?.let {
             val sanitized = sanitizeNumber(it)
             validateAccountNumber(account.method, sanitized)
@@ -77,6 +82,7 @@ class PayoutAccountService(
             account.accountName = trimmed
         }
         val saved = payoutAccountRepository.save(account)
+        recordChange(userId, "update", account.method, oldNumber = oldNumber, newNumber = saved.accountNumber)
         return saved.toDto(qrUrl = qrUrlFor(saved), qrUploadedAt = saved.createdAt)
     }
 
@@ -84,6 +90,8 @@ class PayoutAccountService(
         val account = payoutAccountRepository.findByIdAndUserId(id, userId) ?: return
         val wasPrimary = account.isPrimary
         val qrKey = account.qrS3Key
+        val auditMethod = account.method
+        val auditNumber = account.accountNumber
         payoutAccountRepository.delete(account)
         // Force the unique constraint to register the delete before we set a
         // new primary — otherwise the partial unique index would block the
@@ -100,6 +108,7 @@ class PayoutAccountService(
             runCatching { storageService.delete(qrKey) }
                 .onFailure { log.warn("payout qr delete of {} failed: {}", qrKey, it.message) }
         }
+        recordChange(userId, "delete", auditMethod, oldNumber = auditNumber)
     }
 
     // Atomic clear-then-set so the partial unique index is satisfied at TX
@@ -117,6 +126,7 @@ class PayoutAccountService(
         payoutAccountRepository.flush()
         target.isPrimary = true
         payoutAccountRepository.save(target)
+        recordChange(userId, "set_primary", target.method)
         return list(userId)
     }
 
@@ -157,6 +167,7 @@ class PayoutAccountService(
         storageService.put(newKey, processed, "image/png")
         account.qrS3Key = newKey
         val saved = payoutAccountRepository.save(account)
+        recordChange(userId, "qr", account.method)
         if (previousKey != null && previousKey != newKey) {
             runCatching { storageService.delete(previousKey) }
                 .onFailure { log.warn("payout qr delete of {} failed: {}", previousKey, it.message) }
@@ -172,6 +183,31 @@ class PayoutAccountService(
     }
 
     private fun sanitizeNumber(raw: String): String = raw.filter { it.isDigit() }
+
+    // Append-only forensic trail of payout-destination changes. The most recent
+    // row also starts the anti-fraud cooldown that PayoutRequestService enforces,
+    // so EVERY mutation (incl. set-primary and QR) records one. Numbers are masked
+    // — this is a trail, not a second copy of the sensitive number.
+    private fun recordChange(
+        userId: UUID,
+        action: String,
+        method: PayoutMethod?,
+        oldNumber: String? = null,
+        newNumber: String? = null,
+    ) {
+        payoutAccountAuditRepository.save(
+            PayoutAccountAudit(
+                userId = userId,
+                action = action,
+                method = method?.wire,
+                accountMaskedOld = oldNumber?.let(::maskNumber),
+                accountMaskedNew = newNumber?.let(::maskNumber),
+            ),
+        )
+    }
+
+    private fun maskNumber(n: String): String =
+        if (n.length <= 4) "••••" else "••••" + n.takeLast(4)
 
     // Per plan F.2 line 226: gcash/maya = 11 digits starting 09; gotyme = 10–16.
     private fun validateAccountNumber(method: PayoutMethod, sanitized: String) {

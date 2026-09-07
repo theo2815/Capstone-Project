@@ -15,6 +15,10 @@ data class PlatformProperties(
     // so a refund/dispute in the meantime is absorbed before any payout. Align
     // to the refund/dispute-eligibility window. Overridable: PAYOUT_CLEARING_WINDOW.
     val payoutClearingWindow: Duration = Duration.ofDays(7),
+    // After ANY payout-account change (add/edit/set-primary/delete/QR), block new
+    // payout requests for this long — a compromised account can't change the
+    // destination and withdraw in the same session. Overridable: PAYOUT_ACCOUNT_COOLDOWN.
+    val payoutAccountCooldown: Duration = Duration.ofHours(24),
     // Upper bound for emailed bundle capabilities and migrated legacy tokens.
     // The user-facing "works for 90 days" copy is hardcoded to this default —
     // if you change it, update the receipt email (OrderReceiptEmailService) and

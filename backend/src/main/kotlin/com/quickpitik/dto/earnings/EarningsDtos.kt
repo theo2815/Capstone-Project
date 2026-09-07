@@ -150,6 +150,9 @@ data class PayoutBalanceDto(
     // Tied up in an open request (pending/held); already claimed, so excluded
     // from unpaidBalance.
     val reserved: BigDecimal,
+    // Non-null while a recent payout-account change still bars requests — a
+    // change starts a cooldown; request() rejects until this time passes.
+    val accountCooldownUntil: OffsetDateTime?,
     val minimum: BigDecimal,
     val hasOpenRequest: Boolean,
     val openRequest: PhotographerPayoutDto?,

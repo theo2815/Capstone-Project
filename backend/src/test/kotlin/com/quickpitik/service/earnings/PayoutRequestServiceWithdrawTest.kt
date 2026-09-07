@@ -5,6 +5,7 @@ import com.quickpitik.config.PlatformProperties
 import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.exception.ApiException
+import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -28,6 +29,7 @@ class PayoutRequestServiceWithdrawTest {
     private lateinit var transactionRepository: TransactionRepository
     private lateinit var photographerSettingsRepository: PhotographerSettingsRepository
     private lateinit var payoutAccountRepository: PayoutAccountRepository
+    private lateinit var payoutAccountAuditRepository: PayoutAccountAuditRepository
 
     private val photographerId = UUID.randomUUID()
     private val cycleId = "PAY-JUANDC-001"
@@ -40,6 +42,7 @@ class PayoutRequestServiceWithdrawTest {
         transactionRepository = Mockito.mock(TransactionRepository::class.java)
         photographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
         payoutAccountRepository = Mockito.mock(PayoutAccountRepository::class.java)
+        payoutAccountAuditRepository = Mockito.mock(PayoutAccountAuditRepository::class.java)
     }
 
     private fun service() = PayoutRequestService(
@@ -47,6 +50,7 @@ class PayoutRequestServiceWithdrawTest {
         transactionRepository,
         photographerSettingsRepository,
         payoutAccountRepository,
+        payoutAccountAuditRepository,
         PlatformProperties(),
     )
 
