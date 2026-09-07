@@ -14,6 +14,7 @@ import java.io.IOException
 import java.io.OutputStream
 import java.security.DigestOutputStream
 import java.security.MessageDigest
+import java.util.UUID
 
 class LowCameraStorage : IOException("Phone storage is nearly full. Free space to resume; pending photos remain on the camera.")
 
@@ -50,6 +51,28 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
                 if (current.status != "QUEUED")
                     dao.update(current.copy(status = "PENDING", retryAfter = 0, error = null))
             }
+        }
+    }
+
+    /** Sony reuses one RAM handle. Each attempt is distinct until content hashes prove equality. */
+    suspend fun saveTransient(
+        owner: String, event: String, camera: String, handle: Long, info: PtpObjectInfo,
+        write: (OutputStream) -> Unit,
+    ): Long {
+        if (!UploadSpool.hasRoom(context, info.expectedSize ?: 0)) throw LowCameraStorage()
+        val source = "transient:${UUID.randomUUID()}"
+        val record = transfer(owner, event, camera, handle, info).let {
+            it.copy(key = fingerprint(it.scope, source), sourceKey = source)
+        }
+        try {
+            return save(record, write)
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) {
+            val current = dao.get(record.key)
+            // A complete renamed file remains recoverable; never overwrite its recovery state.
+            if (current != null && !(current.status == "TRANSFERRING" && current.filePath?.let(::File)?.exists() == true))
+                fail(current, "Temporary camera transfer interrupted. Import the backup from the camera card; this buffer handle cannot be retried safely.")
+            throw e
         }
     }
 
@@ -132,7 +155,9 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
                     enqueue(record, file, digest.digest().hex())
                 } catch (e: CancellationException) { throw e }
                 catch (e: Exception) { fail(record, e.message ?: "Interrupted photo needs a retry.") }
-            } else fail(record, "Transfer interrupted. Reconnect the camera to retry.")
+            } else fail(record, if (record.sourceKey.startsWith("transient:"))
+                "Temporary camera transfer interrupted. Import the backup from the camera card; this buffer handle cannot be retried safely."
+                else "Transfer interrupted. Reconnect the camera to retry.")
         }
     }
 

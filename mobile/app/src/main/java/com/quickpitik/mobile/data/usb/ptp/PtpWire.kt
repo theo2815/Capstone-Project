@@ -6,7 +6,10 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /** Shared framing for metadata and streamed files. A broken transaction poisons the session. */
-internal class PtpWire(private val transport: PtpTransport) {
+internal class PtpWire(
+    private val transport: PtpTransport,
+    private val waitMs: (Long) -> Unit = Thread::sleep,
+) {
     var usable = true
         private set
     var transactionId = 0
@@ -15,8 +18,11 @@ internal class PtpWire(private val transport: PtpTransport) {
     private var pending = ByteArray(0)
 
     fun response(op: Int, vararg params: Int): Int = transaction {
-        val tx = command(op, params)
-        readResponse(tx)
+        var retries = 0
+        var code: Int
+        do { code = readResponse(command(op, params)) }
+        while (retryBusy(op, code, retries++))
+        code
     }
 
     fun sendData(op: Int, payload: ByteArray, vararg params: Int) = transaction {
@@ -38,12 +44,19 @@ internal class PtpWire(private val transport: PtpTransport) {
         op: Int, params: IntArray, sink: OutputStream, limit: Long,
         expectedSize: Long?, allowUnknown: Boolean,
     ): Long = transaction {
-        val tx = command(op, params)
-        val header = header(tx)
+        var tx: Int
+        var header: Header
+        var retries = 0
+        do {
+            tx = command(op, params)
+            header = header(tx)
+            if (header.type == Ptp.TYPE_RESPONSE) responsePayload(header)
+        } while (header.type == Ptp.TYPE_RESPONSE && retryBusy(op, header.code, retries++))
         if (header.type == Ptp.TYPE_RESPONSE) {
-            payload(header, ByteArrayOutputStream(), 20, null, false)
             requireOk(header.code)
-            if (op == Ptp.OP_EOS_GET_EVENT) return@transaction 0L
+            // These polls/handshake stages may have no payload. Object and property reads may not.
+            if (op == Ptp.OP_EOS_GET_EVENT || op == SonyPtpCamera.CONNECT || op == SonyPtpCamera.EXT_INFO)
+                return@transaction 0L
             throw PtpException("Camera returned no data for op 0x%04X".format(op))
         }
         if (header.type != Ptp.TYPE_DATA || header.code != op) throw PtpException("Unexpected PTP data phase.")
@@ -90,7 +103,8 @@ internal class PtpWire(private val transport: PtpTransport) {
             checkCancelled()
             if (length != null && written == length) break
             if (pending.isEmpty()) {
-                if (unknown && length == null && lastReadSize < CHUNK) break
+                // Some cameras send the DATA header as its own short transfer.
+                if (unknown && length == null && written > 0 && lastReadSize < CHUNK) break
                 read()
                 if (pending.isEmpty()) {
                     if (unknown && length == null) break
@@ -109,12 +123,29 @@ internal class PtpWire(private val transport: PtpTransport) {
     private fun readResponse(tx: Int): Int {
         val h = header(tx)
         if (h.type != Ptp.TYPE_RESPONSE) throw PtpException("Expected a PTP response.")
-        payload(h, ByteArrayOutputStream(), 20, null, false)
+        responsePayload(h)
         return h.code
     }
 
+    private fun responsePayload(h: Header) {
+        if (h.size !in 12L..32L || (h.size - 12) % 4 != 0L)
+            throw PtpException("Invalid PTP response parameters.")
+        payload(h, ByteArrayOutputStream(), 20, null, false)
+    }
+
+    private fun retryBusy(op: Int, code: Int, retries: Int): Boolean {
+        if (code != Ptp.RC_DEVICE_BUSY || op !in BUSY_RETRY_OPS || retries >= 3) return false
+        // Only reached after a complete response BEFORE any DATA. Never replay
+        // partial files, ambiguous USB failures, or non-idempotent shutter commands.
+        repeat((retries + 1) * 4) { checkCancelled(); waitMs(50) }
+        checkCancelled()
+        return true
+    }
+
     private fun command(op: Int, params: IntArray): Int {
-        val tx = transactionId++
+        // OpenSession always uses transaction zero, including a clean Busy retry.
+        val tx = if (op == Ptp.OP_OPEN_SESSION) 0 else transactionId
+        transactionId = tx + 1
         val bytes = ByteBuffer.allocate(params.size * 4).order(ByteOrder.LITTLE_ENDIAN)
         params.forEach(bytes::putInt)
         write(container(Ptp.TYPE_COMMAND, op, tx, bytes.array()))
@@ -148,6 +179,15 @@ internal class PtpWire(private val transport: PtpTransport) {
         const val TIMEOUT_MS = 5000
         const val MAX_METADATA = 16L * 1024 * 1024
         const val MAX_OBJECT = 1024L * 1024 * 1024
+        private val BUSY_RETRY_OPS = setOf(
+            Ptp.OP_GET_DEVICE_INFO, Ptp.OP_OPEN_SESSION, Ptp.OP_GET_STORAGE_IDS,
+            Ptp.OP_GET_OBJECT_HANDLES, Ptp.OP_GET_OBJECT_INFO, Ptp.OP_GET_OBJECT, Ptp.OP_GET_THUMB,
+            0x1014, 0x1015, // Standard GetDevicePropDesc / GetDevicePropValue.
+            Ptp.OP_EOS_SET_REMOTE_MODE, Ptp.OP_EOS_SET_EVENT_MODE,
+            Ptp.OP_EOS_KEEP_DEVICE_ON, Ptp.OP_EOS_GET_EVENT,
+            Ptp.OP_NIKON_GET_EVENT, Ptp.OP_NIKON_GET_EVENT_EX,
+            SonyPtpCamera.CONNECT, SonyPtpCamera.EXT_INFO, SonyPtpCamera.PROPERTY, SonyPtpCamera.ALL_PROPERTIES,
+        )
         fun requireOk(code: Int) { if (code != Ptp.RC_OK) throw PtpResponseException(code) }
         fun container(type: Int, code: Int, tx: Int, payload: ByteArray = byteArrayOf()): ByteArray =
             ByteBuffer.allocate(12 + payload.size).order(ByteOrder.LITTLE_ENDIAN)

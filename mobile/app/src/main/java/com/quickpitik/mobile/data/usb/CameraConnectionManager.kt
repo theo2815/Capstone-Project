@@ -6,9 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import com.quickpitik.mobile.data.usb.ptp.UsbPtpInterfaces
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -83,7 +83,9 @@ class CameraConnectionManager(context: Context) {
             ?: devices.filter(::isCamera).sortedBy { it.deviceName }.firstOrNull()
         if (camera == null) {
             clearSelection()
-            _state.value = CameraConnectionState.Disconnected
+            _state.value = if (devices.any { it.vendorId in setOf(0x04a9, 0x04b0, 0x054c, 0x04cb, 0x04da) })
+                CameraConnectionState.Unavailable("The attached device has no usable PTP USB interface. Select PTP/MTP or a supported PC tether mode; storage and webcam modes cannot transfer photos here.")
+                else CameraConnectionState.Disconnected
             return
         }
         if (selected?.deviceName != camera.deviceName || selected?.deviceId != camera.deviceId) {
@@ -113,9 +115,7 @@ class CameraConnectionManager(context: Context) {
     }
 
     private fun clearSelection() { selected = null; generation++; permissionPending = false; denied = false }
-    private fun isCamera(device: UsbDevice) = (0 until device.interfaceCount).any {
-        device.getInterface(it).interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE
-    }
+    private fun isCamera(device: UsbDevice) = UsbPtpInterfaces.find(device) != null
     private fun displayName(device: UsbDevice) = runCatching {
         listOfNotNull(device.manufacturerName, device.productName).distinct().joinToString(" ").ifBlank { "USB camera" }
     }.getOrDefault("USB camera")

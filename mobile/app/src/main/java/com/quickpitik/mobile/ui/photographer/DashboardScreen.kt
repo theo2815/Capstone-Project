@@ -566,7 +566,7 @@ private fun CameraConnectedCard(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         QpCard(modifier = Modifier.fillMaxWidth()) {
-            StatusChip(text = "Camera · ready", tone = StatusTone.Approved)
+            StatusChip(text = "Camera · USB connected", tone = StatusTone.Approved)
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = deviceName,
@@ -642,12 +642,7 @@ private fun CameraConnectedCard(
                         text = if (!canStartWatch) {
                             "This event's upload window has closed."
                         } else {
-                            // Canon behaviour, device-verified 2026-09-02: a body plugged
-                            // into a USB host with no active session shows the PC-connection
-                            // screen and locks the shutter. Only our watch session keeps
-                            // it live, so "connected but not watching" means "can't shoot".
-                            "While the cable is in and auto-upload is off, the camera stays in " +
-                                "PC-connection mode and won't shoot. Start auto-upload, or unplug to shoot offline."
+                            com.quickpitik.mobile.data.usb.ptp.CameraDrivers.usbGuidance(vendorId)
                         },
                         color = Slate,
                         style = Typography.bodyMedium
@@ -692,7 +687,7 @@ private fun ShutterWatchLiveCard(
         } else if (state.reconnecting) {
             StatusChip(text = "Auto-upload · reconnecting", tone = StatusTone.Warning)
         } else {
-            StatusChip(text = "Auto-upload · live", tone = StatusTone.Approved)
+            StatusChip(text = "Auto-upload · watching", tone = StatusTone.Approved)
         }
         Spacer(modifier = Modifier.height(14.dp))
         Text(
@@ -705,8 +700,7 @@ private fun ShutterWatchLiveCard(
         if (state.reconnecting) {
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "Camera link dropped. Re-plug the USB cable — shots taken " +
-                    "meanwhile upload once it reconnects.",
+                text = "Camera link dropped. Re-plug the USB cable. Photos saved on the card can be recovered; interrupted temporary transfers need card import.",
                 color = Slate,
                 style = Typography.bodyMedium,
             )

@@ -2,6 +2,7 @@ package com.quickpitik.mobile.data.usb.ptp
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.BufferUnderflowException
 
 /**
  * Parsed PTP DeviceInfo dataset (the payload of the GetDeviceInfo data phase).
@@ -26,7 +27,7 @@ data class PtpDeviceInfo(
 ) {
     companion object {
         /** Parse the DeviceInfo dataset (bytes AFTER the 12-byte container header). */
-        fun parse(payload: ByteArray): PtpDeviceInfo {
+        fun parse(payload: ByteArray): PtpDeviceInfo = try {
             val buf = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
             val standardVersion = buf.u16()
             val vendorExtensionId = buf.u32()
@@ -42,7 +43,7 @@ data class PtpDeviceInfo(
             val model = buf.ptpString()
             val deviceVersion = buf.ptpString()
             val serialNumber = buf.ptpString()
-            return PtpDeviceInfo(
+            PtpDeviceInfo(
                 standardVersion = standardVersion,
                 vendorExtensionId = vendorExtensionId,
                 vendorExtensionVersion = vendorExtensionVersion,
@@ -57,6 +58,8 @@ data class PtpDeviceInfo(
                 deviceVersion = deviceVersion,
                 serialNumber = serialNumber,
             )
+        } catch (e: BufferUnderflowException) {
+            throw PtpException("Truncated camera device information.", e)
         }
 
         private fun ByteBuffer.u16(): Int = short.toInt() and 0xFFFF

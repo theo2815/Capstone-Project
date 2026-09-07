@@ -137,4 +137,56 @@ class CameraTransferStoreTest {
             assertEquals(0, migrated.cameraTransferDao().baselineExists("scope"))
         } finally { migrated.close(); context.deleteDatabase(name) }
     }
+
+    @Test fun `successive temporary frames reuse a handle without losing different content`() = runTest {
+        val info = PtpObjectInfo(0x3801, 4, "DSC00001.JPG")
+        val first = store.saveTransient("owner", "event", "sony", 0xffffc001L, info) { it.write(jpeg) }
+        val secondBytes = byteArrayOf(0xff.toByte(), 0xd8.toByte(), 1, 2)
+        val second = store.saveTransient("owner", "event", "sony", 0xffffc001L, info) { it.write(secondBytes) }
+        assertNotEquals(first, second)
+        assertArrayEquals(jpeg, File(requireNotNull(db.uploadQueueDao().getRecordById(first)).filePath).readBytes())
+        assertArrayEquals(secondBytes, File(requireNotNull(db.uploadQueueDao().getRecordById(second)).filePath).readBytes())
+        val duplicate = store.saveTransient("owner", "event", "sony", 0xffffc001L, info) { it.write(jpeg) }
+        assertEquals(first, duplicate)
+    }
+
+    @Test fun `interrupted temporary handle is retained for card recovery but never automatically retried`() = runTest {
+        val info = PtpObjectInfo(0x3801, 4, "DSC00001.JPG")
+        try {
+            store.saveTransient("owner", "event", "sony", 0xffffc001L, info) {
+                it.write(jpeg, 0, 2); throw IOException("USB detached")
+            }
+            fail("Expected interrupted transfer")
+        } catch (_: IOException) { }
+        val scope = store.transfer("owner", "event", "sony", 0xffffc001L, info).scope
+        val failed = store.dao.forScope(scope).single()
+        assertEquals("FAILED", failed.status)
+        assertTrue(failed.error.orEmpty().contains("camera card"))
+        store.dao.retry("owner", "event")
+        assertEquals("FAILED", store.dao.get(failed.key)?.status)
+        assertTrue(db.uploadQueueDao().getRecordsWithStatus("QUEUED").isEmpty())
+    }
+
+    @Test fun `cancelled temporary transfer recovers without replaying its handle`() = runTest {
+        val info = PtpObjectInfo(0x3801, 4, "DSC00001.JPG")
+        try {
+            store.saveTransient("owner", "event", "sony", 0xffffc001L, info) {
+                it.write(jpeg, 0, 2); throw kotlinx.coroutines.CancellationException("Stop")
+            }
+            fail("Expected cancellation")
+        } catch (_: kotlinx.coroutines.CancellationException) { }
+        val interrupted = store.dao.interrupted("owner").single()
+        assertTrue(interrupted.sourceKey.startsWith("transient:"))
+        assertFalse(UploadSpool.dir(context).listFiles().orEmpty().any { it.name.endsWith(".part") })
+        store.recover("owner")
+        store.dao.retry("owner", "event")
+        assertEquals("FAILED", store.dao.get(interrupted.key)?.status)
+        assertTrue(store.dao.get(interrupted.key)?.error.orEmpty().contains("camera card"))
+        assertTrue(db.uploadQueueDao().getRecordsWithStatus("QUEUED").isEmpty())
+        // A completed rename is a different recovery case: enqueue local bytes without USB.
+        File(requireNotNull(interrupted.filePath)).writeBytes(jpeg)
+        store.dao.update(interrupted)
+        store.recover("owner")
+        assertEquals("QUEUED", store.dao.get(interrupted.key)?.status)
+    }
 }

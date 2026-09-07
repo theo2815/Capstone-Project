@@ -32,6 +32,9 @@ object Ptp {
     // push this on the interrupt endpoint; Canon EOS instead surfaces captures
     // inside the EOS_GetEvent payload.
     const val EV_OBJECT_ADDED = 0x4002
+    const val OP_NIKON_GET_EVENT = 0x90C7
+    const val OP_NIKON_GET_EVENT_EX = 0x941C
+    const val EV_PANASONIC_OBJECT_ADDED = 0xC108
 
     // ObjectInfo.ObjectFormat codes (standard PTP). The card-poll path enumerates
     // the card with GetObjectHandles, then reads each ObjectInfo to decide what to
@@ -72,6 +75,11 @@ object Ptp {
 
     // Response codes.
     const val RC_OK = 0x2001
+    const val RC_OPERATION_NOT_SUPPORTED = 0x2005
+    const val RC_INVALID_STORAGE_ID = 0x2008
+    const val RC_INVALID_OBJECT_HANDLE = 0x2009
+    const val RC_STORE_NOT_AVAILABLE = 0x2013
+    const val RC_DEVICE_BUSY = 0x2019
     const val RC_SESSION_ALREADY_OPEN = 0x201E
 
     // PTP VendorExtensionID values (DeviceInfo).

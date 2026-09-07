@@ -20,6 +20,25 @@ class PtpSession internal constructor(private val transport: PtpTransport) : Clo
 
     fun getDeviceInfo(): PtpDeviceInfo = PtpDeviceInfo.parse(wire.data(Ptp.OP_GET_DEVICE_INFO))
 
+    /** Open first: EOS bodies can treat a second transaction zero as a retransmission. */
+    internal fun identify(): PtpDeviceInfo {
+        val code = openSession()
+        if (code != Ptp.RC_OK && code != Ptp.RC_SESSION_ALREADY_OPEN) throw PtpResponseException(code)
+        return getDeviceInfo()
+    }
+
+    internal fun vendorData(op: Int, vararg params: Int): ByteArray = wire.data(op, *params)
+    internal fun interruptEvents(): List<PtpEvent> {
+        val events = ArrayList<PtpEvent>()
+        // Bound interrupt draining so a noisy camera cannot starve card reads/cancellation.
+        repeat(16) {
+            wire.checkCancelled()
+            val packet = transport.readEvent(1) ?: return events
+            events.addAll(PtpEvent.parseUsb(packet))
+        }
+        return events
+    }
+
     fun openSession(sessionId: Int = 1): Int {
         wire.transactionId = 0
         val code = wire.response(Ptp.OP_OPEN_SESSION, sessionId)
@@ -69,10 +88,8 @@ class PtpSession internal constructor(private val transport: PtpTransport) : Clo
 
     /** Human-readable capability dump driving the Tether Console probe button. */
     fun probe(): String {
-        val info = getDeviceInfo()
+        val info = identify()
         val isEos = info.operationsSupported.contains(Ptp.OP_EOS_GET_EVENT)
-        val openResult = runCatching { "0x%04X".format(openSession()) }
-            .getOrElse { "send failed (${it.message})" }
         return buildString {
             appendLine("${info.manufacturer} ${info.model}".trim())
             appendLine("Serial ${info.serialNumber} • fw ${info.deviceVersion}")
@@ -87,7 +104,7 @@ class PtpSession internal constructor(private val transport: PtpTransport) : Clo
             appendLine("Canon EOS extension: ${if (isEos) "YES — EOS_GetEvent 0x9116 present" else "not detected"}")
             appendLine("Std ObjectAdded event 0x4002: ${if (info.eventsSupported.contains(Ptp.EV_OBJECT_ADDED)) "yes" else "no"}")
             appendLine("Interrupt endpoint: ${if (hasInterruptEndpoint) "present" else "none"}")
-            appendLine("OpenSession: $openResult")
+            appendLine("OpenSession: established")
             appendLine("Ops (${info.operationsSupported.size}): " + info.operationsSupported.joinToString(" ") { "0x%04X".format(it) })
             appendLine("Events (${info.eventsSupported.size}): " + info.eventsSupported.joinToString(" ") { "0x%04X".format(it) })
         }.trim()

@@ -13,6 +13,9 @@ internal class ScriptedPtp(vararg incoming: ByteArray) : PtpTransport {
     val writes = mutableListOf<ByteArray>()
     var shortWrite = false
     var closed = false
+    var interrupts = ArrayDeque<ByteArray>()
+    override val hasInterruptEndpoint get() = interrupts.isNotEmpty()
+    override fun readEvent(timeoutMs: Int): ByteArray? = interrupts.removeFirstOrNull()
     override fun read(buffer: ByteArray, timeoutMs: Int): Int {
         val bytes = reads.removeFirstOrNull() ?: return -1
         bytes.copyInto(buffer)
@@ -122,5 +125,75 @@ class PtpWireTest {
         PtpSession(transport).close()
         assertTrue(transport.closed)
         assertTrue(transport.writes.isEmpty())
+    }
+
+    @Test fun `unknown-length object accepts a header-only short transfer`() {
+        val header = data(byteArrayOf()).also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(-1) }
+        val bytes = byteArrayOf(1, 2, 3)
+        val wire = PtpWire(ScriptedPtp(header, bytes, ok())).apply { allowUnknownObjectLength = true }
+        val out = ByteArrayOutputStream()
+        assertEquals(3L, wire.objectTo(Ptp.OP_GET_OBJECT, 1, out, null))
+        assertArrayEquals(bytes, out.toByteArray())
+        assertTrue(wire.usable)
+    }
+
+    @Test fun `unknown-length full packet ends with ZLP before response`() {
+        val header = data(byteArrayOf()).also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(-1) }
+        val bytes = ByteArray(PtpWire.CHUNK) { (it % 251).toByte() }
+        val wire = PtpWire(ScriptedPtp(header, bytes, byteArrayOf(), ok())).apply { allowUnknownObjectLength = true }
+        val out = ByteArrayOutputStream()
+        assertEquals(bytes.size.toLong(), wire.objectTo(Ptp.OP_GET_OBJECT, 1, out, null))
+        assertArrayEquals(bytes, out.toByteArray())
+    }
+
+    @Test fun `clean busy before data retries with new transaction and exact bytes`() {
+        val busy = PtpWire.container(Ptp.TYPE_RESPONSE, Ptp.RC_DEVICE_BUSY, 0)
+        val transport = ScriptedPtp(busy, data(byteArrayOf(1, 2), 1), ok(1))
+        val wire = PtpWire(transport, waitMs = {})
+        val out = ByteArrayOutputStream()
+        assertEquals(2L, wire.objectTo(Ptp.OP_GET_OBJECT, 1, out, 2))
+        assertArrayEquals(byteArrayOf(1, 2), out.toByteArray())
+        assertEquals(listOf(0, 1), transport.writes.map { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).getInt(8) })
+    }
+
+    @Test fun `busy exhaustion is bounded and keeps a clean stream usable`() {
+        val transport = ScriptedPtp(*(0..3).map { PtpWire.container(Ptp.TYPE_RESPONSE, Ptp.RC_DEVICE_BUSY, it) }.toTypedArray())
+        val wire = PtpWire(transport, waitMs = {})
+        assertThrows(PtpResponseException::class.java) { wire.data(Ptp.OP_GET_OBJECT_INFO, 1) }
+        assertEquals(4, transport.writes.size)
+        assertTrue(wire.usable)
+    }
+
+    @Test fun `busy after data never replays a streamed file`() {
+        val transport = ScriptedPtp(data(byteArrayOf(1, 2)), PtpWire.container(Ptp.TYPE_RESPONSE, Ptp.RC_DEVICE_BUSY, 0))
+        val wire = PtpWire(transport, waitMs = {})
+        val out = ByteArrayOutputStream()
+        assertThrows(PtpResponseException::class.java) { wire.objectTo(Ptp.OP_GET_OBJECT, 1, out, 2) }
+        assertEquals(1, transport.writes.size)
+        assertArrayEquals(byteArrayOf(1, 2), out.toByteArray())
+    }
+
+    @Test fun `remote shutter busy is never automatically retried`() {
+        val transport = ScriptedPtp(PtpWire.container(Ptp.TYPE_RESPONSE, Ptp.RC_DEVICE_BUSY, 0))
+        assertEquals(Ptp.RC_DEVICE_BUSY, PtpWire(transport, waitMs = {}).response(Ptp.OP_EOS_REMOTE_RELEASE))
+        assertEquals(1, transport.writes.size)
+    }
+
+    @Test fun `busy backoff observes cancellation before another command`() {
+        val transport = ScriptedPtp(PtpWire.container(Ptp.TYPE_RESPONSE, Ptp.RC_DEVICE_BUSY, 0))
+        var cancelled = false
+        val wire = PtpWire(transport, waitMs = { cancelled = true }).apply {
+            checkCancelled = { if (cancelled) throw kotlinx.coroutines.CancellationException("Stopped") }
+        }
+        assertThrows(kotlinx.coroutines.CancellationException::class.java) { wire.data(Ptp.OP_GET_OBJECT_INFO, 1) }
+        assertEquals(1, transport.writes.size)
+    }
+
+    @Test fun `misaligned response is not treated as a clean busy rejection`() {
+        val transport = ScriptedPtp(PtpWire.container(Ptp.TYPE_RESPONSE, Ptp.RC_DEVICE_BUSY, 0, byteArrayOf(1)))
+        val wire = PtpWire(transport, waitMs = {})
+        assertThrows(PtpException::class.java) { wire.data(Ptp.OP_GET_OBJECT_INFO, 1) }
+        assertFalse(wire.usable)
+        assertEquals(1, transport.writes.size)
     }
 }

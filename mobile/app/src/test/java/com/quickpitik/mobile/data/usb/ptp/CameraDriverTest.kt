@@ -45,4 +45,89 @@ class CameraDriverTest {
             .putShort(100).putInt(6).putShort(100).put(0).putShort(0).putInt(Int.MAX_VALUE).array()
         assertThrows(PtpException::class.java) { PtpDeviceInfo.parse(payload) }
     }
+
+    @Test fun `identification opens session before device info with distinct transactions`() {
+        val dataset = ByteBuffer.allocate(256).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putShort(100); putInt(6); putShort(100); put(0); putShort(0)
+            repeat(5) { putInt(0) }
+            for (value in listOf("Canon", "Canon EOS R6", "1.0", "serial")) {
+                put((value.length + 1).toByte())
+                value.forEach { putShort(it.code.toShort()) }; putShort(0)
+            }
+        }.let { it.array().copyOf(it.position()) }
+        val transport = ScriptedPtp(ok(0), data(Ptp.OP_GET_DEVICE_INFO, 1, dataset), ok(1))
+        assertEquals("Canon EOS R6", PtpSession(transport).identify().model)
+        val commands = transport.writes.map { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN) }
+        assertEquals(Ptp.OP_OPEN_SESSION, commands[0].getShort(6).toInt())
+        assertEquals(0, commands[0].getInt(8))
+        assertEquals(Ptp.OP_GET_DEVICE_INFO, commands[1].getShort(6).toInt())
+        assertEquals(1, commands[1].getInt(8))
+    }
+
+    @Test fun `empty second slot does not hide readable first card`() {
+        val transport = ScriptedPtp(
+            data(Ptp.OP_GET_STORAGE_IDS, 0, words(2, 1, 2)), ok(0),
+            data(Ptp.OP_GET_OBJECT_HANDLES, 1, words(1, 42)), ok(1),
+            response(Ptp.RC_STORE_NOT_AVAILABLE, 2),
+        )
+        assertEquals(listOf(42L), storageCamera(transport).handles())
+    }
+
+    @Test fun `all unavailable slots and transport errors never become an empty baseline`() {
+        val unavailable = ScriptedPtp(data(Ptp.OP_GET_STORAGE_IDS, 0, words(1, 1)), ok(0),
+            response(Ptp.RC_INVALID_STORAGE_ID, 1))
+        assertThrows(PtpResponseException::class.java) { storageCamera(unavailable).handles() }
+        val disconnected = ScriptedPtp(data(Ptp.OP_GET_STORAGE_IDS, 0, words(1, 1)), ok(0))
+        assertThrows(PtpException::class.java) { storageCamera(disconnected).handles() }
+    }
+
+    @Test fun `storage-less enumeration uses standard all-stores wildcard`() {
+        val transport = ScriptedPtp(data(Ptp.OP_GET_OBJECT_HANDLES, 0, words(1, 42)), ok(0))
+        val camera = GenericPtpCamera(PtpSession(transport), info("Fuji", listOf(
+            Ptp.OP_GET_OBJECT_HANDLES, Ptp.OP_GET_OBJECT_INFO, Ptp.OP_GET_OBJECT)), "camera")
+        assertTrue(camera.capabilities.cardImport)
+        assertEquals(listOf(42L), camera.handles())
+        assertEquals(-1, ByteBuffer.wrap(transport.writes.single()).order(ByteOrder.LITTLE_ENDIAN).getInt(12))
+    }
+
+    @Test fun `Nikon extended event rejection falls back without changing control mode`() {
+        val payload = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+            .putShort(1).putShort(Ptp.EV_OBJECT_ADDED.toShort()).putInt(42).array()
+        val transport = ScriptedPtp(response(Ptp.RC_OPERATION_NOT_SUPPORTED, 0),
+            data(Ptp.OP_NIKON_GET_EVENT, 1, payload), ok(1))
+        val camera = NikonPtpCamera(PtpSession(transport), info("Nikon", listOf(
+            Ptp.OP_NIKON_GET_EVENT, Ptp.OP_NIKON_GET_EVENT_EX)), "camera")
+        assertEquals(listOf(42L), camera.events())
+        assertEquals(listOf(Ptp.OP_NIKON_GET_EVENT_EX, Ptp.OP_NIKON_GET_EVENT),
+            transport.writes.map { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).getShort(6).toInt() and 0xffff })
+    }
+
+    @Test fun `Nikon 1 avoids broken advertised vendor event commands`() {
+        val transport = ScriptedPtp()
+        val camera = NikonPtpCamera(PtpSession(transport), info("Nikon", listOf(Ptp.OP_NIKON_GET_EVENT))
+            .copy(model = "NIKON 1 J4"), "camera")
+        assertFalse(camera.capabilities.eventPolling)
+        assertTrue(camera.events().isEmpty())
+        assertTrue(transport.writes.isEmpty())
+    }
+
+    @Test fun `asynchronous and Nikon event parsers reject truncation and preserve unsigned handles`() {
+        val usb = PtpWire.container(Ptp.TYPE_EVENT, Ptp.EV_OBJECT_ADDED, -1, words(-2))
+        assertEquals(0xfffffffeL, PtpEvent.parseUsb(usb).single().handle)
+        val extended = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
+            .putShort(1).putShort(0).putShort(Ptp.EV_OBJECT_ADDED.toShort()).putShort(1).putInt(-2).array()
+        assertEquals(0xfffffffeL, PtpEvent.parseNikon(extended, true).single().handle)
+        for (length in 0 until extended.size)
+            assertThrows(PtpException::class.java) { PtpEvent.parseNikon(extended.copyOf(length), true) }
+        assertThrows(PtpException::class.java) { PtpEvent.parseUsb(usb.copyOf(usb.size - 1)) }
+        assertThrows(PtpException::class.java) { PtpEvent.parseUsb(usb + byteArrayOf(1)) }
+    }
+
+    private fun storageCamera(transport: ScriptedPtp) = GenericPtpCamera(PtpSession(transport),
+        info("Nikon", listOf(Ptp.OP_GET_STORAGE_IDS, Ptp.OP_GET_OBJECT_HANDLES, Ptp.OP_GET_OBJECT_INFO, Ptp.OP_GET_OBJECT)), "camera")
+    private fun words(vararg values: Int) = ByteBuffer.allocate(values.size * 4).order(ByteOrder.LITTLE_ENDIAN)
+        .apply { values.forEach { putInt(it) } }.array()
+    private fun data(op: Int, tx: Int, bytes: ByteArray) = PtpWire.container(Ptp.TYPE_DATA, op, tx, bytes)
+    private fun ok(tx: Int) = response(Ptp.RC_OK, tx)
+    private fun response(code: Int, tx: Int) = PtpWire.container(Ptp.TYPE_RESPONSE, code, tx)
 }
