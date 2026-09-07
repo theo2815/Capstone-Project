@@ -210,7 +210,13 @@ class OrderService(
             orderRepository.findOverlappingForGuest(recipientEmail, photoIds, ACTIVE_ORDER_STATUSES)
         }
         if (overlapping.any { it.status == OrderStatus.PAID || it.status == OrderStatus.FULFILLED }) {
-            throw checkoutConflict("One or more photos have already been purchased.")
+            // Distinct code (not generic CONFLICT) so clients steer the buyer to
+            // a free re-download instead of showing the QR-failure copy. Clients
+            // also detect this earlier, in the cart; this is the server net.
+            throw checkoutConflict(
+                "You already own one or more of these photos — re-download them anytime from your Orders or your emailed receipt.",
+                code = ErrorCodes.ALREADY_PURCHASED,
+            )
         }
         if (overlapping.isNotEmpty()) {
             val keys = overlapping.mapNotNull { it.idempotencyKey }.toSet()
@@ -719,8 +725,10 @@ class OrderService(
         return events
     }
 
-    private fun checkoutConflict(message: String): ConflictException =
-        ConflictException(code = ErrorCodes.CONFLICT, message = message)
+    private fun checkoutConflict(
+        message: String,
+        code: String = ErrorCodes.CONFLICT,
+    ): ConflictException = ConflictException(code = code, message = message)
 
     private fun pickPrimary(orders: List<Order>): Order = orders.minBy { it.createdAt }
 

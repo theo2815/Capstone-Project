@@ -50,6 +50,11 @@ object ErrorCodes {
 
     const val CART_ITEM_PRICE_CHANGED = "CART_ITEM_PRICE_CHANGED"
     const val ORDER_DUPLICATE_PAYMENT = "ORDER_DUPLICATE_PAYMENT"
+    // Checkout rejected because the buyer already owns one or more carted
+    // photos (a PAID/FULFILLED order for the same user/guest). Distinct from
+    // the generic CONFLICT so clients can steer to a free re-download instead
+    // of the QR-failure copy. See OrderService.reserveCheckout.
+    const val ALREADY_PURCHASED = "ALREADY_PURCHASED"
     const val ORDER_NOT_FOUND = "ORDER_NOT_FOUND"
     const val PAYMENT_FAILED = "PAYMENT_FAILED"
     const val INVALID_IDEMPOTENCY_KEY = "INVALID_IDEMPOTENCY_KEY"
