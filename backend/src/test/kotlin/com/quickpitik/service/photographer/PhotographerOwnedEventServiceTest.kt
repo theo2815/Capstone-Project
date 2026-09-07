@@ -71,8 +71,7 @@ class PhotographerOwnedEventServiceTest {
         service = PhotographerOwnedEventService(
             eventRepository,
             coverageRepository,
-            settingsRepository,
-            userRepository,
+            PhotographerAccessGuard(userRepository, settingsRepository),
             Mockito.mock(EventCoverService::class.java),
             mapper,
             eventPublisher,

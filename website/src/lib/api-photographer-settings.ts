@@ -221,6 +221,10 @@ export async function postPayoutQr(
 export interface VerificationSubmitResponse {
   status: VerificationStatus;
   missing?: string[] | null;
+  // Stable machine codes paired 1:1 with `missing` (e.g. "PROFILE_PHOTO").
+  // Additive to `missing` (human labels) — lets the client map a missing item
+  // to its settings section without matching on the label text.
+  missingCodes?: string[] | null;
   // Populated when admin has suspended the account. Orthogonal to status
   // — an approved photographer can also be suspended, in which case the
   // FE prioritises the suspended state for gating + banner copy.

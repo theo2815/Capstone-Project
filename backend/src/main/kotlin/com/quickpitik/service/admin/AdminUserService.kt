@@ -216,7 +216,7 @@ class AdminUserService(
             throw ApiException(
                 status = HttpStatus.UNPROCESSABLE_ENTITY,
                 code = ErrorCodes.INCOMPLETE_PROFILE,
-                message = "Cannot approve — profile is missing: ${incomplete.missing.joinToString(", ")}",
+                message = "Cannot approve — profile is missing: ${incomplete.labels.joinToString(", ")}",
             )
         }
         s.verificationStatus = VerificationStatus.APPROVED

@@ -12,15 +12,12 @@ import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoSpan
 import com.quickpitik.entity.PhotoStatus
-import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.repository.PhotographerSettingsRepository
-import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import io.micrometer.core.instrument.MeterRegistry
@@ -49,8 +46,7 @@ class PhotoUploadService(
     private val photoRepository: PhotoRepository,
     private val eventPhotographerRepository: EventPhotographerRepository,
     private val eventRepository: EventRepository,
-    private val photographerSettingsRepository: PhotographerSettingsRepository,
-    private val userRepository: UserRepository,
+    private val accessGuard: PhotographerAccessGuard,
     private val aiApiProperties: AiApiProperties,
     private val eventPublisher: ApplicationEventPublisher,
     private val transactionTemplate: TransactionTemplate,
@@ -252,28 +248,7 @@ class PhotoUploadService(
                 message = "Upload window for this event has closed.",
             )
         }
-        val photographer = userRepository.findById(photographerId).orElse(null)
-            ?: throw NotFoundException(code = ErrorCodes.USER_NOT_FOUND, message = "User not found")
-        if (photographer.suspendedAt != null) {
-            throw ApiException(
-                status = HttpStatus.FORBIDDEN,
-                code = ErrorCodes.ACCOUNT_SUSPENDED,
-                message = "Your account is suspended. Contact support to appeal before uploading.",
-            )
-        }
-        val settings = photographerSettingsRepository.findById(photographerId).orElse(null)
-            ?: throw ApiException(
-                status = HttpStatus.FORBIDDEN,
-                code = ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED,
-                message = "Submit your photographer verification before uploading.",
-            )
-        if (settings.verificationStatus != VerificationStatus.APPROVED) {
-            throw ApiException(
-                status = HttpStatus.FORBIDDEN,
-                code = ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED,
-                message = "Submit your photographer verification before uploading.",
-            )
-        }
+        val settings = accessGuard.requireApproved(photographerId, "uploading")
         return Gate(event, settings)
     }
 

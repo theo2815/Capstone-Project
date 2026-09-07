@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { MyEventForm } from "@/components/dashboard/my-event-form";
+import { RequirePhotographerReady } from "@/components/dashboard/require-photographer-ready";
 import { SiteHeader } from "@/components/layout/site-header";
 import { Kicker } from "@/components/ui/kicker";
 import { useToast } from "@/hooks/use-toast";
@@ -31,29 +32,32 @@ export default function NewEventPage() {
           <span aria-hidden="true">←</span>
           <span>Back to events</span>
         </Kicker>
-        <section className="mb-10">
-          <Kicker as="p">Your event</Kicker>
-          <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight text-ink mt-4 leading-[1.05]">
-            Create an event.
-          </h1>
-          <p className="font-sans text-base md:text-lg text-ink-soft mt-4 max-w-md">
-            A race you organise or shoot on your own. Choose paid or free,
-            public or link-only; an admin approves it before it goes live.
-          </p>
-        </section>
-        <MyEventForm
-          onDone={() => {
-            void queryClient.invalidateQueries({
-              queryKey: ["photographer", "events"],
-            });
-            showToast({
-              kind: "success",
-              message: "Sent for review. Uploads open once an admin approves it.",
-            });
-            router.push(ROUTES.DASHBOARD_EVENTS);
-          }}
-          onCancel={() => router.push(ROUTES.DASHBOARD_EVENTS)}
-        />
+        <RequirePhotographerReady>
+          <section className="mb-10">
+            <Kicker as="p">Your event</Kicker>
+            <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight text-ink mt-4 leading-[1.05]">
+              Create an event.
+            </h1>
+            <p className="font-sans text-base md:text-lg text-ink-soft mt-4 max-w-md">
+              A race you organise or shoot on your own. Choose paid or free,
+              public or link-only; an admin approves it before it goes live.
+            </p>
+          </section>
+          <MyEventForm
+            onDone={() => {
+              void queryClient.invalidateQueries({
+                queryKey: ["photographer", "events"],
+              });
+              showToast({
+                kind: "success",
+                message:
+                  "Sent for review. Uploads open once an admin approves it.",
+              });
+              router.push(ROUTES.DASHBOARD_EVENTS);
+            }}
+            onCancel={() => router.push(ROUTES.DASHBOARD_EVENTS)}
+          />
+        </RequirePhotographerReady>
       </div>
     </main>
   );

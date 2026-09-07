@@ -154,7 +154,8 @@ data class TransactionsLedgerResponse(
 
 data class VerificationSubmitResponseDto(
     val status: String, // "incomplete", "pending", "approved", "rejected"
-    val missing: List<String>?,
+    val missing: List<String>?, // human labels, e.g. "profile picture"
+    val missingCodes: List<String>? = null, // stable keys, e.g. "PROFILE_PHOTO"
     val suspendedAt: String?,
     val suspensionReason: String?
 )

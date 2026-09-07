@@ -43,6 +43,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import com.quickpitik.mobile.data.local.CameraRecoverySummary
@@ -243,6 +244,19 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     private val _verificationState = MutableStateFlow<VerificationUiState>(VerificationUiState.Loading)
     val verificationState: StateFlow<VerificationUiState> = _verificationState
 
+    // The single dashboard railguard signal. Every restricted action (create
+    // event/coupon, sync, share, profile access) reads this instead of
+    // re-deriving the approved check, so the rule lives in one place and future
+    // dashboard features inherit it. Fail-open per the 2026-09-03 ADR: an unknown
+    // / still-loading status never blocks — only a loaded, non-approved status
+    // does; the backend (PhotographerAccessGuard) is the real enforcer.
+    val dashboardApproved: StateFlow<Boolean> = verificationState
+        .map { st ->
+            val status = (st as? VerificationUiState.Success)?.verification?.status?.lowercase()
+            status == null || status == "approved"
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     // Owned-event authoring (V46).
     private val _eventFormState = MutableStateFlow<EventFormState>(EventFormState.Idle)
     val eventFormState: StateFlow<EventFormState> = _eventFormState
@@ -327,6 +341,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         fetchEarningsAndTransactions()
         fetchVerificationStatus()
         fetchBrandSettings()
+        // Load socials / payouts / regions at startup too, so the settings
+        // editor shows what the photographer already has (previously loaded only
+        // on the settings-tab tap, which left the editor's lists briefly empty).
+        fetchSettings()
         observeInboxPush()
         cameraManager.start()
         observeNotificationStopRequests()

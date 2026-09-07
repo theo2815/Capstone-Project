@@ -21,6 +21,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.photographer.PhotographerAccessGuard
 import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
@@ -306,6 +307,7 @@ class PhotoServiceAttributionTest {
             eventRepository,
             Mockito.mock(EventPhotographerRepository::class.java),
             Mockito.mock(OrderRepository::class.java),
+            PhotographerAccessGuard(userRepository, photographerSettingsRepository),
         ),
         eventRepository,
         // Trailing slash on purpose — the builder must not emit `//events`.

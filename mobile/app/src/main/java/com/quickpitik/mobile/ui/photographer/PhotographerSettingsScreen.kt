@@ -668,20 +668,15 @@ private fun VerificationSlab(
                 }
                 Text(text = body, color = Slate, style = Typography.bodyMedium)
 
-                // Requirement set aligned with the website's
-                // useAllRequiredFilled (and the backend's missing[]): COVER is
-                // required, BIO is optional. Mobile had these inverted, so the
-                // two clients disagreed about what blocks submission.
-                val localMissing = buildList {
-                    if (brandSettings?.avatarUrl.isNullOrBlank() && avatarUri == null) add("Avatar")
-                    if (brandSettings?.coverUrl.isNullOrBlank() && coverUri == null) add("Cover photo")
-                    if (brandName.isBlank()) add("Brand name")
-                    if (handle.isBlank()) add("Public handle")
-                    if (regionCode.isBlank()) add("Region")
-                    if (socials.isEmpty()) add("Social link")
-                    if (payoutAccounts.isEmpty()) add("Payout method")
-                }
-                val allMissing = (data.missing.orEmpty() + localMissing).distinct()
+                // The backend's missing[] (GET /me/photographer/verification) is
+                // the single source of truth for completeness — the same predicate
+                // the website consumes. Mobile used to UNION it with a local
+                // recomputation over socials/payoutAccounts, but those lists aren't
+                // loaded at cold start (fetchSettings isn't in the VM init, and its
+                // failures are swallowed), so a fully-set-up photographer was
+                // falsely told "Social link"/"Payout method" were missing and
+                // blocked from submitting. Trust the server's answer.
+                val allMissing = data.missing.orEmpty()
                 val isComplete = allMissing.isEmpty()
 
                 var showIncompleteDialog by remember { mutableStateOf(false) }

@@ -12,22 +12,17 @@ import com.quickpitik.entity.EventPricingMode
 import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.EventVisibility
-import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.entity.WatermarkPolicy
-import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
-import com.quickpitik.repository.PhotographerSettingsRepository
-import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.admin.AdminEventService
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.service.events.EventInputs
 import com.quickpitik.websocket.AdminInboxEvent
 import org.springframework.context.ApplicationEventPublisher
-import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
@@ -124,8 +119,7 @@ data class PricingTrio(
 class PhotographerOwnedEventService(
     private val eventRepository: EventRepository,
     private val eventPhotographerRepository: EventPhotographerRepository,
-    private val photographerSettingsRepository: PhotographerSettingsRepository,
-    private val userRepository: UserRepository,
+    private val accessGuard: PhotographerAccessGuard,
     private val eventCoverService: EventCoverService,
     private val eventDtoMapper: EventDtoMapper,
     private val eventPublisher: ApplicationEventPublisher,
@@ -135,7 +129,7 @@ class PhotographerOwnedEventService(
         req: CreateMyEventRequest,
         cover: AdminEventService.CoverUpload?,
     ): PhotographerEventDetailDto {
-        requireApprovedPhotographer(photographerId)
+        accessGuard.requireApproved(photographerId, "creating an event")
         val trio = PricingTrio.parse(req.pricingMode, req.pricePerPhoto, req.watermarkPolicy)
         val visibility = parseVisibility(req.visibility)
         val now = OffsetDateTime.now()
@@ -245,28 +239,6 @@ class PhotographerOwnedEventService(
             code = ErrorCodes.VALIDATION_ERROR,
             field = "visibility",
         )
-
-    // Same gate as uploads: a suspended or unverified photographer creates
-    // nothing (PhotoUploadService.gate keeps the same codes).
-    private fun requireApprovedPhotographer(photographerId: UUID) {
-        val user = userRepository.findById(photographerId).orElse(null)
-            ?: throw NotFoundException(code = ErrorCodes.USER_NOT_FOUND, message = "User not found")
-        if (user.suspendedAt != null) {
-            throw ApiException(
-                status = HttpStatus.FORBIDDEN,
-                code = ErrorCodes.ACCOUNT_SUSPENDED,
-                message = "Your account is suspended. Contact support to appeal before creating events.",
-            )
-        }
-        val settings = photographerSettingsRepository.findById(photographerId).orElse(null)
-        if (settings == null || settings.verificationStatus != VerificationStatus.APPROVED) {
-            throw ApiException(
-                status = HttpStatus.FORBIDDEN,
-                code = ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED,
-                message = "Submit your photographer verification before creating an event.",
-            )
-        }
-    }
 
     // Pings connected admins so the event queue refreshes without a reload —
     // same AFTER_COMMIT publish PhotographerSettingsService.submitVerification uses.

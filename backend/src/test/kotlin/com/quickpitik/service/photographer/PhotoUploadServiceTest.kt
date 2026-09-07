@@ -87,8 +87,7 @@ class PhotoUploadServiceTest {
         photoRepository,
         eventPhotographerRepository,
         eventRepository,
-        photographerSettingsRepository,
-        userRepository,
+        PhotographerAccessGuard(userRepository, photographerSettingsRepository),
         aiApiProperties,
         eventPublisher,
         // Real template over a stubbed manager: execute { } runs the callback

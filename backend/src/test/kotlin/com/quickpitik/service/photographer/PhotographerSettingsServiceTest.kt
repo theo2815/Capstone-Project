@@ -3,7 +3,11 @@ package com.quickpitik.service.photographer
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photographer.HandlePatchRequest
+import com.quickpitik.dto.photographer.MissingRequirement
 import com.quickpitik.entity.PhotographerSettings
+import com.quickpitik.entity.Role
+import com.quickpitik.entity.User
+import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -24,6 +28,7 @@ import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 // Two behaviours locked here:
 //
@@ -147,5 +152,76 @@ class PhotographerSettingsServiceTest {
         assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, ex.status)
         assertEquals(ErrorCodes.PAYLOAD_TOO_LARGE, ex.code)
         Mockito.verifyNoInteractions(storageService)
+    }
+
+    // ─── collectMissing — the single required-field predicate both clients
+    // and the admin-approve gate consume. Pins each of the 8 items so a future
+    // edit to the set can't silently drift from what the FE guards on.
+
+    private fun completeSettings() = PhotographerSettings(
+        userId = userId,
+        handle = "aira",
+        brandName = "Aira Studio",
+        coverS3Key = "covers/$userId.jpg",
+        watermarkS3Key = "watermarks/$userId.png",
+        regionCode = "07",
+        provinceCode = "0722",
+        verificationStatus = VerificationStatus.APPROVED,
+    )
+
+    private fun userNoAvatar() =
+        User(id = userId, email = "p@test.local", passwordHash = "x", name = "Aira", role = Role.PHOTOGRAPHER)
+
+    @Test
+    fun `collectMissing is empty when every required field is set`() {
+        Mockito.`when`(userRepository.findById(userId))
+            .thenReturn(Optional.of(userNoAvatar().apply { avatarS3Key = "avatars/$userId.jpg" }))
+        Mockito.`when`(socialLinkRepository.countByUserId(userId)).thenReturn(1L)
+        Mockito.`when`(payoutAccountRepository.countByUserId(userId)).thenReturn(1L)
+
+        val result = service().collectMissing(userId, completeSettings())
+
+        assertTrue(result.isComplete)
+        assertEquals(emptyList(), result.missing)
+    }
+
+    @Test
+    fun `collectMissing reports all eight requirements in order for a blank profile`() {
+        // No avatar on the user row, empty settings; an unstubbed Long mock
+        // returns 0, so socials/payouts read as absent.
+        Mockito.`when`(userRepository.findById(userId)).thenReturn(Optional.of(userNoAvatar()))
+
+        val result = service().collectMissing(userId, PhotographerSettings(userId = userId))
+
+        assertEquals(
+            listOf(
+                MissingRequirement.PROFILE_PHOTO,
+                MissingRequirement.COVER_PHOTO,
+                MissingRequirement.BRAND_NAME,
+                MissingRequirement.WATERMARK,
+                MissingRequirement.PUBLIC_HANDLE,
+                MissingRequirement.REGION,
+                MissingRequirement.SOCIAL_LINK,
+                MissingRequirement.PAYOUT_ACCOUNT,
+            ),
+            result.missing,
+        )
+        // Labels stay verbatim — the wire contract older clients still display.
+        assertEquals("profile picture", result.labels.first())
+        assertEquals("payout account", result.labels.last())
+    }
+
+    @Test
+    fun `collectMissing accepts a profile photo set via avatarUrl alone`() {
+        // The bug class: the photo lives on the user row via avatarUrl even when
+        // avatarS3Key is null — the profile-photo requirement must be satisfied.
+        Mockito.`when`(userRepository.findById(userId))
+            .thenReturn(Optional.of(userNoAvatar().apply { avatarUrl = "https://cdn/avatar.jpg" }))
+        Mockito.`when`(socialLinkRepository.countByUserId(userId)).thenReturn(1L)
+        Mockito.`when`(payoutAccountRepository.countByUserId(userId)).thenReturn(1L)
+
+        val result = service().collectMissing(userId, completeSettings())
+
+        assertTrue(result.isComplete)
     }
 }

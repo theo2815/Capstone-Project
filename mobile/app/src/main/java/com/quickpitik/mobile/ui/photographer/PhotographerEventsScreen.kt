@@ -73,8 +73,9 @@ fun PhotographerEventsScreen(
     val activeEvent by viewModel.activeEvent.collectAsState()
     val verificationState by viewModel.verificationState.collectAsState()
     val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase()
-    // null = status not loaded yet or fetch failed. Never block on unknown; the backend enforces.
-    val isApproved = currentStatus == null || currentStatus == "approved"
+    // Railguard gate comes from the shared VM flag (fail-open, one definition for
+    // every restricted action). Never block on unknown; the backend enforces.
+    val isApproved by viewModel.dashboardApproved.collectAsState()
     val isPending = currentStatus == "pending"
     var showSetupAlert by remember { mutableStateOf(false) }
     var alertIsPending by remember { mutableStateOf(false) }

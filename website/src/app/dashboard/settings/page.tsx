@@ -44,11 +44,13 @@ import {
   submitVerification,
   withdrawVerification,
 } from "@/lib/api-photographer-settings";
+import { syncVerificationNow } from "@/lib/photographer-verification-sync";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAuthStore } from "@/store/auth-store";
 import { useUserMediaStore } from "@/store/user-media-store";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
+import type { User } from "@/types/user";
 import {
   ACCEPTED_IMAGE_MIME,
   ImageProcessingError,
@@ -330,6 +332,9 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       tasks.push({
         label: "Profile picture",
         run: () => uploadAvatar(pending.avatar!),
+        // Write the fresh User (avatarUrl populated) back to auth-store so the
+        // header + AvatarDisc show the new photo in-session, not the stale one.
+        onSuccess: (result) => useAuthStore.getState().setUser(result as User),
       });
     }
 
@@ -569,6 +574,9 @@ function EditModeProvider({ children }: { children: ReactNode }) {
           watermark: null,
         };
         setEditing(false);
+        // Refresh completeness from the BE now the save landed, so the Submit
+        // button + banners reflect it without waiting for the next focus/poll.
+        void syncVerificationNow();
         // Name what was saved when the whole batch is one kind of change —
         // "Cover saved." tells the photographer their edit landed, where the
         // generic line left them checking. Dedupe mirrors the failure branch
@@ -1162,29 +1170,15 @@ function ReadyToSubmitPill({ onClick }: { onClick: () => void }) {
   );
 }
 
-// Subscribes to every required field so consumers re-render whenever any
-// changes. The store's `isComplete()` getter alone won't trigger updates —
-// Zustand only fires re-renders when the subscribed slice (the function
-// reference) changes, not when the underlying fields change. Profile
-// picture lives in useUserMediaStore (shared with the runner account flow).
+// Completeness is the backend's verdict — GET /me/photographer/verification's
+// missing[], mirrored into the store by photographer-verification-sync. The
+// client no longer recomputes it from individual field stores; that drift
+// (especially reading the avatar from the deprecated useUserMediaStore) was the
+// "everything filled but still says incomplete" bug. Subscribing to
+// verificationMissing re-renders consumers the moment the server answer lands.
 function useAllRequiredFilled(): boolean {
-  const avatar = useUserMediaStore((s) => s.avatar);
-  const cover = usePhotographerSettingsStore((s) => s.cover);
-  const brandName = usePhotographerSettingsStore((s) => s.brandName);
-  const watermark = usePhotographerSettingsStore((s) => s.watermark);
-  const handle = usePhotographerSettingsStore((s) => s.handle);
-  const region = usePhotographerSettingsStore((s) => s.region);
-  const socials = usePhotographerSettingsStore((s) => s.socials);
-  const payouts = usePhotographerSettingsStore((s) => s.payouts);
-  return (
-    avatar !== null &&
-    cover !== null &&
-    brandName.trim().length > 0 &&
-    watermark !== null &&
-    handle.trim().length > 0 &&
-    region !== null &&
-    socials.some((sl) => sl.url.trim().length > 0) &&
-    payouts.some((p) => p.isPrimary)
+  return usePhotographerSettingsStore(
+    (s) => s.verificationMissing !== null && s.verificationMissing.length === 0,
   );
 }
 
@@ -1357,11 +1351,17 @@ function PublicProfileSlab() {
 
   // Readiness pulls each required piece directly from its store so the chip
   // re-renders the moment any of them changes (no save needed).
-  const avatar = useUserMediaStore((s) => s.avatar);
+  // Live per-field feedback while editing: the staged preview (useUserMediaStore)
+  // OR the saved canonical avatar (auth-store.user.avatarUrl) counts — reading
+  // only the staged store was why a saved avatar still showed "Required".
+  const avatarUrl = useAuthStore((s) => s.user?.avatarUrl ?? null);
+  const storeAvatar = useUserMediaStore((s) => s.avatar);
   const cover = usePhotographerSettingsStore((s) => s.cover);
   const brandName = usePhotographerSettingsStore((s) => s.brandName);
   const ready =
-    avatar !== null && cover !== null && brandName.trim().length > 0;
+    (avatarUrl !== null || storeAvatar !== null) &&
+    cover !== null &&
+    brandName.trim().length > 0;
 
   return (
     <Slab

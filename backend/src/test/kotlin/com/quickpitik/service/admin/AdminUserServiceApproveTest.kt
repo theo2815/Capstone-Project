@@ -3,6 +3,7 @@ package com.quickpitik.service.admin
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photographer.IncompleteFields
+import com.quickpitik.dto.photographer.MissingRequirement
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.PhotographerMessage
 import com.quickpitik.entity.PhotographerMessageKind
@@ -111,7 +112,7 @@ class AdminUserServiceApproveTest {
         val s = settings()
         stubLookups(s)
         Mockito.`when`(photographerSettingsService.collectMissing(anyArg(), anyArg()))
-            .thenReturn(IncompleteFields(missing = listOf("watermark", "payout account")))
+            .thenReturn(IncompleteFields(missing = listOf(MissingRequirement.WATERMARK, MissingRequirement.PAYOUT_ACCOUNT)))
 
         val ex = assertFailsWith<ApiException> { service().approve(adminId, photographerId) }
 

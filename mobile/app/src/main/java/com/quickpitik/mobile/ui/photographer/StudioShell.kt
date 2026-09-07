@@ -173,8 +173,9 @@ fun StudioTabScaffold(
     val watchState by viewModel.shutterWatchState.collectAsState()
     val verificationState by viewModel.verificationState.collectAsState()
     val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase()
-    // null = status not loaded yet or fetch failed. Never block on unknown; the backend enforces.
-    val isApproved = currentStatus == null || currentStatus == "approved"
+    // Railguard gate comes from the shared VM flag (fail-open, one definition for
+    // every restricted action). Never block on unknown; the backend enforces.
+    val isApproved by viewModel.dashboardApproved.collectAsState()
     val isPending = currentStatus == "pending"
     val unreadCount = remember(messages) { messages.count { it.readAt == null } }
     var showNotifDialog by remember { mutableStateOf(false) }
@@ -1013,7 +1014,7 @@ fun StudioSetupRequiredDialog(
         },
         title = {
             Text(
-                text = if (isPending) "Verification Review Pending" else "Onboarding Setup Required",
+                text = if (isPending) "Review in progress" else "Finish your setup first",
                 fontWeight = FontWeight.Bold,
                 color = Ink,
             )
@@ -1021,9 +1022,9 @@ fun StudioSetupRequiredDialog(
         text = {
             Text(
                 text = if (isPending) {
-                    "Your professional studio setup is currently being reviewed by an administrator. Please wait for approval before covering events."
+                    "Your profile is in — an admin is reviewing it. You'll be able to cover events as soon as it's approved, usually within 1–2 days."
                 } else {
-                    "Your studio setup is not approved. Please complete the setup on the Settings tab and wait for administrator approval."
+                    "Your photographer profile isn't ready yet. Open the Settings tab to complete your required settings; you'll be able to use the dashboard once you're set up and an admin approves you."
                 },
                 color = Ink,
             )

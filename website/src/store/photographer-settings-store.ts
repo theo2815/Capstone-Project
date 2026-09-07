@@ -156,6 +156,14 @@ export interface PhotographerSettings {
   watermark: WatermarkMedia | null;
   handle: string;
   verificationStatus: VerificationStatus;
+  /** Missing required-setting labels from GET /me/photographer/verification
+   *  (e.g. "profile picture"). null ⇒ not yet synced this session; [] ⇒
+   *  complete. The single source of truth for completeness — the client never
+   *  recomputes it from local fields. */
+  verificationMissing: string[] | null;
+  /** Stable machine codes paired 1:1 with verificationMissing (e.g.
+   *  "PROFILE_PHOTO"), for mapping a missing item to its settings section. */
+  verificationMissingCodes: string[] | null;
   /** ISO timestamp when admin suspended the account, or null. Orthogonal
    *  to verificationStatus — suspended takes priority for gating + banners. */
   suspendedAt: string | null;
@@ -173,6 +181,7 @@ interface PhotographerSettingsState extends PhotographerSettings {
   setWatermark: (watermark: WatermarkMedia | null) => void;
   setHandle: (handle: string) => void;
   setVerificationStatus: (status: VerificationStatus) => void;
+  setVerificationMissing: (missing: string[], codes: string[]) => void;
   setSuspension: (suspendedAt: string | null, reason: string | null) => void;
   setRegion: (region: PhotographerRegion | null) => void;
   addSocial: (platform: SocialPlatform, url: string) => string;
@@ -202,6 +211,8 @@ const SEED: PhotographerSettings = {
   watermark: null,
   handle: "",
   verificationStatus: "incomplete",
+  verificationMissing: null,
+  verificationMissingCodes: null,
   suspendedAt: null,
   suspensionReason: null,
   region: null,
@@ -232,6 +243,8 @@ export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
       setHandle: (handle) => set({ handle: handle.trim().toLowerCase() }),
       setVerificationStatus: (verificationStatus) =>
         set({ verificationStatus }),
+      setVerificationMissing: (verificationMissing, verificationMissingCodes) =>
+        set({ verificationMissing, verificationMissingCodes }),
       setSuspension: (suspendedAt, suspensionReason) =>
         set({ suspendedAt, suspensionReason }),
       setRegion: (region) => set({ region }),
@@ -305,17 +318,12 @@ export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
           }
           return { payouts: filtered };
         }),
+      // Backend is the single source of truth: complete ⇔ the server reported
+      // an empty missing[]. null (not yet synced) reads as not-complete so a
+      // fresh session never briefly claims readiness before the server answers.
       isComplete: () => {
-        const s = get();
-        return (
-          s.cover !== null &&
-          s.brandName.trim().length > 0 &&
-          s.watermark !== null &&
-          s.handle.trim().length > 0 &&
-          s.region !== null &&
-          s.socials.some((sl) => sl.url.trim().length > 0) &&
-          s.payouts.some((p) => p.isPrimary)
-        );
+        const m = get().verificationMissing;
+        return m !== null && m.length === 0;
       },
       reset: () => set(SEED),
     }),

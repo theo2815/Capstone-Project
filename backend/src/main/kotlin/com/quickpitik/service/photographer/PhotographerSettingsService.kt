@@ -6,6 +6,7 @@ import com.quickpitik.dto.photographer.BrandPatchRequest
 import com.quickpitik.dto.photographer.HandlePatchRequest
 import com.quickpitik.dto.photographer.IncompleteFields
 import com.quickpitik.dto.photographer.MediaUploadResponseDto
+import com.quickpitik.dto.photographer.MissingRequirement
 import com.quickpitik.dto.photographer.RegionPatchRequest
 import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
 import com.quickpitik.entity.PhotographerSettings
@@ -396,12 +397,13 @@ class PhotographerSettingsService(
     private fun buildVerificationResponse(
         userId: UUID,
         status: VerificationStatus,
-        missing: List<String>? = null,
+        missing: List<MissingRequirement>? = null,
     ): VerificationSubmitResponseDto {
         val user = userRepository.findById(userId).orElse(null)
         return VerificationSubmitResponseDto(
             status = status.toWire(),
-            missing = missing,
+            missing = missing?.map { it.label },
+            missingCodes = missing?.map { it.name },
             suspendedAt = user?.suspendedAt?.toString(),
             suspensionReason = user?.suspensionReason,
         )
@@ -420,39 +422,37 @@ class PhotographerSettingsService(
     fun collectMissing(userId: UUID, settings: PhotographerSettings? = null): IncompleteFields {
         val s = settings ?: photographerSettingsRepository.findById(userId).orElse(null)
         val user = userRepository.findById(userId).orElse(null)
-        val missing = mutableListOf<String>()
+        val missing = mutableListOf<MissingRequirement>()
 
         // Avatar — User.avatar_s3_key OR avatar_url. Stored on the user row,
-        // not photographer_settings; the FE pulls it from useUserMediaStore
-        // which mirrors the same backing data.
+        // not photographer_settings.
         if (user?.avatarS3Key.isNullOrBlank() && user?.avatarUrl.isNullOrBlank()) {
-            missing.add("profile picture")
+            missing.add(MissingRequirement.PROFILE_PHOTO)
         }
         // Cover banner — require an uploaded image, not just a gradient
-        // fallback (FE useAllRequiredFilled checks for CoverMedia, which
-        // only exists when an actual file was uploaded).
+        // fallback (a cover gradient without an uploaded file does not count).
         if (s?.coverS3Key.isNullOrBlank()) {
-            missing.add("cover banner")
+            missing.add(MissingRequirement.COVER_PHOTO)
         }
         if (s?.brandName.isNullOrBlank()) {
-            missing.add("brand name")
+            missing.add(MissingRequirement.BRAND_NAME)
         }
         // Watermark — same as cover: require an uploaded image, not just a
         // label placeholder.
         if (s?.watermarkS3Key.isNullOrBlank()) {
-            missing.add("watermark")
+            missing.add(MissingRequirement.WATERMARK)
         }
         if (s?.handle.isNullOrBlank()) {
-            missing.add("public handle")
+            missing.add(MissingRequirement.PUBLIC_HANDLE)
         }
         if (s == null || s.regionCode.isNullOrBlank() || s.provinceCode.isNullOrBlank()) {
-            missing.add("region")
+            missing.add(MissingRequirement.REGION)
         }
         if (socialLinkRepository.countByUserId(userId) == 0L) {
-            missing.add("social link")
+            missing.add(MissingRequirement.SOCIAL_LINK)
         }
         if (payoutAccountRepository.countByUserId(userId) == 0L) {
-            missing.add("payout account")
+            missing.add(MissingRequirement.PAYOUT_ACCOUNT)
         }
         return IncompleteFields(missing = missing)
     }

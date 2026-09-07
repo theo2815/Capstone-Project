@@ -49,6 +49,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.photographer.PhotographerAccessGuard
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.support.testTransactionTemplate
 import org.junit.jupiter.api.BeforeEach
@@ -180,6 +181,10 @@ class OrderServiceCheckoutTest {
                 eventRepository,
                 Mockito.mock(EventPhotographerRepository::class.java),
                 orderRepository,
+                PhotographerAccessGuard(
+                    Mockito.mock(UserRepository::class.java),
+                    Mockito.mock(PhotographerSettingsRepository::class.java),
+                ),
             ),
             webhookService,
             checkoutReconciler,
