@@ -1,6 +1,7 @@
 package com.quickpitik.service.earnings
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.earnings.PayoutBalanceAccountDto
 import com.quickpitik.dto.earnings.PayoutBalanceDto
 import com.quickpitik.dto.earnings.PhotographerPayoutDto
@@ -14,6 +15,7 @@ import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.TransactionRepository
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -39,8 +41,8 @@ import java.util.UUID
  *
  * Withdraw is allowed only when the cycle is on hold — the held state is
  * specifically the signal for the photographer to act (e.g. update payout
- * account). Hard-delete on withdraw frees the photographer to re-request
- * once the underlying issue is fixed; the audit log row (if any) persists.
+ * account). Withdraw SOFT-cancels (status → cancelled), preserving the row for
+ * the audit trail while freeing the photographer to request again.
  */
 @Service
 @Transactional
@@ -49,11 +51,12 @@ class PayoutRequestService(
     private val transactionRepository: TransactionRepository,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val payoutAccountRepository: PayoutAccountRepository,
+    private val platformProperties: PlatformProperties,
 ) {
 
     @Transactional(readOnly = true)
     fun getBalance(photographerId: UUID): PayoutBalanceDto {
-        val balance = computeUnpaidBalance(photographerId)
+        val balances = computeBalances(photographerId)
         val open = payoutCycleRepository.findFirstByPhotographerIdAndStatusWireIn(
             photographerId,
             OPEN_STATUS_WIRES,
@@ -62,7 +65,9 @@ class PayoutRequestService(
         // here lets the FE gate on the authoritative DB state, not its store.
         val primary = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(photographerId)
         return PayoutBalanceDto(
-            unpaidBalance = balance,
+            unpaidBalance = balances.available,
+            clearing = balances.clearing,
+            reserved = balances.reserved,
             minimum = MINIMUM,
             hasOpenRequest = open != null,
             openRequest = open?.toDto(),
@@ -91,7 +96,7 @@ class PayoutRequestService(
             )
         }
 
-        val balance = computeUnpaidBalance(photographerId)
+        val balance = computeBalances(photographerId).available
         if (balance < MINIMUM) {
             throw ValidationException(
                 code = ErrorCodes.PAYOUT_BELOW_MINIMUM,
@@ -139,18 +144,26 @@ class PayoutRequestService(
         cycle.status = PayoutCycleStatus.PENDING
         cycle.settledAt = null
 
-        return payoutCycleRepository.save(cycle).toDto()
+        return try {
+            payoutCycleRepository.save(cycle).toDto()
+        } catch (ex: DataIntegrityViolationException) {
+            // Lost the race: the partial unique index uq_payout_open_per_photographer
+            // rejected a second concurrent open cycle. Same outcome as the findFirst
+            // pre-check above, so surface the same clean 409 (not a raw 500).
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.PAYOUT_REQUEST_OPEN,
+                message = "You already have an open payout request",
+            )
+        }
     }
 
     fun withdraw(photographerId: UUID, cycleId: String) {
-        // Idempotent: withdraw hard-deletes, so a double-click (or any client
-        // retry) would otherwise 404 on the second call for work that already
-        // succeeded. Returning silently matches every sibling photographer-scoped
-        // delete — SelfieService.delete, SocialLinkService.delete,
-        // PayoutAccountService.delete. Ownership is still gated because the
-        // lookup is by (id, photographerId).
+        // Ownership gated by the (id, photographerId) lookup.
         val cycle = payoutCycleRepository.findByIdAndPhotographerId(cycleId, photographerId)
-            ?: return
+            ?: return // gone entirely → idempotent no-op (client retry after success)
+        // Already cancelled → idempotent no-op (double-click / retry after success).
+        if (cycle.status == PayoutCycleStatus.CANCELLED) return
         // A non-HELD cycle is a genuine state error, not a replay — keep the 409.
         if (cycle.status != PayoutCycleStatus.HELD) {
             throw ApiException(
@@ -159,13 +172,44 @@ class PayoutRequestService(
                 message = "Can only withdraw a request that is on hold",
             )
         }
-        payoutCycleRepository.delete(cycle)
+        // Soft-cancel: keep the row for the audit trail (was a hard delete, which
+        // destroyed the history). CANCELLED is terminal + not "open", so it releases
+        // the reservation and frees the photographer to request again.
+        cycle.status = PayoutCycleStatus.CANCELLED
+        payoutCycleRepository.save(cycle)
     }
 
-    private fun computeUnpaidBalance(photographerId: UUID): BigDecimal {
+    private data class Balances(
+        val available: BigDecimal,
+        val clearing: BigDecimal,
+        val reserved: BigDecimal,
+    )
+
+    /**
+     * Withdrawable ("available") balance and its two withheld parts, all derived
+     * from the ledger — nothing is stored. `available = max(0, cleared − paid −
+     * reserved)`:
+     *   - cleared: sales aged past the clearing window PLUS all refunds (refunds
+     *     bite immediately). Money younger than the window is not withdrawable.
+     *   - paid: already-settled cycles.
+     *   - reserved: amounts tied up in open cycles (pending/held).
+     * `clearing` is the not-yet-withdrawable remainder (lifetime − cleared). The
+     * non-negative floor stops a refund-after-payout from showing (or paying) a
+     * negative balance.
+     *
+     * NOTE: read here WITHOUT a lock — Phase 2 adds the pessimistic lock + the
+     * partial unique index that make concurrent requests safe. This method is the
+     * amount source of truth; the client never supplies the amount.
+     */
+    private fun computeBalances(photographerId: UUID): Balances {
+        val cutoff = OffsetDateTime.now().minus(platformProperties.payoutClearingWindow)
+        val cleared = transactionRepository.sumCleared(photographerId, cutoff)
         val lifetime = transactionRepository.sumLifetime(photographerId)
         val paid = payoutCycleRepository.sumPaidByPhotographer(photographerId)
-        return lifetime.subtract(paid)
+        val reserved = payoutCycleRepository.sumReservedByPhotographer(photographerId)
+        val available = cleared.subtract(paid).subtract(reserved).max(BigDecimal.ZERO)
+        val clearing = lifetime.subtract(cleared).max(BigDecimal.ZERO)
+        return Balances(available = available, clearing = clearing, reserved = reserved)
     }
 
     private companion object {

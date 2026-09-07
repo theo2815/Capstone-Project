@@ -1,6 +1,7 @@
 package com.quickpitik.service.earnings
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.exception.ApiException
@@ -46,6 +47,7 @@ class PayoutRequestServiceWithdrawTest {
         transactionRepository,
         photographerSettingsRepository,
         payoutAccountRepository,
+        PlatformProperties(),
     )
 
     private fun cycle(status: PayoutCycleStatus): PayoutCycle {
@@ -60,24 +62,29 @@ class PayoutRequestServiceWithdrawTest {
     }
 
     @Test
-    fun `withdrawing an already-withdrawn cycle is a silent no-op, not a 404`() {
+    fun `withdrawing a cycle that no longer exists is a silent no-op, not a 404`() {
         Mockito.`when`(payoutCycleRepository.findByIdAndPhotographerId(cycleId, photographerId))
             .thenReturn(null)
 
         // The assertion is simply that this does not throw.
         service().withdraw(photographerId, cycleId)
 
+        Mockito.verify(payoutCycleRepository, Mockito.never()).save(anyArg())
         Mockito.verify(payoutCycleRepository, Mockito.never()).delete(anyArg())
     }
 
     @Test
-    fun `withdrawing a held cycle deletes it`() {
+    fun `withdrawing a held cycle soft-cancels it and keeps the row`() {
+        val held = cycle(PayoutCycleStatus.HELD)
         Mockito.`when`(payoutCycleRepository.findByIdAndPhotographerId(cycleId, photographerId))
-            .thenReturn(cycle(PayoutCycleStatus.HELD))
+            .thenReturn(held)
 
         service().withdraw(photographerId, cycleId)
 
-        Mockito.verify(payoutCycleRepository).delete(anyArg())
+        // Soft-cancel: saved as CANCELLED (audit row preserved), never hard-deleted.
+        assertEquals(PayoutCycleStatus.CANCELLED, held.status)
+        Mockito.verify(payoutCycleRepository).save(held)
+        Mockito.verify(payoutCycleRepository, Mockito.never()).delete(anyArg())
     }
 
     @Test
@@ -88,6 +95,17 @@ class PayoutRequestServiceWithdrawTest {
         val ex = assertFailsWith<ApiException> { service().withdraw(photographerId, cycleId) }
 
         assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        Mockito.verify(payoutCycleRepository, Mockito.never()).save(anyArg())
         Mockito.verify(payoutCycleRepository, Mockito.never()).delete(anyArg())
+    }
+
+    @Test
+    fun `withdrawing an already-cancelled cycle is an idempotent no-op`() {
+        Mockito.`when`(payoutCycleRepository.findByIdAndPhotographerId(cycleId, photographerId))
+            .thenReturn(cycle(PayoutCycleStatus.CANCELLED))
+
+        service().withdraw(photographerId, cycleId) // must not throw
+
+        Mockito.verify(payoutCycleRepository, Mockito.never()).save(anyArg())
     }
 }

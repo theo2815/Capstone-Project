@@ -282,6 +282,9 @@ app:
     # Largest photographer coupon (whole percent of the photographer's share).
     # The platform cut never moves, whatever this is set to.
     coupon-max-percent: ${COUPON_MAX_PERCENT:50}
+    # Earnings clear (become withdrawable) this long after the sale, so a refund
+    # in the window is absorbed before payout. Align to the refund window.
+    payout-clearing-window: ${PAYOUT_CLEARING_WINDOW:P7D}
     # Upper bound for emailed bundle capabilities and migrated legacy tokens.
     share-token-ttl: ${SHARE_TOKEN_TTL:P90D}
     order-return-ttl: ${ORDER_RETURN_TOKEN_TTL:PT35M}

@@ -140,7 +140,16 @@ data class SubmitPayoutReportRequest(
 // approved / held — null when the photographer has none, in which case the
 // hero shows the request CTA gated on unpaidBalance >= minimum.
 data class PayoutBalanceDto(
+    // Withdrawable now = max(0, cleared − paid − reserved). Tightened in Phase 1
+    // to be clearing- and reservation-aware; clients gate the request CTA on
+    // this, so it must be the true available amount, never lifetime earnings.
     val unpaidBalance: BigDecimal,
+    // Earned but still inside the clearing window — becomes withdrawable once it
+    // ages past app.platform.payout-clearing-window.
+    val clearing: BigDecimal,
+    // Tied up in an open request (pending/held); already claimed, so excluded
+    // from unpaidBalance.
+    val reserved: BigDecimal,
     val minimum: BigDecimal,
     val hasOpenRequest: Boolean,
     val openRequest: PhotographerPayoutDto?,

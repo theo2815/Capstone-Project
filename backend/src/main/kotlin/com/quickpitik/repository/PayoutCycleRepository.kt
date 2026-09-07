@@ -83,6 +83,20 @@ interface PayoutCycleRepository : JpaRepository<PayoutCycle, String> {
     )
     fun sumPaidByPhotographer(@Param("photographerId") photographerId: UUID): BigDecimal
 
+    // Amount tied up in OPEN cycles — reserved against the available balance so a
+    // photographer can't request funds already committed to a pending/held cycle.
+    // Includes 'held' (still committed), unlike sumOpenAmount which is a display
+    // figure that hides held. Phase 2's terminal states (cancelled/rejected/
+    // failed/returned) must stay OUT of this list — they release the reservation.
+    @Query(
+        """
+        SELECT COALESCE(SUM(c.amountPhp), 0) FROM PayoutCycle c
+        WHERE c.photographerId = :photographerId
+          AND c.statusWire IN ('scheduled', 'pending', 'approved', 'processing', 'held')
+        """,
+    )
+    fun sumReservedByPhotographer(@Param("photographerId") photographerId: UUID): BigDecimal
+
     // Admin payout queue list. The FE filter is one of pending_review |
     // approved | held | paid; we map "pending_review" → DB "pending" since
     // the DB enum is shared with the photographer-facing surface (which

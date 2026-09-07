@@ -516,12 +516,19 @@ class AdminPayoutService(
 
     private fun toAdminWireStatus(cycle: PayoutCycle): String {
         return when (cycle.status) {
-            // approved is settledAt-set + still PENDING; before that it's
-            // pending_review for the admin queue.
+            // Legacy derived approval: settledAt-set + still PENDING reads as
+            // "approved"; before that it's pending_review. (Phase 4 makes APPROVED
+            // a real stored state — mapped directly below too.)
             PayoutCycleStatus.PENDING -> if (cycle.settledAt != null) "approved" else "pending_review"
             PayoutCycleStatus.SCHEDULED -> "pending_review"
+            PayoutCycleStatus.APPROVED -> "approved"
+            PayoutCycleStatus.PROCESSING -> "processing"
             PayoutCycleStatus.HELD -> "held"
             PayoutCycleStatus.PAID -> "paid"
+            PayoutCycleStatus.FAILED -> "failed"
+            PayoutCycleStatus.RETURNED -> "returned"
+            PayoutCycleStatus.REJECTED -> "rejected"
+            PayoutCycleStatus.CANCELLED -> "cancelled"
         }
     }
 
