@@ -250,7 +250,12 @@ class PayoutRequestService(
 
     private companion object {
         val MINIMUM: BigDecimal = BigDecimal("500")
-        val OPEN_STATUS_WIRES = listOf("pending", "held")
+        // MUST match the V53 uq_payout_open_per_photographer index AND
+        // sumReservedByPhotographer — all three define "open" (funds reserved,
+        // slot locked). If these drift, an approved/processing cycle stops
+        // reading as an open request: the hero shows "Available to request" and
+        // the next request() 409s on the index instead of the clean pre-check.
+        val OPEN_STATUS_WIRES = listOf("scheduled", "pending", "approved", "processing", "held")
         val EPOCH: OffsetDateTime = OffsetDateTime.parse("1970-01-01T00:00:00Z")
     }
 }

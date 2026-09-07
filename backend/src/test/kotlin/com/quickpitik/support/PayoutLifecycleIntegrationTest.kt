@@ -96,6 +96,23 @@ class PayoutLifecycleIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `an approved cycle still counts as an open request`() {
+        // Regression: OPEN_STATUS_WIRES must match the V53 unique index +
+        // sumReservedByPhotographer open-set. Once admin approves a request its
+        // status leaves 'pending', but the funds are still reserved and the index
+        // still locks the slot — so the photographer's balance must keep reading
+        // hasOpenRequest=true (hero shows the in-flight payout), not flip back to
+        // "Available to request" and then 409 on the next request.
+        val pid = newPhotographer()
+        payoutCycleRepository.saveAndFlush(cycle(pid, PayoutCycleStatus.APPROVED))
+
+        val balance = payoutRequestService.getBalance(pid)
+
+        assertTrue(balance.hasOpenRequest, "an approved cycle must read as an open request")
+        assertEquals(PayoutCycleStatus.APPROVED.wire, balance.openRequest?.status)
+    }
+
+    @Test
     fun `an open cycle after a cancelled one is permitted (soft-cancel frees the slot)`() {
         val pid = newPhotographer()
         // Simulate request -> hold -> withdraw(cancel): the cancelled row stays
