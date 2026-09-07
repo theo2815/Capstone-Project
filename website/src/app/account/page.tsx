@@ -19,6 +19,7 @@ import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useToast } from "@/hooks/use-toast";
 import { FieldError } from "@/components/ui/field-error";
+import { Eye, EyeOff } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { resetUserScopedStores } from "@/lib/auth-reset";
 import {
@@ -662,20 +663,35 @@ function PasswordField({
   error?: string | null;
   onChange: (v: string) => void;
 }) {
+  const [showPassword, setShowPassword] = useState(false);
   const errorId = `${id}-error`;
   return (
     <FieldShell id={id} label={label}>
-      <input
-        id={id}
-        type="password"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="••••••••"
-        autoComplete={autoComplete}
-        aria-invalid={!!error}
-        aria-describedby={error ? errorId : undefined}
-        className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-4 text-lg text-ink placeholder:text-slate-soft transition-colors"
-      />
+      <div className="relative">
+        <input
+          id={id}
+          type={showPassword ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="••••••••"
+          autoComplete={autoComplete}
+          aria-invalid={!!error}
+          aria-describedby={error ? errorId : undefined}
+          className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-4 pr-10 text-lg text-ink placeholder:text-slate-soft transition-colors"
+        />
+        <button
+          type="button"
+          onClick={() => setShowPassword((prev) => !prev)}
+          aria-label={showPassword ? "Hide password" : "Show password"}
+          className="absolute right-0 top-1/2 -translate-y-1/2 p-2 text-slate hover:text-ink transition-colors focus:outline-none focus-visible:text-fresh"
+        >
+          {showPassword ? (
+            <EyeOff className="size-5" aria-hidden="true" />
+          ) : (
+            <Eye className="size-5" aria-hidden="true" />
+          )}
+        </button>
+      </div>
       <FieldError message={error} id={errorId} density="tight" />
     </FieldShell>
   );

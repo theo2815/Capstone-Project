@@ -11,6 +11,7 @@ import {
   validateResetCode,
 } from "@/lib/auth-validation";
 import { FieldError } from "@/components/ui/field-error";
+import { Eye, EyeOff } from "lucide-react";
 
 // The whole OTP reset flow lives on this one page: request a code, verify it,
 // set the new password. Step idiom follows checkout-modal. The continuation
@@ -36,6 +37,8 @@ export function ForgotPasswordForm() {
   const [resetToken, setResetToken] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [codeError, setCodeError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
@@ -248,21 +251,35 @@ export function ForgotPasswordForm() {
                 min. 8 characters
               </span>
             </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                if (passwordError) setPasswordError(null);
-                if (submitError) setSubmitError(null);
-              }}
-              placeholder="••••••••"
-              autoComplete="new-password"
-              aria-invalid={!!passwordError}
-              aria-describedby={passwordError ? "password-error" : undefined}
-              className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
-            />
+            <div className="relative">
+              <input
+                id="password"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (passwordError) setPasswordError(null);
+                  if (submitError) setSubmitError(null);
+                }}
+                placeholder="••••••••"
+                autoComplete="new-password"
+                aria-invalid={!!passwordError}
+                aria-describedby={passwordError ? "password-error" : undefined}
+                className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 pr-10 text-base text-ink placeholder:text-slate-soft transition-colors"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                className="absolute right-0 top-1/2 -translate-y-1/2 p-2 text-slate hover:text-ink transition-colors focus:outline-none focus-visible:text-fresh"
+              >
+                {showPassword ? (
+                  <EyeOff className="size-4" aria-hidden="true" />
+                ) : (
+                  <Eye className="size-4" aria-hidden="true" />
+                )}
+              </button>
+            </div>
             <FieldError
               message={passwordError}
               id="password-error"
@@ -274,21 +291,35 @@ export function ForgotPasswordForm() {
             <label htmlFor="confirm-password" className="kicker">
               Confirm new password
             </label>
-            <input
-              id="confirm-password"
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => {
-                setConfirmPassword(e.target.value);
-                if (confirmError) setConfirmError(null);
-                if (submitError) setSubmitError(null);
-              }}
-              placeholder="••••••••"
-              autoComplete="new-password"
-              aria-invalid={!!confirmError}
-              aria-describedby={confirmError ? "confirm-error" : undefined}
-              className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
-            />
+            <div className="relative">
+              <input
+                id="confirm-password"
+                type={showConfirmPassword ? "text" : "password"}
+                value={confirmPassword}
+                onChange={(e) => {
+                  setConfirmPassword(e.target.value);
+                  if (confirmError) setConfirmError(null);
+                  if (submitError) setSubmitError(null);
+                }}
+                placeholder="••••••••"
+                autoComplete="new-password"
+                aria-invalid={!!confirmError}
+                aria-describedby={confirmError ? "confirm-error" : undefined}
+                className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 pr-10 text-base text-ink placeholder:text-slate-soft transition-colors"
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword((prev) => !prev)}
+                aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                className="absolute right-0 top-1/2 -translate-y-1/2 p-2 text-slate hover:text-ink transition-colors focus:outline-none focus-visible:text-fresh"
+              >
+                {showConfirmPassword ? (
+                  <EyeOff className="size-4" aria-hidden="true" />
+                ) : (
+                  <Eye className="size-4" aria-hidden="true" />
+                )}
+              </button>
+            </div>
             <FieldError
               message={confirmError}
               id="confirm-error"
