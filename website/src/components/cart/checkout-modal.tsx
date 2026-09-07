@@ -13,6 +13,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
+import { useOwnedPhotoIds } from "@/hooks/use-owned-photo-ids";
 import { useConfirmationStore } from "@/store/confirmation-store";
 import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { useConfirmation } from "@/hooks/use-confirmation";
@@ -79,6 +80,7 @@ type Outcome =
   | { kind: "expired" }
   | { kind: "failed" }
   | { kind: "cancelled" }
+  | { kind: "already_purchased" }
   | { kind: "error"; message: string };
 
 interface QrPayment {
@@ -116,7 +118,10 @@ export function CheckoutModal({
   const items = useCartStore((s) => s.items);
   const total = useCartStore((s) => s.total());
   const clearCart = useCartStore((s) => s.clear);
+  const removeItem = useCartStore((s) => s.removeItem);
   const queryClient = useQueryClient();
+  // Photos the runner already owns — gates the pay button + brands the 409.
+  const ownedPhotoIds = useOwnedPhotoIds();
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const authUser = useAuthStore((s) => s.user);
@@ -382,6 +387,20 @@ export function CheckoutModal({
       });
       setStep("qr");
     } catch (err) {
+      // The client usually catches an already-owned photo in the cart, but a
+      // guest (no /me/orders) or a photo bought mid-checkout can still trip the
+      // server gate — brand that 409 instead of the generic QR-failure copy.
+      if (
+        err instanceof ApiError &&
+        err.errors.some((e) => e.code === "ALREADY_PURCHASED")
+      ) {
+        // Refresh owned photos so the just-detected duplicates get flagged in
+        // the summary and the pay button gates — the runner sees which to drop.
+        queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
+        setOutcome({ kind: "already_purchased" });
+        setStep("payment");
+        return;
+      }
       setOutcome({
         kind: "error",
         message:
@@ -646,6 +665,8 @@ export function CheckoutModal({
               total={payable}
               itemCount={itemCount}
               items={items}
+              ownedPhotoIds={ownedPhotoIds}
+              onRemoveItem={removeItem}
               coupon={coupon}
               couponInput={couponInput}
               onCouponInputChange={(v) => {
@@ -813,6 +834,12 @@ const OUTCOME_COPY: Record<Outcome["kind"], { tone: NoticeTone; kicker: string; 
     title: "Couldn't create a QR code",
     body: "",
   },
+  already_purchased: {
+    tone: "neutral",
+    kicker: "Already yours",
+    title: "You already own this",
+    body: "Re-download it free from your Orders or your emailed receipt. Remove it from this order to check out the rest.",
+  },
 };
 
 function IdentifyStep({
@@ -908,6 +935,8 @@ function PaymentStep({
   total,
   itemCount,
   items,
+  ownedPhotoIds,
+  onRemoveItem,
   coupon,
   couponInput,
   onCouponInputChange,
@@ -926,6 +955,8 @@ function PaymentStep({
   total: number;
   itemCount: number;
   items: CartItem[];
+  ownedPhotoIds: Set<string>;
+  onRemoveItem: (photoId: string) => void;
   coupon: CouponPreview | null;
   couponInput: string;
   onCouponInputChange: (v: string) => void;
@@ -942,6 +973,7 @@ function PaymentStep({
   // Per-photo rows open up whenever a discount reached the cart or a code was
   // typed (so "Not covered by this code" has somewhere to show).
   const showRows = coupon != null && (coupon.code != null || coupon.items.length > 0);
+  const ownedItems = items.filter((i) => ownedPhotoIds.has(i.photoId));
 
   return (
     <div className="px-6 md:px-7 py-6 flex flex-col gap-7">
@@ -955,6 +987,32 @@ function PaymentStep({
           <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
             {outcome.kind === "error" ? outcome.message : OUTCOME_COPY[outcome.kind].body}
           </p>
+        </PaymentNotice>
+      )}
+
+      {ownedItems.length > 0 && (
+        <PaymentNotice
+          tone="neutral"
+          kicker="Already yours"
+          title={`You already own ${ownedItems.length} of these ${
+            ownedItems.length === 1 ? "photo" : "photos"
+          }`}
+          role="status"
+        >
+          <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
+            {isAuthenticated
+              ? "Re-download them free from your Orders. Remove them here to check out the rest."
+              : "Re-download them free from your email receipt. Remove them here to check out the rest."}
+          </p>
+          <button
+            type="button"
+            onClick={() => ownedItems.forEach((i) => onRemoveItem(i.photoId))}
+            className="mt-3 inline-flex items-center gap-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors focus:outline-none focus-visible:text-fresh"
+          >
+            <span aria-hidden="true">✕</span>
+            Remove already-purchased
+            {ownedItems.length > 1 ? ` (${ownedItems.length})` : ""}
+          </button>
         </PaymentNotice>
       )}
 
@@ -1162,6 +1220,7 @@ function PaymentStep({
       <button
         type="button"
         onClick={onPay}
+        disabled={ownedItems.length > 0}
         className={cn(BTN_PRIMARY, BTN_SIZE.md, "w-full")}
       >
         {total === 0 ? (
@@ -1175,9 +1234,11 @@ function PaymentStep({
       </button>
 
       <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft text-center -mt-3">
-        {total === 0
-          ? "Nothing to pay · Watermark removed on download"
-          : "Nothing is charged until you scan · Watermark removed on download"}
+        {ownedItems.length > 0
+          ? "Remove already-purchased photos to continue"
+          : total === 0
+            ? "Nothing to pay · Watermark removed on download"
+            : "Nothing is charged until you scan · Watermark removed on download"}
       </p>
 
       {onBackToCart && (
