@@ -52,6 +52,33 @@ class PayoutCycle(
     @Column(name = "hold_reason", length = 255)
     var holdReason: String? = null,
 
+    // ─── Explicit lifecycle (V56, Phase 4b) — set as the cycle moves through
+    // the admin state machine. settledAt keeps its meaning as the paid-at
+    // instant; approvedAt is the review instant. second_approved_by is Phase 4c.
+    @Column(name = "approved_by")
+    var approvedBy: UUID? = null,
+
+    @Column(name = "approved_at")
+    var approvedAt: OffsetDateTime? = null,
+
+    @Column(name = "second_approved_by")
+    var secondApprovedBy: UUID? = null,
+
+    @Column(name = "processing_at")
+    var processingAt: OffsetDateTime? = null,
+
+    @Column(name = "paid_by")
+    var paidBy: UUID? = null,
+
+    @Column(name = "failed_reason", length = 255)
+    var failedReason: String? = null,
+
+    @Column(name = "returned_at")
+    var returnedAt: OffsetDateTime? = null,
+
+    @Column(name = "rejected_reason", length = 255)
+    var rejectedReason: String? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 ) {

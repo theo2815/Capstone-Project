@@ -43,6 +43,8 @@ data class AdminPayoutCycleDto(
     val paidAt: String?,
     val paymentReference: String?,
     val holdReason: String?,
+    val rejectedReason: String? = null,
+    val failedReason: String? = null,
     val payoutAccount: AdminPayoutAccountSnapshotDto,
 )
 
@@ -58,6 +60,13 @@ data class MarkPayoutPaidRequest(
     @field:NotBlank
     @field:Size(max = 100)
     val paymentReference: String,
+)
+
+// POST /admin/payouts/{id}/reject | mark-failed | mark-returned — body { reason }.
+data class PayoutReasonRequest(
+    @field:NotBlank
+    @field:Size(max = 255)
+    val reason: String,
 )
 
 // POST /admin/payouts/bulk — body { ids, action, reason? }.

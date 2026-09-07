@@ -10,6 +10,7 @@ import com.quickpitik.dto.admin.BulkPayoutsRequest
 import com.quickpitik.dto.admin.GenerateCyclesResultDto
 import com.quickpitik.dto.admin.HoldPayoutRequest
 import com.quickpitik.dto.admin.MarkPayoutPaidRequest
+import com.quickpitik.dto.admin.PayoutReasonRequest
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminPayoutService
@@ -64,6 +65,33 @@ class AdminPayoutsController(
         @PathVariable payoutId: String,
         @Valid @RequestBody body: MarkPayoutPaidRequest,
     ): AdminPayoutCycleDto = adminPayoutService.markPaid(principal.userId, payoutId, body)
+
+    @PostMapping("/{payoutId}/reject")
+    fun reject(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable payoutId: String,
+        @Valid @RequestBody body: PayoutReasonRequest,
+    ): AdminPayoutCycleDto = adminPayoutService.reject(principal.userId, payoutId, body.reason)
+
+    @PostMapping("/{payoutId}/mark-processing")
+    fun markProcessing(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable payoutId: String,
+    ): AdminPayoutCycleDto = adminPayoutService.markProcessing(principal.userId, payoutId)
+
+    @PostMapping("/{payoutId}/mark-failed")
+    fun markFailed(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable payoutId: String,
+        @Valid @RequestBody body: PayoutReasonRequest,
+    ): AdminPayoutCycleDto = adminPayoutService.markFailed(principal.userId, payoutId, body.reason)
+
+    @PostMapping("/{payoutId}/mark-returned")
+    fun markReturned(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable payoutId: String,
+        @Valid @RequestBody body: PayoutReasonRequest,
+    ): AdminPayoutCycleDto = adminPayoutService.markReturned(principal.userId, payoutId, body.reason)
 
     // Idempotent on the inbound Idempotency-Key header (RFC 9110 §9.2.2,
     // matches POST /api/v1/orders). `required = false` so our own
