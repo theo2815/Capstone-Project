@@ -84,6 +84,24 @@ import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.StatusChip
 import com.quickpitik.mobile.ui.theme.StatusTone
 import com.quickpitik.mobile.ui.theme.Typography
+// Watermark placement editor (V51)
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import coil.compose.rememberAsyncImagePainter
+import com.quickpitik.mobile.data.remote.WatermarkSettingsDto
+import kotlin.math.roundToInt
 
 // ─── Reference data ──────────────────────────────────────────────────────────
 // PH regions/provinces come from the backend (`GET /api/v1/regions`), not from
@@ -236,6 +254,9 @@ fun PhotographerSettingsScreen(
     var avatarUri by remember { mutableStateOf<String?>(null) }
     var coverUri by remember { mutableStateOf<String?>(null) }
     var watermarkUri by remember { mutableStateOf<String?>(null) }
+    // Placement of the photographer's own logo (V51). Hydrated once from the
+    // brand read; edited live by the drag preview + sliders; PUT on Save.
+    var watermarkPlacement by remember { mutableStateOf(WatermarkSettingsDto()) }
 
     val avatarPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
@@ -281,6 +302,7 @@ fun PhotographerSettingsScreen(
         handle = s.handle.orEmpty()
         regionCode = s.regionCode.orEmpty()
         provinceCode = s.provinceCode.orEmpty()
+        s.watermarkSettings?.let { watermarkPlacement = it }
     }
 
     var socialSheetMode by remember { mutableStateOf<SocialSheetMode?>(null) }
@@ -457,6 +479,8 @@ fun PhotographerSettingsScreen(
             WatermarkSlab(
                 remoteUrl = resolveImageUrl(brandSettings?.watermarkUrl),
                 stagedUri = watermarkUri,
+                placement = watermarkPlacement,
+                onPlacementChange = { watermarkPlacement = it },
                 onPick = {
                     watermarkPickerLauncher.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -526,6 +550,7 @@ fun PhotographerSettingsScreen(
                         coverUri = coverUri,
                         watermarkUri = watermarkUri,
                         brandColor = brandColor,
+                        watermarkPlacement = watermarkPlacement,
                     )
                 },
                 onSignOut = onLogout,
@@ -937,6 +962,8 @@ private val BRAND_COLOR_SWATCHES: List<Pair<String, Color>> = listOf(
 private fun WatermarkSlab(
     remoteUrl: String?,
     stagedUri: String?,
+    placement: WatermarkSettingsDto,
+    onPlacementChange: (WatermarkSettingsDto) -> Unit,
     onPick: () -> Unit,
     showValidation: Boolean = false,
 ) {
@@ -992,6 +1019,161 @@ private fun WatermarkSlab(
                 }
             }
         }
+        // Position / opacity / size — shown once a logo is set (staged or saved).
+        // The preview runs the same free-space formula the backend bakes with, so
+        // what the photographer drags is what ships.
+        val model = stagedUri ?: remoteUrl
+        if (model != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            WatermarkPlacementEditor(
+                model = model,
+                placement = placement,
+                onPlacementChange = onPlacementChange,
+            )
+        }
+    }
+}
+
+// Drag-to-position + size/opacity editor for the photographer's own logo. Two
+// previews (landscape / portrait) each keep their own position; size + opacity
+// are shared. Sliders stay Ink so the screen's single Fresh accent is the Save
+// CTA. The preview background is a token gradient standing in for a race photo.
+@Composable
+private fun WatermarkPlacementEditor(
+    model: Any,
+    placement: WatermarkSettingsDto,
+    onPlacementChange: (WatermarkSettingsDto) -> Unit,
+) {
+    var landscape by remember { mutableStateOf(true) }
+    var boxSize by remember { mutableStateOf(IntSize.Zero) }
+    val density = LocalDensity.current
+    val painter = rememberAsyncImagePainter(model = model)
+    val intrinsic = painter.intrinsicSize
+    val logoAspect = if (intrinsic != Size.Unspecified && intrinsic.height > 0f) {
+        intrinsic.width / intrinsic.height
+    } else {
+        3f
+    }
+    val placementState = rememberUpdatedState(placement)
+
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OrientationPill(label = "Landscape", selected = landscape) { landscape = true }
+            OrientationPill(label = "Portrait", selected = !landscape) { landscape = false }
+        }
+
+        val (nxD, nyD) = placement.pos(landscape)
+        val scaleF = placement.scale.toFloat()
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(if (landscape) 1f else 0.62f)
+                    .aspectRatio(if (landscape) 3f / 2f else 2f / 3f)
+                    .clip(QpCardShape)
+                    .background(Brush.linearGradient(listOf(Ink, Slate, BoneDeep)))
+                    .onSizeChanged { boxSize = it },
+            ) {
+                if (boxSize.width > 0) {
+                    val box = watermarkBox(
+                        boxSize.width.toFloat(), boxSize.height.toFloat(),
+                        logoAspect, scaleF, nxD.toFloat(), nyD.toFloat(),
+                    )
+                    Image(
+                        painter = painter,
+                        contentDescription = "Watermark position preview",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .offset { IntOffset(box.left.roundToInt(), box.top.roundToInt()) }
+                            .size(with(density) { box.width.toDp() }, with(density) { box.height.toDp() })
+                            .alpha(placement.opacity.toFloat().coerceIn(WATERMARK_OPACITY_MIN, WATERMARK_OPACITY_MAX))
+                            .pointerInput(landscape, boxSize, logoAspect) {
+                                detectDragGestures { change, dragAmount ->
+                                    change.consume()
+                                    val p = placementState.value
+                                    val (cx, cy) = p.pos(landscape)
+                                    val sc = p.scale.toFloat()
+                                    val cur = watermarkBox(
+                                        boxSize.width.toFloat(), boxSize.height.toFloat(),
+                                        logoAspect, sc, cx.toFloat(), cy.toFloat(),
+                                    )
+                                    val (px, py) = positionFromBox(
+                                        boxSize.width.toFloat(), boxSize.height.toFloat(),
+                                        logoAspect, sc, cur.left + dragAmount.x, cur.top + dragAmount.y,
+                                    )
+                                    onPlacementChange(p.withPos(landscape, px.toDouble(), py.toDouble()))
+                                }
+                            },
+                    )
+                }
+            }
+        }
+
+        WatermarkSliderRow(
+            label = "Size",
+            valueLabel = "${(placement.scale * 100).roundToInt()}% of width",
+            value = scaleF,
+            min = WATERMARK_SCALE_MIN,
+            max = WATERMARK_SCALE_MAX,
+        ) { onPlacementChange(placement.copy(scale = it.toDouble())) }
+
+        WatermarkSliderRow(
+            label = "Opacity",
+            valueLabel = "${(placement.opacity * 100).roundToInt()}%",
+            value = placement.opacity.toFloat(),
+            min = WATERMARK_OPACITY_MIN,
+            max = WATERMARK_OPACITY_MAX,
+        ) { onPlacementChange(placement.copy(opacity = it.toDouble())) }
+    }
+}
+
+@Composable
+private fun OrientationPill(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(PillShape)
+            .border(1.dp, if (selected) Ink else Line, PillShape)
+            .background(if (selected) BoneDeep else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Ink else Slate,
+            style = Typography.bodyMedium,
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+        )
+    }
+}
+
+@Composable
+private fun WatermarkSliderRow(
+    label: String,
+    valueLabel: String,
+    value: Float,
+    min: Float,
+    max: Float,
+    onChange: (Float) -> Unit,
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Kicker(text = label, color = SlateSoft)
+            Text(text = valueLabel, color = Ink, style = Typography.labelMedium)
+        }
+        Slider(
+            value = value.coerceIn(min, max),
+            onValueChange = onChange,
+            valueRange = min..max,
+            colors = SliderDefaults.colors(
+                thumbColor = Ink,
+                activeTrackColor = Ink,
+                inactiveTrackColor = Line,
+            ),
+        )
     }
 }
 

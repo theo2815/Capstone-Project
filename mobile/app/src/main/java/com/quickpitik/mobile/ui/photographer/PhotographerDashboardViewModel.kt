@@ -1428,6 +1428,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         // Wire value from ALLOWED_BRAND_COLORS (none/fresh/amber/indigo/rose/
         // ink). Null = leave whatever is on the server untouched.
         brandColor: String? = null,
+        // Placement of the photographer's own logo (V51). Null = leave unchanged;
+        // otherwise PUT it only when it differs from the loaded value.
+        watermarkPlacement: com.quickpitik.mobile.data.remote.WatermarkSettingsDto? = null,
     ) {
         viewModelScope.launch {
             _isSavingSettings.value = true
@@ -1562,6 +1565,23 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     val watermarkResponse = RetrofitClient.apiService.uploadWatermark("Bearer $token", part)
                     if (!watermarkResponse.success) {
                         _settingsActionState.value = "Error: " + (watermarkResponse.error ?: "Failed to upload watermark.")
+                        _isSavingSettings.value = false
+                        return@launch
+                    }
+                }
+
+                // 6. Update watermark placement (position/opacity/size) when the
+                // photographer changed it — independent of the image upload above.
+                if (watermarkPlacement != null &&
+                    watermarkPlacement != brandSettings.value?.watermarkSettings
+                ) {
+                    val wmSettingsResponse = RetrofitClient.apiService.updateWatermarkSettings(
+                        "Bearer $token",
+                        watermarkPlacement,
+                    )
+                    if (!wmSettingsResponse.success) {
+                        _settingsActionState.value =
+                            "Error: " + (wmSettingsResponse.error ?: "Failed to update watermark placement.")
                         _isSavingSettings.value = false
                         return@launch
                     }

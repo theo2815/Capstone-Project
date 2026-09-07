@@ -272,6 +272,14 @@ interface QuickPitikApi {
         @Part file: MultipartBody.Part
     ): ApiResponseEnvelope<MediaUploadResponseDto>
 
+    // Position / opacity / size for the photographer's own logo (V51). Separate
+    // from the image upload above — geometry changes without re-uploading.
+    @PUT("api/v1/me/photographer/watermark/settings")
+    suspend fun updateWatermarkSettings(
+        @Header("Authorization") token: String,
+        @Body request: WatermarkSettingsDto
+    ): ApiResponseEnvelope<Map<String, Any?>>
+
     // Clears the avatar and returns the updated user (avatarUrl null).
     @DELETE("api/v1/me/avatar")
     suspend fun deleteAvatar(

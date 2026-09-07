@@ -173,6 +173,21 @@ data class BrandPatchRequest(
     val bio: String?
 )
 
+// Placement of the photographer's own logo (V51) — position split per
+// orientation, plus shared opacity + size. Doubles as the nested block on the
+// brand response AND the PUT body for updateWatermarkSettings (same field set as
+// the backend WatermarkSettingsRequest). Defaults reproduce the historical fixed
+// bottom-right / 15% width / 70% opacity mark, so an unconfigured photographer
+// is unchanged. Position values are normalized free-space fractions in [0,1].
+data class WatermarkSettingsDto(
+    val opacity: Double = 0.70,
+    val scale: Double = 0.15,
+    val landscapeX: Double = 1.0,
+    val landscapeY: Double = 1.0,
+    val portraitX: Double = 1.0,
+    val portraitY: Double = 1.0,
+)
+
 data class BrandSettingsResponseDto(
     val brandName: String?,
     val brandColor: String?,
@@ -182,7 +197,8 @@ data class BrandSettingsResponseDto(
     val provinceCode: String?,
     val coverUrl: String?,
     val watermarkUrl: String?,
-    val avatarUrl: String?
+    val avatarUrl: String?,
+    val watermarkSettings: WatermarkSettingsDto? = null,
 )
 
 data class MediaUploadResponseDto(
