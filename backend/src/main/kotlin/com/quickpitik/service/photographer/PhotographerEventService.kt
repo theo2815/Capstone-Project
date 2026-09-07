@@ -97,6 +97,7 @@ class PhotographerEventService(
         photographerId: UUID,
         eventId: UUID,
         order: String?,
+        deleted: Boolean = false,
         pagination: PaginationParams,
     ): PaginatedResponse<PhotographerLibraryPhotoDto> {
         eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
@@ -106,11 +107,22 @@ class PhotographerEventService(
         } else {
             Sort.by(Sort.Direction.DESC, "uploadedAt").and(Sort.by(Sort.Direction.ASC, "id"))
         }
-        val page = photoRepository.findPhotographerLibrary(
-            eventId = eventId,
-            photographerId = photographerId,
-            pageable = OffsetLimitPageable(pagination, sort),
-        )
+        val pageable = OffsetLimitPageable(pagination, sort)
+        // deleted=true → the Deleted Photos tab (trashed rows); otherwise the
+        // active gallery. Both scope by photographer, so ownership is intrinsic.
+        val page = if (deleted) {
+            photoRepository.findPhotographerTrash(
+                eventId = eventId,
+                photographerId = photographerId,
+                pageable = pageable,
+            )
+        } else {
+            photoRepository.findPhotographerLibrary(
+                eventId = eventId,
+                photographerId = photographerId,
+                pageable = pageable,
+            )
+        }
         if (page.isEmpty) return PaginatedResponse.empty(pagination)
         val photoIds = page.content.map { it.id }
         val salesByPhoto: Map<UUID, Long> = if (photoIds.isEmpty()) {

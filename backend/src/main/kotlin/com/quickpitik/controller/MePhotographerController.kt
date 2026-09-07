@@ -11,6 +11,10 @@ import com.quickpitik.dto.photographer.DirectUploadCommitRequest
 import com.quickpitik.dto.photographer.CreateMyEventRequest
 import com.quickpitik.dto.photographer.PhotoExistsRequest
 import com.quickpitik.dto.photographer.PhotoExistsResponse
+import com.quickpitik.dto.photographer.PermanentDeleteResponse
+import com.quickpitik.dto.photographer.PhotoActionResponse
+import com.quickpitik.dto.photographer.PhotoIdsRequest
+import com.quickpitik.dto.photographer.PhotographerBundleDto
 import com.quickpitik.dto.photographer.PhotographerLibraryPhotoDto
 import com.quickpitik.dto.photographer.UpdateMyEventRequest
 import com.quickpitik.dto.photographer.UploadedPhotoDto
@@ -19,8 +23,10 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminEventService
 import com.quickpitik.service.photographer.PhotoUploadService
+import com.quickpitik.service.photographer.PhotographerBundleService
 import com.quickpitik.service.photographer.PhotographerEventService
 import com.quickpitik.service.photographer.PhotographerOwnedEventService
+import com.quickpitik.service.photographer.PhotographerPhotoService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
@@ -47,6 +53,8 @@ import java.util.UUID
 class MePhotographerController(
     private val photographerEventService: PhotographerEventService,
     private val photographerOwnedEventService: PhotographerOwnedEventService,
+    private val photographerPhotoService: PhotographerPhotoService,
+    private val photographerBundleService: PhotographerBundleService,
     private val photoUploadService: PhotoUploadService,
     private val rateLimiter: RateLimiter,
 ) {
@@ -171,6 +179,7 @@ class MePhotographerController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
         @RequestParam(required = false) order: String?,
+        @RequestParam(required = false) deleted: Boolean?,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
     ): PaginatedResponse<PhotographerLibraryPhotoDto> =
@@ -178,6 +187,7 @@ class MePhotographerController(
             photographerId = principal.userId,
             eventId = eventId,
             order = order,
+            deleted = deleted ?: false,
             pagination = PaginationParams.of(offset, limit),
         )
 
@@ -265,4 +275,63 @@ class MePhotographerController(
             eventId = eventId,
             hashes = body.hashes,
         )
+
+    // ── Photo library management: trash / restore / permanent delete ───────
+    // Bulk by design — a per-photo action in the website/mobile UI sends a
+    // single-element list. Ownership + event scoping are enforced in the
+    // service (a foreign or wrong-event id is silently skipped).
+    @PostMapping("/events/{eventId}/photos/trash")
+    fun trashPhotos(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody body: PhotoIdsRequest,
+    ): PhotoActionResponse =
+        PhotoActionResponse(photographerPhotoService.trash(principal.userId, eventId, body.photoIds))
+
+    @PostMapping("/events/{eventId}/photos/restore")
+    fun restorePhotos(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody body: PhotoIdsRequest,
+    ): PhotoActionResponse =
+        PhotoActionResponse(photographerPhotoService.restore(principal.userId, eventId, body.photoIds))
+
+    // Irreversible: deletes the DB row and the R2 objects. Capped lower than
+    // trash/restore because each photo is up to 3 single-key R2 deletes. Sold
+    // photos are refused and returned in blockedSold (a buyer may still hold a
+    // download grant).
+    @PostMapping("/events/{eventId}/photos/permanent-delete")
+    fun permanentDeletePhotos(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody body: PhotoIdsRequest,
+    ): PermanentDeleteResponse {
+        if (body.photoIds.size > PERMANENT_DELETE_BATCH_MAX) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "At most $PERMANENT_DELETE_BATCH_MAX photos per permanent delete",
+                field = "photoIds",
+            )
+        }
+        return photographerPhotoService.permanentDelete(principal.userId, eventId, body.photoIds)
+    }
+
+    // "Download All" step 1: mint a short-lived tokened URL the client then
+    // navigates to (the ZIP stream is token-auth — a top-level <a> nav carries
+    // no JWT). Rate-limited like the order bundle.
+    @PostMapping("/events/{eventId}/download-bundle")
+    fun prepareBundle(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+    ): PhotographerBundleDto {
+        rateLimiter.acquireOrThrow(
+            policy = Bucket4jRateLimiter.POLICY_BUNDLE_DOWNLOAD,
+            key = principal.userId.toString(),
+        )
+        return photographerBundleService.prepareDownloadUrl(principal.userId, eventId)
+    }
+
+    private companion object {
+        const val PERMANENT_DELETE_BATCH_MAX = 100
+    }
 }

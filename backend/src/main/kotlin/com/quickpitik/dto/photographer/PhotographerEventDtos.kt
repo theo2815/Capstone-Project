@@ -133,10 +133,40 @@ data class PhotographerLibraryPhotoDto(
     val tone: Int,
     val span: String,
     val thumbnailUrl: String?,
+    // Soft-delete timestamp (V52); non-null = in the photographer's trash.
+    // Null on the active tab, set on the Deleted Photos tab.
+    val deletedAt: OffsetDateTime? = null,
 )
 
 // Mirrors website/src/lib/api-photographer.ts PhotographerDownloadResponse.
 data class PhotographerDownloadDto(
+    val url: String,
+    val expiresAt: OffsetDateTime,
+)
+
+// Bulk photo operations (trash / restore / permanent-delete). photoIds is
+// capped at the batch upload limit; the permanent-delete route caps lower
+// (it deletes R2 objects one call each).
+data class PhotoIdsRequest(
+    @field:NotEmpty
+    @field:Size(max = 500)
+    val photoIds: List<UUID>,
+)
+
+// trash / restore: how many photos actually moved (ids already in that state
+// are no-ops and don't count).
+data class PhotoActionResponse(val affected: Int)
+
+// permanent-delete: the ids actually purged, and the ones refused because
+// they've been sold (a buyer may still be entitled to download them).
+data class PermanentDeleteResponse(
+    val deleted: List<UUID>,
+    val blockedSold: List<UUID>,
+)
+
+// POST /events/{id}/download-bundle → a short-lived tokened URL the client
+// navigates to for the ZIP of every active photo.
+data class PhotographerBundleDto(
     val url: String,
     val expiresAt: OffsetDateTime,
 )
@@ -292,6 +322,7 @@ fun Photo.toLibraryDto(
         tone = tone,
         span = span.wire,
         thumbnailUrl = thumbnailUrlResolver(this),
+        deletedAt = deletedAt,
     )
 
 // ── Direct-to-storage upload (2026-09-02) ─────────────────────────────────

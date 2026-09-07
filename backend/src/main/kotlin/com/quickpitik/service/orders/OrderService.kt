@@ -701,7 +701,10 @@ class OrderService(
                     field = "items",
                 )
             }
-            if (photo.status != PhotoStatus.LIVE) {
+            if (photo.status != PhotoStatus.LIVE || photo.deletedAt != null) {
+                // A trashed photo (deleted_at set) can't be freshly purchased,
+                // even if it lingered in a cart from before it was trashed.
+                // Existing orders/grants are untouched.
                 throw checkoutConflict("Only live photos can be purchased.")
             }
             if (photo.pricePhp <= BigDecimal.ZERO) {

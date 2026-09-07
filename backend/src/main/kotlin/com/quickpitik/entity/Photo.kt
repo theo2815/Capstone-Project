@@ -71,6 +71,14 @@ class Photo(
     @Column(name = "published_at")
     var publishedAt: OffsetDateTime? = if (status == PhotoStatus.LIVE) uploadedAt else null,
 
+    // Soft-delete / trash (V52): non-null = in the photographer's Deleted
+    // Photos. Kept separate from `status` so PROCESSING/LIVE/HIDDEN survives a
+    // trash → restore cycle. Every runner / public / search / checkout query
+    // excludes rows where this is set; only the photographer's own trash view
+    // returns them.
+    @Column(name = "deleted_at")
+    var deletedAt: OffsetDateTime? = null,
+
     @Column(name = "price_php", nullable = false, precision = 12, scale = 2)
     var pricePhp: BigDecimal,
 

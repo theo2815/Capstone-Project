@@ -133,6 +133,10 @@ class SecurityConfig(
                 // Bundle download (token-gated; works for both runners + guests
                 // because a top-level navigation can't carry the JWT).
                 auth.requestMatchers(guestOrderGet("/download-bundle")).permitAll()
+                // Photographer "Download All" ZIP — same token-gated shape as the
+                // order bundle above (a top-level <a> nav carries no JWT). The
+                // signed token is verified in the service layer.
+                auth.requestMatchers(photographerBundleGet()).permitAll()
                 // Guest order detail (token-gated, anti-IDOR via service layer).
                 // The UUID regex keeps future named sibling routes private.
                 auth.requestMatchers(guestOrderGet("")).permitAll()
@@ -171,5 +175,12 @@ class SecurityConfig(
 
         internal fun guestOrderRoute(method: HttpMethod, suffix: String): RegexRequestMatcher =
             RegexRequestMatcher.regexMatcher(method, "$GUEST_ORDER_PATH$suffix(?:\\?.*)?\$")
+
+        private const val PHOTOGRAPHER_BUNDLE_PATH = "^/api/v1/photographer-bundles/$UUID_PATH"
+
+        // GET /api/v1/photographer-bundles/{eventId}?token=... — token-gated in
+        // the service layer, same query-string-tolerant shape as guestOrderGet.
+        internal fun photographerBundleGet(): RegexRequestMatcher =
+            RegexRequestMatcher.regexMatcher(HttpMethod.GET, "$PHOTOGRAPHER_BUNDLE_PATH(?:\\?.*)?\$")
     }
 }
