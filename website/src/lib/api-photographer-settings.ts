@@ -20,6 +20,9 @@ import type {
 //   PUT    /api/v1/me/photographer/region    { regionCode, provinceCode }
 //   POST   /api/v1/me/photographer/cover     (multipart, file) → { url, uploadedAt }
 //   POST   /api/v1/me/photographer/watermark (multipart, file) → { url, uploadedAt }
+//   PUT    /api/v1/me/photographer/watermark/settings  { opacity, scale,
+//          landscapeX/Y, portraitX/Y } → ok  (V51 — logo position/opacity/size;
+//          read back via the watermarkSettings block on GET …/brand)
 //
 // ─── Socials CRUD ─────────────────────────────────────────────────────────
 //   GET    /api/v1/me/photographer/socials                          → SocialLink[]
@@ -76,6 +79,18 @@ export interface BrandPatch {
 // settings page hydrates from this on mount so persisted-Zustand state cleared
 // by resetUserScopedStores (lib/auth-reset.ts) is repopulated from the BE
 // instead of rendering blank slabs for a verified photographer.
+// Placement of the photographer's own logo (V51). Flat wire shape mirroring the
+// backend WatermarkSettingsRequest / photographer_settings columns; the store +
+// preview use a nested {landscape,portrait} shape.
+export interface WatermarkSettingsWire {
+  opacity: number;
+  scale: number;
+  landscapeX: number;
+  landscapeY: number;
+  portraitX: number;
+  portraitY: number;
+}
+
 export interface PhotographerBrandResponse {
   brandName: string;
   brandColor: string;
@@ -86,6 +101,7 @@ export interface PhotographerBrandResponse {
   coverUrl: string;
   watermarkUrl: string;
   avatarUrl: string;
+  watermarkSettings: WatermarkSettingsWire;
 }
 
 export async function fetchBrand(): Promise<PhotographerBrandResponse | null> {
@@ -127,6 +143,15 @@ export async function postCover(file: File): Promise<MediaUploadResponse> {
 
 export async function postWatermark(file: File): Promise<MediaUploadResponse> {
   return postMultipart("/me/photographer/watermark", file);
+}
+
+// Position / opacity / size for the photographer's own logo (V51). Independent
+// of the image upload above — geometry changes without re-uploading. Applies to
+// new uploads only; already-stamped photos keep their watermark.
+export async function putWatermarkSettings(
+  settings: WatermarkSettingsWire,
+): Promise<void> {
+  await api.put<unknown>("/me/photographer/watermark/settings", settings);
 }
 
 // ───────────────────────────────────────────── Coupon (V45)

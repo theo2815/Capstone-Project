@@ -60,6 +60,26 @@ export interface WatermarkMedia {
   uploadedAt: string;
 }
 
+// Placement of the photographer's own logo on their uploaded photos (V51).
+// `opacity` 0.05–1; `scale` = logo width as a fraction of photo width (0.05–0.40,
+// height follows the logo's aspect ratio); position is a normalized free-space
+// fraction in [0,1] split per orientation. Mirrors the backend
+// photographer_settings columns and the preview math in `lib/watermark-placement.ts`;
+// DEFAULT reproduces the historical fixed bottom-right / 15% / 70% mark.
+export interface WatermarkPlacement {
+  opacity: number;
+  scale: number;
+  landscape: { x: number; y: number };
+  portrait: { x: number; y: number };
+}
+
+export const DEFAULT_WATERMARK_PLACEMENT: WatermarkPlacement = {
+  opacity: 0.7,
+  scale: 0.15,
+  landscape: { x: 1, y: 1 },
+  portrait: { x: 1, y: 1 },
+};
+
 // ─── Region ──────────────────────────────────────────────────────────────
 // Codes resolve against `lib/ph-regions.ts` (mock; backend will own the list
 // via `GET /api/regions`). Storing codes — not display names — so the FE can
@@ -154,6 +174,7 @@ export interface PhotographerSettings {
   brandColor: BrandColor;
   bio: string;
   watermark: WatermarkMedia | null;
+  watermarkPlacement: WatermarkPlacement;
   handle: string;
   verificationStatus: VerificationStatus;
   /** Missing required-setting labels from GET /me/photographer/verification
@@ -179,6 +200,7 @@ interface PhotographerSettingsState extends PhotographerSettings {
   setBrandColor: (color: BrandColor) => void;
   setBio: (bio: string) => void;
   setWatermark: (watermark: WatermarkMedia | null) => void;
+  setWatermarkPlacement: (placement: WatermarkPlacement) => void;
   setHandle: (handle: string) => void;
   setVerificationStatus: (status: VerificationStatus) => void;
   setVerificationMissing: (missing: string[], codes: string[]) => void;
@@ -209,6 +231,7 @@ const SEED: PhotographerSettings = {
   brandColor: "none",
   bio: "",
   watermark: null,
+  watermarkPlacement: DEFAULT_WATERMARK_PLACEMENT,
   handle: "",
   verificationStatus: "incomplete",
   verificationMissing: null,
@@ -240,6 +263,7 @@ export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
       setBrandColor: (color) => set({ brandColor: color }),
       setBio: (bio) => set({ bio }),
       setWatermark: (watermark) => set({ watermark }),
+      setWatermarkPlacement: (watermarkPlacement) => set({ watermarkPlacement }),
       setHandle: (handle) => set({ handle: handle.trim().toLowerCase() }),
       setVerificationStatus: (verificationStatus) =>
         set({ verificationStatus }),

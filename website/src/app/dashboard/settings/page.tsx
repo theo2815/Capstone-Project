@@ -17,6 +17,7 @@ import { createPortal } from "react-dom";
 import { Check } from "lucide-react";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
+import { WatermarkPlacementEditor } from "@/components/dashboard/watermark-placement-editor";
 import { CharCounter } from "@/components/ui/char-counter";
 import { Dropdown, DropdownItem } from "@/components/ui/dropdown";
 import { FieldError } from "@/components/ui/field-error";
@@ -41,6 +42,7 @@ import {
   putBrand,
   putHandle,
   putRegion,
+  putWatermarkSettings,
   submitVerification,
   withdrawVerification,
 } from "@/lib/api-photographer-settings";
@@ -150,6 +152,7 @@ interface EditModeSnapshot {
   brandColor: BrandColor;
   bio: string;
   watermark: ReturnType<typeof usePhotographerSettingsStore.getState>["watermark"];
+  watermarkPlacement: ReturnType<typeof usePhotographerSettingsStore.getState>["watermarkPlacement"];
   handle: string;
   region: ReturnType<typeof usePhotographerSettingsStore.getState>["region"];
   socials: SocialLink[];
@@ -197,6 +200,13 @@ function takeSnapshot(): EditModeSnapshot {
     brandColor: s.brandColor,
     bio: s.bio,
     watermark: s.watermark,
+    // Deep-clone the nested position objects so a Cancel restores the exact
+    // pre-edit placement.
+    watermarkPlacement: {
+      ...s.watermarkPlacement,
+      landscape: { ...s.watermarkPlacement.landscape },
+      portrait: { ...s.watermarkPlacement.portrait },
+    },
     handle: s.handle,
     region: s.region,
     // Deep-clone arrays so future mutations to the store don't leak into the
@@ -215,6 +225,7 @@ function restoreSnapshot(snap: EditModeSnapshot): void {
     brandColor: snap.brandColor,
     bio: snap.bio,
     watermark: snap.watermark,
+    watermarkPlacement: snap.watermarkPlacement,
     handle: snap.handle,
     region: snap.region,
     socials: snap.socials,
@@ -326,6 +337,27 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       tasks.push({
         label: "Watermark",
         run: () => postWatermark(pending.watermark!),
+      });
+    }
+
+    // Watermark placement (position/opacity/size) — separate endpoint from the
+    // image upload; fires only when the photographer moved/resized/faded it.
+    const placementDirty =
+      JSON.stringify(snap.watermarkPlacement) !==
+      JSON.stringify(settings.watermarkPlacement);
+    if (placementDirty) {
+      const p = settings.watermarkPlacement;
+      tasks.push({
+        label: "Watermark position",
+        run: () =>
+          putWatermarkSettings({
+            opacity: p.opacity,
+            scale: p.scale,
+            landscapeX: p.landscape.x,
+            landscapeY: p.landscape.y,
+            portraitX: p.portrait.x,
+            portraitY: p.portrait.y,
+          }),
       });
     }
     if (pending.avatar) {
@@ -1949,6 +1981,10 @@ function WatermarkSlab() {
   const { editing, setPendingFile } = useEditMode();
   const watermark = usePhotographerSettingsStore((s) => s.watermark);
   const setWatermark = usePhotographerSettingsStore((s) => s.setWatermark);
+  const placement = usePhotographerSettingsStore((s) => s.watermarkPlacement);
+  const setWatermarkPlacement = usePhotographerSettingsStore(
+    (s) => s.setWatermarkPlacement,
+  );
   const { showToast } = useToast();
   const { confirm } = useConfirmation();
   const [busy, setBusy] = useState(false);
@@ -2037,25 +2073,23 @@ function WatermarkSlab() {
           with a solid background works too.
         </p>
 
-        <div className="rounded-2xl overflow-hidden bg-bone-deep border border-line aspect-[3/2] relative">
-          <SamplePhoto />
-          {watermark && (
-            // eslint-disable-next-line @next/next/no-img-element -- data-URL mock; backend will composite watermark onto each photo at upload time.
-            <img
-              src={watermark.dataUrl}
-              alt=""
-              className="absolute bottom-4 right-4 max-w-[40%] max-h-[35%] opacity-70 mix-blend-screen pointer-events-none"
-              draggable={false}
-            />
-          )}
-          {!watermark && (
+        {watermark ? (
+          <WatermarkPlacementEditor
+            dataUrl={watermark.dataUrl}
+            editing={editing}
+            placement={placement}
+            onChange={setWatermarkPlacement}
+          />
+        ) : (
+          <div className="rounded-2xl overflow-hidden bg-bone-deep border border-line aspect-[3/2] relative">
+            <SamplePhoto />
             <div className="absolute bottom-4 right-4 px-4 py-2 rounded-full border border-dashed border-line bg-bone/40 backdrop-blur-sm">
               <Kicker as="p">
                 Watermark goes here
               </Kicker>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <label
