@@ -8,6 +8,7 @@ import { getRefreshToken, setTokens, clearTokens } from "@/lib/auth";
 import { captureGuestBuffer, resetUserScopedStores } from "@/lib/auth-reset";
 import type {
   AuthResponse,
+  LoginOutcome,
   LoginRequest,
   OAuthIdentity,
   RegisterRequest,
@@ -56,8 +57,26 @@ export function useAuth() {
   // synchronous, so getState() would also work — but returning the value
   // keeps the dataflow explicit at the call site.
   const login = useCallback(
-    async (credentials: LoginRequest) => {
+    async (credentials: LoginRequest): Promise<LoginOutcome> => {
       const data = await api.post<AuthResponse>("/auth/login", credentials);
+      // Admin MFA: the backend withholds tokens and returns a challenge. The
+      // caller collects a code and calls verifyMfa; only then is a session set.
+      if (data.mfaRequired && data.mfaToken) {
+        return { kind: "mfa", mfaToken: data.mfaToken };
+      }
+      return { kind: "authed", user: establishSession(data) };
+    },
+    [establishSession],
+  );
+
+  // Second factor: exchange the challenge token + a TOTP or recovery code for a
+  // real session. Owes the same establishSession wipe as every other entry point.
+  const verifyMfa = useCallback(
+    async (mfaToken: string, code: string) => {
+      const data = await api.post<AuthResponse>("/auth/mfa/verify", {
+        mfaToken,
+        code,
+      });
       return establishSession(data);
     },
     [establishSession],
@@ -149,6 +168,7 @@ export function useAuth() {
     isLoading,
     pendingOAuth,
     login,
+    verifyMfa,
     register,
     googleLogin,
     completeOnboarding,
