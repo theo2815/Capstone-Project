@@ -236,10 +236,23 @@ export function generatePhotographerLibrary(
 // Billing
 // ─────────────────────────────────────────────────────────────────────────
 
-// "held" added for the request-based flow: admin can hold a photographer's
-// request pending a fix (e.g. update payout account); photographer sees the
-// reason and can Withdraw to re-request after addressing it.
-export type PayoutStatus = "paid" | "pending" | "scheduled" | "held";
+// The full payout lifecycle wire vocabulary (matches the backend
+// PayoutCycleStatus enum). "held" lets admin pause a request pending a fix; the
+// photographer sees the reason and can Cancel to re-request. approved →
+// processing → paid is the happy path; failed/returned/rejected/cancelled are
+// terminal-with-a-reason. scheduled is a legacy weekly-model state, kept so old
+// rows still render.
+export type PayoutStatus =
+  | "paid"
+  | "pending"
+  | "scheduled"
+  | "held"
+  | "approved"
+  | "processing"
+  | "failed"
+  | "returned"
+  | "rejected"
+  | "cancelled";
 
 export interface PhotographerPayout {
   id: string;

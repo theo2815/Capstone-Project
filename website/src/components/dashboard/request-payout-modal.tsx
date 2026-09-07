@@ -113,9 +113,8 @@ export function RequestPayoutModal({
 
         <p className="font-sans text-sm text-slate">
           Once submitted, admin reviews and transfers the funds manually. You
-          can&apos;t submit another request until this one is paid or held. If
-          held, you can withdraw and re-submit after fixing what admin
-          flagged.
+          can&apos;t submit another request while this one is open. If it&apos;s
+          held, you can cancel and re-submit after fixing what admin flagged.
         </p>
 
         <div className="flex flex-wrap items-center justify-end gap-3 pt-2 border-t border-line">

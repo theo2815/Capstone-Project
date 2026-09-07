@@ -43,6 +43,12 @@ const STATUS_LABEL: Record<PayoutStatus, string> = {
   pending: "PENDING",
   scheduled: "SCHEDULED",
   held: "HELD",
+  approved: "APPROVED",
+  processing: "PROCESSING",
+  failed: "FAILED",
+  returned: "RETURNED",
+  rejected: "REJECTED",
+  cancelled: "CANCELLED",
 };
 
 const STATUS_TONE: Record<PayoutStatus, string> = {
@@ -50,6 +56,27 @@ const STATUS_TONE: Record<PayoutStatus, string> = {
   pending: "text-ink",
   scheduled: "text-slate",
   held: "text-error",
+  approved: "text-ink",
+  processing: "text-ink",
+  failed: "text-error",
+  returned: "text-error",
+  rejected: "text-error",
+  cancelled: "text-slate-soft",
+};
+
+// Row's secondary line, per status (paid is handled inline — it needs the
+// reference). Honest about where the money actually is at each stage.
+const ROW_NOTE: Record<PayoutStatus, string> = {
+  paid: "",
+  pending: "Awaiting admin review.",
+  scheduled: "Scheduled.",
+  held: "On hold — needs attention.",
+  approved: "Approved — payment being sent.",
+  processing: "Payment in transit.",
+  failed: "Payment failed — admin will retry.",
+  returned: "Payment returned — check your payout account.",
+  rejected: "Request rejected.",
+  cancelled: "Request cancelled.",
 };
 
 export default function BillingPage() {
@@ -252,6 +279,9 @@ function RequestPayoutHero({
   }
 
   const eligible = balance.unpaidBalance >= balance.minimum;
+  const cooldownUntil = balance.accountCooldownUntil;
+  const cooldownActive =
+    !!cooldownUntil && new Date(cooldownUntil).getTime() > Date.now();
 
   return (
     <div>
@@ -279,6 +309,35 @@ function RequestPayoutHero({
           </>
         )}
       </p>
+
+      {balance.clearing > 0 && (
+        <div className="mt-6 max-w-lg">
+          <Kicker as="p" tone="soft" className="flex items-baseline gap-2">
+            <span>Clearing</span>
+            <span className="font-mono tnum text-ink">
+              ₱{balance.clearing.toLocaleString()}
+            </span>
+          </Kicker>
+          <p className="font-sans text-sm text-slate mt-2">
+            New sales become withdrawable after a short clearing period.
+          </p>
+        </div>
+      )}
+
+      {cooldownActive && (
+        <div className="mt-6 rounded-xl border border-warning/40 bg-warning/5 p-4 max-w-lg">
+          <Kicker as="p" className="text-warning">
+            Payouts paused
+          </Kicker>
+          <p className="font-sans text-sm text-ink-soft mt-2">
+            After a recent payout-account change, new requests are paused until{" "}
+            <span className="font-mono tnum">
+              {formatLongDate(cooldownUntil)}
+            </span>
+            . This protects your earnings if your account was compromised.
+          </p>
+        </div>
+      )}
 
       <div className="mt-6 border-t border-line pt-5 max-w-lg">
         {primary ? (
@@ -318,7 +377,7 @@ function RequestPayoutHero({
         <button
           type="button"
           onClick={onRequest}
-          disabled={!eligible || !primary}
+          disabled={!eligible || !primary || cooldownActive}
           className={`${BTN_PRIMARY} ${BTN_SIZE.md}`}
         >
           Request payout
@@ -334,6 +393,9 @@ function RequestPayoutHero({
 // risk; mirrors the actual shape returned by GET /payouts/balance.
 interface PayoutBalanceResponseLike {
   unpaidBalance: number;
+  clearing: number;
+  reserved: number;
+  accountCooldownUntil: string | null;
   minimum: number;
   hasOpenRequest: boolean;
   openRequest: PhotographerPayout | null;
@@ -357,24 +419,28 @@ function OpenRequestHero({
   onWithdraw: () => void;
   onOpenHow: () => void;
 }) {
-  // BE returns DB wire ("pending" / "held" / "paid"). For pending, settledAt
-  // is null until admin approves, then populated — that's the photographer-
-  // visible "approved" stage.
-  const stage: "pending_review" | "approved" | "held" =
+  // BE returns the real lifecycle status now (pending → approved → processing,
+  // or held). Drive the stage off status directly — settledAt alone can't tell
+  // approved from processing.
+  const stage: "pending_review" | "approved" | "processing" | "held" =
     cycle.status === "held"
       ? "held"
-      : cycle.settledAt
-        ? "approved"
-        : "pending_review";
+      : cycle.status === "processing"
+        ? "processing"
+        : cycle.status === "approved"
+          ? "approved"
+          : "pending_review";
 
   const stageLabel: Record<typeof stage, string> = {
     pending_review: "Pending review",
     approved: "Approved · payment incoming",
+    processing: "Processing · payment being sent",
     held: "Held — needs attention",
   };
   const stageTone: Record<typeof stage, string> = {
     pending_review: "text-ink",
     approved: "text-fresh",
+    processing: "text-fresh",
     held: "text-error",
   };
 
@@ -404,8 +470,11 @@ function OpenRequestHero({
             <span className="font-mono">
               {formatLongDate(cycle.settledAt)}
             </span>{" "}
-            · admin is processing the transfer
+            · payment will be sent shortly
           </>
+        )}
+        {stage === "processing" && (
+          <>Payment in transit · waiting on confirmation</>
         )}
         {stage === "held" && cycle.holdReason && (
           <>
@@ -437,12 +506,12 @@ function OpenRequestHero({
           <button
             type="button"
             onClick={onWithdraw}
-            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-error border border-error hover:bg-error hover:text-bone transition-colors rounded-full px-5 py-2"
+            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-error border border-error hover:bg-error hover:text-surface transition-colors rounded-full px-5 py-2"
           >
-            Withdraw request
+            Cancel request
           </button>
           <p className="font-sans text-sm text-slate mt-3 max-w-md">
-            Fix the issue above, withdraw this request, then submit a new one.
+            Fix the issue above, cancel this request, then submit a new one.
           </p>
         </div>
       )}
@@ -510,15 +579,8 @@ function PayoutRow({
               <span className="text-slate-soft"> · </span>
               <span className="font-mono">{payout.reference}</span>
             </>
-          ) : payout.status === "pending" ? (
-            <>Processing — funds in transit.</>
           ) : (
-            <>
-              Releases{" "}
-              <span className="font-mono tnum text-ink-soft">
-                {formatLongDate(payout.settledAt)}
-              </span>
-            </>
+            ROW_NOTE[payout.status]
           )}
         </p>
         {hasReport ? (

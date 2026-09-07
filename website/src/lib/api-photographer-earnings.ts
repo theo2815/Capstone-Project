@@ -131,7 +131,19 @@ export interface PayoutBalancePrimaryAccount {
 }
 
 export interface PayoutBalanceResponse {
+  // Withdrawable now = max(0, cleared − paid − reserved). Gate the request CTA
+  // on this, never on lifetime earnings.
   unpaidBalance: number;
+  // Earned but still inside the clearing window — becomes withdrawable once it
+  // ages out. Shown as a separate "clearing" figure so the photographer can see
+  // why available < lifetime.
+  clearing: number;
+  // Tied up in an open request (pending/approved/processing/held); already
+  // claimed, so excluded from unpaidBalance.
+  reserved: number;
+  // ISO timestamp; non-null while a recent payout-account change still bars
+  // requests. The hero shows a paused banner and disables Request until it passes.
+  accountCooldownUntil: string | null;
   minimum: number;
   hasOpenRequest: boolean;
   openRequest: PhotographerPayout | null;

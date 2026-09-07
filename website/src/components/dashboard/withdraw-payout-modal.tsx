@@ -8,10 +8,10 @@ import { useToast } from "@/hooks/use-toast";
 import { withdrawPhotographerPayout } from "@/lib/api-photographer-earnings";
 import type { PhotographerPayout } from "@/lib/photographer-mock";
 
-// Confirmation modal for withdrawing a held payout request. BE only allows
-// withdraw when the cycle is on hold — this UI is gated to that state by the
-// hero. On confirm, hard-deletes the cycle (audit log row persists) and
-// invalidates the balance cache so the photographer can immediately submit
+// Confirmation modal for cancelling a held payout request. BE only allows this
+// when the cycle is on hold — the hero gates the UI to that state. On confirm,
+// the cycle is soft-cancelled (status → cancelled; the row and its audit history
+// persist) and the balance cache is invalidated so the photographer can submit
 // a new request once they've addressed the hold reason.
 
 export function WithdrawPayoutModal({
@@ -42,14 +42,14 @@ export function WithdrawPayoutModal({
       ]);
       showToast({
         kind: "success",
-        message: "Request withdrawn. You can submit a new one when ready.",
+        message: "Request cancelled. You can submit a new one when ready.",
       });
       onClose();
     } catch (err) {
-      console.error("[payouts] withdraw failed", err);
+      console.error("[payouts] cancel failed", err);
       showToast({
         kind: "error",
-        message: "Could not withdraw request. Please try again.",
+        message: "Could not cancel request. Please try again.",
       });
     } finally {
       setSubmitting(false);
@@ -59,11 +59,11 @@ export function WithdrawPayoutModal({
   if (!openRequest) return null;
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Withdraw payout request">
+    <Modal isOpen={isOpen} onClose={onClose} title="Cancel payout request">
       <div className="space-y-6">
         <div>
           <Kicker as="p" tone="soft">
-            Request to withdraw
+            Request to cancel
           </Kicker>
           <p className="font-display text-3xl md:text-4xl font-medium tracking-tight text-ink tnum mt-2">
             ₱{openRequest.amount.toLocaleString()}
@@ -85,7 +85,7 @@ export function WithdrawPayoutModal({
         )}
 
         <p className="font-sans text-sm text-slate">
-          Withdrawing removes this request. The unpaid balance stays on your
+          Cancelling removes this request. Your unpaid balance stays on your
           account — submit a new request once you&apos;ve addressed the reason
           above.
         </p>
@@ -97,7 +97,7 @@ export function WithdrawPayoutModal({
             disabled={submitting}
             className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink disabled:opacity-50 disabled:cursor-not-allowed transition-colors px-4 py-2"
           >
-            Cancel
+            Keep request
           </button>
           <button
             type="button"
@@ -105,7 +105,7 @@ export function WithdrawPayoutModal({
             disabled={submitting}
             className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-error border border-error hover:bg-error hover:text-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors rounded-full px-5 py-2"
           >
-            {submitting ? "Withdrawing…" : "Withdraw request"}
+            {submitting ? "Cancelling…" : "Cancel request"}
           </button>
         </div>
       </div>
