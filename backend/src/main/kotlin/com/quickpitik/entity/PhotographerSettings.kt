@@ -66,6 +66,29 @@ class PhotographerSettings(
     @Column(name = "watermark_label", length = 40)
     var watermarkLabel: String? = null,
 
+    // Photographer-controlled placement of their own logo (V51). Opacity
+    // (0.05-1.0) and scale (fraction of photo width) are shared; position is a
+    // normalized free-space fraction in [0,1] split per orientation. Defaults
+    // reproduce the former fixed bottom-right / 15% / 70% mark exactly — see
+    // WatermarkPlacement.DEFAULT and WatermarkService.drawWatermarkImage.
+    @Column(name = "watermark_opacity", nullable = false)
+    var watermarkOpacity: Double = 0.70,
+
+    @Column(name = "watermark_scale", nullable = false)
+    var watermarkScale: Double = 0.15,
+
+    @Column(name = "watermark_pos_landscape_x", nullable = false)
+    var watermarkPosLandscapeX: Double = 1.0,
+
+    @Column(name = "watermark_pos_landscape_y", nullable = false)
+    var watermarkPosLandscapeY: Double = 1.0,
+
+    @Column(name = "watermark_pos_portrait_x", nullable = false)
+    var watermarkPosPortraitX: Double = 1.0,
+
+    @Column(name = "watermark_pos_portrait_y", nullable = false)
+    var watermarkPosPortraitY: Double = 1.0,
+
     @Enumerated(EnumType.STRING)
     @Column(name = "verification_status", nullable = false, length = 20)
     var verificationStatus: VerificationStatus = VerificationStatus.INCOMPLETE,

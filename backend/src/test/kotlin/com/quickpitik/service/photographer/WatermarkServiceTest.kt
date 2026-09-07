@@ -255,6 +255,80 @@ class WatermarkServiceTest {
         assertEquals("Ana Reyes Studio", xmp?.xmpProperties?.get("dc:creator[1]"))
     }
 
+    // ─── Photographer placement (V51): position / opacity / size ──────────
+    // The default (bottom-right) is already pinned by "…touches only the
+    // corner" above. These cover the configurable knobs.
+
+    @Test
+    fun `a custom landscape position moves the logo out of the default corner`() {
+        val placement = WatermarkPlacement.DEFAULT.copy(landscapeX = 0.0, landscapeY = 0.0)
+        val marked = ImageIO.read(
+            ByteArrayInputStream(
+                service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = false, placement = placement).jpeg,
+            ),
+        )
+        val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
+
+        fun changedRatio(x0: Int, x1: Int, y0: Int, y1: Int): Double {
+            var changed = 0
+            for (y in y0 until y1) for (x in x0 until x1) {
+                if (channelDelta(marked.getRGB(x, y), plain.getRGB(x, y)) >= 40) changed++
+            }
+            return changed.toDouble() / ((x1 - x0) * (y1 - y0))
+        }
+        val topLeft = changedRatio(0, marked.width / 5, 0, marked.height / 5)
+        val bottomRight = changedRatio(marked.width * 4 / 5, marked.width, marked.height * 4 / 5, marked.height)
+        assertTrue(topLeft > 0.05, "logo should now sit in the top-left: ${"%.3f".format(topLeft)}")
+        assertTrue(bottomRight < 0.01, "the default bottom-right corner should be clear now: ${"%.3f".format(bottomRight)}")
+    }
+
+    @Test
+    fun `portrait photos use their own position independent of landscape`() {
+        // Landscape left at the default bottom-right; only portrait is moved to
+        // top-left. A tall photo must follow the portrait setting, not landscape.
+        val placement = WatermarkPlacement.DEFAULT.copy(portraitX = 0.0, portraitY = 0.0)
+        val marked = ImageIO.read(
+            ByteArrayInputStream(
+                service.processThumbnail(photoJpeg(1500, 2000), logoPng(), credit, platformMark = false, placement = placement).jpeg,
+            ),
+        )
+        val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(1500, 2000))), 1280)
+
+        fun changedRatio(x0: Int, x1: Int, y0: Int, y1: Int): Double {
+            var changed = 0
+            for (y in y0 until y1) for (x in x0 until x1) {
+                if (channelDelta(marked.getRGB(x, y), plain.getRGB(x, y)) >= 40) changed++
+            }
+            return changed.toDouble() / ((x1 - x0) * (y1 - y0))
+        }
+        val topLeft = changedRatio(0, marked.width / 4, 0, marked.height / 6)
+        val bottomRight = changedRatio(marked.width * 3 / 4, marked.width, marked.height * 5 / 6, marked.height)
+        assertTrue(topLeft > 0.05, "portrait logo should sit top-left: ${"%.3f".format(topLeft)}")
+        assertTrue(bottomRight < 0.01, "portrait bottom-right should be clear: ${"%.3f".format(bottomRight)}")
+    }
+
+    @Test
+    fun `a larger scale stamps a bigger logo`() {
+        fun markedPixels(scale: Double): Int {
+            val marked = ImageIO.read(
+                ByteArrayInputStream(
+                    service.processThumbnail(
+                        photoJpeg(2000, 1500), logoPng(), credit, platformMark = false,
+                        placement = WatermarkPlacement.DEFAULT.copy(scale = scale),
+                    ).jpeg,
+                ),
+            )
+            val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
+            var changed = 0
+            for (y in 0 until marked.height) for (x in 0 until marked.width) {
+                if (channelDelta(marked.getRGB(x, y), plain.getRGB(x, y)) >= 40) changed++
+            }
+            return changed
+        }
+        // 0.30 width is 2× the linear size ⇒ ~4× the area; comfortably > 2×.
+        assertTrue(markedPixels(0.30) > markedPixels(0.15) * 2, "a 0.30 scale should mark far more than 0.15")
+    }
+
     // ─── fixtures ─────────────────────────────────────────────────────────
 
     private fun photoJpeg(w: Int, h: Int): ByteArray {

@@ -28,6 +28,22 @@ data class RegionPatchRequest(
     val provinceCode: String,
 )
 
+// ─── Watermark placement (V51) ────────────────────────────────────────────
+// Position / opacity / size for the photographer's OWN logo (not the platform
+// protection layers). Mirrors the website + mobile watermark settings. Position
+// is a normalized free-space fraction in [0,1], split per orientation; scale is
+// the logo width as a fraction of photo width; opacity is the SRC_OVER alpha.
+// The service clamps every value into range (opacity 0.05-1.0, scale 0.05-0.40,
+// position 0-1), so an out-of-range payload is normalized, never rejected.
+data class WatermarkSettingsRequest(
+    val opacity: Double,
+    val scale: Double,
+    val landscapeX: Double,
+    val landscapeY: Double,
+    val portraitX: Double,
+    val portraitY: Double,
+)
+
 // ─── Cover / Watermark / QR upload response ───────────────────────────────
 // Mirrors website/src/lib/api-photographer-settings.ts MediaUploadResponse.
 data class MediaUploadResponseDto(

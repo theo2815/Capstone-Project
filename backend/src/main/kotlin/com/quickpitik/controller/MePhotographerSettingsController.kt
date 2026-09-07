@@ -14,6 +14,7 @@ import com.quickpitik.dto.photographer.PayoutAccountDto
 import com.quickpitik.dto.photographer.RegionPatchRequest
 import com.quickpitik.dto.photographer.SocialLinkDto
 import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
+import com.quickpitik.dto.photographer.WatermarkSettingsRequest
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.earnings.PayoutCycleService
 import com.quickpitik.service.orders.CouponService
@@ -128,6 +129,20 @@ class MePhotographerSettingsController(
             bytes = file.bytes,
             contentType = file.contentType,
         )
+    }
+
+    // Placement (position/opacity/size) for the photographer's own logo (V51).
+    // Separate from the image upload above — geometry changes without a
+    // re-upload. Applies to new uploads only. Mirrors website + mobile.
+    @PutMapping("/watermark/settings")
+    fun putWatermarkSettings(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @Valid @RequestBody body: WatermarkSettingsRequest,
+    ): Map<String, Any?> {
+        photographerSettingsService.putWatermarkSettings(principal.userId, body)
+        // FE ignores the body (api.put<unknown>); return an empty object so the
+        // envelope's `data` is not null — matches putBrand.
+        return emptyMap()
     }
 
     // ─── Socials CRUD ─────────────────────────────────────────────────────

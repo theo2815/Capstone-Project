@@ -57,6 +57,7 @@ class PhotoWatermarkServiceTest {
     private var lastCredit: WatermarkCredit? = null
     private var lastLogo: ByteArray? = null
     private var lastPlatformMark: Boolean? = null
+    private var lastPlacement: WatermarkPlacement? = null
 
     @BeforeEach
     fun setUp() {
@@ -142,12 +143,13 @@ class PhotoWatermarkServiceTest {
         Mockito.`when`(storageService.getBytes("events/$eventId/photos/$photoId/original.jpg"))
             .thenReturn(byteArrayOf(1))
         Mockito.`when`(storageService.getBytes("watermarks/logo.png")).thenReturn(byteArrayOf(2))
-        Mockito.`when`(watermarkService.processThumbnail(anyArg(), anyArg(), anyArg(), Mockito.anyBoolean())).thenAnswer { inv ->
+        Mockito.`when`(watermarkService.processThumbnail(anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(), anyArg())).thenAnswer { inv ->
             // Kotlin's non-null parameter rejects ArgumentCaptor/eq (both return
             // null), so record the arguments here instead.
             lastLogo = inv.getArgument(1)
             lastCredit = inv.getArgument(2)
             lastPlatformMark = inv.getArgument(3)
+            lastPlacement = inv.getArgument(4)
             MarkedPreview(jpeg = byteArrayOf(3), phash = 42L, phashClean = 43L, phashCentre = 44L)
         }
         Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
@@ -232,6 +234,39 @@ class PhotoWatermarkServiceTest {
         assertEquals("Ana Reyes", lastCredit?.name)
     }
 
+    // V51: the photographer's own logo placement (position per orientation,
+    // opacity, size) is read straight off the settings row and threaded into
+    // the compositor. Distinct values in every field so a mis-wired mapping is
+    // caught. Applies under whatever policy draws the logo (here PLATFORM).
+    @Test
+    fun `placement is read from settings and passed to the compositor`() {
+        stubHappyPath()
+        val custom = settings().apply {
+            watermarkOpacity = 0.5
+            watermarkScale = 0.25
+            watermarkPosLandscapeX = 0.125
+            watermarkPosLandscapeY = 0.375
+            watermarkPosPortraitX = 0.625
+            watermarkPosPortraitY = 0.875
+        }
+        Mockito.`when`(settingsRepository.findById(photographerId)).thenReturn(Optional.of(custom))
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+
+        service().process(photoId)
+
+        assertEquals(
+            WatermarkPlacement(
+                opacity = 0.5f,
+                scale = 0.25,
+                landscapeX = 0.125,
+                landscapeY = 0.375,
+                portraitX = 0.625,
+                portraitY = 0.875,
+            ),
+            lastPlacement,
+        )
+    }
+
     @Test
     fun `a lost flip race publishes no websocket frame`() {
         stubHappyPath()
@@ -272,7 +307,7 @@ class PhotoWatermarkServiceTest {
         // doAnswer, not thenThrow: Kotlin declares no checked exceptions, so
         // Mockito rejects thenThrow(IIOException) for this method.
         Mockito.doAnswer { throw IIOException("Image is truncated") }
-            .`when`(watermarkService).processThumbnail(anyArg(), anyArg(), anyArg(), Mockito.anyBoolean())
+            .`when`(watermarkService).processThumbnail(anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(), anyArg())
 
         service().process(photoId)
 

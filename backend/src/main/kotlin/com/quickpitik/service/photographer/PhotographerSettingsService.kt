@@ -9,6 +9,7 @@ import com.quickpitik.dto.photographer.MediaUploadResponseDto
 import com.quickpitik.dto.photographer.MissingRequirement
 import com.quickpitik.dto.photographer.RegionPatchRequest
 import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
+import com.quickpitik.dto.photographer.WatermarkSettingsRequest
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.VerificationStatus
@@ -104,7 +105,17 @@ class PhotographerSettingsService(
             "provinceCode" to settings.provinceCode.orEmpty(),
             "coverUrl" to coverUrl.orEmpty(),
             "watermarkUrl" to watermarkUrl.orEmpty(),
-            "avatarUrl" to avatarUrl.orEmpty()
+            "avatarUrl" to avatarUrl.orEmpty(),
+            // Placement of the photographer's own logo (V51). Both clients
+            // hydrate the drag-preview + sliders from this block.
+            "watermarkSettings" to mapOf(
+                "opacity" to settings.watermarkOpacity,
+                "scale" to settings.watermarkScale,
+                "landscapeX" to settings.watermarkPosLandscapeX,
+                "landscapeY" to settings.watermarkPosLandscapeY,
+                "portraitX" to settings.watermarkPosPortraitX,
+                "portraitY" to settings.watermarkPosPortraitY,
+            ),
         )
     }
 
@@ -233,6 +244,24 @@ class PhotographerSettingsService(
             .firstOrNull { it.code == regionCode }
             ?.provinces?.firstOrNull { it.code == provinceCode }
         settings.city = province?.name
+        return photographerSettingsRepository.save(settings)
+    }
+
+    // ─── Watermark placement (V51) ────────────────────────────────────────
+    // Position (per orientation), opacity and size for the photographer's own
+    // logo. Independent of the watermark image upload — geometry changes
+    // without re-uploading. Values are clamped into range rather than rejected:
+    // a slider/drag can only send in-range values, and a hand-crafted request
+    // is normalized. Applies to NEW uploads only — already-baked previews keep
+    // their stamp (see PhotoWatermarkService).
+    fun putWatermarkSettings(userId: UUID, req: WatermarkSettingsRequest): PhotographerSettings {
+        val settings = getOrCreate(userId)
+        settings.watermarkOpacity = req.opacity.coerceIn(MIN_WATERMARK_OPACITY, MAX_WATERMARK_OPACITY)
+        settings.watermarkScale = req.scale.coerceIn(MIN_WATERMARK_SCALE, MAX_WATERMARK_SCALE)
+        settings.watermarkPosLandscapeX = req.landscapeX.coerceIn(0.0, 1.0)
+        settings.watermarkPosLandscapeY = req.landscapeY.coerceIn(0.0, 1.0)
+        settings.watermarkPosPortraitX = req.portraitX.coerceIn(0.0, 1.0)
+        settings.watermarkPosPortraitY = req.portraitY.coerceIn(0.0, 1.0)
         return photographerSettingsRepository.save(settings)
     }
 
@@ -544,6 +573,12 @@ class PhotographerSettingsService(
         val HANDLE_REGEX = Regex("^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])?$")
         const val MAX_COVER_LONG_EDGE = 1920
         const val MAX_WATERMARK_LONG_EDGE = 1024
+        // Watermark placement bounds (V51). Keep in sync with the client slider
+        // ranges; opacity floor keeps the mark from being made invisible.
+        const val MIN_WATERMARK_OPACITY = 0.05
+        const val MAX_WATERMARK_OPACITY = 1.0
+        const val MIN_WATERMARK_SCALE = 0.05
+        const val MAX_WATERMARK_SCALE = 0.40
         const val MAX_COVER_BYTES = 10 * 1024 * 1024
         const val MAX_WATERMARK_BYTES = 10 * 1024 * 1024
         // Postgres auto-names the UNIQUE on photographer_settings.handle

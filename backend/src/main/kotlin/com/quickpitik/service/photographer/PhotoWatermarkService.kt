@@ -100,6 +100,19 @@ class PhotoWatermarkService(
             handle = settings.handle,
             photoId = photo.id,
         )
+        // The photographer's own logo placement (V51) — position (per
+        // orientation), size and opacity. Applies under every policy that draws
+        // the logo; the compositor clamps each value in-frame, so a stale or
+        // hand-edited row can never crash the render. Defaults reproduce the
+        // former fixed bottom-right mark.
+        val placement = WatermarkPlacement(
+            opacity = settings.watermarkOpacity.toFloat(),
+            scale = settings.watermarkScale,
+            landscapeX = settings.watermarkPosLandscapeX,
+            landscapeY = settings.watermarkPosLandscapeY,
+            portraitX = settings.watermarkPosPortraitX,
+            portraitY = settings.watermarkPosPortraitY,
+        )
 
         val marked = try {
             val original = storageService.getBytes(photo.s3Key)
@@ -120,6 +133,7 @@ class PhotoWatermarkService(
                     logo,
                     credit,
                     platformMark = policy == WatermarkPolicy.PLATFORM,
+                    placement = placement,
                 )
             } catch (ex: IllegalArgumentException) {
                 settleSemanticFailure(photo.id, photo.processingAttempts, ex.message ?: "undecodable image")
