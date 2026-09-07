@@ -16,6 +16,7 @@ import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -34,6 +35,7 @@ class PayoutAccountService(
     private val payoutAccountAuditRepository: PayoutAccountAuditRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -126,7 +128,7 @@ class PayoutAccountService(
         payoutAccountRepository.flush()
         target.isPrimary = true
         payoutAccountRepository.save(target)
-        recordChange(userId, "set_primary", target.method)
+        recordChange(userId, "set_primary", target.method, newNumber = target.accountNumber)
         return list(userId)
     }
 
@@ -167,7 +169,7 @@ class PayoutAccountService(
         storageService.put(newKey, processed, "image/png")
         account.qrS3Key = newKey
         val saved = payoutAccountRepository.save(account)
-        recordChange(userId, "qr", account.method)
+        recordChange(userId, "qr", account.method, newNumber = account.accountNumber)
         if (previousKey != null && previousKey != newKey) {
             runCatching { storageService.delete(previousKey) }
                 .onFailure { log.warn("payout qr delete of {} failed: {}", previousKey, it.message) }
@@ -195,13 +197,25 @@ class PayoutAccountService(
         oldNumber: String? = null,
         newNumber: String? = null,
     ) {
+        val maskedOld = oldNumber?.let(::maskNumber)
+        val maskedNew = newNumber?.let(::maskNumber)
         payoutAccountAuditRepository.save(
             PayoutAccountAudit(
                 userId = userId,
                 action = action,
                 method = method?.wire,
-                accountMaskedOld = oldNumber?.let(::maskNumber),
-                accountMaskedNew = newNumber?.let(::maskNumber),
+                accountMaskedOld = maskedOld,
+                accountMaskedNew = maskedNew,
+            ),
+        )
+        // Owner alert (AFTER_COMMIT + async) so a compromised session's change is
+        // visible to the real owner during the cooldown. Never carries the raw number.
+        eventPublisher.publishEvent(
+            PayoutAccountChangedEvent(
+                userId = userId,
+                action = action,
+                method = method?.wire,
+                maskedAccount = maskedNew ?: maskedOld,
             ),
         )
     }

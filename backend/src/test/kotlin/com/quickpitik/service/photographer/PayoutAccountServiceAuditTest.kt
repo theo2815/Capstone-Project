@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
+import org.springframework.context.ApplicationEventPublisher
 import java.util.UUID
 import kotlin.test.assertEquals
 
@@ -23,6 +24,7 @@ class PayoutAccountServiceAuditTest {
     private lateinit var payoutAccountAuditRepository: PayoutAccountAuditRepository
     private lateinit var storageService: StorageService
     private lateinit var storageProperties: StorageProperties
+    private lateinit var eventPublisher: ApplicationEventPublisher
 
     private val userId = UUID.randomUUID()
 
@@ -34,6 +36,7 @@ class PayoutAccountServiceAuditTest {
         payoutAccountAuditRepository = Mockito.mock(PayoutAccountAuditRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
         storageProperties = Mockito.mock(StorageProperties::class.java)
+        eventPublisher = Mockito.mock(ApplicationEventPublisher::class.java)
     }
 
     private fun service() = PayoutAccountService(
@@ -41,6 +44,7 @@ class PayoutAccountServiceAuditTest {
         payoutAccountAuditRepository,
         storageService,
         storageProperties,
+        eventPublisher,
     )
 
     @Test
@@ -58,5 +62,21 @@ class PayoutAccountServiceAuditTest {
         assertEquals("create", captor.value.action)
         assertEquals("gcash", captor.value.method)
         assertEquals("••••4567", captor.value.accountMaskedNew)
+    }
+
+    @Test
+    fun `creating a payout account publishes an owner-alert event`() {
+        Mockito.`when`(payoutAccountRepository.countByUserId(userId)).thenReturn(0L)
+        Mockito.`when`(payoutAccountRepository.save(anyArg<PayoutAccount>())).thenAnswer { it.getArgument(0) }
+
+        service().create(
+            userId,
+            CreatePayoutRequest(method = "gcash", accountNumber = "09171234567", accountName = "Juan Dela Cruz"),
+        )
+
+        val captor = ArgumentCaptor.forClass(PayoutAccountChangedEvent::class.java)
+        Mockito.verify(eventPublisher).publishEvent(captor.capture())
+        assertEquals("create", captor.value.action)
+        assertEquals("••••4567", captor.value.maskedAccount)
     }
 }

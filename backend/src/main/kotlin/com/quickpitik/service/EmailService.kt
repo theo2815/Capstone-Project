@@ -144,6 +144,99 @@ class EmailService(
         log.info("Photos-ready email sent · to={} resendId={}", toEmail, response.id)
     }
 
+    // Security alert to the account OWNER (their registered email — never the new
+    // payout number) when a payout destination changes. Sent AFTER_COMMIT + async
+    // via PayoutAccountChangedEmailListener. Failures are logged and dropped like
+    // the other advisory mails: the append-only audit row + the 24h payout cooldown
+    // are the hard controls; this alert is what makes the cooldown actionable — a
+    // compromised session can't suppress it (unlike an in-app inbox message).
+    fun sendPayoutAccountChangedAlert(
+        toEmail: String,
+        name: String,
+        action: String,
+        method: String?,
+        maskedAccount: String?,
+    ) {
+        if (devMode) {
+            log.info(
+                "[EMAIL STUB] payout-account {} for {} — {} {}",
+                action, toEmail, method ?: "", maskedAccount ?: "",
+            )
+            return
+        }
+        val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
+        try {
+            val response = resendClient.send(
+                ResendSendEmailRequest(
+                    from = sender,
+                    to = listOf(toEmail),
+                    subject = "Your QuickPitik payout account changed",
+                    html = renderPayoutAccountChangedHtml(name, action, method, maskedAccount),
+                ),
+            )
+            log.info("Payout-account-change alert sent · to={} resendId={}", toEmail, response.id)
+        } catch (ex: Exception) {
+            log.error("Payout-account-change alert failed · to={} err={}", toEmail, ex.message, ex)
+        }
+    }
+
+    private fun renderPayoutAccountChangedHtml(
+        name: String,
+        action: String,
+        method: String?,
+        maskedAccount: String?,
+    ): String {
+        val greeting = name.trim().ifBlank { "there" }
+        val actionText = when (action) {
+            "create" -> "A new payout account was added to your QuickPitik account"
+            "update" -> "A payout account on your QuickPitik account was edited"
+            "set_primary" -> "Your primary payout account was changed"
+            "delete" -> "A payout account was removed from your QuickPitik account"
+            "qr" -> "A payout account's QR code was updated"
+            else -> "Your payout accounts were changed"
+        }
+        val detail = listOfNotNull(method?.uppercase(), maskedAccount).joinToString(" · ")
+        val detailLine = if (detail.isNotBlank()) {
+            """<p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 20px;">Account: <strong>${escapeHtml(detail)}</strong></p>"""
+        } else {
+            ""
+        }
+        return """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /><title>Your QuickPitik payout account changed</title></head>
+<body style="margin:0;padding:0;background:#f7f5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;">
+  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f7f5ee;padding:32px 16px;">
+    <tr><td align="center">
+      <table cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#fafaf6;border-radius:16px;padding:36px 32px;border:1px solid #e5e2d8;">
+        <tr><td>
+          <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:11px;color:#7a7a7a;margin:0 0 10px;">
+            QuickPitik · Security
+          </p>
+          <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:30px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.1;color:#1a1a1a;">
+            Payout account changed.
+          </h1>
+          <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 12px;">
+            Hi ${escapeHtml(greeting)} — ${escapeHtml(actionText)}.
+          </p>
+          $detailLine
+          <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 24px;">
+            As a precaution, <strong>payouts are paused for 24 hours</strong> after any payout-account change.
+          </p>
+          <hr style="border:none;border-top:1px solid #e5e2d8;margin:24px 0;" />
+          <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
+            <strong>If this wasn't you</strong>, change your password now and contact QuickPitik support — someone may have access to your account. If it was you, no action is needed.
+          </p>
+        </td></tr>
+      </table>
+      <p style="text-align:center;font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:10px;color:#a8a8a8;margin:24px 0 0;">
+        QuickPitik · Cebu, Philippines
+      </p>
+    </td></tr>
+  </table>
+</body></html>
+        """.trimIndent()
+    }
+
     private fun renderVerificationHtml(toEmail: String, verifyUrl: String): String {
         return """
 <!DOCTYPE html>
