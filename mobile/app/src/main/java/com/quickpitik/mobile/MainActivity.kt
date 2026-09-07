@@ -981,8 +981,18 @@ class MainActivity : ComponentActivity() {
                         FloatingCart(
                             navController = navController,
                             cartViewModel = cartViewModel,
-                            onAfterCheckoutSuccess = {
-                                navController.navigate("orders") {
+                            onAfterCheckoutSuccess = { order ->
+                                // A settled order (₱0/100%-coupon giveaway or a paid replay)
+                                // has no PayMongo handoff — land on the receipt so the cart
+                                // clears and the downloads show, mirroring the deep-link
+                                // return. A null order is the PayMongo bail-back → orders list.
+                                val route = order?.let {
+                                    val id = Uri.encode(it.id)
+                                    it.returnToken?.takeIf { t -> t.isNotBlank() }
+                                        ?.let { t -> "orders/return/$id?token=${Uri.encode(t)}" }
+                                        ?: "orders/return/$id"
+                                } ?: "orders"
+                                navController.navigate(route) {
                                     popUpTo("events") { saveState = true }
                                     launchSingleTop = true
                                 }

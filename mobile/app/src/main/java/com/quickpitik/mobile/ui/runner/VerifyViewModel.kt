@@ -4,11 +4,14 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.quickpitik.mobile.data.readAtMost
 import com.quickpitik.mobile.data.remote.PhotoVerifyResultDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -31,10 +34,15 @@ class VerifyViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _state.value = VerifyState.Uploading
             val cr = getApplication<Application>().contentResolver
-            val bytes = try {
-                cr.openInputStream(uri)?.use { it.readBytes() }
-            } catch (e: Exception) {
-                null
+            // Read off the main thread and bounded — at most 10 MB + 1 so an
+            // oversized pick is caught by the size check below without pulling
+            // the whole file into memory or janking the UI.
+            val bytes = withContext(Dispatchers.IO) {
+                try {
+                    cr.openInputStream(uri)?.use { it.readAtMost(MAX_BYTES + 1) }
+                } catch (e: Exception) {
+                    null
+                }
             }
             if (bytes == null) {
                 _state.value = VerifyState.Error("Couldn't read that image. Pick another.")

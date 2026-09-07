@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.quickpitik.mobile.data.remote.OrderResponse
 import com.quickpitik.mobile.ui.auth.validateEmail
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -88,7 +89,7 @@ internal fun isSafeCheckoutUrl(url: String): Boolean = url.toHttpUrlOrNull()?.is
 fun CheckoutSheet(
     cartViewModel: CartViewModel,
     onDismiss: () -> Unit,
-    onCheckoutSuccess: () -> Unit,
+    onCheckoutSuccess: (OrderResponse?) -> Unit,
 ) {
     val cartItems by cartViewModel.cartItems.collectAsState()
     val total by cartViewModel.cartTotal.collectAsState()
@@ -119,11 +120,15 @@ fun CheckoutSheet(
     // total shown is what the runner is actually charged, not the list price.
     LaunchedEffect(Unit) { cartViewModel.previewCoupon(null) }
 
-    // Empty-cart settlement (no PayMongo handoff) — fire success immediately.
+    // Settled with no PayMongo handoff — a ₱0/100%-coupon giveaway or an
+    // already-paid replay returns FULFILLED/PAID with no redirect. Route to the
+    // receipt (like the PayMongo deep-link return) so the cart clears and the
+    // downloads show. Keyed on status, NOT redirectUrl (a legacy hosted-checkout
+    // field): a PENDING order must never be misread as settled.
     LaunchedEffect(checkoutState) {
-        val state = checkoutState
-        if (state is CheckoutState.Success && state.order.redirectUrl == null) {
-            onCheckoutSuccess()
+        val order = (checkoutState as? CheckoutState.Success)?.order ?: return@LaunchedEffect
+        if (order.status.uppercase() in setOf("PAID", "FULFILLED")) {
+            onCheckoutSuccess(order)
             cartViewModel.resetCheckoutState()
         }
     }
@@ -184,7 +189,7 @@ fun CheckoutSheet(
                 // fired (manual return), which the OrderReturnScreen poll path
                 // would otherwise have been the only thing to clear.
                 cartViewModel.fetchCart()
-                onCheckoutSuccess()
+                onCheckoutSuccess(null)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

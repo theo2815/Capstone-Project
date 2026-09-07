@@ -20,10 +20,13 @@ import com.quickpitik.mobile.ui.theme.*
 import androidx.compose.ui.unit.dp
 
 // Event coupon editor (V47) — lives on the event, not Settings. Only for a
-// covered PAID event. code (UPPERCASE 4-16), percentOff 1-100 (100 = a free
+// covered PAID event. code (UPPERCASE 4-16), percentOff 1-50 (or 100 for a free
 // giveaway on an event you created), active toggle, optional usage limit. The
 // backend enforces coverage/eligibility; this only mirrors the shape.
-// ponytail: no expiresAt field — optional, defaults null; add when a photographer asks.
+// ponytail: 50 mirrors the backend default COUPON_MAX_PERCENT (mobile has no
+// platform-fees fetch to read a raised cap); the sheet only opens for an
+// owned/created event, so 100 is always the valid giveaway here. No expiresAt
+// editor — the loaded value is preserved on save so a web-set expiry survives.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EventCouponSheet(
@@ -47,7 +50,7 @@ fun EventCouponSheet(
 
     val codeValid = Regex("^[A-Z0-9]{4,16}$").matches(code)
     val pct = percent.trim().toIntOrNull()
-    val pctValid = pct != null && pct in 1..100
+    val pctValid = pct != null && (pct in 1..50 || pct == 100)
     val canSave = codeValid && pctValid
 
     ModalBottomSheet(
@@ -84,8 +87,8 @@ fun EventCouponSheet(
                     CouponField("Code", code, { code = it.uppercase() }, "SAVE20")
                     if (code.isNotBlank() && !codeValid) FieldError("4-16 letters/numbers, e.g. SAVE20.")
                     Spacer(Modifier.height(16.dp))
-                    CouponField("Percent off · 1-100", percent, { percent = it.filter { c -> c.isDigit() } }, "20")
-                    if (percent.isNotBlank() && !pctValid) FieldError("Enter 1 to 100 (100 = free giveaway).")
+                    CouponField("Percent off · 1-50 (100 = giveaway)", percent, { percent = it.filter { c -> c.isDigit() } }, "20")
+                    if (percent.isNotBlank() && !pctValid) FieldError("Enter 1-50, or 100 for a free giveaway.")
                     Spacer(Modifier.height(16.dp))
                     CouponField("Usage limit · optional", usageLimit, { usageLimit = it.filter { c -> c.isDigit() } }, "No limit")
 
@@ -114,7 +117,10 @@ fun EventCouponSheet(
                                 code = code,
                                 percentOff = pct ?: 0,
                                 active = active,
-                                expiresAt = null,
+                                // Preserve any expiry set elsewhere (e.g. the website) — this
+                                // editor has no expiresAt field, and the PUT is a full upsert,
+                                // so sending null would silently clear it.
+                                expiresAt = loaded?.expiresAt,
                                 usageLimit = usageLimit.trim().toIntOrNull(),
                             )
                         },

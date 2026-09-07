@@ -584,7 +584,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     // eventId == null → create (POST); else edit (PATCH, only the non-null fields
     // in `input` are sent). On success refetch the list so review chips update.
     fun submitEvent(eventId: String?, input: OwnedEventFormInput) {
-        viewModelScope.launch {
+        // IO: buildEventParts reads the cover image bytes off the main thread,
+        // matching the other upload paths in this VM.
+        viewModelScope.launch(Dispatchers.IO) {
             _eventFormState.value = EventFormState.Submitting
             val token = sessionManager.getAccessToken()
             if (token == null) {
