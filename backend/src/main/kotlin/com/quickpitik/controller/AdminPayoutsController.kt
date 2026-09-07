@@ -13,6 +13,7 @@ import com.quickpitik.dto.admin.MarkPayoutPaidRequest
 import com.quickpitik.dto.admin.PayoutReasonRequest
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
+import com.quickpitik.service.StepUpService
 import com.quickpitik.service.admin.AdminPayoutService
 import jakarta.validation.Valid
 import org.springframework.security.access.prepost.PreAuthorize
@@ -35,6 +36,7 @@ import java.time.format.DateTimeParseException
 @PreAuthorize("hasRole('ADMIN')")
 class AdminPayoutsController(
     private val adminPayoutService: AdminPayoutService,
+    private val stepUpService: StepUpService,
 ) {
 
     @GetMapping
@@ -59,12 +61,18 @@ class AdminPayoutsController(
         @Valid @RequestBody body: HoldPayoutRequest,
     ): AdminPayoutCycleDto = adminPayoutService.hold(principal.userId, payoutId, body.reason)
 
+    // Step-up-gated (X-Step-Up) — money leaving the platform needs a fresh
+    // password. Enforced only when PAYOUT_STEP_UP_ENABLED is on; no-op otherwise.
     @PostMapping("/{payoutId}/mark-paid")
     fun markPaid(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable payoutId: String,
+        @RequestHeader(name = "X-Step-Up", required = false) stepUp: String?,
         @Valid @RequestBody body: MarkPayoutPaidRequest,
-    ): AdminPayoutCycleDto = adminPayoutService.markPaid(principal.userId, payoutId, body)
+    ): AdminPayoutCycleDto {
+        stepUpService.enforce(principal.userId, stepUp)
+        return adminPayoutService.markPaid(principal.userId, payoutId, body)
+    }
 
     @PostMapping("/{payoutId}/reject")
     fun reject(

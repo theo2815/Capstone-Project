@@ -29,6 +29,12 @@ data class PlatformProperties(
     // PAYOUT_DISBURSEMENT_PROVIDER. Keep "manual" until PayMongo KYB is approved
     // and the adapter is verified in a test-mode account (Phase 11).
     val disbursementProvider: String = "manual",
+    // Step-up re-auth master switch (like AI_API_ENABLED). OFF by default so the
+    // shipped web + mobile clients — which don't yet send an X-Step-Up header —
+    // keep working. Turn ON only once both clients do the /me/reauth flow; then
+    // payout-account changes and admin mark-paid require a fresh password.
+    // Overridable: PAYOUT_STEP_UP_ENABLED.
+    val payoutStepUpEnabled: Boolean = false,
     // Upper bound for emailed bundle capabilities and migrated legacy tokens.
     // The user-facing "works for 90 days" copy is hardcoded to this default —
     // if you change it, update the receipt email (OrderReceiptEmailService) and

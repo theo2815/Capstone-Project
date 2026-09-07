@@ -89,6 +89,10 @@ object ErrorCodes {
     const val PAYOUT_NO_ACCOUNT = "PAYOUT_NO_ACCOUNT"
     const val PAYOUT_ACCOUNT_COOLDOWN = "PAYOUT_ACCOUNT_COOLDOWN"
     const val PAYOUT_SECOND_APPROVER_REQUIRED = "PAYOUT_SECOND_APPROVER_REQUIRED"
+    // Sensitive action needs a fresh password re-entry (step-up). Only enforced
+    // when PAYOUT_STEP_UP_ENABLED is on; the client answers by POSTing /me/reauth
+    // and retrying with the X-Step-Up header.
+    const val STEP_UP_REQUIRED = "STEP_UP_REQUIRED"
     const val MFA_ALREADY_ENABLED = "MFA_ALREADY_ENABLED"
     const val MFA_NOT_ENROLLED = "MFA_NOT_ENROLLED"
     const val INVALID_MFA_CODE = "INVALID_MFA_CODE"

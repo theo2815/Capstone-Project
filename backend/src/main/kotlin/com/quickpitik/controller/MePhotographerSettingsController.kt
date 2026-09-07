@@ -17,6 +17,7 @@ import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
 import com.quickpitik.dto.photographer.WatermarkSettingsRequest
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.earnings.PayoutCycleService
+import com.quickpitik.service.StepUpService
 import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.photographer.PayoutAccountService
 import com.quickpitik.service.photographer.PhotographerSettingsService
@@ -35,6 +36,7 @@ import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
@@ -63,6 +65,7 @@ class MePhotographerSettingsController(
     private val payoutCycleService: PayoutCycleService,
     private val rateLimiter: RateLimiter,
     private val couponService: CouponService,
+    private val stepUpService: StepUpService,
 ) {
     // ─── Brand / Handle / Region ──────────────────────────────────────────
     @GetMapping("/brand")
@@ -214,24 +217,37 @@ class MePhotographerSettingsController(
         payoutAccountService.list(principal.userId)
     }
 
+    // Payout-account mutations are step-up-gated (X-Step-Up), enforced only when
+    // PAYOUT_STEP_UP_ENABLED is on — a compromised session then can't change the
+    // destination without re-entering the password. Off by default → no-op.
     @PostMapping("/payouts")
     fun createPayout(
         @AuthenticationPrincipal principal: AuthPrincipal,
+        @RequestHeader(name = "X-Step-Up", required = false) stepUp: String?,
         @Valid @RequestBody body: CreatePayoutRequest,
-    ): PayoutAccountDto = payoutAccountService.create(principal.userId, body)
+    ): PayoutAccountDto {
+        stepUpService.enforce(principal.userId, stepUp)
+        return payoutAccountService.create(principal.userId, body)
+    }
 
     @PatchMapping("/payouts/{id}")
     fun patchPayout(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable id: UUID,
+        @RequestHeader(name = "X-Step-Up", required = false) stepUp: String?,
         @Valid @RequestBody body: PatchPayoutRequest,
-    ): PayoutAccountDto = payoutAccountService.patch(principal.userId, id, body)
+    ): PayoutAccountDto {
+        stepUpService.enforce(principal.userId, stepUp)
+        return payoutAccountService.patch(principal.userId, id, body)
+    }
 
     @DeleteMapping("/payouts/{id}")
     fun deletePayout(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable id: UUID,
+        @RequestHeader(name = "X-Step-Up", required = false) stepUp: String?,
     ): Map<String, Boolean> {
+        stepUpService.enforce(principal.userId, stepUp)
         payoutAccountService.delete(principal.userId, id)
         return mapOf("removed" to true)
     }
@@ -240,14 +256,20 @@ class MePhotographerSettingsController(
     fun setPrimaryPayout(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable id: UUID,
-    ): List<PayoutAccountDto> = payoutAccountService.setPrimary(principal.userId, id)
+        @RequestHeader(name = "X-Step-Up", required = false) stepUp: String?,
+    ): List<PayoutAccountDto> {
+        stepUpService.enforce(principal.userId, stepUp)
+        return payoutAccountService.setPrimary(principal.userId, id)
+    }
 
     @PostMapping("/payouts/{id}/qr", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun uploadPayoutQr(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable id: UUID,
+        @RequestHeader(name = "X-Step-Up", required = false) stepUp: String?,
         @RequestPart("file") file: MultipartFile,
     ): PayoutAccountDto {
+        stepUpService.enforce(principal.userId, stepUp)
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
         return payoutAccountService.uploadQr(
             userId = principal.userId,

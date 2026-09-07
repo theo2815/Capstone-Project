@@ -32,9 +32,10 @@ class JwtAuthenticationFilter(
         if (token != null && SecurityContextHolder.getContext().authentication == null) {
             try {
                 val claims = tokenProvider.parse(token)
-                // An mfaPending token (first factor only) is NOT an access token —
-                // reject it as a bearer so it can't reach any authenticated route.
-                if (claims["mfaPending"] == true) {
+                // An mfaPending (first factor only) or stepUp (re-auth proof)
+                // token is NOT an access token — reject either as a bearer so it
+                // can't reach an authenticated route. stepUp travels in X-Step-Up.
+                if (claims["mfaPending"] == true || claims["stepUp"] == true) {
                     writeUnauthorized(response)
                     return
                 }
