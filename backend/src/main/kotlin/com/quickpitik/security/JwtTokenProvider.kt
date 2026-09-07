@@ -7,8 +7,10 @@ import io.jsonwebtoken.Jwts
 import io.jsonwebtoken.security.Keys
 import org.springframework.stereotype.Component
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 import java.time.Instant
 import java.util.Date
+import java.util.UUID
 import javax.crypto.SecretKey
 
 @Component
@@ -43,4 +45,30 @@ class JwtTokenProvider(private val props: JwtProperties) {
             .build()
             .parseSignedClaims(token)
             .payload
+
+    // Short-lived "first factor passed, second factor pending" token. Carries the
+    // mfaPending claim and NO role/email, so it is not a usable access token — the
+    // auth filter rejects any bearer with this claim. Only /auth/mfa/verify accepts it.
+    fun createMfaPendingToken(userId: UUID): String {
+        val now = Instant.now()
+        return Jwts.builder()
+            .subject(userId.toString())
+            .claim("mfaPending", true)
+            .issuedAt(Date.from(now))
+            .expiration(Date.from(now.plus(MFA_PENDING_TTL)))
+            .signWith(key)
+            .compact()
+    }
+
+    // Returns the userId only for a valid, unexpired mfaPending token; null otherwise.
+    fun parseMfaPending(token: String): UUID? = try {
+        val claims = parse(token)
+        if (claims["mfaPending"] == true) UUID.fromString(claims.subject) else null
+    } catch (_: Exception) {
+        null
+    }
+
+    private companion object {
+        val MFA_PENDING_TTL: Duration = Duration.ofMinutes(5)
+    }
 }

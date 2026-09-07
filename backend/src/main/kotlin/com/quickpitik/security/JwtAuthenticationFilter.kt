@@ -32,6 +32,12 @@ class JwtAuthenticationFilter(
         if (token != null && SecurityContextHolder.getContext().authentication == null) {
             try {
                 val claims = tokenProvider.parse(token)
+                // An mfaPending token (first factor only) is NOT an access token —
+                // reject it as a bearer so it can't reach any authenticated route.
+                if (claims["mfaPending"] == true) {
+                    writeUnauthorized(response)
+                    return
+                }
                 val userId = UUID.fromString(claims.subject)
                 val email = claims["email"] as? String ?: error("missing email claim")
                 val role = Role.valueOf(claims["role"] as? String ?: error("missing role claim"))

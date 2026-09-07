@@ -58,6 +58,9 @@ class SecurityConfig(
                 auth.requestMatchers(
                     "/api/v1/auth/register",
                     "/api/v1/auth/login",
+                    // Second step of an admin MFA login — the caller holds a
+                    // short-lived mfaPending token (in the body), not a session.
+                    "/api/v1/auth/mfa/verify",
                     // Google ID-token exchange — the token in the body is the
                     // credential, verified against Google's JWKS.
                     "/api/v1/auth/google",
