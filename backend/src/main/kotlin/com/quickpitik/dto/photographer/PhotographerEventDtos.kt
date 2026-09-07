@@ -32,6 +32,11 @@ data class PhotographerEventSummaryDto(
     val photoCount: Int,
     val salesCount: Int,
     val revenueKept: BigDecimal,
+    // The caller's own public handle, so the client can build the shareable
+    // gallery URL (quickpitik.com/{handle}/events/{slug}) from backend truth
+    // instead of a client-side settings store that can be an empty placeholder.
+    // null until the photographer sets a handle — clients gate on it.
+    val handle: String? = null,
     // Photographer-owned events (V46). ownedByMe = the caller created it;
     // the rest are wire-lowercase enums. Defaults keep older clients safe.
     val ownedByMe: Boolean = false,
@@ -58,6 +63,8 @@ data class PhotographerEventDetailDto(
     val revenueKept: BigDecimal,
     val firstUploadAt: OffsetDateTime?,
     val lastUploadAt: OffsetDateTime?,
+    // See PhotographerEventSummaryDto.handle.
+    val handle: String? = null,
     val ownedByMe: Boolean = false,
     val visibility: String = "public",
     val pricingMode: String = "paid",
@@ -209,6 +216,7 @@ fun summaryDto(
     ep: EventPhotographer,
     bannerUrl: String?,
     viewerId: UUID? = null,
+    handle: String? = null,
 ): PhotographerEventSummaryDto =
     PhotographerEventSummaryDto(
         id = event.id,
@@ -221,6 +229,7 @@ fun summaryDto(
         photoCount = ep.photoCount,
         salesCount = ep.salesCount,
         revenueKept = ep.revenueKeptPhp,
+        handle = handle,
         ownedByMe = event.createdBy != null && event.createdBy == viewerId,
         visibility = event.visibility.wire,
         pricingMode = event.pricingMode.wire,
@@ -235,6 +244,7 @@ fun detailDto(
     ep: EventPhotographer,
     bannerUrl: String?,
     viewerId: UUID? = null,
+    handle: String? = null,
 ): PhotographerEventDetailDto =
     PhotographerEventDetailDto(
         id = event.id,
@@ -249,6 +259,7 @@ fun detailDto(
         revenueKept = ep.revenueKeptPhp,
         firstUploadAt = ep.firstUploadAt,
         lastUploadAt = ep.lastUploadAt,
+        handle = handle,
         ownedByMe = event.createdBy != null && event.createdBy == viewerId,
         visibility = event.visibility.wire,
         pricingMode = event.pricingMode.wire,

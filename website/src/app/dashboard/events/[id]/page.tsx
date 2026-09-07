@@ -38,8 +38,7 @@ import type {
   PhotographerLibraryPhoto,
 } from "@/lib/photographer-mock";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
-import { cn } from "@/lib/utils";
+import { cn, copyToClipboard } from "@/lib/utils";
 
 // Focused share page. Direction A composition: SiteHeader (no dashboard rail
 // — escaped via the conditional in app/dashboard/layout.tsx) → back chip →
@@ -208,7 +207,9 @@ export default function FocusedSharePage() {
         <Hero event={event} />
         {ownedUi}
         {couponUi}
-        {uploadsOpen && <ShareHeroBand event={event} />}
+        {uploadsOpen && (
+          <ShareHeroBand event={event} handle={liveDetail.handle ?? null} />
+        )}
         <Stats photographer={photographer} />
         <PhotoGrid
           event={event}
@@ -446,27 +447,48 @@ function StateChip({ state }: { state: EventState }) {
   return <span>{STATE_LABEL[state]}</span>;
 }
 
-function ShareHeroBand({ event }: { event: ListEvent }) {
-  const handle = usePhotographerSettingsStore((s) => s.handle) || "your-handle";
+function ShareHeroBand({
+  event,
+  handle,
+}: {
+  event: ListEvent;
+  handle: string | null;
+}) {
   const { showToast } = useToast();
   const [copied, setCopied] = useState(false);
 
-  const path = `/${handle}/events/${event.slug}`;
+  // The public gallery lives at quickpitik.com/{handle}/events/{slug}, and the
+  // handle now comes from the backend event detail — not a client store that
+  // could still hold the "your-handle" placeholder. No handle yet ⇒ there is no
+  // shareable URL, so the actions stay disabled instead of copying a broken
+  // link that dead-ends the photographer's followers.
+  const hasHandle = handle !== null && handle.trim().length > 0;
+  const path = hasHandle ? `/${handle}/events/${event.slug}` : "";
   const fullUrl =
     typeof window !== "undefined"
       ? `${window.location.origin}${path}`
       : `https://quickpitik.com${path}`;
-  const displayUrl = `quickpitik.com${path}`;
+  const displayUrl = hasHandle
+    ? `quickpitik.com${path}`
+    : "Set a public handle in Settings to share this gallery";
 
-  function handleCopy() {
-    if (typeof navigator === "undefined" || !navigator.clipboard) return;
-    navigator.clipboard.writeText(fullUrl);
-    setCopied(true);
-    showToast({ kind: "success", message: "Link copied." });
-    setTimeout(() => setCopied(false), 2500);
+  async function handleCopy() {
+    if (!hasHandle) return;
+    const ok = await copyToClipboard(fullUrl);
+    if (ok) {
+      setCopied(true);
+      showToast({ kind: "success", message: "Link copied." });
+      setTimeout(() => setCopied(false), 2500);
+    } else {
+      showToast({
+        kind: "error",
+        message: "Couldn't copy. Select the link above and copy it manually.",
+      });
+    }
   }
 
   function shareTo(provider: "facebook" | "x" | "threads") {
+    if (!hasHandle) return;
     const encoded = encodeURIComponent(fullUrl);
     const tweetText = encodeURIComponent(`Photos from ${event.name}`);
     const threadsText = encodeURIComponent(
@@ -487,16 +509,25 @@ function ShareHeroBand({ event }: { event: ListEvent }) {
     window.open(url, "_blank", "noopener,noreferrer,width=600,height=480");
   }
 
-  function handleInstagram() {
-    if (typeof navigator === "undefined" || !navigator.clipboard) return;
-    navigator.clipboard.writeText(fullUrl);
-    showToast({
-      kind: "info",
-      message: "Link copied. Paste into your IG bio or story.",
-    });
+  async function handleInstagram() {
+    if (!hasHandle) return;
+    const ok = await copyToClipboard(fullUrl);
+    showToast(
+      ok
+        ? {
+            kind: "info",
+            message: "Link copied. Paste into your IG bio or story.",
+          }
+        : {
+            kind: "error",
+            message:
+              "Couldn't copy. Select the link above and copy it manually.",
+          },
+    );
   }
 
   function handleNativeShare() {
+    if (!hasHandle) return;
     if (typeof navigator !== "undefined" && navigator.share) {
       navigator
         .share({
@@ -508,7 +539,7 @@ function ShareHeroBand({ event }: { event: ListEvent }) {
           // user cancelled, ignore
         });
     } else {
-      handleCopy();
+      void handleCopy();
     }
   }
 
@@ -525,8 +556,12 @@ function ShareHeroBand({ event }: { event: ListEvent }) {
         <button
           type="button"
           onClick={handleCopy}
+          disabled={!hasHandle}
           aria-label="Copy public gallery link"
-          className="font-sans text-sm font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-2.5 px-5 rounded-full transition-colors inline-flex items-center justify-center gap-2 shrink-0"
+          className={cn(
+            "font-sans text-sm font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-2.5 px-5 rounded-full transition-colors inline-flex items-center justify-center gap-2 shrink-0",
+            !hasHandle && "opacity-50 cursor-not-allowed hover:bg-transparent hover:text-ink",
+          )}
         >
           {copied ? "Copied!" : "Copy link"}
         </button>
@@ -541,6 +576,7 @@ function ShareHeroBand({ event }: { event: ListEvent }) {
             onClick={() => shareTo("facebook")}
             dotColor="#1877F2"
             label="Facebook"
+            disabled={!hasHandle}
           />
           {/* Instagram has no web share intent, so this copies the link
               instead of opening a composer. Labelled for what it does — the
@@ -552,21 +588,25 @@ function ShareHeroBand({ event }: { event: ListEvent }) {
             label="Instagram"
             hint="copy"
             ariaLabel="Copy gallery link for Instagram"
+            disabled={!hasHandle}
           />
           <ShareChip
             onClick={() => shareTo("x")}
             dotColor="#000000"
             label="X"
+            disabled={!hasHandle}
           />
           <ShareChip
             onClick={() => shareTo("threads")}
             dotColor="#444444"
             label="Threads"
+            disabled={!hasHandle}
           />
           <ShareChip
             onClick={handleNativeShare}
             dotColor="var(--slate-soft)"
             label="More"
+            disabled={!hasHandle}
           />
         </div>
       </div>
@@ -580,6 +620,7 @@ function ShareChip({
   label,
   hint,
   ariaLabel,
+  disabled,
 }: {
   onClick: () => void;
   dotColor: string;
@@ -587,13 +628,19 @@ function ShareChip({
   /** Trailing qualifier for chips that don't open a share window. */
   hint?: string;
   ariaLabel?: string;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-label={ariaLabel ?? `Share to ${label}`}
-      className="inline-flex items-center gap-2 font-sans text-sm font-medium border border-line bg-bone hover:bg-bone-deep hover:border-ink py-2 px-4 rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+      className={cn(
+        "inline-flex items-center gap-2 font-sans text-sm font-medium border border-line bg-bone hover:bg-bone-deep hover:border-ink py-2 px-4 rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
+        disabled &&
+          "opacity-50 cursor-not-allowed hover:bg-bone hover:border-line",
+      )}
     >
       <span
         aria-hidden="true"

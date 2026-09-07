@@ -18,6 +18,7 @@ import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.service.storage.StorageService
 import org.springframework.data.domain.Sort
@@ -36,7 +37,13 @@ class PhotographerEventService(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val eventDtoMapper: EventDtoMapper,
+    private val photographerSettingsRepository: PhotographerSettingsRepository,
 ) {
+    // The caller's public handle is the same for every event they cover, so
+    // resolve it once per request. null until they set one — the client then
+    // knows the shareable gallery URL isn't ready.
+    private fun resolveHandle(photographerId: UUID): String? =
+        photographerSettingsRepository.findById(photographerId).orElse(null)?.handle
     fun listEvents(
         photographerId: UUID,
         withUploads: Boolean,
@@ -50,10 +57,11 @@ class PhotographerEventService(
         if (page.isEmpty) return PaginatedResponse.empty(pagination)
         val eventIds = page.content.map { it.id.eventId }
         val eventsById = eventRepository.findAllById(eventIds).associateBy { it.id }
+        val handle = resolveHandle(photographerId)
         val items = page.content.mapNotNull { ep ->
             val event = eventsById[ep.id.eventId] ?: return@mapNotNull null
             if (event.deletedAt != null) return@mapNotNull null
-            summaryDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId)
+            summaryDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId, handle = handle)
         }
         return PaginatedResponse(
             items = items,
@@ -76,7 +84,13 @@ class PhotographerEventService(
                 message = "No coverage for this event",
             )
         }
-        return detailDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId)
+        return detailDto(
+            event,
+            ep,
+            eventDtoMapper.resolveBannerUrl(event),
+            viewerId = photographerId,
+            handle = resolveHandle(photographerId),
+        )
     }
 
     fun listPhotos(

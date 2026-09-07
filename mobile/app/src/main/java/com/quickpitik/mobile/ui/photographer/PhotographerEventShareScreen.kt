@@ -46,6 +46,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -107,7 +108,6 @@ fun PhotographerEventShareScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val brand by viewModel.brandSettings.collectAsState()
     val photosState by viewModel.sharePhotosState.collectAsState()
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
     var visiblePhotoLimit by rememberSaveable(event.id) { mutableStateOf(20) }
@@ -118,15 +118,20 @@ fun PhotographerEventShareScreen(
 
     LaunchedEffect(event.id) {
         viewModel.fetchSharePhotos(event.id)
-        // The handle is read from the shared brandSettings flow, hydrated by
-        // the VM's init + Settings refreshes; re-fetch only the one payload this
-        // screen needs if it never loaded.
-        if (viewModel.brandSettings.value == null) viewModel.fetchBrandSettings()
     }
 
-    val handle = brand?.handle?.takeIf { it.isNotBlank() } ?: "your-handle"
-    val displayUrl = "quickpitik.com/$handle/events/${event.slug}"
-    val fullUrl = "https://$displayUrl"
+    // The gallery URL is built from the caller's handle on the event payload
+    // (backend truth) — not the settings flow, which could still hold a blank
+    // placeholder. No handle yet ⇒ no shareable link, so the share actions stay
+    // disabled instead of copying a broken quickpitik.com/your-handle/… link.
+    val handle = event.handle?.takeIf { it.isNotBlank() }
+    val hasHandle = handle != null
+    val displayUrl = if (hasHandle) {
+        "quickpitik.com/$handle/events/${event.slug}"
+    } else {
+        "Set a handle in Settings to share this gallery"
+    }
+    val fullUrl = if (hasHandle) "https://quickpitik.com/$handle/events/${event.slug}" else ""
 
     Surface(modifier = Modifier.fillMaxSize(), color = Bone) {
         Column(
@@ -214,11 +219,13 @@ fun PhotographerEventShareScreen(
                             copyLink(context, fullUrl)
                             Toast.makeText(context, "Link copied.", Toast.LENGTH_SHORT).show()
                         },
+                        enabled = hasHandle,
                         modifier = Modifier.weight(1f)
                     )
                     GhostCta(
                         text = "Share",
                         onClick = { shareNative(context, event.name, fullUrl) },
+                        enabled = hasHandle,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -226,17 +233,17 @@ fun PhotographerEventShareScreen(
                 Kicker("Share to your followers", color = SlateSoft)
                 Spacer(modifier = Modifier.height(10.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ShareChip(label = "Facebook", dotColor = FacebookBlue) {
+                    ShareChip(label = "Facebook", dotColor = FacebookBlue, enabled = hasHandle) {
                         openUrl(context, "https://www.facebook.com/sharer/sharer.php?u=${enc(fullUrl)}")
                     }
-                    ShareChip(label = "Instagram", dotColor = InstagramPink) {
+                    ShareChip(label = "Instagram", dotColor = InstagramPink, enabled = hasHandle) {
                         copyLink(context, fullUrl)
                         Toast.makeText(context, "Link copied. Paste into your IG bio or story.", Toast.LENGTH_LONG).show()
                     }
-                    ShareChip(label = "X", dotColor = XBlack) {
+                    ShareChip(label = "X", dotColor = XBlack, enabled = hasHandle) {
                         openUrl(context, "https://twitter.com/intent/tweet?url=${enc(fullUrl)}&text=${enc("Photos from ${event.name}")}")
                     }
-                    ShareChip(label = "Threads", dotColor = ThreadsGray) {
+                    ShareChip(label = "Threads", dotColor = ThreadsGray, enabled = hasHandle) {
                         openUrl(context, "https://www.threads.net/intent/post?text=${enc("Photos from ${event.name} — $displayUrl")}")
                     }
                 }
@@ -408,13 +415,14 @@ private fun SharePhotoTile(
 }
 
 @Composable
-private fun ShareChip(label: String, dotColor: Color, onClick: () -> Unit) {
+private fun ShareChip(label: String, dotColor: Color, enabled: Boolean = true, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .clip(PillShape)
             .background(Bone)
             .border(BorderStroke(1.dp, Line), PillShape)
-            .clickable { onClick() }
+            .clickable(enabled = enabled) { onClick() }
+            .alpha(if (enabled) 1f else 0.5f)
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)

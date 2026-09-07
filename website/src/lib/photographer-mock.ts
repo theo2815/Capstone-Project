@@ -59,6 +59,11 @@ export interface PendingPricingChange {
 export interface PhotographerEventSummary {
   id: string;
   slug: string;
+  /** The caller's own public handle, from the backend — pair with `slug` to
+   *  build the shareable gallery URL (quickpitik.com/{handle}/events/{slug}).
+   *  null/absent until the photographer sets a handle; the share UI gates on it
+   *  rather than copying a `your-handle` placeholder. */
+  handle?: string | null;
   name: string;
   /** Event date, ISO date-only (YYYY-MM-DD). */
   date: string;

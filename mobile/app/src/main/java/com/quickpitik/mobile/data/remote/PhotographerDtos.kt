@@ -19,6 +19,11 @@ data class PhotographerEventSummaryDto(
     val salesCount: Int,
     val revenueKept: Double,
     val bannerUrl: String? = null,
+    // The caller's own public handle, from the backend — pair with slug to build
+    // the shareable gallery URL (quickpitik.com/{handle}/events/{slug}). null
+    // until the photographer sets a handle; the share screen gates on it instead
+    // of copying a "your-handle" placeholder.
+    val handle: String? = null,
     // Photographer-owned events (V46). ownedByMe = the caller created it (and may
     // upload on any date); the rest are lowercase wire enums, defaults keeping the
     // pre-V46 admin-event shape safe. pendingChange is the parked pricing trio on
@@ -49,6 +54,8 @@ data class PhotographerEventDetailDto(
     val revenueKept: Double,
     val firstUploadAt: String? = null,
     val lastUploadAt: String? = null,
+    // See PhotographerEventSummaryDto.handle.
+    val handle: String? = null,
     val ownedByMe: Boolean = false,
     val visibility: String = "public",
     val pricingMode: String = "paid",

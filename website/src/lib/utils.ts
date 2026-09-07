@@ -32,14 +32,39 @@ export function safeHttpUrl(u: string | null | undefined): string | null {
   }
 }
 
-// Guarded clipboard write. Resolves false (never throws) when the Clipboard
-// API is missing — insecure origins, some in-app browsers — so callers can
-// toast an honest "couldn't copy" instead of a silent no-op.
+// Guarded clipboard write. Resolves true/false (never throws) so callers can
+// toast an honest "couldn't copy" instead of a silent no-op or a false
+// success. Tries the async Clipboard API first, then falls back to the legacy
+// execCommand("copy") path for contexts where navigator.clipboard is absent or
+// rejects — insecure origins and in-app browsers (Facebook/Instagram WebView),
+// which is exactly where photographers open share links.
 export async function copyToClipboard(text: string): Promise<boolean> {
-  if (typeof navigator === "undefined" || !navigator.clipboard) return false;
+  if (typeof navigator !== "undefined" && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // fall through to the legacy path
+    }
+  }
+  return legacyCopy(text);
+}
+
+function legacyCopy(text: string): boolean {
+  if (typeof document === "undefined") return false;
   try {
-    await navigator.clipboard.writeText(text);
-    return true;
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    // Keep it off-screen and non-disruptive: no scroll jump, no focus flash.
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-9999px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
   } catch {
     return false;
   }
