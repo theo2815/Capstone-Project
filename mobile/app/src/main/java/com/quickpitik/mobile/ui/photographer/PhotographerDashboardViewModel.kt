@@ -910,6 +910,99 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
+    // ── Photo library management (V52): Deleted tab + trash/restore/permanent ──
+    private val _trashPhotosState = MutableStateFlow<SharePhotosState>(SharePhotosState.Loading)
+    val trashPhotosState: StateFlow<SharePhotosState> = _trashPhotosState
+
+    fun fetchTrashPhotos(eventId: String) {
+        val token = sessionManager.getAccessToken() ?: return
+        viewModelScope.launch {
+            _trashPhotosState.value = SharePhotosState.Loading
+            try {
+                val response = RetrofitClient.apiService
+                    .getPhotographerEventPhotos("Bearer $token", eventId, deleted = true)
+                if (response.success && response.data != null) {
+                    _trashPhotosState.value = SharePhotosState.Success(response.data.items)
+                } else {
+                    _trashPhotosState.value =
+                        SharePhotosState.Error(response.error ?: "Failed to load deleted photos.")
+                }
+            } catch (e: Exception) {
+                _trashPhotosState.value = SharePhotosState.Error(RetrofitClient.parseError(e))
+            }
+        }
+    }
+
+    // Trash / restore are bulk; the per-photo UI sends a one-element list.
+    // Returns the affected count. On success both photo lists + the events list
+    // are refreshed (a photo moved between them; photoCount changed).
+    suspend fun trashPhotos(eventId: String, photoIds: List<String>): Result<Int> =
+        mutatePhotos(eventId) { token ->
+            RetrofitClient.apiService.trashPhotographerPhotos(
+                "Bearer $token", eventId, com.quickpitik.mobile.data.remote.PhotoIdsRequest(photoIds),
+            ).let {
+                if (it.success && it.data != null) Result.success(it.data.affected)
+                else Result.failure(IllegalStateException(it.error ?: "Couldn't delete the photos."))
+            }
+        }
+
+    suspend fun restorePhotos(eventId: String, photoIds: List<String>): Result<Int> =
+        mutatePhotos(eventId) { token ->
+            RetrofitClient.apiService.restorePhotographerPhotos(
+                "Bearer $token", eventId, com.quickpitik.mobile.data.remote.PhotoIdsRequest(photoIds),
+            ).let {
+                if (it.success && it.data != null) Result.success(it.data.affected)
+                else Result.failure(IllegalStateException(it.error ?: "Couldn't restore the photos."))
+            }
+        }
+
+    suspend fun permanentDeletePhotos(
+        eventId: String,
+        photoIds: List<String>,
+    ): Result<com.quickpitik.mobile.data.remote.PermanentDeleteResponseDto> =
+        mutatePhotos(eventId) { token ->
+            RetrofitClient.apiService.permanentDeletePhotographerPhotos(
+                "Bearer $token", eventId, com.quickpitik.mobile.data.remote.PhotoIdsRequest(photoIds),
+            ).let {
+                if (it.success && it.data != null) Result.success(it.data)
+                else Result.failure(IllegalStateException(it.error ?: "Couldn't delete the photos."))
+            }
+        }
+
+    // Runs a mutation, and on success refreshes the active list, the trash
+    // list, and the events list so every count stays honest.
+    private suspend fun <T> mutatePhotos(
+        eventId: String,
+        call: suspend (String) -> Result<T>,
+    ): Result<T> {
+        val token = sessionManager.getAccessToken()
+            ?: return Result.failure(IllegalStateException("You're signed out. Sign in and try again."))
+        return try {
+            call(token).onSuccess {
+                fetchSharePhotos(eventId)
+                fetchTrashPhotos(eventId)
+                fetchEvents()
+            }
+        } catch (e: Exception) {
+            Result.failure(IllegalStateException(RetrofitClient.parseError(e)))
+        }
+    }
+
+    // "Download all" — mints the tokened ZIP URL; the screen streams it into
+    // Downloads. Suspending like resolvePhotoDownloadUrl (consumed once).
+    suspend fun prepareBundleUrl(eventId: String): Result<String> {
+        val token = sessionManager.getAccessToken()
+            ?: return Result.failure(IllegalStateException("You're signed out. Sign in and try again."))
+        return try {
+            val response = RetrofitClient.apiService.preparePhotographerBundle("Bearer $token", eventId)
+            val url = response.data?.url
+            if (response.success && url != null) Result.success(url)
+            else Result.failure(IllegalStateException(response.error ?: "Couldn't prepare the download."))
+        } catch (e: Exception) {
+            Result.failure(IllegalStateException(RetrofitClient.parseError(e)))
+        }
+    }
+
     fun fetchVerificationStatus() {
         viewModelScope.launch {
             _verificationState.value = VerificationUiState.Loading

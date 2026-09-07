@@ -96,4 +96,70 @@ object PhotoDownloader {
         }
         return "quickpitik-$tag.jpg"
     }
+
+    // "Download all" (V52): stream the tokened bundle URL into the Downloads
+    // collection (not Pictures — it's a ZIP for a multi-photo event, or a raw
+    // JPEG for a single one). The filename + MIME come from the server's
+    // Content-Disposition / Content-Type so the file lands correctly labelled
+    // either way. Same IS_PENDING two-phase write as saveToGallery.
+    suspend fun saveBundleToDownloads(
+        context: Context,
+        url: String,
+    ): Result = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        try {
+            val request = Request.Builder().url(url).build()
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.Failed("Server returned ${response.code} for the download.")
+                }
+                val body = response.body
+                    ?: return@withContext Result.Failed("Server returned an empty response.")
+                val filename = parseContentDispositionFilename(response.header("Content-Disposition"))
+                    ?: "quickpitik-photos.zip"
+                val mime = response.header("Content-Type")
+                    ?.substringBefore(';')?.trim()?.takeIf { it.isNotBlank() }
+                    ?: "application/zip"
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, filename)
+                    put(MediaStore.Downloads.MIME_TYPE, mime)
+                    put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/QuickPitik")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: return@withContext Result.Failed("Couldn't open a slot in Downloads.")
+                try {
+                    resolver.openOutputStream(uri).use { out ->
+                        if (out == null) {
+                            resolver.delete(uri, null, null)
+                            return@withContext Result.Failed("Couldn't write the download.")
+                        }
+                        body.byteStream().use { input -> input.copyTo(out) }
+                    }
+                } catch (e: Exception) {
+                    resolver.delete(uri, null, null)
+                    return@withContext Result.Failed(e.localizedMessage ?: "Couldn't save the download.")
+                }
+                val finalize = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+                resolver.update(uri, finalize, null, null)
+                Result.Saved(uri, filename)
+            }
+        } catch (e: IOException) {
+            Result.Failed(e.localizedMessage ?: "Network error while downloading.")
+        } catch (e: Exception) {
+            Result.Failed(e.localizedMessage ?: "Couldn't save the download.")
+        }
+    }
+
+    // filename*=UTF-8''… (RFC 5987) preferred; falls back to filename="…".
+    private fun parseContentDispositionFilename(disposition: String?): String? {
+        if (disposition.isNullOrBlank()) return null
+        Regex("filename\\*=UTF-8''([^;]+)", RegexOption.IGNORE_CASE).find(disposition)?.let { m ->
+            return runCatching { java.net.URLDecoder.decode(m.groupValues[1].trim(), "UTF-8") }.getOrNull()
+        }
+        Regex("filename=\"?([^\";]+)\"?", RegexOption.IGNORE_CASE).find(disposition)?.let { m ->
+            return m.groupValues[1].trim()
+        }
+        return null
+    }
 }

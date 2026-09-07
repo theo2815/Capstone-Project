@@ -163,7 +163,9 @@ interface QuickPitikApi {
         @Header("Authorization") token: String,
         @Path("eventId") eventId: String,
         @Query("offset") offset: Int = 0,
-        @Query("limit") limit: Int = 100
+        @Query("limit") limit: Int = 100,
+        // V52: true → the Deleted Photos (trash) list; false → active gallery.
+        @Query("deleted") deleted: Boolean = false
     ): ApiResponseEnvelope<PaginatedResponse<PhotographerLibraryPhotoDto>>
 
     // Clean original for a photo the caller uploaded. The library listing only
@@ -174,6 +176,37 @@ interface QuickPitikApi {
         @Header("Authorization") token: String,
         @Path("photoId") photoId: String
     ): ApiResponseEnvelope<PhotographerDownloadDto>
+
+    // Photo library management (V52). Trash/restore/permanent-delete are bulk
+    // (the per-photo UI sends a one-element list); download-bundle mints a
+    // tokened ZIP URL. Ownership is enforced server-side (foreign ids ignored).
+    @POST("api/v1/me/photographer/events/{eventId}/photos/trash")
+    suspend fun trashPhotographerPhotos(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: PhotoIdsRequest
+    ): ApiResponseEnvelope<PhotoActionResponseDto>
+
+    @POST("api/v1/me/photographer/events/{eventId}/photos/restore")
+    suspend fun restorePhotographerPhotos(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: PhotoIdsRequest
+    ): ApiResponseEnvelope<PhotoActionResponseDto>
+
+    @POST("api/v1/me/photographer/events/{eventId}/photos/permanent-delete")
+    suspend fun permanentDeletePhotographerPhotos(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: PhotoIdsRequest
+    ): ApiResponseEnvelope<PermanentDeleteResponseDto>
+
+    // No @Body: the backend reads only the path + principal (mirrors requestPayout).
+    @POST("api/v1/me/photographer/events/{eventId}/download-bundle")
+    suspend fun preparePhotographerBundle(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String
+    ): ApiResponseEnvelope<PhotographerBundleDto>
 
     @GET("api/v1/me/photographer/verification")
     suspend fun getVerificationStatus(

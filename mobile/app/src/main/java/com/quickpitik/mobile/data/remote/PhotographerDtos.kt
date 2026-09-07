@@ -341,7 +341,10 @@ data class PhotographerLibraryPhotoDto(
     val uploadedAt: String,
     val tone: Int,
     val span: String,
-    val thumbnailUrl: String? = null
+    val thumbnailUrl: String? = null,
+    // Soft-delete timestamp (V52); non-null = in the photographer's trash. Null
+    // on the active list, set on the ?deleted=true (Deleted tab) list.
+    val deletedAt: String? = null,
 )
 
 // Presigned URL for the photographer's own un-watermarked original — the
@@ -351,6 +354,32 @@ data class PhotographerLibraryPhotoDto(
 data class PhotographerDownloadDto(
     val url: String,
     val expiresAt: String? = null
+)
+
+// Photo library management (V52). Trash/restore/permanent-delete are bulk; the
+// per-photo UI sends a one-element list.
+data class PhotoIdsRequest(
+    val photoIds: List<String>
+)
+
+// trash / restore → how many photos actually moved (ids already in that state
+// are no-ops and don't count).
+data class PhotoActionResponseDto(
+    val affected: Int
+)
+
+// permanent-delete → the ids actually purged, and the ones refused because
+// they've been sold (kept so buyers can still download them).
+data class PermanentDeleteResponseDto(
+    val deleted: List<String> = emptyList(),
+    val blockedSold: List<String> = emptyList(),
+)
+
+// "Download all" step 1 → a short-lived tokened URL the client streams the ZIP
+// (or, for a single-photo event, the raw JPEG) from.
+data class PhotographerBundleDto(
+    val url: String,
+    val expiresAt: String? = null,
 )
 
 // --- Public photographer profile (GET /public/photographers/{handle}) ---
