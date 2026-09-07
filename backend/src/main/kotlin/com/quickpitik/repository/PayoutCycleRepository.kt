@@ -74,6 +74,10 @@ interface PayoutCycleRepository : JpaRepository<PayoutCycle, String> {
         statusWires: Collection<String>,
     ): PayoutCycle?
 
+    // The PayMongo transfer webhook resolves a cycle by the id it stored at
+    // disbursement time (Phase 11).
+    fun findByProviderTransferId(providerTransferId: String): PayoutCycle?
+
     @Query(
         """
         SELECT COALESCE(SUM(c.amountPhp), 0) FROM PayoutCycle c

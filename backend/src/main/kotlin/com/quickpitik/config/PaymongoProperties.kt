@@ -31,6 +31,11 @@ data class PaymongoProperties(
     val mobileSuccessUrl: String = "http://10.0.2.2:8080/api/v1/orders/mobile-return",
     val mobileCancelUrl: String = "http://10.0.2.2:8080/api/v1/orders/mobile-cancel",
     val baseUrl: String = "https://api.paymongo.com/v1",
+    // Disbursements / Transfers live on the v2 API root (checkout is v1). Used
+    // only by PayMongoDisbursementProvider, which is inactive unless
+    // app.platform.disbursement-provider=paymongo. Auth reuses `secretKey`;
+    // inbound transfer webhooks reuse `webhookSecret` (same HMAC scheme).
+    val disbursementBaseUrl: String = "https://api.paymongo.com/v2",
     val connectTimeout: Duration = Duration.ofSeconds(5),
     val readTimeout: Duration = Duration.ofSeconds(15),
     val checkoutTtl: Duration = Duration.ofMinutes(30),
