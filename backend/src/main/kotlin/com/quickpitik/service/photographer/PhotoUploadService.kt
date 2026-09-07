@@ -224,9 +224,8 @@ class PhotoUploadService(
             )
         }
         // Photographer-owned events (V46): only the owner uploads into their
-        // event, and since they set the date the race-day window below does
-        // not bind them. The status gate above still closes a DRAFT (pending
-        // review) event.
+        // event. The status gate above still closes a DRAFT (pending review)
+        // event; the date window below binds owner + admin events differently.
         val owned = event.createdBy != null
         if (owned && event.createdBy != photographerId) {
             throw ApiException(
@@ -235,17 +234,28 @@ class PhotoUploadService(
                 message = "This event belongs to another photographer.",
             )
         }
-        // Photographer upload window is race day + 3 days (4 days inclusive,
-        // Asia/Manila). Outside that window the gallery is open for sale
-        // (or future-dated and not yet opened to runners) and new uploads
-        // are closed — mirrors website/src/lib/event-catalog.ts
-        // canUploadToEvent so the FE upload tile and the backend agree.
+        // Upload window (Asia/Manila), enforced here so the UI is never the only
+        // gate. Both windows mirror website/src/lib/event-catalog.ts + mobile
+        // EventCatalog.kt so the FE upload tile and the backend agree.
+        //  - Owner-created event: before/during/after, up to one month after the
+        //    event date, then closed. The owner set the date, so no lower bound.
+        //  - Admin event: race day + 3 days (4 inclusive); outside that the
+        //    gallery is open for sale (or future-dated) and uploads are closed.
         val today = LocalDate.now(PH_ZONE)
-        if (!owned && (today.isBefore(event.date) || today.isAfter(event.date.plusDays(UPLOAD_GRACE_DAYS - 1L)))) {
+        val closed = if (owned) {
+            today.isAfter(event.date.plusMonths(OWNER_UPLOAD_GRACE_MONTHS))
+        } else {
+            today.isBefore(event.date) || today.isAfter(event.date.plusDays(UPLOAD_GRACE_DAYS - 1L))
+        }
+        if (closed) {
             throw ApiException(
                 status = HttpStatus.UNPROCESSABLE_ENTITY,
                 code = ErrorCodes.EVENT_NOT_UPLOADABLE,
-                message = "Upload window for this event has closed.",
+                message = if (owned) {
+                    "The 1-month upload window for this event has ended."
+                } else {
+                    "Upload window for this event has closed."
+                },
             )
         }
         val settings = accessGuard.requireApproved(photographerId, "uploading")
@@ -505,6 +515,9 @@ class PhotoUploadService(
         val ALLOWED_CONTENT_TYPES: Set<String> = setOf("image/jpeg", "image/png", "image/webp")
         val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
         const val UPLOAD_GRACE_DAYS = 4
+        // Photographer-owned events: the owner may upload up to one calendar
+        // month after the event date (before/during/after), then it closes.
+        const val OWNER_UPLOAD_GRACE_MONTHS = 1L
         // Direct path: same ceiling as the multipart cap in application.yml.
         const val MAX_DIRECT_UPLOAD_BYTES = 25L * 1024 * 1024
         // Long enough for a 25 MB frame on a bad venue uplink, short enough that

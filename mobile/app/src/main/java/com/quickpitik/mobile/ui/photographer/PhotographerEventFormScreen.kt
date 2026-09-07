@@ -240,9 +240,15 @@ fun PhotographerEventFormScreen(
             Divider()
             Spacer(Modifier.height(16.dp))
             Kicker("Visibility")
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Your events never appear on the general Events page — runners reach them from your profile or a link you share. This only sets whether it shows on your public profile.",
+                style = Typography.bodySmall,
+                color = SlateSoft,
+            )
             Spacer(Modifier.height(10.dp))
-            RadioOption("Public — listed on Events for every runner", visibility == "public", !submitting) { visibility = "public" }
-            RadioOption("Unlisted — only people with your link", visibility == "unlisted", !submitting) { visibility = "unlisted" }
+            RadioOption("Public — shown on your photographer profile", visibility == "public", !submitting) { visibility = "public" }
+            RadioOption("Private — hidden from your profile, reachable only by your link", visibility == "unlisted", !submitting) { visibility = "unlisted" }
 
             if (!isEdit) {
                 Spacer(Modifier.height(16.dp))

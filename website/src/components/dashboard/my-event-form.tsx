@@ -52,8 +52,11 @@ const WATERMARK_OPTIONS = [
 ] as const;
 
 const VISIBILITY_OPTIONS = [
-  { value: "public", label: "Public — listed on /events for every runner" },
-  { value: "unlisted", label: "Unlisted — only people with your link" },
+  { value: "public", label: "Public — shown on your photographer profile" },
+  {
+    value: "unlisted",
+    label: "Private — hidden from your profile, reachable only by your link",
+  },
 ] as const;
 
 interface MyEventFormProps {
@@ -324,6 +327,11 @@ export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
 
       <fieldset className="pt-5 border-t border-line space-y-4">
         <Kicker as="p">Visibility</Kicker>
+        <p className="font-sans text-sm text-ink-soft max-w-prose">
+          Your events never appear on the general Events page — runners reach
+          them from your profile or a link you share. This only sets whether it
+          shows on your public profile.
+        </p>
         <AdminRadioGroup
           name="my-event-visibility"
           options={VISIBILITY_OPTIONS}

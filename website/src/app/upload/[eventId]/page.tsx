@@ -32,7 +32,9 @@ import {
 import { ROUTES } from "@/lib/constants";
 import {
   UPLOAD_GRACE_DAYS,
+  canOwnerUploadToEvent,
   canUploadToEvent,
+  ownerUploadCloseDate,
   useEventCatalog,
   uploadDaysRemaining,
 } from "@/lib/event-catalog";
@@ -316,6 +318,36 @@ function UploadGate({
     );
   }
 
+  // Owner of a photographer-owned event (V46): the one-month upload window
+  // after the event date has passed. Uploads are closed (the BE enforces the
+  // same cutoff); the gallery itself stays up for sale.
+  if (ownedByMe && !canOwnerUploadToEvent(event.date)) {
+    return (
+      <div className="border border-line rounded-2xl px-6 py-12 bg-bone-deep/20 text-center">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+          Upload window closed
+        </p>
+        <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
+          Your 1-month window has ended.
+        </p>
+        <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto tnum">
+          {formatLongDate(event.date, true)} · {event.location}
+        </p>
+        <p className="font-sans text-sm text-slate mt-6 max-w-md mx-auto">
+          You can add photos to an event you created for one month after its
+          date. Your gallery stays up for sale — reach out to admin if you
+          still have frames to land.
+        </p>
+        <Link
+          href={ROUTES.DASHBOARD_UPLOAD}
+          className="inline-flex mt-6 font-sans text-sm font-medium border border-ink text-ink hover:bg-ink hover:text-bone py-2.5 px-5 rounded-full transition-colors"
+        >
+          Pick a different event
+        </Link>
+      </div>
+    );
+  }
+
   if (gate.kind === "suspended") {
     // The VerificationBanner above already carries the full suspended copy
     // + Contact support CTA; keep the dropzone block terse so the banner
@@ -345,7 +377,7 @@ function UploadGate({
     );
   }
 
-  return <UploadForm event={event} />;
+  return <UploadForm event={event} ownedByMe={ownedByMe} />;
 }
 
 function GraceBadge({ event }: { event: ListEvent }) {
@@ -365,7 +397,31 @@ function GraceBadge({ event }: { event: ListEvent }) {
   );
 }
 
-function UploadForm({ event }: { event: ListEvent }) {
+// Friendly heads-up for the owner of a photographer-owned event (V46): they can
+// keep uploading for one month after their event, then it closes. Mirrors the
+// backend cutoff so the date shown is exactly the one enforced.
+function OwnerGraceNote({ event }: { event: ListEvent }) {
+  return (
+    <div className="mb-8 rounded-2xl border border-line bg-bone-deep/20 px-5 py-4">
+      <p className="font-sans text-sm md:text-base text-ink-soft">
+        This is your event — you can keep uploading until{" "}
+        <span className="text-ink font-medium tnum">
+          {formatLongDate(ownerUploadCloseDate(event.date), true)}
+        </span>
+        , one month after race day. After that it closes for uploads and your
+        gallery stays up for sale.
+      </p>
+    </div>
+  );
+}
+
+function UploadForm({
+  event,
+  ownedByMe,
+}: {
+  event: ListEvent;
+  ownedByMe: boolean;
+}) {
   const { showToast } = useToast();
   const [entries, setEntries] = useState<UploadEntry[]>([]);
   const [dragActive, setDragActive] = useState(false);
@@ -742,6 +798,7 @@ function UploadForm({ event }: { event: ListEvent }) {
 
   return (
     <>
+      {ownedByMe && <OwnerGraceNote event={event} />}
       <section className="mb-10">
         <div
           onDrop={handleDrop}

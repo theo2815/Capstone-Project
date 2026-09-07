@@ -51,6 +51,11 @@ private enum class StatusFilter(val label: String, val tone: StatusTone) {
     COMPLETED("Completed", StatusTone.Neutral),
 }
 
+// Primary owner split the user asked for: events the photographer created vs
+// admin-created races they can cover. Web parity: /dashboard/events renders
+// these as two sections; on a phone one bucket shows at a time.
+private enum class OwnerTab(val label: String) { MINE("My events"), ADMIN("Admin events") }
+
 private fun PhotographerEventSummaryDto.filterBucket(today: LocalDate = LocalDate.now()): StatusFilter =
     when (deriveEventState(date, today)) {
         EventState.LIVE -> StatusFilter.LIVE
@@ -81,6 +86,10 @@ fun PhotographerEventsScreen(
     var alertIsPending by remember { mutableStateOf(false) }
     var couponEvent by remember { mutableStateOf<PhotographerEventSummaryDto?>(null) }
     val today = remember { LocalDate.now() }
+    // Owner bucket + name filter hoisted so both survive tab visits and the
+    // search persists as you toggle between My / Admin events.
+    var ownerTab by rememberSaveable { mutableStateOf(OwnerTab.MINE) }
+    var nameQuery by rememberSaveable { mutableStateOf("") }
 
     val guardAction: (() -> Unit) -> Unit = { action ->
         if (!isApproved) {
@@ -119,7 +128,7 @@ fun PhotographerEventsScreen(
             .padding(horizontal = 16.dp)
             .padding(top = 12.dp),
     ) {
-        Kicker(text = "Covered events", color = Slate)
+        Kicker(text = "Events", color = Slate)
         Spacer(modifier = Modifier.height(16.dp))
 
         val coveredEvents = (eventsState as? EventsState.Success)?.events.orEmpty()
@@ -127,6 +136,9 @@ fun PhotographerEventsScreen(
         val all = remember(coveredEvents, publicEvents) {
             (coveredEvents + publicEvents).distinctBy { it.id }
         }
+        // Owner split: events I created (ownedByMe) vs admin-created races.
+        val mineAll = remember(all) { all.filter { it.ownedByMe } }
+        val adminAll = remember(all) { all.filter { !it.ownedByMe } }
 
         val isLoading = (eventsState is EventsState.Loading || publicEventsState is EventsState.Loading) && all.isEmpty()
         val isError = eventsState is EventsState.Error && publicEventsState is EventsState.Error && all.isEmpty()
@@ -155,10 +167,32 @@ fun PhotographerEventsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Owner split (web parity): My events vs Admin-created races. One
+            // bucket at a time — the phone form of the web page's two sections.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OwnerTabChip(
+                    label = OwnerTab.MINE.label,
+                    count = mineAll.size,
+                    selected = ownerTab == OwnerTab.MINE,
+                    onClick = { ownerTab = OwnerTab.MINE },
+                )
+                OwnerTabChip(
+                    label = OwnerTab.ADMIN.label,
+                    count = adminAll.size,
+                    selected = ownerTab == OwnerTab.ADMIN,
+                    onClick = { ownerTab = OwnerTab.ADMIN },
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            val scoped = if (ownerTab == OwnerTab.MINE) mineAll else adminAll
+
             // Name filter — web EventFilterBar parity (its date dropdown is
             // covered by the status chips below; the search is what's needed
             // to find one event in a long roster).
-            var nameQuery by rememberSaveable { mutableStateOf("") }
             TextField(
                 value = nameQuery,
                 onValueChange = { nameQuery = it },
@@ -177,17 +211,17 @@ fun PhotographerEventsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            val filteredAll = remember(all, nameQuery) {
+            val filteredAll = remember(scoped, nameQuery) {
                 val q = nameQuery.trim()
-                if (q.isEmpty()) all
-                else all.filter { it.name.contains(q, ignoreCase = true) }
+                if (q.isEmpty()) scoped
+                else scoped.filter { it.name.contains(q, ignoreCase = true) }
             }
             val buckets = remember(filteredAll, today) { filteredAll.groupBy { it.filterBucket(today) } }
             val liveCount = buckets[StatusFilter.LIVE]?.size ?: 0
             val upcomingCount = buckets[StatusFilter.UPCOMING]?.size ?: 0
             val completedCount = buckets[StatusFilter.COMPLETED]?.size ?: 0
 
-            var selectedFilter by remember(liveCount, upcomingCount, completedCount) {
+            var selectedFilter by remember(ownerTab, liveCount, upcomingCount, completedCount) {
                 mutableStateOf(
                     when {
                         liveCount > 0 -> StatusFilter.LIVE
@@ -239,10 +273,16 @@ fun PhotographerEventsScreen(
                 val visible = buckets[selectedFilter].orEmpty()
                 if (visible.isEmpty()) {
                     EmptyEventsCard(
-                        message = when (selectedFilter) {
-                            StatusFilter.LIVE -> "Nothing live right now. Race-day coverage will land here."
-                            StatusFilter.UPCOMING -> "No upcoming events on your roster yet."
-                            StatusFilter.COMPLETED -> "Your completed coverage will land here."
+                        message = when {
+                            scoped.isEmpty() && ownerTab == OwnerTab.MINE ->
+                                "You haven't created any events yet. Tap ＋ Create an event to add one."
+                            scoped.isEmpty() ->
+                                "No admin-created races to cover yet."
+                            selectedFilter == StatusFilter.LIVE ->
+                                "Nothing live in this view. Race-day coverage lands here."
+                            selectedFilter == StatusFilter.UPCOMING ->
+                                "No upcoming events in this view yet."
+                            else -> "No completed events in this view yet."
                         },
                     )
                 } else {
@@ -340,6 +380,34 @@ private fun StatusFilterChip(
                 .clip(CircleShape)
                 .background(dotColor),
         )
+        Text(
+            text = "${label.uppercase()} · $count",
+            style = Typography.labelMedium,
+            color = textColor,
+        )
+    }
+}
+
+@Composable
+private fun OwnerTabChip(
+    label: String,
+    count: Int,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Neutral segmented control (no lifecycle dot) — selected fills Ink, matching
+    // the StatusFilterChip family so the two rows read as one control stack.
+    val bg = if (selected) Ink else BoneDeep
+    val textColor = if (selected) Bone else Slate
+    Row(
+        modifier = modifier
+            .clip(BadgeShape)
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
             text = "${label.uppercase()} · $count",
             style = Typography.labelMedium,

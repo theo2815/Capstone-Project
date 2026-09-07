@@ -24,6 +24,8 @@ import {
   ownedEventNote,
   summaryToListEvent,
 } from "@/lib/photographer-events";
+import type { ListEvent } from "@/app/events/events-browser";
+import type { PhotographerEventSummary } from "@/lib/photographer-mock";
 import { cn } from "@/lib/utils";
 
 // Photographer's events list — races they've uploaded to, plus every event
@@ -49,14 +51,8 @@ export default function DashboardEventsPage() {
     [liveEvents],
   );
 
-  const trailing =
-    covered.length > 0
-      ? `${covered.length} event${covered.length === 1 ? "" : "s"}`
-      : undefined;
-
   const [date, setDate] = useState<EventDateKey>("any");
   const [query, setQuery] = useState("");
-  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EVENT_GRID_INITIAL);
   const [couponOpen, setCouponOpen] = useState(false);
   const couponEvents = useMemo(
     () => covered.map(({ photographer }) => photographer),
@@ -76,7 +72,17 @@ export default function DashboardEventsPage() {
     });
   }, [covered, date, query]);
 
-  const visibleSlice = filtered.slice(0, loadedCount);
+  // Two clear buckets: events the photographer created (ownedByMe) vs admin
+  // races they're covering. The BE already stamps ownedByMe per row.
+  const mine = useMemo(
+    () => filtered.filter(({ photographer }) => photographer.ownedByMe),
+    [filtered],
+  );
+  const adminCovered = useMemo(
+    () => filtered.filter(({ photographer }) => !photographer.ownedByMe),
+    [filtered],
+  );
+
   const clearFilters = () => {
     setDate("any");
     setQuery("");
@@ -85,10 +91,10 @@ export default function DashboardEventsPage() {
   if (isLoading) {
     return (
       <Slab
-        id="covered"
+        id="mine"
         number="01"
-        title="Your events"
-        caption="Races you've covered or created"
+        title="My events"
+        caption="Races you've created or covered"
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
           {[0, 1, 2, 3].map((i) => (
@@ -101,71 +107,113 @@ export default function DashboardEventsPage() {
 
   return (
     <>
-      <Slab
-        id="covered"
-        number="01"
-        title="Your events"
-        caption="Races you've covered or created"
-        trailing={trailing}
-      >
-        <div className="flex flex-wrap justify-end gap-2 mb-6">
-          <button
-            type="button"
-            onClick={() => setCouponOpen(true)}
-            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
-          >
-            + Create event coupon
-          </button>
-          <CreateEventLink />
-        </div>
-        {covered.length === 0 ? (
-          <CoveredEmpty />
-        ) : (
-          <>
-            <EventFilterBar
-              date={date}
-              onDateChange={setDate}
-              query={query}
-              onQueryChange={setQuery}
-              dateAriaLabel="Filter covered events by date"
-              searchAriaLabel="Search covered events"
-            />
-            {filtered.length === 0 ? (
-              <EventFilterEmpty onClear={clearFilters} />
-            ) : (
-              <>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
-                  {visibleSlice.map(({ catalog, photographer }, i) => (
-                    <EventTile
-                      key={catalog.id}
-                      mode="manage"
-                      event={catalog}
-                      index={i}
-                      photoCount={photographer.photoCount}
-                      salesCount={photographer.salesCount}
-                      note={ownedEventNote(photographer)}
-                    />
-                  ))}
-                </div>
-                <LoadMoreButton
-                  shown={visibleSlice.length}
-                  total={filtered.length}
-                  increment={PAGE_SIZE.EVENT_GRID_INCREMENT}
-                  onLoadMore={() =>
-                    setLoadedCount((n) => n + PAGE_SIZE.EVENT_GRID_INCREMENT)
-                  }
+      <div className="flex flex-wrap justify-end gap-2 pt-10 md:pt-20">
+        <button
+          type="button"
+          onClick={() => setCouponOpen(true)}
+          className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+        >
+          + Create event coupon
+        </button>
+        <CreateEventLink />
+      </div>
+
+      {covered.length === 0 ? (
+        <CoveredEmpty />
+      ) : (
+        <>
+          <EventFilterBar
+            date={date}
+            onDateChange={setDate}
+            query={query}
+            onQueryChange={setQuery}
+            dateAriaLabel="Filter your events by date"
+            searchAriaLabel="Search your events"
+          />
+          {mine.length === 0 && adminCovered.length === 0 ? (
+            <EventFilterEmpty onClear={clearFilters} />
+          ) : (
+            <>
+              {mine.length > 0 && (
+                <EventGroupSlab
+                  id="mine"
+                  number="01"
+                  title="My events"
+                  caption="Events you created"
+                  items={mine}
                 />
-              </>
-            )}
-          </>
-        )}
-      </Slab>
+              )}
+              {adminCovered.length > 0 && (
+                <EventGroupSlab
+                  id="admin"
+                  number={mine.length > 0 ? "02" : "01"}
+                  title="Admin events"
+                  caption="Races you're covering for QuickPitik"
+                  items={adminCovered}
+                />
+              )}
+            </>
+          )}
+        </>
+      )}
       <EventCouponModal
         isOpen={couponOpen}
         onClose={() => setCouponOpen(false)}
         events={couponEvents}
       />
     </>
+  );
+}
+
+// One "My events" / "Admin events" section: a Slab with its own paginated grid.
+// Each group owns its load-more so the two lists page independently.
+function EventGroupSlab({
+  id,
+  number,
+  title,
+  caption,
+  items,
+}: {
+  id: string;
+  number: string;
+  title: string;
+  caption: string;
+  items: Array<{ catalog: ListEvent; photographer: PhotographerEventSummary }>;
+}) {
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EVENT_GRID_INITIAL);
+  const visibleSlice = items.slice(0, loadedCount);
+  const noun = items.length === 1 ? "event" : "events";
+
+  return (
+    <Slab
+      id={id}
+      number={number}
+      title={title}
+      caption={caption}
+      trailing={`${items.length} ${noun}`}
+    >
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
+        {visibleSlice.map(({ catalog, photographer }, i) => (
+          <EventTile
+            key={catalog.id}
+            mode="manage"
+            event={catalog}
+            index={i}
+            photoCount={photographer.photoCount}
+            salesCount={photographer.salesCount}
+            note={ownedEventNote(photographer)}
+          />
+        ))}
+      </div>
+      <LoadMoreButton
+        shown={visibleSlice.length}
+        total={items.length}
+        increment={PAGE_SIZE.EVENT_GRID_INCREMENT}
+        onLoadMore={() =>
+          setLoadedCount((n) => n + PAGE_SIZE.EVENT_GRID_INCREMENT)
+        }
+      />
+    </Slab>
   );
 }
 

@@ -309,9 +309,10 @@ class PhotoUploadServiceTest {
     }
 
     // ── Photographer-owned events (V46) ──────────────────────────────────
-    // The owner is not bound to the race-day window (they set the date), but a
-    // pending event takes nothing and nobody else may upload into their event.
-    // A NONE watermark policy is the one case that needs no logo at all.
+    // The owner uploads before/during and up to one month after the event date
+    // (not the 4-day race-day window), but a pending event takes nothing and
+    // nobody else may upload into their event. A NONE watermark policy is the
+    // one case that needs no logo at all.
 
     private fun ownedEvent(
         date: LocalDate,
@@ -340,7 +341,7 @@ class PhotoUploadServiceTest {
 
     @Test
     fun `the owner may upload to their live event outside the race-day window`() {
-        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")).minusDays(30)))
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")).minusDays(20)))
 
         val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
 
@@ -392,6 +393,45 @@ class PhotoUploadServiceTest {
             service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
         }
         assertEquals(ErrorCodes.WATERMARK_MISSING, ex.code)
+    }
+
+    @Test
+    fun `the owner may upload before the event date`() {
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")).plusDays(10)))
+
+        val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        assertEquals("processing", dto.status)
+        Mockito.verify(photoRepository).saveAndFlush(anyArg<Photo>())
+    }
+
+    @Test
+    fun `the owner is closed out more than one month after the event date`() {
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")).minusMonths(1).minusDays(5)))
+
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+        assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, ex.code)
+        assertTrue(ex.message!!.contains("1-month"))
+        Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
+    }
+
+    // Refactoring the owned window into an if/else must not loosen the admin
+    // race-day window (createdBy == null): a past admin event is still closed.
+    @Test
+    fun `an admin event outside the race-day window is still closed`() {
+        val adminEvent = event().apply { date = LocalDate.now(ZoneId.of("Asia/Manila")).minusDays(10) }
+        Mockito.`when`(eventRepository.findById(eventId)).thenReturn(Optional.of(adminEvent))
+        Mockito.`when`(userRepository.findById(photographerId)).thenReturn(Optional.of(photographer()))
+        Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.of(approvedSettings()))
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+        assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, ex.code)
+        assertTrue(ex.message!!.contains("has closed"))
     }
 
     // The race-safe backstop: when a concurrent identical-bytes upload slips past

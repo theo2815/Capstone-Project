@@ -63,6 +63,34 @@ export function uploadDaysRemaining(
   return UPLOAD_GRACE_DAYS - 1 - days;
 }
 
+// Photographer-owned events (V46): the owner may upload from before the event
+// through one calendar month after the event date, then it closes. Mirrors the
+// backend gate in PhotoUploadService.gate (OWNER_UPLOAD_GRACE_MONTHS = 1) so the
+// tile + gate copy never disagree with what the server enforces. No lower bound
+// — the owner set the date and may stage photos ahead of it.
+export function ownerUploadCloseDate(eventDate: string): string {
+  const [y, m, d] = eventDate.split("-").map(Number);
+  // Clamp to end-of-month like Java's LocalDate.plusMonths(1) (Jan 31 → Feb 28)
+  // so a month-end event date closes the same day the backend closes it.
+  const monthIndex = m; // (m - 1) zero-based, + 1 month
+  const ty = y + Math.floor(monthIndex / 12);
+  const tm = monthIndex % 12;
+  const lastDay = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
+  const day = Math.min(d, lastDay);
+  return new Date(Date.UTC(ty, tm, day)).toISOString().slice(0, 10);
+}
+
+// True while the owner can still push photos to their own event. Open until the
+// end of the close date (one month after race day); no lower bound.
+export function canOwnerUploadToEvent(
+  eventDate: string,
+  now: Date = new Date(),
+): boolean {
+  // daysSinceEvent returns (today − date) in whole days; ≤ 0 means Manila-today
+  // has not passed the close date yet.
+  return daysSinceEvent(ownerUploadCloseDate(eventDate), now) <= 0;
+}
+
 // Public catalog seed — readers can reference but we recompute state on read.
 export const EVENT_CATALOG: ReadonlyArray<ListEvent> = SEED.map((e) => ({
   ...e,
