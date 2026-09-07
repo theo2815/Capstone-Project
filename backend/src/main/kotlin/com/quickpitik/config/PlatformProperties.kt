@@ -23,6 +23,12 @@ data class PlatformProperties(
     // before they can be paid. Dormant until >= 2 admin accounts exist (a lone
     // admin must still be able to approve). Overridable: PAYOUT_TWO_PERSON_THRESHOLD_PHP.
     val payoutTwoPersonThresholdPhp: BigDecimal = BigDecimal("10000"),
+    // Which disbursement rail moves payout money: "manual" (admin sends by hand
+    // and attests via mark-paid — the default) or "paymongo" (create a Transfer
+    // via the API; confirmation arrives by webhook). Overridable:
+    // PAYOUT_DISBURSEMENT_PROVIDER. Keep "manual" until PayMongo KYB is approved
+    // and the adapter is verified in a test-mode account (Phase 11).
+    val disbursementProvider: String = "manual",
     // Upper bound for emailed bundle capabilities and migrated legacy tokens.
     // The user-facing "works for 90 days" copy is hardcoded to this default —
     // if you change it, update the receipt email (OrderReceiptEmailService) and

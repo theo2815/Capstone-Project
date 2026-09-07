@@ -17,6 +17,8 @@ import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.disbursement.DisbursementService
+import com.quickpitik.service.disbursement.ManualDisbursementProvider
 import com.quickpitik.service.earnings.PayoutStatusRecorder
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
@@ -85,6 +87,8 @@ class AdminPayoutServiceTransitionTest {
             adminDecisionLogRepository, photographerMessageRepository, eventPublisher,
         )
         val recorder = PayoutStatusRecorder(payoutStatusHistoryRepository)
+        val props = PlatformProperties()
+        val disbursementService = DisbursementService(listOf(ManualDisbursementProvider()), props)
         return AdminPayoutService(
             payoutCycleRepository,
             payoutAccountRepository,
@@ -96,7 +100,8 @@ class AdminPayoutServiceTransitionTest {
             adminDecisionLogService,
             adminDecisionLogRepository,
             recorder,
-            PlatformProperties(),
+            props,
+            disbursementService,
         )
     }
 
@@ -145,6 +150,17 @@ class AdminPayoutServiceTransitionTest {
         given(PayoutCycleStatus.APPROVED)
         service().markProcessing(adminId, cycleId)
         assertEquals(PayoutCycleStatus.PROCESSING.wire, recordedToStatus())
+    }
+
+    @Test
+    fun `mark-processing routes through the disbursement seam and stamps the manual provider`() {
+        given(PayoutCycleStatus.APPROVED)
+        service().markProcessing(adminId, cycleId)
+        val captor = ArgumentCaptor.forClass(PayoutCycle::class.java)
+        Mockito.verify(payoutCycleRepository).save(captor.capture())
+        assertEquals("manual", captor.value.provider)
+        // Manual disbursement creates no external transfer, so no id is recorded.
+        assertEquals(null, captor.value.providerTransferId)
     }
 
     @Test

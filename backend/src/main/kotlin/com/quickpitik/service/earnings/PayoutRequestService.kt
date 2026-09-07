@@ -164,6 +164,12 @@ class PayoutRequestService(
         cycle.method = primary.method
         cycle.status = PayoutCycleStatus.PENDING
         cycle.settledAt = null
+        // Snapshot the destination now (immutable) so a later payout-account
+        // change can't reroute this in-flight payout, and disbursement targets a
+        // fixed account (V58, Phase 8).
+        cycle.accountSnapshotMethod = primary.method.wire
+        cycle.accountSnapshotNumber = primary.accountNumber
+        cycle.accountSnapshotName = primary.accountName
 
         val saved = try {
             payoutCycleRepository.save(cycle)

@@ -32,6 +32,8 @@ import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.disbursement.DisbursementRequest
+import com.quickpitik.service.disbursement.DisbursementService
 import com.quickpitik.service.earnings.PayoutStatusRecorder
 import com.quickpitik.service.storage.StorageService
 import org.springframework.dao.DataIntegrityViolationException
@@ -58,6 +60,7 @@ class AdminPayoutService(
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val payoutStatusRecorder: PayoutStatusRecorder,
     private val platformProperties: PlatformProperties,
+    private val disbursementService: DisbursementService,
 ) {
 
     @Transactional(readOnly = true)
@@ -236,6 +239,13 @@ class AdminPayoutService(
         val cycle = loadCycle(payoutId)
         val from = cycle.status
         ensureFrom(cycle, setOf(PayoutCycleStatus.APPROVED))
+        // Route the money movement through the disbursement seam. Manual = no-op
+        // (admin sends by hand, then attests via mark-paid); PayMongo = creates a
+        // Transfer and returns its id, with the webhook confirming later (Phase 11).
+        cycle.provider = disbursementService.activeName
+        disbursementRequestFor(cycle)?.let { req ->
+            cycle.providerTransferId = disbursementService.initiate(req).providerTransferId
+        }
         cycle.status = PayoutCycleStatus.PROCESSING
         cycle.processingAt = OffsetDateTime.now()
         payoutCycleRepository.save(cycle)
@@ -245,6 +255,28 @@ class AdminPayoutService(
             adminId = adminId, targetPayoutId = cycle.id, decision = "processing",
         )
         return hydrateOne(cycle)
+    }
+
+    // The disbursement destination: the cycle's immutable snapshot (captured at
+    // request time), falling back to the current primary account for legacy
+    // cycles created before snapshots existed. Null when neither resolves — the
+    // manual provider ignores it; a real provider would fail-fast.
+    private fun disbursementRequestFor(cycle: PayoutCycle): DisbursementRequest? {
+        val method = cycle.accountSnapshotMethod
+        val number = cycle.accountSnapshotNumber
+        val name = cycle.accountSnapshotName
+        if (method != null && number != null && name != null) {
+            return DisbursementRequest(cycle.id, cycle.amountPhp, method, number, name)
+        }
+        val live = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(cycle.photographerId)
+            ?: return null
+        return DisbursementRequest(
+            cycleId = cycle.id,
+            amountPhp = cycle.amountPhp,
+            method = live.method.wire,
+            accountNumber = live.accountNumber,
+            accountName = live.accountName,
+        )
     }
 
     fun markFailed(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
@@ -687,7 +719,7 @@ class AdminPayoutService(
             failedReason = cycle.failedReason,
             approvedBy = cycle.approvedBy?.toString(),
             secondApprovedBy = cycle.secondApprovedBy?.toString(),
-            payoutAccount = snapshotAccount(account),
+            payoutAccount = snapshotAccount(cycle, account),
         )
     }
 
@@ -709,16 +741,18 @@ class AdminPayoutService(
         }
     }
 
-    private fun snapshotAccount(account: PayoutAccount?): AdminPayoutAccountSnapshotDto {
-        if (account == null) {
-            return AdminPayoutAccountSnapshotDto(
-                method = "",
-                accountNumber = "",
-                accountName = "",
-                qr = null,
-            )
-        }
-        val qr = account.qrS3Key?.let { key ->
+    // Prefer the cycle's immutable destination snapshot (where the money will
+    // actually go) so a later payout-account change can't make the admin send to
+    // a new number; fall back to the live account for legacy cycles without a
+    // snapshot. The QR is a display aid and always comes from the live account.
+    private fun snapshotAccount(
+        cycle: PayoutCycle,
+        account: PayoutAccount?,
+    ): AdminPayoutAccountSnapshotDto {
+        val method = cycle.accountSnapshotMethod ?: account?.method?.wire ?: ""
+        val number = cycle.accountSnapshotNumber ?: account?.accountNumber ?: ""
+        val name = cycle.accountSnapshotName ?: account?.accountName ?: ""
+        val qr = account?.qrS3Key?.let { key ->
             AdminPayoutQrDto(
                 // Reuse the cover TTL — both are private images surfaced via
                 // a presigned GET that the FE renders straight into <img src>.
@@ -727,9 +761,9 @@ class AdminPayoutService(
             )
         }
         return AdminPayoutAccountSnapshotDto(
-            method = account.method.wire,
-            accountNumber = account.accountNumber,
-            accountName = account.accountName,
+            method = method,
+            accountNumber = number,
+            accountName = name,
             qr = qr,
         )
     }

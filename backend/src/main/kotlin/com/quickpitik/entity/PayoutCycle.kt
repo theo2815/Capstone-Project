@@ -79,6 +79,27 @@ class PayoutCycle(
     @Column(name = "rejected_reason", length = 255)
     var rejectedReason: String? = null,
 
+    // ─── Disbursement seam (V58, Phase 8) ─────────────────────────────────
+    // Which rail moved the money and its id there. 'manual' = admin sends by
+    // hand (today); 'paymongo' = a Transfer created via the API (Phase 11).
+    @Column(name = "provider", nullable = false, length = 20)
+    var provider: String = "manual",
+
+    @Column(name = "provider_transfer_id", length = 100)
+    var providerTransferId: String? = null,
+
+    // Destination snapshot captured at request time — immutable, so a later
+    // payout-account change can't reroute an in-flight payout. Disbursement
+    // targets this, not the live primary account.
+    @Column(name = "account_snapshot_method", length = 20)
+    var accountSnapshotMethod: String? = null,
+
+    @Column(name = "account_snapshot_number", length = 64)
+    var accountSnapshotNumber: String? = null,
+
+    @Column(name = "account_snapshot_name", length = 200)
+    var accountSnapshotName: String? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 ) {
