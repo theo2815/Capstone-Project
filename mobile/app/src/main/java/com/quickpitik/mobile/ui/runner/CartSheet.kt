@@ -58,6 +58,8 @@ import com.quickpitik.mobile.ui.theme.PrimaryCta
 import com.quickpitik.mobile.ui.theme.QpHaptic
 import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.StatusChip
+import com.quickpitik.mobile.ui.theme.StatusTone
 import com.quickpitik.mobile.ui.theme.TileShape
 import com.quickpitik.mobile.ui.theme.Typography
 import com.quickpitik.mobile.ui.theme.rememberQpHaptic
@@ -79,6 +81,8 @@ fun CartSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val hapticFire = rememberQpHaptic()
     val itemCount = items.size
+    val ownedPhotoIds by cartViewModel.ownedPhotoIds.collectAsState()
+    val ownedItems = items.filter { ownedPhotoIds.contains(it.photoId) }
     var previewIndex by remember { mutableStateOf<Int?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -101,6 +105,9 @@ fun CartSheet(
             }
         }
     }
+
+    // Refresh owned-photo data on open so already-purchased flags are current.
+    LaunchedEffect(Unit) { cartViewModel.fetchOrders() }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -136,6 +143,14 @@ fun CartSheet(
                     onBrowseEvents()
                 })
             } else {
+                if (ownedItems.isNotEmpty()) {
+                    AlreadyPurchasedBanner(
+                        count = ownedItems.size,
+                        onRemoveAll = {
+                            ownedItems.forEach { cartViewModel.removeFromCart(it.photoId) }
+                        },
+                    )
+                }
                 LazyColumn(
                     modifier = Modifier
                         .weight(1f, fill = false)
@@ -145,6 +160,7 @@ fun CartSheet(
                         val idx = items.indexOf(item)
                         CartSheetRow(
                             item = item,
+                            owned = ownedPhotoIds.contains(item.photoId),
                             onPreview = { previewIndex = idx },
                             onRemove = {
                                 hapticFire(QpHaptic.REMOVE)
@@ -295,6 +311,7 @@ fun CartSheet(
 @Composable
 private fun CartSheetRow(
     item: com.quickpitik.mobile.data.remote.CartItemDto,
+    owned: Boolean,
     onPreview: () -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -347,6 +364,10 @@ private fun CartSheetRow(
                 style = NumeralStyle.copy(fontSize = 11.sp),
                 color = SlateSoft,
             )
+            if (owned) {
+                Spacer(modifier = Modifier.height(6.dp))
+                StatusChip(text = "Already purchased", tone = StatusTone.Neutral)
+            }
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(
@@ -367,6 +388,44 @@ private fun CartSheetRow(
             }
         }
     }
+}
+
+// Shown above the cart list when the runner already owns one or more carted
+// photos. Neutral tone — owning a photo isn't an error. The one-tap call-out
+// catches the duplicate here instead of on the checkout 409.
+@Composable
+private fun AlreadyPurchasedBanner(count: Int, onRemoveAll: () -> Unit) {
+    val noun = if (count == 1) "photo" else "photos"
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BoneDeep)
+            .padding(horizontal = 24.dp, vertical = 14.dp),
+    ) {
+        Text(
+            text = "You already own $count of these $noun.",
+            style = Typography.titleSmall,
+            color = Ink,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "They're in your account — re-download them free from Orders. Remove them here to check out the rest.",
+            style = Typography.bodySmall,
+            color = SlateSoft,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        TextButton(
+            onClick = onRemoveAll,
+            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+        ) {
+            Text(
+                text = "✕ Remove already-purchased" + if (count > 1) " ($count)" else "",
+                style = Typography.labelMedium,
+                color = Ink,
+            )
+        }
+    }
+    Divider(color = Line)
 }
 
 @Composable

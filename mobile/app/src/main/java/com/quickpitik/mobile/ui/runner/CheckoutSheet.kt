@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -98,6 +99,8 @@ fun CheckoutSheet(
     val couponLoading by cartViewModel.couponLoading.collectAsState()
     val discount = couponPreview?.discountTotal ?: 0.0
     val net = (total - discount).coerceAtLeast(0.0)
+    val ownedPhotoIds by cartViewModel.ownedPhotoIds.collectAsState()
+    val ownedItems = cartItems.filter { ownedPhotoIds.contains(it.photoId) }
     val checkoutState by cartViewModel.checkoutState.collectAsState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -119,6 +122,9 @@ fun CheckoutSheet(
     // Load the auto-applied photographer coupons for the current cart so the
     // total shown is what the runner is actually charged, not the list price.
     LaunchedEffect(Unit) { cartViewModel.previewCoupon(null) }
+
+    // Refresh owned-photo data on open so already-purchased flags are current.
+    LaunchedEffect(Unit) { cartViewModel.fetchOrders() }
 
     // Settled with no PayMongo handoff — a ₱0/100%-coupon giveaway or an
     // already-paid replay returns FULFILLED/PAID with no redirect. Route to the
@@ -382,6 +388,46 @@ fun CheckoutSheet(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
+                if (ownedItems.isNotEmpty()) {
+                    Surface(
+                        color = BoneDeep,
+                        border = BorderStroke(1.dp, Line),
+                        shape = FieldShape,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "You already own ${ownedItems.size} of these ${
+                                    if (ownedItems.size == 1) "photo" else "photos"
+                                }.",
+                                style = Typography.titleSmall,
+                                color = Ink,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Re-download them free from Orders. Remove them here to check out the rest.",
+                                style = Typography.bodySmall,
+                                color = SlateSoft,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TextButton(
+                                onClick = {
+                                    ownedItems.forEach { cartViewModel.removeFromCart(it.photoId) }
+                                },
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                            ) {
+                                Text(
+                                    text = "✕ Remove already-purchased" +
+                                        if (ownedItems.size > 1) " (${ownedItems.size})" else "",
+                                    style = Typography.labelMedium,
+                                    color = Ink,
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
                 QpCard {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -431,7 +477,7 @@ fun CheckoutSheet(
                         onClick = { cartViewModel.checkout(emailInput, selectedPaymentMethod) },
                         modifier = Modifier.fillMaxWidth(),
                         loading = isLoading,
-                        enabled = emailError == null,
+                        enabled = emailError == null && ownedItems.isEmpty(),
                     )
                 }
             }

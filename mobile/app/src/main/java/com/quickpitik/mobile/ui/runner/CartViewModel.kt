@@ -104,6 +104,27 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     private val _ordersState = MutableStateFlow<OrdersState>(OrdersState.Loading)
     val ordersState: StateFlow<OrdersState> = _ordersState
 
+    // Photo IDs the runner already owns — a PAID/FULFILLED order covers them.
+    // Derived from the same /me/orders data OrdersScreen loads, so the cart and
+    // checkout sheets can flag a duplicate before checkout instead of on the
+    // 409. Kept fresh by a fetchOrders() call when those sheets open. Narrower
+    // than the server gate (no PENDING/guest), so the backend 409 stays the net.
+    val ownedPhotoIds: StateFlow<Set<String>> = _ordersState
+        .map { state ->
+            if (state is OrdersState.Success) {
+                state.orders
+                    .filter { order ->
+                        val status = order.status?.uppercase()
+                        status != null && status in OWNED_ORDER_STATUSES
+                    }
+                    .flatMap { it.photoIds }
+                    .toSet()
+            } else {
+                emptySet()
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
     private val _orderDetailState = MutableStateFlow<OrderDetailState>(OrderDetailState.Idle)
     val orderDetailState: StateFlow<OrderDetailState> = _orderDetailState
 
@@ -466,5 +487,6 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         const val POLL_INTERVAL_MS = 2_000L
         const val POLL_MAX_ATTEMPTS = 30 // 60s
+        val OWNED_ORDER_STATUSES = setOf("PAID", "FULFILLED")
     }
 }
