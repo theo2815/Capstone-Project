@@ -45,6 +45,10 @@ data class AdminPayoutCycleDto(
     val holdReason: String?,
     val rejectedReason: String? = null,
     val failedReason: String? = null,
+    // Two-person approval (Phase 4c): first + second (distinct) admin ids. For a
+    // large cycle the FE shows "1 of 2 approvals" until secondApprovedBy is set.
+    val approvedBy: String? = null,
+    val secondApprovedBy: String? = null,
     val payoutAccount: AdminPayoutAccountSnapshotDto,
 )
 

@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminPayoutAccountSnapshotDto
 import com.quickpitik.dto.admin.AdminPayoutCycleDto
@@ -20,6 +21,7 @@ import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.entity.PayoutMethod
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
+import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
@@ -55,6 +57,7 @@ class AdminPayoutService(
     private val adminDecisionLogService: AdminDecisionLogService,
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val payoutStatusRecorder: PayoutStatusRecorder,
+    private val platformProperties: PlatformProperties,
 ) {
 
     @Transactional(readOnly = true)
@@ -78,10 +81,50 @@ class AdminPayoutService(
         val from = cycle.status
         ensureFrom(cycle, setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.HELD))
         cycle.holdReason = null
+        val needsTwo = requiresTwoPerson(cycle)
+
+        // Two-person second-approval leg (large amount, already first-approved).
+        if (needsTwo && cycle.approvedBy != null) {
+            if (cycle.approvedBy == adminId) {
+                throw ApiException(
+                    status = HttpStatus.CONFLICT,
+                    code = ErrorCodes.PAYOUT_SECOND_APPROVER_REQUIRED,
+                    message = "A different admin must give the second approval for this amount.",
+                )
+            }
+            cycle.secondApprovedBy = adminId
+            cycle.status = PayoutCycleStatus.APPROVED
+            payoutCycleRepository.save(cycle)
+            payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.APPROVED, "admin", adminId, "second approval")
+            val decision = adminDecisionLogService.logPayoutDecision(
+                adminId = adminId, targetPayoutId = cycle.id, decision = "approved-second",
+            )
+            adminDecisionLogService.pushMessage(
+                photographerId = cycle.photographerId,
+                kind = PhotographerMessageKind.PAYOUT_APPROVED,
+                body = "Payout cycle ${cycle.id} was approved and is being processed.",
+                sourceAdminId = adminId,
+                sourceDecisionId = decision.id,
+            )
+            return hydrateOne(cycle)
+        }
+
+        // Two-person first-approval leg — awaits a second, different admin. The
+        // cycle stays PENDING (not payable) until the second approval lands.
+        if (needsTwo) {
+            cycle.approvedBy = adminId
+            cycle.approvedAt = OffsetDateTime.now()
+            payoutCycleRepository.save(cycle)
+            adminDecisionLogService.logPayoutDecision(
+                adminId = adminId, targetPayoutId = cycle.id, decision = "approved-first",
+            )
+            return hydrateOne(cycle)
+        }
+
+        // Single approval (below threshold, or fewer than two admins).
         cycle.status = PayoutCycleStatus.APPROVED
         cycle.approvedBy = adminId
         cycle.approvedAt = OffsetDateTime.now()
-        // settledAt keeps its paid-at meaning; approvedAt drives reviewedAt.
         payoutCycleRepository.save(cycle)
         payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.APPROVED, "admin", adminId)
         val decision = adminDecisionLogService.logPayoutDecision(
@@ -97,6 +140,13 @@ class AdminPayoutService(
             sourceDecisionId = decision.id,
         )
         return hydrateOne(cycle)
+    }
+
+    // Payouts >= the configured threshold need a second, distinct admin — but
+    // only once >= 2 admins exist, so a lone admin can still run the business.
+    private fun requiresTwoPerson(cycle: PayoutCycle): Boolean {
+        if (cycle.amountPhp < platformProperties.payoutTwoPersonThresholdPhp) return false
+        return userRepository.countByRole(Role.ADMIN) >= 2
     }
 
     fun hold(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
@@ -126,10 +176,9 @@ class AdminPayoutService(
     fun markPaid(adminId: UUID, payoutId: String, req: MarkPayoutPaidRequest): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
         val from = cycle.status
-        ensureFrom(
-            cycle,
-            setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.APPROVED, PayoutCycleStatus.PROCESSING),
-        )
+        // APPROVED/PROCESSING only — a cycle must be (fully) approved before it
+        // can be paid, which also enforces two-person approval for large amounts.
+        ensureFrom(cycle, setOf(PayoutCycleStatus.APPROVED, PayoutCycleStatus.PROCESSING))
         cycle.status = PayoutCycleStatus.PAID
         cycle.paymentReference = req.paymentReference.trim()
         cycle.paidBy = adminId
@@ -336,9 +385,26 @@ class AdminPayoutService(
         // APPROVED included so a retry (already approved) is a no-op, not a 409.
         ensureFrom(cycle, setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.HELD, PayoutCycleStatus.APPROVED))
         cycle.holdReason = null
-        cycle.status = PayoutCycleStatus.APPROVED
-        cycle.approvedBy = adminId
-        cycle.approvedAt = OffsetDateTime.now()
+        val needsTwo = requiresTwoPerson(cycle)
+        val reachedApproved = when {
+            needsTwo && cycle.approvedBy != null && cycle.approvedBy != adminId -> {
+                cycle.secondApprovedBy = adminId
+                cycle.status = PayoutCycleStatus.APPROVED
+                true
+            }
+            needsTwo && cycle.approvedBy == null -> {
+                cycle.approvedBy = adminId
+                cycle.approvedAt = OffsetDateTime.now()
+                false
+            }
+            needsTwo -> false // same admin already first-approved (or retry) — hold at PENDING
+            else -> {
+                cycle.status = PayoutCycleStatus.APPROVED
+                cycle.approvedBy = adminId
+                cycle.approvedAt = OffsetDateTime.now()
+                true
+            }
+        }
         payoutCycleRepository.save(cycle)
 
         // C-3: per-row dedup gate. On a retry, an audit-log row already
@@ -355,21 +421,25 @@ class AdminPayoutService(
             return
         }
 
-        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.APPROVED, "admin", adminId)
+        if (reachedApproved) {
+            payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.APPROVED, "admin", adminId)
+        }
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,
-            decision = "approved",
+            decision = if (reachedApproved) "approved" else "approved-first",
             groupId = groupId,
             idempotencyKey = idempotencyKey,
         )
-        adminDecisionLogService.pushMessage(
-            photographerId = cycle.photographerId,
-            kind = PhotographerMessageKind.PAYOUT_APPROVED,
-            body = "Payout cycle ${cycle.id} was approved.",
-            sourceAdminId = adminId,
-            sourceDecisionId = decision.id,
-        )
+        if (reachedApproved) {
+            adminDecisionLogService.pushMessage(
+                photographerId = cycle.photographerId,
+                kind = PhotographerMessageKind.PAYOUT_APPROVED,
+                body = "Payout cycle ${cycle.id} was approved.",
+                sourceAdminId = adminId,
+                sourceDecisionId = decision.id,
+            )
+        }
     }
 
     private fun bulkHold(
@@ -615,6 +685,8 @@ class AdminPayoutService(
             holdReason = cycle.holdReason,
             rejectedReason = cycle.rejectedReason,
             failedReason = cycle.failedReason,
+            approvedBy = cycle.approvedBy?.toString(),
+            secondApprovedBy = cycle.secondApprovedBy?.toString(),
             payoutAccount = snapshotAccount(account),
         )
     }

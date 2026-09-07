@@ -1,11 +1,13 @@
 package com.quickpitik.service.admin
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.MarkPayoutPaidRequest
 import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.entity.PayoutStatusHistory
+import com.quickpitik.entity.Role
 import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.PayoutAccountRepository
@@ -22,6 +24,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
+import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.Optional
 import java.util.UUID
@@ -93,10 +96,11 @@ class AdminPayoutServiceTransitionTest {
             adminDecisionLogService,
             adminDecisionLogRepository,
             recorder,
+            PlatformProperties(),
         )
     }
 
-    private fun cycle(status: PayoutCycleStatus): PayoutCycle {
+    private fun cycle(status: PayoutCycleStatus, amount: String = "1000", approvedBy: UUID? = null): PayoutCycle {
         val c = PayoutCycle(
             id = cycleId,
             photographerId = photographerId,
@@ -104,12 +108,14 @@ class AdminPayoutServiceTransitionTest {
             methodWire = "gcash",
         )
         c.status = status
-        c.amountPhp = java.math.BigDecimal("1000")
+        c.amountPhp = BigDecimal(amount)
+        c.approvedBy = approvedBy
         return c
     }
 
-    private fun given(status: PayoutCycleStatus) {
-        Mockito.`when`(payoutCycleRepository.findById(cycleId)).thenReturn(Optional.of(cycle(status)))
+    private fun given(status: PayoutCycleStatus, amount: String = "1000", approvedBy: UUID? = null) {
+        Mockito.`when`(payoutCycleRepository.findById(cycleId))
+            .thenReturn(Optional.of(cycle(status, amount, approvedBy)))
     }
 
     private fun recordedToStatus(): String {
@@ -174,6 +180,52 @@ class AdminPayoutServiceTransitionTest {
     fun `mark-processing is rejected when not approved`() {
         given(PayoutCycleStatus.PENDING)
         val ex = assertFailsWith<ApiException> { service().markProcessing(adminId, cycleId) }
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+    }
+
+    // ─── Phase 4c — two-person approval ────────────────────────────────────
+
+    @Test
+    fun `large payout first approval stays pending awaiting a second admin`() {
+        Mockito.`when`(userRepository.countByRole(Role.ADMIN)).thenReturn(2L)
+        given(PayoutCycleStatus.PENDING, amount = "15000")
+        val dto = service().approve(adminId, cycleId)
+        assertEquals("pending_review", dto.status)
+        assertEquals(adminId.toString(), dto.approvedBy)
+    }
+
+    @Test
+    fun `large payout second approval by a different admin approves it`() {
+        Mockito.`when`(userRepository.countByRole(Role.ADMIN)).thenReturn(2L)
+        val firstAdmin = UUID.randomUUID()
+        given(PayoutCycleStatus.PENDING, amount = "15000", approvedBy = firstAdmin)
+        val dto = service().approve(adminId, cycleId)
+        assertEquals("approved", dto.status)
+        assertEquals(adminId.toString(), dto.secondApprovedBy)
+    }
+
+    @Test
+    fun `the same admin cannot give both approvals`() {
+        Mockito.`when`(userRepository.countByRole(Role.ADMIN)).thenReturn(2L)
+        given(PayoutCycleStatus.PENDING, amount = "15000", approvedBy = adminId)
+        val ex = assertFailsWith<ApiException> { service().approve(adminId, cycleId) }
+        assertEquals(ErrorCodes.PAYOUT_SECOND_APPROVER_REQUIRED, ex.code)
+    }
+
+    @Test
+    fun `two-person is dormant with a single admin`() {
+        Mockito.`when`(userRepository.countByRole(Role.ADMIN)).thenReturn(1L)
+        given(PayoutCycleStatus.PENDING, amount = "15000")
+        val dto = service().approve(adminId, cycleId)
+        assertEquals("approved", dto.status)
+    }
+
+    @Test
+    fun `a large pending payout cannot be paid before it is approved`() {
+        given(PayoutCycleStatus.PENDING, amount = "15000")
+        val ex = assertFailsWith<ApiException> {
+            service().markPaid(adminId, cycleId, MarkPayoutPaidRequest(paymentReference = "GC-1"))
+        }
         assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
     }
 }

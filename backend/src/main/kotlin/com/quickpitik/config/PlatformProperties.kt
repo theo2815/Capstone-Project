@@ -19,6 +19,10 @@ data class PlatformProperties(
     // payout requests for this long — a compromised account can't change the
     // destination and withdraw in the same session. Overridable: PAYOUT_ACCOUNT_COOLDOWN.
     val payoutAccountCooldown: Duration = Duration.ofHours(24),
+    // Payouts at or above this amount need a second, DIFFERENT admin to approve
+    // before they can be paid. Dormant until >= 2 admin accounts exist (a lone
+    // admin must still be able to approve). Overridable: PAYOUT_TWO_PERSON_THRESHOLD_PHP.
+    val payoutTwoPersonThresholdPhp: BigDecimal = BigDecimal("10000"),
     // Upper bound for emailed bundle capabilities and migrated legacy tokens.
     // The user-facing "works for 90 days" copy is hardcoded to this default —
     // if you change it, update the receipt email (OrderReceiptEmailService) and

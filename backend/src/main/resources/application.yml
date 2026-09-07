@@ -288,6 +288,8 @@ app:
     # After any payout-account change, hold payout requests this long (anti-fraud:
     # a changed destination cannot be withdrawn to immediately).
     payout-account-cooldown: ${PAYOUT_ACCOUNT_COOLDOWN:PT24H}
+    # Payouts >= this amount need a second admin's approval (dormant until 2+ admins).
+    payout-two-person-threshold-php: ${PAYOUT_TWO_PERSON_THRESHOLD_PHP:10000}
     # Upper bound for emailed bundle capabilities and migrated legacy tokens.
     share-token-ttl: ${SHARE_TOKEN_TTL:P90D}
     order-return-ttl: ${ORDER_RETURN_TOKEN_TTL:PT35M}
