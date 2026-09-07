@@ -7,6 +7,10 @@ import {
   approvePayout as apiApprovePayout,
   holdPayout as apiHoldPayout,
   markPayoutPaid as apiMarkPayoutPaid,
+  rejectPayout as apiRejectPayout,
+  markPayoutProcessing as apiMarkPayoutProcessing,
+  markPayoutFailed as apiMarkPayoutFailed,
+  markPayoutReturned as apiMarkPayoutReturned,
   bulkApprovePayouts as apiBulkApprovePayouts,
   bulkHoldPayouts as apiBulkHoldPayouts,
 } from "@/lib/api-admin";
@@ -42,6 +46,10 @@ export type PayoutDecision =
   | "approved"
   | "held"
   | "paid"
+  | "rejected"
+  | "processing"
+  | "failed"
+  | "returned"
   | "bulk_approved"
   | "bulk_held";
 
@@ -60,6 +68,10 @@ interface AdminPayoutStoreState {
   approve: (payoutId: string) => Promise<boolean>;
   hold: (payoutId: string, reason: string) => Promise<boolean>;
   markPaid: (payoutId: string, reference: string) => Promise<boolean>;
+  reject: (payoutId: string, reason: string) => Promise<boolean>;
+  markProcessing: (payoutId: string) => Promise<boolean>;
+  markFailed: (payoutId: string, reason: string) => Promise<boolean>;
+  markReturned: (payoutId: string, reason: string) => Promise<boolean>;
   bulkApprove: (payoutIds: string[]) => Promise<boolean>;
   bulkHold: (payoutIds: string[], reason: string) => Promise<boolean>;
   clear: () => void;
@@ -192,6 +204,126 @@ export const useAdminPayoutStore = create<AdminPayoutStoreState>((set, get) => (
     } catch (err) {
       set((s) => ({ overrides: rollbackOverride(s.overrides, payoutId, prior) }));
       toastBackendFailure("mark payout paid", err);
+      return false;
+    }
+  },
+  reject: async (payoutId, reason) => {
+    const prior = get().overrides[payoutId];
+    const at = nowIso();
+    set((s) => ({
+      overrides: {
+        ...s.overrides,
+        [payoutId]: {
+          ...s.overrides[payoutId],
+          status: "rejected",
+          reviewedAt: at,
+          rejectedReason: reason,
+          holdReason: null,
+        },
+      },
+    }));
+    try {
+      await apiRejectPayout(payoutId, reason);
+      set((s) => ({
+        log: appendLog(s.log, {
+          payoutId,
+          decision: "rejected",
+          paymentReference: null,
+          reason,
+          decidedAt: at,
+        }),
+      }));
+      return true;
+    } catch (err) {
+      set((s) => ({ overrides: rollbackOverride(s.overrides, payoutId, prior) }));
+      toastBackendFailure("reject payout", err);
+      return false;
+    }
+  },
+  markProcessing: async (payoutId) => {
+    const prior = get().overrides[payoutId];
+    const at = nowIso();
+    set((s) => ({
+      overrides: {
+        ...s.overrides,
+        [payoutId]: { ...s.overrides[payoutId], status: "processing" },
+      },
+    }));
+    try {
+      await apiMarkPayoutProcessing(payoutId);
+      set((s) => ({
+        log: appendLog(s.log, {
+          payoutId,
+          decision: "processing",
+          paymentReference: null,
+          reason: null,
+          decidedAt: at,
+        }),
+      }));
+      return true;
+    } catch (err) {
+      set((s) => ({ overrides: rollbackOverride(s.overrides, payoutId, prior) }));
+      toastBackendFailure("mark payout processing", err);
+      return false;
+    }
+  },
+  markFailed: async (payoutId, reason) => {
+    const prior = get().overrides[payoutId];
+    const at = nowIso();
+    set((s) => ({
+      overrides: {
+        ...s.overrides,
+        [payoutId]: {
+          ...s.overrides[payoutId],
+          status: "failed",
+          failedReason: reason,
+        },
+      },
+    }));
+    try {
+      await apiMarkPayoutFailed(payoutId, reason);
+      set((s) => ({
+        log: appendLog(s.log, {
+          payoutId,
+          decision: "failed",
+          paymentReference: null,
+          reason,
+          decidedAt: at,
+        }),
+      }));
+      return true;
+    } catch (err) {
+      set((s) => ({ overrides: rollbackOverride(s.overrides, payoutId, prior) }));
+      toastBackendFailure("mark payout failed", err);
+      return false;
+    }
+  },
+  markReturned: async (payoutId, reason) => {
+    const prior = get().overrides[payoutId];
+    const at = nowIso();
+    // Keep paymentReference — a returned payout WAS paid; the reference stays
+    // part of its audit trail.
+    set((s) => ({
+      overrides: {
+        ...s.overrides,
+        [payoutId]: { ...s.overrides[payoutId], status: "returned" },
+      },
+    }));
+    try {
+      await apiMarkPayoutReturned(payoutId, reason);
+      set((s) => ({
+        log: appendLog(s.log, {
+          payoutId,
+          decision: "returned",
+          paymentReference: null,
+          reason,
+          decidedAt: at,
+        }),
+      }));
+      return true;
+    } catch (err) {
+      set((s) => ({ overrides: rollbackOverride(s.overrides, payoutId, prior) }));
+      toastBackendFailure("mark payout returned", err);
       return false;
     }
   },

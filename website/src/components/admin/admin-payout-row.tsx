@@ -22,6 +22,7 @@ interface AdminPayoutRowProps {
   onApprove: () => void;
   onHold: () => void;
   onMarkPaid: () => void;
+  onMarkProcessing: () => void;
 }
 
 function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
@@ -30,10 +31,17 @@ function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
       return "amber";
     case "approved":
       return "fresh";
+    case "processing":
     case "held":
       return "ink";
     case "paid":
       return "slate";
+    case "failed":
+    case "returned":
+      return "amber";
+    case "rejected":
+    case "cancelled":
+      return "muted";
   }
 }
 
@@ -60,6 +68,7 @@ export function AdminPayoutRow({
   onApprove,
   onHold,
   onMarkPaid,
+  onMarkProcessing,
 }: AdminPayoutRowProps) {
   const subjectLabel = cycle.brandName ?? cycle.photographerName;
 
@@ -123,6 +132,22 @@ export function AdminPayoutRow({
               {cycle.holdReason}
             </p>
           )}
+          {cycle.status === "rejected" && cycle.rejectedReason && (
+            <p className="font-sans text-sm text-slate mt-2">
+              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mr-2">
+                Rejected:
+              </span>
+              {cycle.rejectedReason}
+            </p>
+          )}
+          {cycle.status === "failed" && cycle.failedReason && (
+            <p className="font-sans text-sm text-slate mt-2">
+              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mr-2">
+                Failed:
+              </span>
+              {cycle.failedReason}
+            </p>
+          )}
           {cycle.status === "paid" && cycle.paymentReference && (
             <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-2 tnum">
               Ref: {cycle.paymentReference}
@@ -176,49 +201,69 @@ export function AdminPayoutRow({
           e.stopPropagation();
           onMarkPaid();
         }}
+        onMarkProcessing={(e) => {
+          e.stopPropagation();
+          onMarkProcessing();
+        }}
       />
     </article>
   );
 }
 
+// Inline row actions are the PRIMARY next step per status; the full matrix
+// (reject / mark-failed / mark-returned) lives in the drawer. Buttons match the
+// backend's ensureFrom guards exactly so a shown button never 409s:
+//   pending_review → Approve, Hold          approved → Mark processing, Mark paid, Hold
+//   processing     → Mark paid, Hold        held     → Approve
+//   terminal (paid/failed/returned/rejected/cancelled) → none
 function RowActions({
   status,
   onApprove,
   onHold,
   onMarkPaid,
+  onMarkProcessing,
 }: {
   status: AdminPayoutStatus;
   onApprove: (e: React.MouseEvent) => void;
   onHold: (e: React.MouseEvent) => void;
   onMarkPaid: (e: React.MouseEvent) => void;
+  onMarkProcessing: (e: React.MouseEvent) => void;
 }) {
-  if (status === "paid") return null;
+  const PILL =
+    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-4 py-1.5";
+  const GHOST =
+    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-1.5";
+
+  const canApprove = status === "pending_review" || status === "held";
+  const canMarkProcessing = status === "approved";
+  const canMarkPaid = status === "approved" || status === "processing";
+  const canHold =
+    status === "pending_review" ||
+    status === "approved" ||
+    status === "processing";
+
+  if (!canApprove && !canMarkProcessing && !canMarkPaid && !canHold) {
+    return null;
+  }
   return (
     <div className="mt-4 flex items-center gap-2 flex-wrap">
-      {(status === "pending_review" || status === "held") && (
-        <button
-          type="button"
-          onClick={onApprove}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-1.5"
-        >
+      {canApprove && (
+        <button type="button" onClick={onApprove} className={PILL}>
           Approve
         </button>
       )}
-      {(status === "approved" || status === "held") && (
-        <button
-          type="button"
-          onClick={onMarkPaid}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-4 py-1.5"
-        >
+      {canMarkProcessing && (
+        <button type="button" onClick={onMarkProcessing} className={PILL}>
+          Mark processing
+        </button>
+      )}
+      {canMarkPaid && (
+        <button type="button" onClick={onMarkPaid} className={PILL}>
           Mark paid…
         </button>
       )}
-      {status !== "held" && (
-        <button
-          type="button"
-          onClick={onHold}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-1.5"
-        >
+      {canHold && (
+        <button type="button" onClick={onHold} className={GHOST}>
           Hold…
         </button>
       )}

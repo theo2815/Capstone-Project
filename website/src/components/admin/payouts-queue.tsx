@@ -10,6 +10,10 @@ import { AdminPayoutBulkBar } from "@/components/admin/admin-payout-bulk-bar";
 import { AdminPayoutBulkApproveModal } from "@/components/admin/admin-payout-bulk-approve-modal";
 import { AdminPayoutHoldModal } from "@/components/admin/admin-payout-hold-modal";
 import { AdminPayoutMarkPaidModal } from "@/components/admin/admin-payout-mark-paid-modal";
+import {
+  AdminPayoutReasonModal,
+  type PayoutReasonKind,
+} from "@/components/admin/admin-payout-reason-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { PayoutAccountCard } from "@/components/admin/payout-account-card";
 import { ReadyToSendCard } from "@/components/admin/ready-to-send-card";
@@ -48,16 +52,34 @@ type HoldTarget = SingleHoldTarget | BulkHoldTarget | null;
 
 type MarkPaidTarget = AdminPayoutCycle;
 
+// Terminal states carry no further admin action and can't be bulk-selected.
+function isTerminal(status: AdminPayoutStatus): boolean {
+  return (
+    status === "paid" ||
+    status === "failed" ||
+    status === "returned" ||
+    status === "rejected" ||
+    status === "cancelled"
+  );
+}
+
 function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
   switch (status) {
     case "pending_review":
       return "amber";
     case "approved":
       return "fresh";
+    case "processing":
     case "held":
       return "ink";
     case "paid":
       return "slate";
+    case "failed":
+    case "returned":
+      return "amber";
+    case "rejected":
+    case "cancelled":
+      return "muted";
   }
 }
 
@@ -81,6 +103,10 @@ export function PayoutsQueue() {
   const approve = useAdminPayoutStore((s) => s.approve);
   const hold = useAdminPayoutStore((s) => s.hold);
   const markPaid = useAdminPayoutStore((s) => s.markPaid);
+  const reject = useAdminPayoutStore((s) => s.reject);
+  const markProcessing = useAdminPayoutStore((s) => s.markProcessing);
+  const markFailed = useAdminPayoutStore((s) => s.markFailed);
+  const markReturned = useAdminPayoutStore((s) => s.markReturned);
   const bulkApprove = useAdminPayoutStore((s) => s.bulkApprove);
   const bulkHold = useAdminPayoutStore((s) => s.bulkHold);
   const { showToast } = useToast();
@@ -91,6 +117,11 @@ export function PayoutsQueue() {
   const [markPaidTarget, setMarkPaidTarget] = useState<MarkPaidTarget | null>(
     null,
   );
+  // reject / mark-failed / mark-returned all capture a reason via one modal.
+  const [reasonTarget, setReasonTarget] = useState<{
+    kind: PayoutReasonKind;
+    cycle: AdminPayoutCycle;
+  } | null>(null);
   const [rowId, setRowId] = useUrlState<string>("row", "");
 
   // A-1: hydrate from BE rather than the mock seed. Local overrides still
@@ -125,7 +156,7 @@ export function PayoutsQueue() {
       const next = new Set<string>();
       for (const id of prev) {
         const cycle = byId.get(id);
-        if (cycle && cycle.status !== "paid") next.add(id);
+        if (cycle && !isTerminal(cycle.status)) next.add(id);
         else mutated = true;
       }
       return mutated ? next : prev;
@@ -139,6 +170,7 @@ export function PayoutsQueue() {
         bulkApproveOpen ||
         holdTarget !== null ||
         markPaidTarget !== null ||
+        reasonTarget !== null ||
         openRow
       )
         return;
@@ -147,7 +179,14 @@ export function PayoutsQueue() {
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [selected, bulkApproveOpen, holdTarget, markPaidTarget, openRow]);
+  }, [
+    selected,
+    bulkApproveOpen,
+    holdTarget,
+    markPaidTarget,
+    reasonTarget,
+    openRow,
+  ]);
 
   const pending = useMemo(
     () =>
@@ -156,11 +195,15 @@ export function PayoutsQueue() {
       ),
     [effective],
   );
-  const approved = useMemo(
+  // approved + processing share a slab — both are "reviewed, payment in motion";
+  // each row still shows its own status pill + status-appropriate actions.
+  const inProgress = useMemo(
     () =>
-      [...effective.filter((c) => c.status === "approved")].sort((a, b) =>
-        (b.reviewedAt ?? "").localeCompare(a.reviewedAt ?? ""),
-      ),
+      [
+        ...effective.filter(
+          (c) => c.status === "approved" || c.status === "processing",
+        ),
+      ].sort((a, b) => (b.reviewedAt ?? "").localeCompare(a.reviewedAt ?? "")),
     [effective],
   );
   const held = useMemo(
@@ -174,6 +217,25 @@ export function PayoutsQueue() {
     () =>
       [...effective.filter((c) => c.status === "paid")].sort((a, b) =>
         (b.paidAt ?? "").localeCompare(a.paidAt ?? ""),
+      ),
+    [effective],
+  );
+  // Terminal, non-paid states in one read-only slab so nothing disappears from
+  // the admin's view (a failed/returned payout must stay visible).
+  const closed = useMemo(
+    () =>
+      [
+        ...effective.filter(
+          (c) =>
+            c.status === "failed" ||
+            c.status === "returned" ||
+            c.status === "rejected" ||
+            c.status === "cancelled",
+        ),
+      ].sort((a, b) =>
+        (b.reviewedAt ?? b.submittedAt).localeCompare(
+          a.reviewedAt ?? a.submittedAt,
+        ),
       ),
     [effective],
   );
@@ -199,17 +261,23 @@ export function PayoutsQueue() {
 
   const selectionActive = selected.size > 0;
   const drawerEscDisabled =
-    bulkApproveOpen || holdTarget !== null || markPaidTarget !== null;
+    bulkApproveOpen ||
+    holdTarget !== null ||
+    markPaidTarget !== null ||
+    reasonTarget !== null;
 
   // Pagination — load-more model. Pending review keeps full visibility
   // because the bulk-bar + J/K nav target that triage list. Read-only
   // history slabs start at 10 and grow by 10 per click.
-  const [approvedLoaded, setApprovedLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
+  const [inProgressLoaded, setInProgressLoaded] = useState(
+    PAGE_SIZE.ADMIN_INITIAL,
+  );
   const [heldLoaded, setHeldLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
   const [paidLoaded, setPaidLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
-  const approvedVisible = useMemo(
-    () => approved.slice(0, approvedLoaded),
-    [approved, approvedLoaded],
+  const [closedLoaded, setClosedLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
+  const inProgressVisible = useMemo(
+    () => inProgress.slice(0, inProgressLoaded),
+    [inProgress, inProgressLoaded],
   );
   const heldVisible = useMemo(
     () => held.slice(0, heldLoaded),
@@ -218,6 +286,10 @@ export function PayoutsQueue() {
   const paidVisible = useMemo(
     () => paid.slice(0, paidLoaded),
     [paid, paidLoaded],
+  );
+  const closedVisible = useMemo(
+    () => closed.slice(0, closedLoaded),
+    [closed, closedLoaded],
   );
 
   // Keyboard nav iterates pending → approved → held → paid in render
@@ -231,11 +303,12 @@ export function PayoutsQueue() {
     () =>
       [
         ...pending,
-        ...approvedVisible,
+        ...inProgressVisible,
         ...heldVisible,
         ...paidVisible,
+        ...closedVisible,
       ].map((c) => c.id),
-    [pending, approvedVisible, heldVisible, paidVisible],
+    [pending, inProgressVisible, heldVisible, paidVisible, closedVisible],
   );
   const queueNavDisabled = openRow !== null || drawerEscDisabled;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
@@ -306,6 +379,54 @@ export function PayoutsQueue() {
   function handleDrawerMarkPaidRequest() {
     if (!openRow) return;
     setMarkPaidTarget(openRow);
+  }
+
+  // mark-processing takes no reason — fire directly. The drawer stays open
+  // (a processing cycle is still actionable: mark paid / mark failed).
+  async function runMarkProcessing(id: string) {
+    const ok = await markProcessing(id);
+    if (ok) showToast({ kind: "success", message: `Processing · ${id}` });
+  }
+  function handleSingleMarkProcessing(cycle: AdminPayoutCycle) {
+    void runMarkProcessing(cycle.id);
+  }
+  function handleDrawerMarkProcessing() {
+    if (openRow) void runMarkProcessing(openRow.id);
+  }
+
+  // reject / mark-failed / mark-returned are drawer-only (they need a reason
+  // and are less common than the inline triage actions).
+  function handleDrawerReject() {
+    if (openRow) setReasonTarget({ kind: "reject", cycle: openRow });
+  }
+  function handleDrawerMarkFailed() {
+    if (openRow) setReasonTarget({ kind: "failed", cycle: openRow });
+  }
+  function handleDrawerMarkReturned() {
+    if (openRow) setReasonTarget({ kind: "returned", cycle: openRow });
+  }
+
+  async function handleReasonSubmit(reason: string) {
+    if (!reasonTarget) return;
+    const { kind, cycle } = reasonTarget;
+    setReasonTarget(null);
+    const fn =
+      kind === "reject" ? reject : kind === "failed" ? markFailed : markReturned;
+    const ok = await fn(cycle.id, reason);
+    if (ok) {
+      const label =
+        kind === "reject"
+          ? "Rejected"
+          : kind === "failed"
+            ? "Marked failed"
+            : "Marked returned";
+      showToast({
+        kind: kind === "reject" ? "info" : "success",
+        message: `${label} · ${cycle.id}`,
+      });
+      // All three land in a terminal state — close the drawer if it was open.
+      if (openRow && openRow.id === cycle.id) setRowId("");
+    }
   }
 
   async function handleBulkApproveConfirm() {
@@ -379,7 +500,9 @@ export function PayoutsQueue() {
               ? handleDrawerApprove
               : undefined,
           H:
-            openRow.status !== "held" && openRow.status !== "paid"
+            openRow.status === "pending_review" ||
+            openRow.status === "approved" ||
+            openRow.status === "processing"
               ? handleDrawerHoldRequest
               : undefined,
         }
@@ -405,15 +528,16 @@ export function PayoutsQueue() {
         onApprove={handleSingleApprove}
         onHold={handleSingleHoldRequest}
         onMarkPaid={handleSingleMarkPaid}
+        onMarkProcessing={handleSingleMarkProcessing}
       />
       <PayoutSlab
-        id="approved"
+        id="in-progress"
         number="02"
-        title="Approved"
-        caption="Awaiting payment"
-        totalCount={approved.length}
-        rows={approvedVisible}
-        empty="No approved payouts waiting on payment."
+        title="In progress"
+        caption="Approved · payment in motion"
+        totalCount={inProgress.length}
+        rows={inProgressVisible}
+        empty="No payouts in progress."
         selected={selected}
         selectionActive={selectionActive}
         toggleSelect={toggleSelect}
@@ -423,12 +547,13 @@ export function PayoutsQueue() {
         onApprove={handleSingleApprove}
         onHold={handleSingleHoldRequest}
         onMarkPaid={handleSingleMarkPaid}
+        onMarkProcessing={handleSingleMarkProcessing}
         loadMore={{
-          shown: approvedVisible.length,
-          total: approved.length,
+          shown: inProgressVisible.length,
+          total: inProgress.length,
           increment: PAGE_SIZE.ADMIN_INCREMENT,
           onLoadMore: () =>
-            setApprovedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
+            setInProgressLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
       <PayoutSlab
@@ -448,6 +573,7 @@ export function PayoutsQueue() {
         onApprove={handleSingleApprove}
         onHold={handleSingleHoldRequest}
         onMarkPaid={handleSingleMarkPaid}
+        onMarkProcessing={handleSingleMarkProcessing}
         loadMore={{
           shown: heldVisible.length,
           total: held.length,
@@ -473,12 +599,39 @@ export function PayoutsQueue() {
         onApprove={handleSingleApprove}
         onHold={handleSingleHoldRequest}
         onMarkPaid={handleSingleMarkPaid}
+        onMarkProcessing={handleSingleMarkProcessing}
         loadMore={{
           shown: paidVisible.length,
           total: paid.length,
           increment: PAGE_SIZE.ADMIN_INCREMENT,
           onLoadMore: () =>
             setPaidLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
+        }}
+      />
+      <PayoutSlab
+        id="closed"
+        number="05"
+        title="Closed"
+        caption="Rejected, cancelled, failed or returned"
+        totalCount={closed.length}
+        rows={closedVisible}
+        empty="No closed payouts."
+        selected={selected}
+        selectionActive={selectionActive}
+        toggleSelect={toggleSelect}
+        onActivate={handleRowActivate}
+        onOpenDrawer={handleOpenDrawer}
+        focusedId={focusedId}
+        onApprove={handleSingleApprove}
+        onHold={handleSingleHoldRequest}
+        onMarkPaid={handleSingleMarkPaid}
+        onMarkProcessing={handleSingleMarkProcessing}
+        loadMore={{
+          shown: closedVisible.length,
+          total: closed.length,
+          increment: PAGE_SIZE.ADMIN_INCREMENT,
+          onLoadMore: () =>
+            setClosedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
 
@@ -524,6 +677,16 @@ export function PayoutsQueue() {
           cycle={markPaidTarget}
         />
       )}
+      {reasonTarget && (
+        <AdminPayoutReasonModal
+          open={true}
+          kind={reasonTarget.kind}
+          payoutId={reasonTarget.cycle.id}
+          amount={reasonTarget.cycle.amount}
+          onClose={() => setReasonTarget(null)}
+          onSubmit={handleReasonSubmit}
+        />
+      )}
 
       {openRow && (
         <AdminDetailDrawer
@@ -545,6 +708,10 @@ export function PayoutsQueue() {
               onApprove={handleDrawerApprove}
               onHold={handleDrawerHoldRequest}
               onMarkPaid={handleDrawerMarkPaidRequest}
+              onMarkProcessing={handleDrawerMarkProcessing}
+              onReject={handleDrawerReject}
+              onMarkFailed={handleDrawerMarkFailed}
+              onMarkReturned={handleDrawerMarkReturned}
             />
           }
         >
@@ -596,6 +763,7 @@ function PayoutSlab({
   onApprove,
   onHold,
   onMarkPaid,
+  onMarkProcessing,
   loadMore,
 }: {
   id: string;
@@ -614,6 +782,7 @@ function PayoutSlab({
   onApprove: (cycle: AdminPayoutCycle) => void;
   onHold: (cycle: AdminPayoutCycle) => void;
   onMarkPaid: (cycle: AdminPayoutCycle) => void;
+  onMarkProcessing: (cycle: AdminPayoutCycle) => void;
   loadMore?: {
     shown: number;
     total: number;
@@ -648,6 +817,7 @@ function PayoutSlab({
                   onApprove={() => onApprove(row)}
                   onHold={() => onHold(row)}
                   onMarkPaid={() => onMarkPaid(row)}
+                  onMarkProcessing={() => onMarkProcessing(row)}
                 />
               </li>
             ))}
@@ -684,51 +854,81 @@ function PayoutSubtitle({ cycle }: { cycle: AdminPayoutCycle }) {
   );
 }
 
+// Full per-status action matrix — mirrors AdminPayoutService.ensureFrom so a
+// shown button never 409s:
+//   pending_review → Hold, Reject, Approve      approved → Hold, Reject, Mark processing, Mark paid
+//   processing     → Hold, Mark failed, Mark paid   held → Reject, Approve
+//   paid           → Mark returned               failed/returned/rejected/cancelled → none
 function PayoutDrawerActions({
   cycle,
   onApprove,
   onHold,
   onMarkPaid,
+  onMarkProcessing,
+  onReject,
+  onMarkFailed,
+  onMarkReturned,
 }: {
   cycle: AdminPayoutCycle;
   onApprove: () => void;
   onHold: () => void;
   onMarkPaid: () => void;
+  onMarkProcessing: () => void;
+  onReject: () => void;
+  onMarkFailed: () => void;
+  onMarkReturned: () => void;
 }) {
-  if (cycle.status === "paid") {
+  const PILL =
+    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2";
+  const PRIMARY =
+    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2";
+  const GHOST =
+    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2";
+
+  const s = cycle.status;
+
+  if (s === "failed" || s === "returned" || s === "rejected" || s === "cancelled") {
     return (
-      <p className="font-sans text-sm text-slate-soft">
-        Settled. No further actions.
-      </p>
+      <p className="font-sans text-sm text-slate-soft">No further actions.</p>
+    );
+  }
+  if (s === "paid") {
+    return (
+      <button type="button" onClick={onMarkReturned} className={PILL}>
+        Mark returned…
+      </button>
     );
   }
 
   return (
     <>
-      {cycle.status !== "held" && (
-        <button
-          type="button"
-          onClick={onHold}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
-        >
+      {(s === "pending_review" || s === "approved" || s === "processing") && (
+        <button type="button" onClick={onHold} className={GHOST}>
           Hold…
         </button>
       )}
-      {(cycle.status === "approved" || cycle.status === "held") && (
-        <button
-          type="button"
-          onClick={onMarkPaid}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
-        >
+      {(s === "pending_review" || s === "approved" || s === "held") && (
+        <button type="button" onClick={onReject} className={PILL}>
+          Reject…
+        </button>
+      )}
+      {s === "approved" && (
+        <button type="button" onClick={onMarkProcessing} className={PILL}>
+          Mark processing
+        </button>
+      )}
+      {s === "processing" && (
+        <button type="button" onClick={onMarkFailed} className={PILL}>
+          Mark failed…
+        </button>
+      )}
+      {(s === "approved" || s === "processing") && (
+        <button type="button" onClick={onMarkPaid} className={PILL}>
           Mark paid…
         </button>
       )}
-      {(cycle.status === "pending_review" || cycle.status === "held") && (
-        <button
-          type="button"
-          onClick={onApprove}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
-        >
+      {(s === "pending_review" || s === "held") && (
+        <button type="button" onClick={onApprove} className={PRIMARY}>
           Approve
         </button>
       )}
@@ -847,6 +1047,79 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
           </Kicker>
           <p className="font-sans text-sm text-ink-soft tnum">
             Approved {formatLongDate(cycle.reviewedAt)} — awaiting payment.
+          </p>
+          {cycle.secondApprovedBy && (
+            <p className="font-sans text-sm text-slate-soft mt-1">
+              Approved by two admins (2 of 2).
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* Two-person approval mid-flight: a large cycle stays pending_review
+          after the first approval until a second, distinct admin signs off. */}
+      {cycle.status === "pending_review" && cycle.approvedBy && (
+        <section>
+          <Kicker as="p" tone="soft" className="mb-3">
+            Approvals
+          </Kicker>
+          <p className="font-sans text-sm text-ink-soft">
+            1 of 2 — first approval recorded. This payout needs a second, distinct
+            admin before it can be sent.
+          </p>
+        </section>
+      )}
+
+      {cycle.status === "processing" && (
+        <section>
+          <Kicker as="p" tone="soft" className="mb-3">
+            Payment
+          </Kicker>
+          <p className="font-sans text-sm text-ink-soft">
+            Payment in transit — mark it paid once it lands, or mark it failed if
+            it doesn&apos;t go through.
+          </p>
+        </section>
+      )}
+
+      {cycle.status === "rejected" && cycle.rejectedReason && (
+        <section>
+          <Kicker as="p" tone="soft" className="mb-3">
+            Rejected
+          </Kicker>
+          <div className="rounded-xl border border-line bg-bone-deep p-4">
+            <p className="font-sans text-sm text-ink-soft">
+              {cycle.rejectedReason}
+            </p>
+          </div>
+        </section>
+      )}
+
+      {cycle.status === "failed" && cycle.failedReason && (
+        <section>
+          <Kicker as="p" tone="soft" className="mb-3">
+            Failed
+          </Kicker>
+          <div className="rounded-xl border border-line bg-bone-deep p-4">
+            <p className="font-sans text-sm text-ink-soft">
+              {cycle.failedReason}
+            </p>
+            <p className="font-sans text-sm text-slate-soft mt-2">
+              The reserved funds returned to the photographer&apos;s balance to
+              retry.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {cycle.status === "returned" && (
+        <section>
+          <Kicker as="p" tone="soft" className="mb-3">
+            Returned
+          </Kicker>
+          <p className="font-sans text-sm text-ink-soft">
+            The transfer left but bounced back. The photographer has been asked to
+            check their payout account.
           </p>
         </section>
       )}
