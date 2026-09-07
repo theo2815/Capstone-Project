@@ -1,9 +1,11 @@
 package com.quickpitik.mobile.ui.photographer
 
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import com.quickpitik.mobile.ui.common.AvatarCropDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -234,13 +236,14 @@ fun PhotographerSettingsScreen(
     var provinceCode by remember { mutableStateOf("") }
 
     var avatarUri by remember { mutableStateOf<String?>(null) }
+    var pendingAvatarCropUri by remember { mutableStateOf<Uri?>(null) }
     var coverUri by remember { mutableStateOf<String?>(null) }
     var watermarkUri by remember { mutableStateOf<String?>(null) }
 
     val avatarPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        uri?.let { avatarUri = it.toString() }
+        uri?.let { pendingAvatarCropUri = it }
     }
     val coverPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
@@ -606,6 +609,17 @@ fun PhotographerSettingsScreen(
                     Text("CANCEL", color = Slate, fontWeight = FontWeight.SemiBold)
                 }
             },
+        )
+    }
+
+    pendingAvatarCropUri?.let { uri ->
+        AvatarCropDialog(
+            imageUri = uri,
+            onDismiss = { pendingAvatarCropUri = null },
+            onCropSuccess = { croppedUri ->
+                pendingAvatarCropUri = null
+                avatarUri = croppedUri.toString()
+            }
         )
     }
 }

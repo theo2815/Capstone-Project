@@ -1,7 +1,9 @@
 package com.quickpitik.mobile.ui.runner
 
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import com.quickpitik.mobile.ui.common.AvatarCropDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -91,9 +93,11 @@ fun AccountSettingsScreen(
     val avatarUploading by viewModel.avatarUploading.collectAsState()
     val avatarError by viewModel.avatarError.collectAsState()
 
+    var pendingAvatarCropUri by remember { mutableStateOf<Uri?>(null) }
+
     val avatarPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
-    ) { uri -> uri?.let { viewModel.uploadAvatar(it) } }
+    ) { uri -> uri?.let { pendingAvatarCropUri = it } }
 
     val nameSuccess by viewModel.nameUpdateSuccess.collectAsState()
     val nameError by viewModel.nameUpdateError.collectAsState()
@@ -842,6 +846,17 @@ fun AccountSettingsScreen(
                 TextButton(onClick = { showLogoutConfirm = false }) {
                     Text("CANCEL", color = Slate, fontWeight = FontWeight.Bold)
                 }
+            }
+        )
+    }
+
+    pendingAvatarCropUri?.let { uri ->
+        AvatarCropDialog(
+            imageUri = uri,
+            onDismiss = { pendingAvatarCropUri = null },
+            onCropSuccess = { croppedUri ->
+                pendingAvatarCropUri = null
+                viewModel.uploadAvatar(croppedUri)
             }
         )
     }
