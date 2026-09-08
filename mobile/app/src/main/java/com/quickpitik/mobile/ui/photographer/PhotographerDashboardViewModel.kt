@@ -340,10 +340,11 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         observeQueue()
         fetchEarningsAndTransactions()
         fetchVerificationStatus()
-        fetchBrandSettings()
-        // Load socials / payouts / regions at startup too, so the settings
-        // editor shows what the photographer already has (previously loaded only
-        // on the settings-tab tap, which left the editor's lists briefly empty).
+        // Load brand + socials / payouts / regions at startup, so the settings
+        // editor shows what the photographer already has (these were previously
+        // loaded only on the settings-tab tap, leaving the editor briefly
+        // empty). fetchSettings already loads brand, so there's no separate
+        // fetchBrandSettings() call here — it would double-GET brand at startup.
         fetchSettings()
         observeInboxPush()
         cameraManager.start()

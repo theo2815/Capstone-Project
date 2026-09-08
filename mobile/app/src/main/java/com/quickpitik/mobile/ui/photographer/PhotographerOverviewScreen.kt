@@ -86,7 +86,7 @@ import com.quickpitik.mobile.ui.theme.TileShape
 import com.quickpitik.mobile.ui.theme.Typography
 import com.quickpitik.mobile.ui.theme.WarningOrange
 
-private data class SetupStep(
+internal data class SetupStep(
     val title: String,
     val isCompleted: Boolean,
     val icon: ImageVector,
@@ -132,7 +132,19 @@ fun PhotographerOverviewScreen(
     val transactions = (earningsUiState as? EarningsUiState.Success)?.transactions ?: emptyList()
 
     val verification = (verificationState as? VerificationUiState.Success)?.verification
-    val missingCodes = verification?.missingCodes ?: emptyList()
+    // The setup checklist keys off the backend's stable missingCodes. Guard the
+    // fallback against version skew: if a response arrives on a non-complete
+    // status but WITHOUT codes, don't null-coalesce to an empty list — that
+    // would mark every step done (100% for a blank profile). A completed
+    // profile (approved) and a just-submitted one (pending) legitimately omit
+    // codes, so those stay empty; a still-loading state (null verification)
+    // also stays empty and the chip shows its loading copy.
+    val reportedCodes = verification?.missingCodes
+    val missingCodes: List<String> = when {
+        reportedCodes != null -> reportedCodes
+        verification == null || currentStatus == "approved" || currentStatus == "pending" -> emptyList()
+        else -> SETUP_CODES_ALL
+    }
     val setupItems = buildSetupItems(missingCodes)
     val completedCount = setupItems.count { it.isCompleted }
 
@@ -309,7 +321,15 @@ fun PhotographerOverviewScreen(
     }
 }
 
-private fun buildSetupItems(missingCodes: List<String>): List<SetupStep> {
+// The 8 stable requirement codes (VerificationSubmitResponseDto.missingCodes),
+// used as the "nothing done yet" fallback when a non-complete status returns
+// without codes (version skew) — see the checklist guard in the screen body.
+internal val SETUP_CODES_ALL = listOf(
+    "PROFILE_PHOTO", "COVER_PHOTO", "BRAND_NAME", "WATERMARK",
+    "PAYOUT_ACCOUNT", "PUBLIC_HANDLE", "REGION", "SOCIAL_LINK",
+)
+
+internal fun buildSetupItems(missingCodes: List<String>): List<SetupStep> {
     // Keyed on the backend's stable codes (VerificationSubmitResponseDto.
     // missingCodes) — a step is done when its code isn't in the missing set.
     // Replaces substring-matching the human labels, which silently mis-checked a
