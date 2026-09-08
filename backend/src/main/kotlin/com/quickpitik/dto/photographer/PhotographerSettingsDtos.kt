@@ -33,8 +33,8 @@ data class RegionPatchRequest(
 // protection layers). Mirrors the website + mobile watermark settings. Position
 // is a normalized free-space fraction in [0,1], split per orientation; scale is
 // the logo width as a fraction of photo width; opacity is the SRC_OVER alpha.
-// The service clamps every value into range (opacity 0.05-1.0, scale 0.05-0.40,
-// position 0-1), so an out-of-range payload is normalized, never rejected.
+// The service rejects non-finite values, then clamps finite values into range
+// (opacity 0.05-1.0, scale 0.05-0.40, position 0-1).
 data class WatermarkSettingsRequest(
     val opacity: Double,
     val scale: Double,

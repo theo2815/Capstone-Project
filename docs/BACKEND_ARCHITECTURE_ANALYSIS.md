@@ -311,6 +311,27 @@ flowchart LR
 - **Watermark Resistance:** Applies diagonal wordmark patterns, custom photographer logos, and seed-based geometry derived from `HMAC(seed, photoId)`.
 - **Copyright Verification:** Computes 64-bit DCT perceptual hashes. `POST /public/photos/verify` allows runners or admins to upload screenshots or crops and find the original photographer using Hamming distance comparison (≤ 12 bits).
 
+**Photographer watermark settings — website/mobile integration:**
+`PUT /api/v1/me/photographer/watermark/settings` takes `opacity`, `scale`,
+`landscapeX`, `landscapeY`, `portraitX`, and `portraitY`; `/brand` returns them
+under `watermarkSettings`. Every field must be finite (otherwise HTTP 400 with
+`VALIDATION_ERROR` and the offending field). Finite values retain the clamps in
+`PhotographerSettingsService`. Position is independent per orientation; size and
+opacity are shared. The settings affect future uploads under every policy that
+draws the photographer's logo; existing previews are not re-rendered.
+
+Geometry is defined by `WatermarkService.watermarkBox`: apply minimum size,
+padding and integer rounding in rendered-photo pixels, shrink both logo axes
+together to fit the padded frame, then position within the remaining space.
+The caption reserves the fitted logo width, and the logo is drawn last. The
+website `src/lib/watermark-placement.ts` and Android `WatermarkPlacementMath.kt`
+mirror this calculation. Their sample photo dimensions live with those helpers;
+editors scale the computed rectangle to screen coordinates and undo that scale
+for dragging. Matching numeric fixtures in all three modules pin minimums,
+rounding, tall logos and tiny photos. Both editors also expose labeled position
+sliders. Website partial saves advance the placement snapshot after its PUT
+succeeds, so retry and Cancel retain the saved placement.
+
 ---
 
 ### 7.4. AI Face Indexing & Bib OCR Pipeline

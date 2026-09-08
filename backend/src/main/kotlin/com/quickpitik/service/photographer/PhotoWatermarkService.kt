@@ -102,9 +102,8 @@ class PhotoWatermarkService(
         )
         // The photographer's own logo placement (V51) — position (per
         // orientation), size and opacity. Applies under every policy that draws
-        // the logo; the compositor clamps each value in-frame, so a stale or
-        // hand-edited row can never crash the render. Defaults reproduce the
-        // former fixed bottom-right mark.
+        // the logo. Settings writes reject non-finite values; the compositor
+        // fits the logo inside the frame. Defaults keep the bottom-right mark.
         val placement = WatermarkPlacement(
             opacity = settings.watermarkOpacity.toFloat(),
             scale = settings.watermarkScale,

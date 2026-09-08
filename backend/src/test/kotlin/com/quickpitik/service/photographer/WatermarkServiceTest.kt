@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test
 import java.awt.Color
 import java.awt.GradientPaint
 import java.awt.RenderingHints
+import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -327,6 +328,41 @@ class WatermarkServiceTest {
         }
         // 0.30 width is 2× the linear size ⇒ ~4× the area; comfortably > 2×.
         assertTrue(markedPixels(0.30) > markedPixels(0.15) * 2, "a 0.30 scale should mark far more than 0.15")
+    }
+
+    @Test
+    fun `render-pixel geometry matches the client fixtures including minimums and fitting`() {
+        // Same numeric cases in website watermark-placement.test and mobile
+        // WatermarkPlacementMathTest; each client scales these AFTER rounding.
+        assertEquals(Rectangle(328, 268, 60, 20), service.watermarkBox(400, 300, 3.0, 0.15, 1.0, 1.0))
+        assertEquals(Rectangle(20, 20, 48, 16), service.watermarkBox(800, 1200, 3.0, 0.05, 0.0, 0.0))
+        assertEquals(Rectangle(97, 144, 52, 17), service.watermarkBox(333, 222, 3.0, 0.157, 0.33, 0.73))
+        assertEquals(Rectangle(854, 32, 394, 789), service.watermarkBox(1280, 853, 0.5, 0.4, 1.0, 1.0))
+        assertEquals(Rectangle(30, 9, 1, 2), service.watermarkBox(40, 20, 0.5, 0.4, 1.0, 1.0))
+    }
+
+    @Test
+    fun `a tall logo keeps its bottom stripe at maximum size under both logo policies`() {
+        val logo = BufferedImage(500, 1000, BufferedImage.TYPE_INT_RGB)
+        val g = logo.createGraphics()
+        g.color = Color.RED
+        g.fillRect(0, 0, 500, 1000)
+        g.color = Color.GREEN
+        g.fillRect(0, 900, 500, 100)
+        g.dispose()
+        val bytes = ByteArrayOutputStream().also { ImageIO.write(logo, "png", it) }.toByteArray()
+
+        for (platformMark in listOf(false, true)) {
+            val marked = service.processThumbnail(
+                photoJpeg(1280, 853), bytes, credit, platformMark,
+                WatermarkPlacement.DEFAULT.copy(scale = 0.4, opacity = 1f),
+            )
+            val image = ImageIO.read(ByteArrayInputStream(marked.jpeg))
+            // Before fitting, this stripe was entirely below the image edge.
+            val footer = Color(image.getRGB(1050, 790))
+            assertTrue(footer.green > 200 && footer.red < 60 && footer.blue < 60,
+                "logo footer missing with platformMark=$platformMark: $footer")
+        }
     }
 
     // ─── fixtures ─────────────────────────────────────────────────────────

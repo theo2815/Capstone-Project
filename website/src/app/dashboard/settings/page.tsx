@@ -358,6 +358,15 @@ function EditModeProvider({ children }: { children: ReactNode }) {
             portraitX: p.portrait.x,
             portraitY: p.portrait.y,
           }),
+        onSuccess: () => {
+          // A sibling request can fail: Cancel/retry must start from the
+          // placement that the server accepted, not the pre-edit value.
+          snap.watermarkPlacement = {
+            ...p,
+            landscape: { ...p.landscape },
+            portrait: { ...p.portrait },
+          };
+        },
       });
     }
     if (pending.avatar) {

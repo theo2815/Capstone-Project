@@ -97,6 +97,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import coil.compose.rememberAsyncImagePainter
@@ -1039,7 +1042,7 @@ private fun WatermarkSlab(
 // are shared. Sliders stay Ink so the screen's single Fresh accent is the Save
 // CTA. The preview background is a token gradient standing in for a race photo.
 @Composable
-private fun WatermarkPlacementEditor(
+internal fun WatermarkPlacementEditor(
     model: Any,
     placement: WatermarkSettingsDto,
     onPlacementChange: (WatermarkSettingsDto) -> Unit,
@@ -1050,11 +1053,15 @@ private fun WatermarkPlacementEditor(
     val painter = rememberAsyncImagePainter(model = model)
     val intrinsic = painter.intrinsicSize
     val logoAspect = if (intrinsic != Size.Unspecified && intrinsic.height > 0f) {
-        intrinsic.width / intrinsic.height
+        intrinsic.width.toDouble() / intrinsic.height
     } else {
-        3f
+        3.0
     }
     val placementState = rememberUpdatedState(placement)
+    val onPlacementChangeState = rememberUpdatedState(onPlacementChange)
+    val photoW = if (landscape) WATERMARK_PREVIEW_LONG_EDGE else WATERMARK_PREVIEW_SHORT_EDGE
+    val photoH = if (landscape) WATERMARK_PREVIEW_SHORT_EDGE else WATERMARK_PREVIEW_LONG_EDGE
+    val previewScale = boxSize.width.toFloat() / photoW
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1068,45 +1075,59 @@ private fun WatermarkPlacementEditor(
             Box(
                 modifier = Modifier
                     .fillMaxWidth(if (landscape) 1f else 0.62f)
-                    .aspectRatio(if (landscape) 3f / 2f else 2f / 3f)
+                    .aspectRatio(photoW.toFloat() / photoH)
                     .clip(QpCardShape)
                     .background(Brush.linearGradient(listOf(Ink, Slate, BoneDeep)))
                     .onSizeChanged { boxSize = it },
             ) {
                 if (boxSize.width > 0) {
                     val box = watermarkBox(
-                        boxSize.width.toFloat(), boxSize.height.toFloat(),
-                        logoAspect, scaleF, nxD.toFloat(), nyD.toFloat(),
+                        photoW, photoH, logoAspect, placement.scale, nxD, nyD,
                     )
                     Image(
                         painter = painter,
                         contentDescription = "Watermark position preview",
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
-                            .offset { IntOffset(box.left.roundToInt(), box.top.roundToInt()) }
-                            .size(with(density) { box.width.toDp() }, with(density) { box.height.toDp() })
+                            .offset { IntOffset((box.left * previewScale).roundToInt(), (box.top * previewScale).roundToInt()) }
+                            .size(with(density) { (box.width * previewScale).toDp() }, with(density) { (box.height * previewScale).toDp() })
                             .alpha(placement.opacity.toFloat().coerceIn(WATERMARK_OPACITY_MIN, WATERMARK_OPACITY_MAX))
                             .pointerInput(landscape, boxSize, logoAspect) {
                                 detectDragGestures { change, dragAmount ->
                                     change.consume()
                                     val p = placementState.value
                                     val (cx, cy) = p.pos(landscape)
-                                    val sc = p.scale.toFloat()
                                     val cur = watermarkBox(
-                                        boxSize.width.toFloat(), boxSize.height.toFloat(),
-                                        logoAspect, sc, cx.toFloat(), cy.toFloat(),
+                                        photoW, photoH, logoAspect, p.scale, cx, cy,
                                     )
                                     val (px, py) = positionFromBox(
-                                        boxSize.width.toFloat(), boxSize.height.toFloat(),
-                                        logoAspect, sc, cur.left + dragAmount.x, cur.top + dragAmount.y,
+                                        photoW, photoH, logoAspect, p.scale,
+                                        cur.left + dragAmount.x.toDouble() / previewScale,
+                                        cur.top + dragAmount.y.toDouble() / previewScale,
+                                        cx, cy,
                                     )
-                                    onPlacementChange(p.withPos(landscape, px.toDouble(), py.toDouble()))
+                                    onPlacementChangeState.value(p.withPos(landscape, px, py))
                                 }
                             },
                     )
                 }
             }
         }
+
+        Text(text = "Sample photo. Tall logos shrink to fit inside the frame.", color = Slate, style = Typography.bodySmall)
+        WatermarkSliderRow(
+            label = "Horizontal position",
+            valueLabel = "${(nxD * 100).roundToInt()}%",
+            valueDescription = "${if (landscape) "Landscape" else "Portrait"}, ${(nxD * 100).roundToInt()}% from left",
+            value = nxD.toFloat(), min = 0f, max = 1f,
+        ) { onPlacementChange(placement.withPos(landscape, it.toDouble(), nyD)) }
+
+        WatermarkSliderRow(
+            label = "Vertical position",
+            valueLabel = "${(nyD * 100).roundToInt()}%",
+            valueDescription = "${if (landscape) "Landscape" else "Portrait"}, ${(nyD * 100).roundToInt()}% from top",
+            value = nyD.toFloat(), min = 0f, max = 1f,
+        ) { onPlacementChange(placement.withPos(landscape, nxD, it.toDouble())) }
 
         WatermarkSliderRow(
             label = "Size",
@@ -1153,6 +1174,7 @@ private fun WatermarkSliderRow(
     value: Float,
     min: Float,
     max: Float,
+    valueDescription: String = valueLabel,
     onChange: (Float) -> Unit,
 ) {
     Column {
@@ -1165,6 +1187,10 @@ private fun WatermarkSliderRow(
             Text(text = valueLabel, color = Ink, style = Typography.labelMedium)
         }
         Slider(
+            modifier = Modifier.semantics {
+                contentDescription = label
+                stateDescription = valueDescription
+            },
             value = value.coerceIn(min, max),
             onValueChange = onChange,
             valueRange = min..max,

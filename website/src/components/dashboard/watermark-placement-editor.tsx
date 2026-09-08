@@ -14,6 +14,7 @@ import {
   OPACITY_MIN,
   SCALE_MAX,
   SCALE_MIN,
+  WATERMARK_PREVIEW_SIZE,
   positionFromBox,
   watermarkBox,
   type Orientation,
@@ -24,7 +25,7 @@ import type { WatermarkPlacement } from "@/store/photographer-settings-store";
 // landscape and a portrait preview (each orientation keeps its own position),
 // and tunes size + opacity with sliders. The preview runs the exact same
 // free-space formula the backend bakes with (lib/watermark-placement +
-// WatermarkService.drawWatermarkImage), so what they see is what ships.
+// WatermarkService.watermarkBox), scaled from a representative photo.
 
 interface Props {
   dataUrl: string;
@@ -34,8 +35,8 @@ interface Props {
 }
 
 const ORIENTATIONS: { key: Orientation; label: string; wrap: string }[] = [
-  { key: "landscape", label: "Landscape", wrap: "aspect-[3/2] w-full" },
-  { key: "portrait", label: "Portrait", wrap: "aspect-[2/3] w-2/3 max-w-[280px]" },
+  { key: "landscape", label: "Landscape", wrap: "w-full" },
+  { key: "portrait", label: "Portrait", wrap: "w-2/3 max-w-[280px]" },
 ];
 
 export function WatermarkPlacementEditor({ dataUrl, editing, placement, onChange }: Props) {
@@ -46,10 +47,10 @@ export function WatermarkPlacementEditor({ dataUrl, editing, placement, onChange
   const grab = useRef<{ dx: number; dy: number } | null>(null);
 
   const pos = orientation === "landscape" ? placement.landscape : placement.portrait;
+  const photo = WATERMARK_PREVIEW_SIZE[orientation];
 
-  // Measure the preview in real pixels — both the drag math and the logo box
-  // work in px so they stay in lockstep. Re-measures on orientation change
-  // (aspect swaps) and any responsive resize.
+  // Scale rendered-photo coordinates to the responsive preview. Applying the
+  // compositor's minimums to this small DOM box would exaggerate the logo.
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return;
@@ -60,7 +61,8 @@ export function WatermarkPlacementEditor({ dataUrl, editing, placement, onChange
     return () => ro.disconnect();
   }, [orientation]);
 
-  const logo = watermarkBox(box.w, box.h, logoAspect, placement.scale, pos.x, pos.y);
+  const previewScale = box.w / photo.width;
+  const logo = watermarkBox(photo.width, photo.height, logoAspect, placement.scale, pos.x, pos.y);
 
   const setPos = useCallback(
     (x: number, y: number) => {
@@ -77,18 +79,23 @@ export function WatermarkPlacementEditor({ dataUrl, editing, placement, onChange
     if (!editing) return;
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    const r = boxRef.current!.getBoundingClientRect();
+    const el = boxRef.current!;
+    const r = el.getBoundingClientRect();
     // Offset within the logo where it was grabbed, so it doesn't jump under the
     // cursor on the first move.
-    grab.current = { dx: e.clientX - (r.left + logo.left), dy: e.clientY - (r.top + logo.top) };
+    grab.current = {
+      dx: e.clientX - (r.left + el.clientLeft + logo.left * previewScale),
+      dy: e.clientY - (r.top + el.clientTop + logo.top * previewScale),
+    };
   };
 
   const onPointerMove = (e: PointerEvent) => {
-    if (!editing || !grab.current) return;
-    const r = boxRef.current!.getBoundingClientRect();
-    const left = e.clientX - r.left - grab.current.dx;
-    const top = e.clientY - r.top - grab.current.dy;
-    const next = positionFromBox(box.w, box.h, logoAspect, placement.scale, left, top);
+    if (!editing || !grab.current || previewScale <= 0) return;
+    const el = boxRef.current!;
+    const r = el.getBoundingClientRect();
+    const left = (e.clientX - r.left - el.clientLeft - grab.current.dx) / previewScale;
+    const top = (e.clientY - r.top - el.clientTop - grab.current.dy) / previewScale;
+    const next = positionFromBox(photo.width, photo.height, logoAspect, placement.scale, left, top, pos.x, pos.y);
     setPos(next.x, next.y);
   };
 
@@ -130,6 +137,7 @@ export function WatermarkPlacementEditor({ dataUrl, editing, placement, onChange
             ORIENTATIONS.find((o) => o.key === orientation)!.wrap,
           )}
           style={{
+            aspectRatio: `${photo.width} / ${photo.height}`,
             background:
               "linear-gradient(135deg, var(--ink-soft) 0%, var(--slate) 45%, var(--bone-deep) 100%)",
           }}
@@ -153,10 +161,10 @@ export function WatermarkPlacementEditor({ dataUrl, editing, placement, onChange
               className={cn("select-none", editing && "active:cursor-grabbing")}
               style={{
                 position: "absolute",
-                left: logo.left,
-                top: logo.top,
-                width: logo.width,
-                height: logo.height,
+                left: logo.left * previewScale,
+                top: logo.top * previewScale,
+                width: logo.width * previewScale,
+                height: logo.height * previewScale,
                 opacity: placement.opacity,
                 touchAction: "none",
                 cursor: editing ? "grab" : "default",
@@ -172,6 +180,29 @@ export function WatermarkPlacementEditor({ dataUrl, editing, placement, onChange
       </div>
 
       <div className="space-y-4">
+        <p className="text-sm text-slate">Sample photo. Tall logos shrink to fit inside the frame.</p>
+        <SliderRow
+          label="Horizontal position"
+          value={pos.x}
+          min={0}
+          max={1}
+          step={0.01}
+          display={`${Math.round(pos.x * 100)}%`}
+          valueText={`${orientation}, ${Math.round(pos.x * 100)}% from left`}
+          disabled={!editing}
+          onChange={(x) => setPos(x, pos.y)}
+        />
+        <SliderRow
+          label="Vertical position"
+          value={pos.y}
+          min={0}
+          max={1}
+          step={0.01}
+          display={`${Math.round(pos.y * 100)}%`}
+          valueText={`${orientation}, ${Math.round(pos.y * 100)}% from top`}
+          disabled={!editing}
+          onChange={(y) => setPos(pos.x, y)}
+        />
         <SliderRow
           label="Size"
           value={placement.scale}
@@ -204,6 +235,7 @@ function SliderRow({
   max,
   step,
   display,
+  valueText = display,
   disabled,
   onChange,
 }: {
@@ -213,6 +245,7 @@ function SliderRow({
   max: number;
   step: number;
   display: string;
+  valueText?: string;
   disabled: boolean;
   onChange: (v: number) => void;
 }) {
@@ -231,8 +264,9 @@ function SliderRow({
         disabled={disabled}
         onChange={(e) => onChange(parseFloat(e.target.value))}
         className="w-full disabled:cursor-not-allowed"
-        style={{ accentColor: "var(--fresh)" }}
+        style={{ accentColor: "var(--ink)" }}
         aria-label={label}
+        aria-valuetext={valueText}
       />
     </label>
   );

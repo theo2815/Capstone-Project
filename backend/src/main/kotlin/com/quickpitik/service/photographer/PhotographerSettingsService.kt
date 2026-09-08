@@ -250,11 +250,26 @@ class PhotographerSettingsService(
     // ─── Watermark placement (V51) ────────────────────────────────────────
     // Position (per orientation), opacity and size for the photographer's own
     // logo. Independent of the watermark image upload — geometry changes
-    // without re-uploading. Values are clamped into range rather than rejected:
+    // without re-uploading. Finite values are clamped into range:
     // a slider/drag can only send in-range values, and a hand-crafted request
     // is normalized. Applies to NEW uploads only — already-baked previews keep
     // their stamp (see PhotoWatermarkService).
     fun putWatermarkSettings(userId: UUID, req: WatermarkSettingsRequest): PhotographerSettings {
+        // Jackson accepts quoted NaN/Infinity as Doubles; coerceIn does not
+        // reject NaN. Validate every field before even lazy-creating the row.
+        mapOf(
+            "opacity" to req.opacity, "scale" to req.scale,
+            "landscapeX" to req.landscapeX, "landscapeY" to req.landscapeY,
+            "portraitX" to req.portraitX, "portraitY" to req.portraitY,
+        ).forEach { (field, value) ->
+            if (!value.isFinite()) {
+                throw ValidationException(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "$field must be a finite number",
+                    field = field,
+                )
+            }
+        }
         val settings = getOrCreate(userId)
         settings.watermarkOpacity = req.opacity.coerceIn(MIN_WATERMARK_OPACITY, MAX_WATERMARK_OPACITY)
         settings.watermarkScale = req.scale.coerceIn(MIN_WATERMARK_SCALE, MAX_WATERMARK_SCALE)

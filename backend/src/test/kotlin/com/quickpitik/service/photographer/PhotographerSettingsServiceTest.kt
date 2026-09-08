@@ -4,11 +4,13 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photographer.HandlePatchRequest
 import com.quickpitik.dto.photographer.MissingRequirement
+import com.quickpitik.dto.photographer.WatermarkSettingsRequest
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.ReservedHandleRepository
@@ -23,6 +25,7 @@ import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
+import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder
 import java.sql.SQLException
 import java.util.Optional
 import java.util.UUID
@@ -152,6 +155,42 @@ class PhotographerSettingsServiceTest {
         assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, ex.status)
         assertEquals(ErrorCodes.PAYLOAD_TOO_LARGE, ex.code)
         Mockito.verifyNoInteractions(storageService)
+    }
+
+    @Test
+    fun `non-finite watermark fields are rejected before reading or changing settings`() {
+        val mapper = Jackson2ObjectMapperBuilder.json().build<com.fasterxml.jackson.databind.ObjectMapper>()
+        val fields = listOf("opacity", "scale", "landscapeX", "landscapeY", "portraitX", "portraitY")
+        for (field in fields) for (value in listOf("NaN", "Infinity", "-Infinity")) {
+            // Jackson accepts these quoted strings as Doubles on the real API.
+            val body = fields.joinToString(prefix = "{", postfix = "}") {
+                "\"$it\":" + if (it == field) "\"$value\"" else "0.3"
+            }
+            val req = mapper.readValue(body, WatermarkSettingsRequest::class.java)
+            val ex = assertFailsWith<ValidationException>("$field=$value") {
+                service().putWatermarkSettings(userId, req)
+            }
+            assertEquals(ErrorCodes.VALIDATION_ERROR, ex.code)
+            assertEquals(field, ex.field)
+        }
+        Mockito.verifyNoInteractions(photographerSettingsRepository, userRepository)
+    }
+
+    @Test
+    fun `finite watermark values still clamp and round-trip through brand details`() {
+        val settings = PhotographerSettings(userId = userId)
+        Mockito.`when`(photographerSettingsRepository.findById(userId)).thenReturn(Optional.of(settings))
+        Mockito.`when`(photographerSettingsRepository.save(anyArg<PhotographerSettings>()))
+            .thenAnswer { it.getArgument<PhotographerSettings>(0) }
+        val service = service()
+        service.putWatermarkSettings(userId, WatermarkSettingsRequest(2.0, -1.0, -5.0, 5.0, 0.3, 0.7))
+
+        assertEquals(
+            mapOf("opacity" to 1.0, "scale" to 0.05, "landscapeX" to 0.0,
+                "landscapeY" to 1.0, "portraitX" to 0.3, "portraitY" to 0.7),
+            service.getBrandDetails(userId)["watermarkSettings"],
+        )
+        Mockito.verify(photographerSettingsRepository).save(settings)
     }
 
     // ─── collectMissing — the single required-field predicate both clients
