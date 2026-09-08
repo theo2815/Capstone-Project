@@ -82,6 +82,11 @@ proving the entities still match, the `uq_photos_photographer_content_hash` part
 lockout counter's survival of a rolled-back login transaction. Extend `PostgresIntegrationTest`
 to add one. End-to-end is verified via `curl` (see Smoke Test below).
 
+**If Docker is down when you need `integrationTest`, start it — never skip.** Bring Docker Desktop
+up (launch it, then poll `docker info` until it succeeds), then run the suite. "Couldn't run —
+Docker was down" is not a verified test; only report an integration test unrun if the daemon
+genuinely won't start on this machine, and say so explicitly.
+
 ### API docs
 
 With the app running, `http://localhost:8080/swagger-ui.html` (spec at `/v3/api-docs`).
