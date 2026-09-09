@@ -92,7 +92,13 @@ export const useCartStore = create<CartState>()(
           });
         }
       },
-      total: () => get().items.reduce((sum, item) => sum + item.price, 0),
+      total: () => {
+        const cents = get().items.reduce(
+          (sum, item) => sum + Math.round(Number(item.price || 0) * 100),
+          0,
+        );
+        return cents / 100;
+      },
       isFull: () => get().items.length >= MAX_CART_ITEMS,
       remainingCapacity: () =>
         Math.max(0, MAX_CART_ITEMS - get().items.length),

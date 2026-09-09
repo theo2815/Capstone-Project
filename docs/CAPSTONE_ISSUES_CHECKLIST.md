@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 31
-- **✅ Already Solved:** 19 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 26, 31, 32, 33, 34)
-- **⏳ Pending / To Be Worked On:** 12 (Items 16, 17, 19, 21, 22, 23, 24, 25, 27, 28, 29, 30)
+- **✅ Already Solved:** 20 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 26, 28, 31, 32, 33, 34)
+- **⏳ Pending / To Be Worked On:** 11 (Items 16, 17, 19, 21, 22, 23, 24, 25, 27, 29, 30)
 
 ---
 
@@ -188,11 +188,16 @@
     - `website/src/lib/reserved-handles.ts`
   - **Action Plan:** Add `"verify"`, `"verify-email"`, and `"confirm-email-change"` to the `RESERVED_HANDLES` set.
 
-- [ ] **28. Website — Floating-Point Precision Accumulation in Cart Pricing Summation**
-  - **Issue:** `cart-store.ts` calculates the cart total as `items.reduce((sum, item) => sum + item.price, 0)`. Floating-point arithmetic on decimals (e.g., `150.50 + 99.99 = 250.49000000000004`) causes micro-penny precision inaccuracies, risking mismatches with backend cent-based order calculations during checkout.
+- [x] **28. Website — Floating-Point Precision Accumulation in Cart Pricing Summation**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated `total()` in `website/src/store/cart-store.ts` to accumulate item prices in integer cents (`Math.round(Number(item.price || 0) * 100)`) and return `cents / 100`.
+    - Hardened `payable` calculation in `website/src/components/cart/checkout-modal.tsx` to round to integer cents before decimal conversion.
+    - Added unit test suite in `website/src/store/cart-store.test.ts` verifying micro-decimal addition without floating-point drift.
   - **Affected Files:**
     - `website/src/store/cart-store.ts`
-  - **Action Plan:** Calculate the total in integer cents (`Math.round(item.price * 100)`) and divide by 100, or format using fixed two-decimal precision.
+    - `website/src/components/cart/checkout-modal.tsx`
+    - `website/src/store/cart-store.test.ts`
 
 - [ ] **29. Website — Overly Restrictive `Permissions-Policy` Blocking Camera in Production**
   - **Issue:** In `next.config.ts:50`, the production security header sets `Permissions-Policy: camera=(), microphone=(), geolocation=()`. In `SelfieSearchPanel.tsx`, runners can match photos via `<input type="file" capture="user">`. Certain mobile browser webviews and future direct camera previews (`getUserMedia`) are blocked by `camera=()`.

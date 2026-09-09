@@ -210,7 +210,7 @@ export function CheckoutModal({
   const itemCount = items.length;
   const recipientEmail = isAuthenticated ? authUser?.email ?? email : email;
   const discountTotal = coupon?.discountTotal ?? 0;
-  const payable = Math.max(0, total - discountTotal);
+  const payable = Math.max(0, Math.round((total - discountTotal) * 100) / 100);
   // While a QR is live the cart may already be empty (resume after refresh),
   // so the amount on screen comes from the record.
   const qrTotal = pending?.total ?? payable;
