@@ -35,15 +35,13 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 import kotlinx.coroutines.launch
 
-// Date-filter chips, mirroring the website's date dropdown. Each (except ANY) maps
-// to a single lifecycle bucket; selecting one collapses the segmented view into a
-// flat list of just that bucket — same behaviour as /events on the web.
-private enum class DateFilter(val label: String, val match: EventState?) {
-    ANY("Any time", null),
-    UPCOMING("Upcoming", EventState.UPCOMING),
-    LIVE("Live now", EventState.LIVE),
-    RECENT("Recent", EventState.OPEN),
-    ARCHIVE("Archive", EventState.PAST),
+// Date-filter choices: 3 primary lifecycle options (Live, Upcoming, Finished),
+// with Finished matching both recent and archived races.
+private enum class DateFilter(val label: String, val matches: (EventState) -> Boolean) {
+    ANY("All events", { true }),
+    LIVE("Live", { it == EventState.LIVE }),
+    UPCOMING("Upcoming", { it == EventState.UPCOMING }),
+    FINISHED("Finished", { it == EventState.OPEN || it == EventState.PAST }),
 }
 
 // The four segment blocks rendered (in this order) when no filter is active, matching
@@ -230,7 +228,7 @@ fun EventsDiscoveryScreen(
 
                     val filtered = withState.filter { (event, eventState) ->
                         if (cityFilter != "all" && extractCity(event.location) != cityFilter) return@filter false
-                        dateFilter.match?.let { if (eventState != it) return@filter false }
+                        if (!dateFilter.matches(eventState)) return@filter false
                         if (trimmed.isNotEmpty()) {
                             val hay = "${event.name} ${event.location} ${event.date}".lowercase()
                             if (!hay.contains(trimmed)) return@filter false
