@@ -11,9 +11,11 @@ import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import com.quickpitik.mobile.MainActivity
 import com.quickpitik.mobile.data.local.TetherEvents
+import com.quickpitik.mobile.data.local.UploadSpool
 import com.quickpitik.mobile.data.usb.CameraIngestCoordinator
 import com.quickpitik.mobile.data.usb.CameraConnectionState
 import com.quickpitik.mobile.data.usb.ShutterWatchState
@@ -29,15 +31,19 @@ class TetherIngestService : Service() {
     private val coordinator by lazy { CameraIngestCoordinator.get(this) }
     private var foreground = false
     private var lastNotice: String? = null
+    private var storageAlert: UploadSpool.Level? = null
 
     override fun onCreate() {
         super.onCreate()
         coordinator.attach()
         scope.launch {
-            combine(coordinator.watch, coordinator.cardBusy, coordinator.cameraManager.state) { state, busy, connection ->
-                Triple(state, busy, connection)
-            }.collect { (state, busy, connection) ->
+            combine(coordinator.watch, coordinator.cardBusy, coordinator.cameraManager.state,
+                UploadSpool.observeSpace(this@TetherIngestService)) { state, busy, connection, space ->
+                Triple(state, busy, connection) to space
+            }.collect { (capture, space) ->
+                val (state, busy, connection) = capture
                 if (foreground) {
+                    showStorageAlert(space)
                     if (connection is CameraConnectionState.Connected && (coordinator.isWatching || busy)) acquireWakeLock()
                     else releaseWakeLock()
                     val notice = when (state) {
@@ -97,6 +103,34 @@ class TetherIngestService : Service() {
                 .notify(NOTIFICATION_ID, buildNotification(notice))
         }
         lastNotice = notice
+    }
+
+    private fun showStorageAlert(space: UploadSpool.Space) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (space.level == UploadSpool.Level.READY) {
+            manager.cancel(STORAGE_NOTIFICATION_ID)
+            storageAlert = null
+            return
+        }
+        if (storageAlert == space.level || (storageAlert == UploadSpool.Level.BLOCKED && space.level == UploadSpool.Level.LOW)) return
+        if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return
+        manager.createNotificationChannel(NotificationChannel(STORAGE_CHANNEL_ID, "Phone storage", NotificationManager.IMPORTANCE_DEFAULT))
+        val title = when (space.level) {
+            UploadSpool.Level.BLOCKED -> "Phone storage needs attention"
+            UploadSpool.Level.UNKNOWN -> "Couldn't check phone storage"
+            else -> "Phone storage is getting low"
+        }
+        val detail = "Open Capture to free verified phone copies. Camera transfers pause when space is insufficient; uploads can continue."
+        val open = PendingIntent.getActivity(this, REQUEST_CONTENT, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        manager.cancel(STORAGE_NOTIFICATION_ID)
+        manager.notify(STORAGE_NOTIFICATION_ID, NotificationCompat.Builder(this, STORAGE_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setContentTitle(title).setContentText(detail)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
+            .setContentIntent(open).setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_ERROR).build())
+        storageAlert = space.level
     }
 
     override fun onDestroy() {
@@ -177,6 +211,8 @@ class TetherIngestService : Service() {
         private const val CHANNEL_DESCRIPTION =
             "Shows while photos are transferring from a connected camera."
         private const val NOTIFICATION_ID = 4101
+        private const val STORAGE_NOTIFICATION_ID = 4102
+        private const val STORAGE_CHANNEL_ID = "tether_storage"
         private const val REQUEST_CONTENT = 0
         private const val REQUEST_STOP = 1
 

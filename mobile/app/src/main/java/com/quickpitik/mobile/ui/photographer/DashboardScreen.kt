@@ -4,8 +4,11 @@ import com.quickpitik.mobile.data.usb.ShutterWatchState
 import com.quickpitik.mobile.ui.theme.WarningOrange
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
+import android.text.format.Formatter
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -75,14 +78,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.app.NotificationManagerCompat
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.local.UploadRecord
+import com.quickpitik.mobile.data.local.UploadSpool
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.usb.CameraConnectionState
@@ -152,6 +160,8 @@ private fun TetherConsoleView(
     val cameraRecovery by viewModel.cameraRecovery.collectAsState()
     val cameraState by viewModel.cameraConnectionState.collectAsState()
     val watchState by viewModel.shutterWatchState.collectAsState()
+    val phoneSpace by viewModel.phoneSpace.collectAsState()
+    val cleanupState by viewModel.cleanupState.collectAsState()
     val scrollState = rememberScrollState()
 
     // Per-photo strip data: this event's rows only, newest first, capped so a
@@ -159,14 +169,14 @@ private fun TetherConsoleView(
     // (any event) still keeps the sync card visible below.
     val recentForEvent = remember(queueStats.recentRecords, activeEvent?.id) {
         queueStats.recentRecords.asSequence()
-            .filter { it.eventId == activeEvent?.id }
+            .filter { it.eventId == activeEvent?.id && it.localDeletedAt == null }
             .take(RECENT_STRIP_MAX_TILES)
             .toList()
     }
     val pendingWork = queueStats.queuedCount + queueStats.uploadingCount + queueStats.failedCount
 
     // Tapping a strip tile opens the shared lightbox on the local file: the
-    // full original while it waits to upload, the 1024px thumbnail afterwards.
+    // full original until verified cleanup removes the phone copy.
     var previewIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     previewIndex?.let { index ->
         if (index !in recentForEvent.indices) {
@@ -204,7 +214,19 @@ private fun TetherConsoleView(
     // photographer who declined shouldn't be re-prompted on every start
     // mid-race.
     val context = LocalContext.current
-    var notificationsDenied by remember { mutableStateOf(false) }
+    cleanupState.review?.let { review ->
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelPhoneCleanup() },
+            containerColor = Bone,
+            title = { Text("Check and free phone space?") },
+            text = { Text("Check ${review.records.size} uploaded tether copies from your events, then remove only copies whose cloud originals match. " +
+                "This downloads up to ${Formatter.formatShortFileSize(context, review.bytes)} for verification. " +
+                "Camera card and gallery files stay unchanged. Removed phone copies will need downloading to view offline.") },
+            confirmButton = { GhostCta("Verify and free", onClick = { viewModel.confirmPhoneCleanup() }) },
+            dismissButton = { GhostCta("Cancel", onClick = { viewModel.cancelPhoneCleanup() }) },
+        )
+    }
+    var notificationsDenied by remember { mutableStateOf(!NotificationManagerCompat.from(context).areNotificationsEnabled()) }
     var notificationAsked by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -274,6 +296,19 @@ private fun TetherConsoleView(
                 )
             }
         }
+
+        PhoneStorageCard(
+            space = phoneSpace,
+            busy = cleanupState.busy,
+            message = cleanupState.message,
+            onCleanup = { viewModel.reviewPhoneCleanup() },
+            onCancel = { viewModel.cancelPhoneCleanup() },
+            onSettings = {
+                val intent = Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)
+                if (intent.resolveActivity(context.packageManager) != null) context.startActivity(intent)
+                else context.startActivity(Intent(Settings.ACTION_SETTINGS))
+            },
+        )
 
         // 2. Camera connection. Branches on the real USB-host state from
         // CameraConnectionManager. Mobile is tether-only — gallery upload lives
@@ -439,9 +474,7 @@ private fun TetherConsoleView(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = queueStats.uploadingCount == 0
             )
-            // Retry + Clear only appear when there's actually something failed
-            // — keeps the card quiet on the happy path. Both disabled mid-
-            // upload so the actions can't race with a running worker.
+            // Failed originals stay recoverable. Only verified cleanup can remove a phone copy.
             if (queueStats.failedCount > 0) {
                 Spacer(modifier = Modifier.height(10.dp))
                 GhostCta(
@@ -450,18 +483,52 @@ private fun TetherConsoleView(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = queueStats.uploadingCount == 0
                 )
-                Spacer(modifier = Modifier.height(10.dp))
-                GhostCta(
-                    text = "Clear ${queueStats.failedCount} failed",
-                    onClick = { viewModel.clearFailedUploads() },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = queueStats.uploadingCount == 0
-                )
             }
         }
         }
     }
 }
+
+@Composable
+private fun PhoneStorageCard(
+    space: UploadSpool.Space,
+    busy: Boolean = false,
+    message: String? = null,
+    onCleanup: () -> Unit = {},
+    onCancel: () -> Unit = {},
+    onSettings: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    val (label, tone) = when (space.level) {
+        UploadSpool.Level.UNKNOWN -> "Storage unavailable" to StatusTone.Warning
+        UploadSpool.Level.BLOCKED -> "Space needed for camera transfers" to StatusTone.Danger
+        UploadSpool.Level.LOW -> "Phone storage low" to StatusTone.Warning
+        UploadSpool.Level.READY -> "Phone storage" to StatusTone.Neutral
+    }
+    QpCard(modifier = Modifier.fillMaxWidth()) {
+        StatusChip(text = label, tone = tone, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        Text(space.availableBytes?.let { "${Formatter.formatShortFileSize(context, it)} available" }
+            ?: "Couldn't check available space. Camera transfers will wait.", color = Ink, style = NumeralStyle)
+        Text(when (space.level) {
+            UploadSpool.Level.BLOCKED -> "Camera transfers wait when the next photo won't fit safely. Uploads can continue. Free space to resume."
+            UploadSpool.Level.LOW -> "Free space soon to keep camera transfers running."
+            else -> "Uploaded originals stay on this phone until you verify and remove them."
+        }, color = Slate, style = Typography.bodyMedium)
+        message?.let { Text(it, color = Slate, style = Typography.bodyMedium) }
+        GhostCta(if (busy) "Checking phone copies…" else "Free phone space", onClick = onCleanup,
+            enabled = !busy, modifier = Modifier.fillMaxWidth())
+        if (busy) GhostCta("Stop cleanup", onClick = onCancel, modifier = Modifier.fillMaxWidth())
+        else GhostCta("Phone storage settings", onClick = onSettings, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PhoneStorageReadyPreview() { PhoneStorageCard(UploadSpool.Space(4 * UploadSpool.LOW_FREE_BYTES)) }
+
+@Preview(showBackground = true)
+@Composable
+private fun PhoneStorageBlockedPreview() { PhoneStorageCard(UploadSpool.Space(0)) }
 
 @Composable
 private fun CameraConnectPrompt(
@@ -944,8 +1011,8 @@ private fun CameraConnectedCardReconnectingPreview() {
 @Composable
 private fun NotificationsOffNote(modifier: Modifier = Modifier) {
     Text(
-        text = "Notifications are off, so the shoot won't appear in your notification " +
-            "shade. Photos still upload — start and stop from this screen.",
+        text = "Notifications are off. Storage warnings and shoot status will only appear in the app. " +
+            "Photos still upload — keep this screen visible to watch for low space.",
         color = Slate,
         style = Typography.bodyMedium,
         modifier = modifier.fillMaxWidth(),

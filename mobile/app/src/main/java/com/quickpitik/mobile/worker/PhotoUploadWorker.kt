@@ -1,16 +1,11 @@
 package com.quickpitik.mobile.worker
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Matrix
-import android.media.ExifInterface
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.UploadRecord
-import com.quickpitik.mobile.data.local.UploadSpool
 import com.quickpitik.mobile.data.remote.*
 import kotlinx.coroutines.*
 import okhttp3.*
@@ -34,7 +29,6 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         dao.recoverOwned(owner)
         if (dao.retryNotBefore(owner) > System.currentTimeMillis()) return Result.retry()
         val cutoff = System.currentTimeMillis() - COMPLETED_TTL_MS
-        dao.getCompletedPathsBefore(cutoff, owner).forEach { runCatching { File(it).delete() } }
         dao.deleteCompletedBefore(cutoff, owner)
 
         val failures = AtomicBoolean(false)
@@ -74,6 +68,7 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         val file = File(record.filePath)
         if (!file.exists()) { dao.updateStatus(record.id, "FAILED", "Local file not found."); return }
         val started = System.nanoTime()
+        val backend = RetrofitClient.BASE_URL
         try {
             requireOwner(record.photographerId)
             val response = tryDirectUpload(file, record, database) ?: run {
@@ -87,12 +82,13 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
                 pacer.observe(0, failed = true)
                 return
             }
-            // Only a backend acknowledgment makes it safe to replace the full original with a preview.
-            dao.updateStatus(record.id, "COMPLETED", null)
-            dao.checkpointDirectUpload(record.id, null, null, null)
-            val ours = file.canonicalPath.startsWith(applicationContext.cacheDir.canonicalPath + File.separator) ||
-                file.canonicalPath.startsWith(UploadSpool.dir(applicationContext).canonicalPath + File.separator)
-            if (ours && !runCatching { shrinkToThumbnail(file) }.getOrDefault(false)) runCatching { file.delete() }
+            requireOwner(record.photographerId)
+            check(backend == RetrofitClient.BASE_URL && !response.data.id.isNullOrBlank()) {
+                "Upload confirmation changed. Original kept on phone."
+            }
+            // Upload acknowledgement is a receipt, not a byte-integrity proof. Cleanup re-reads
+            // the owner-only cloud original before deleting; never shrink or expire this file.
+            dao.completeUpload(record.id, response.data.id, backend)
             pacer.observe((System.nanoTime() - started) / 1_000_000, failed = false)
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
@@ -222,55 +218,6 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         return runCatching { ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli() }.getOrDefault(0)
     }
 
-    /**
-     * Replaces an already-uploaded spool JPEG with a bounded thumbnail at the
-     * SAME path, so UploadRecord.filePath stays renderable in the sync strip
-     * until the completed-record cleanup. Returns false
-     * when the bytes can't be decoded; the caller then falls back to the old
-     * delete. In-place rewrite, no temp+rename: renameTo can't replace an
-     * existing file on the Windows JVM the Robolectric suite runs on, and a
-     * mid-write crash only costs a placeholder tile — the upload itself already
-     * COMPLETED before this runs. Upload concurrency also bounds these decodes.
-     */
-    private fun shrinkToThumbnail(file: File): Boolean {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(file.absolutePath, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
-        var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= THUMBNAIL_LONG_EDGE_PX) {
-            sample *= 2
-        }
-        var bitmap = BitmapFactory.decodeFile(
-            file.absolutePath,
-            BitmapFactory.Options().apply { inSampleSize = sample },
-        ) ?: return false
-        // Re-encoding drops the EXIF orientation tag, so bake the rotation into
-        // the pixels — otherwise portrait frames render sideways after the swap.
-        val degrees = runCatching {
-            when (
-                ExifInterface(file.absolutePath)
-                    .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-            ) {
-                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
-                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-                else -> 0f
-            }
-        }.getOrDefault(0f)
-        if (degrees != 0f) {
-            val rotated = Bitmap.createBitmap(
-                bitmap, 0, 0, bitmap.width, bitmap.height,
-                Matrix().apply { postRotate(degrees) }, true,
-            )
-            bitmap.recycle()
-            bitmap = rotated
-        }
-        val encoded = file.outputStream().use { out ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, THUMBNAIL_JPEG_QUALITY, out)
-        }
-        bitmap.recycle()
-        return encoded
-    }
 
     /**
      * Additive-increase / multiplicative-free concurrency pacer. Deliberately
@@ -306,8 +253,7 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
     }
 
     private companion object {
-        // COMPLETED rows older than this are pruned at the start of each run.
-        // Backend content dedup remains authoritative after local previews expire.
+        // Retire metadata only after verified local deletion. Originals never expire by age.
         const val COMPLETED_TTL_MS = 7L * 24 * 60 * 60 * 1000
 
         // Rejections that can NEVER succeed on retry, so they END the record
@@ -338,15 +284,5 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         // before a non-terminal failure is declared permanent.
         const val MAX_RETRIES = 5
 
-        // Post-upload in-place thumbnail: long edge + JPEG quality. ~20 KB per
-        // synced frame keeps the sync strip renderable without hoarding
-        // multi-MB originals in cacheDir.
-        // Was 320px/q80 (~20 KB). The strip tile is 64dp, but the tile now opens
-        // the lightbox, and a 320px frame is unreadable there. 1024px/q75 is
-        // ~100 KB — a 1,000-frame race keeps ~100 MB on the phone.
-        // ponytail: fixed size; prune-by-age (7 days) bounds it, add a
-        // "keep thumbnails" setting if a photographer ever asks.
-        const val THUMBNAIL_LONG_EDGE_PX = 1024
-        const val THUMBNAIL_JPEG_QUALITY = 75
     }
 }

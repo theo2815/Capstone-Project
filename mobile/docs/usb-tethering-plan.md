@@ -2,6 +2,91 @@
 
 Scope: Android USB ingestion into the existing Room/WorkManager/backend pipeline. Preserve physical-shutter Canon capture and on-card originals. Wi-Fi, remote shutter/live view, multi-camera operation, and RAW cloud processing are outside this increment. This repository has no iOS app; this work adds no iPhone USB implementation.
 
+## Phone storage management — 2026-09-09
+
+**Recommendation implemented:** monitor the internal tether spool, keep originals
+after upload, and offer explicit **Free phone space → Verify and free** cleanup of
+this account's uploaded tether copies across events. Confirmation names the count
+and verification-download size. Every candidate is checked independently; failed,
+pending, unconfirmed and changed copies stay on the phone. Camera-card originals,
+gallery media and arbitrary device files are outside this cleanup feature.
+
+### Android feasibility and permissions
+
+| Concern | Decision |
+|---|---|
+| Available storage | Read `StatFs(filesDir).availableBytes` on the spool's actual volume, excluding OS-reserved blocks. Poll while the Capture UI/service is active and check next-file size before every camera pull. Thresholds and polling interval live in `UploadSpool`, not duplicated here. [Android StatFs](https://developer.android.com/reference/android/os/StatFs). |
+| Allocation races | A free-space reading is a snapshot, not a reservation. Retain the existing OS safety reserve and classify `ENOSPC`/full-database failures. A card transfer pauses without consuming retries; a partial temporary camera buffer needs card recovery. `getAllocatableBytes()` can include reclaimable caches, so it is not used as current writable capacity. [App storage](https://developer.android.com/training/data-storage/app-specific#query-free-space). |
+| App-owned spool | No storage permission is required to read/delete files in `filesDir`. Uninstall/clear-app-data still removes app-private files; retain camera originals until independently backed up. [App-specific files](https://developer.android.com/training/data-storage/app-specific). |
+| Other gallery photos | Android 10 can require a `RecoverableSecurityException` consent flow; Android 11+ provides `MediaStore.createDeleteRequest`/`createTrashRequest`. Browsing other media may require version-specific read permission or a user-selected URI. The current tether flow owns no gallery-source URI/backup binding, so this feature does not request broad media/all-files access or delete gallery photos. [Shared media](https://developer.android.com/training/data-storage/shared/media). |
+| User-selected documents | SAF permits deletion only with a suitable URI grant and provider support (`FLAG_SUPPORTS_DELETE`); this is not a general filesystem permission. No document cleanup is implemented. [SAF deletion](https://developer.android.com/training/data-storage/shared/documents-files#delete). |
+| Notifications | Reuse the connected-device foreground service plus a separate storage-warning channel. Android 13+ requires the existing `POST_NOTIFICATIONS` runtime grant for shade alerts. An in-app warning remains when permission is denied. [Notification permission](https://developer.android.com/develop/ui/compose/notifications/notification-permission). |
+
+### Backup gate and backend requirements
+
+No backend code, database migration or new endpoint is required for this version.
+The existing owner-only download endpoint resolves the original. Upload completion
+stores its photo ID and backend origin in Room; migration 3 → 4 preserves all old
+queue rows with no invented receipts. Legacy completed rows are excluded from
+cleanup because they may already contain an overwritten thumbnail.
+
+`COMPLETED`, a successful storage PUT, a duplicate match, a preview and a
+client-supplied checksum are insufficient deletion proof. Cleanup requires a
+persisted successful backend response, the same signed-in owner/backend, an
+app-owned tether file and the recorded SHA-256. It reads the entire cloud original
+as a stream, requires HTTP 200, and compares actual byte count and SHA-256. It then
+rechecks the queue row, owner, path, other file references and current phone bytes
+under the camera-persistence lock before deletion. No cloud bytes are saved back
+to the already-full phone; verification is cancellable and bounded by local size.
+
+The upload worker no longer shrinks originals or removes unverified files by age;
+the unsafe **Clear failed** action is removed. Local deletion time is recorded only
+after deletion succeeds. A process crash between filesystem deletion and its Room
+update can leave an absent-file completed row; it is excluded from subsequent
+cleanup and is never returned to the upload queue. Metadata retention only prunes
+rows with a recorded local deletion. A failed history update reports the actual
+removal and stops the batch; a connection failure keeps remaining candidates for
+a later attempt. Verification confirms a readable matching
+backup at cleanup time; it does not prevent a later cloud-side deletion or provide
+an independent archival/retention guarantee.
+
+The tradeoff is one full original download per cleanup candidate. A future
+server-verified checksum/size receipt tied to an immutable object version could
+reduce that cost; client-asserted hashes or ETags alone must not replace byte
+verification. Central phone-deletion audit tracking is unnecessary for local space
+management; add it only if a separate product requirement needs it.
+
+### Implementation and verification
+
+1. **Capacity:** shared `UploadSpool` readings, size-aware admission, storage alerts,
+   actionable card-import failure and automatic live-card resume after freeing space.
+2. **Safety:** persist receipts in `UploadRecord`, retain originals, and gate
+   `TetherStorageCleanup` behind a reviewed snapshot and full-byte verification.
+3. **UX:** Capture shows available bytes and low-space guidance, review/confirm,
+   cancel/progress/results and Android storage settings. Removed copies leave the
+   local strip; cloud originals remain available through the existing photo library.
+4. **Checks:** Room migration/retention, actual worker receipts and preservation,
+   simulated low/full volume and ENOSPC, live pause/resume, truncated/mismatched/
+   missing cloud bytes, ownership/server changes, shared references and cancellation.
+
+Software validation (2026-09-09): from `mobile/`,
+`.\gradlew.bat --offline testDebugUnitTest assembleDebug lintDebug compileReleaseKotlin --console=plain --max-workers=1`
+passed: **146 tests, zero failures/errors/skips**, debug APK assembly and release
+Kotlin compilation. Lint completed with **zero errors, 95 warnings and 7
+informational findings**, including the existing incompatible Compose custom-check
+registry limitation. Reports: `app/build/reports/tests/testDebugUnitTest/` and
+`app/build/reports/lint-results-debug.html`; APK:
+`app/build/outputs/apk/debug/app-debug.apk`. A final regression injects a database
+write failure after verified deletion and checks truthful results and no re-upload.
+
+Physical acceptance still requires a target phone and camera: fill the phone near
+the configured reserve, verify foreground/background alerts and denied-permission
+copy, free verified copies and confirm live capture resumes without missing a
+frame. Interrupt network/process during verification, compare retained/deleted
+copies against independently copied card originals and actual cloud objects, and
+measure verification data/battery cost. Synthetic tests cannot certify OEM storage
+behavior, camera RAM-buffer recovery or live object-store retention.
+
 ## Continuous auto-upload reliability — 2026-09-09
 
 This increment preserves the September 7 drivers and durable spool. The Second
@@ -193,7 +278,7 @@ Source paths below are relative to `app/src/main/java/com/quickpitik/mobile/`.
 | Completeness and recovery | `data/usb/ptp/UsbEventCaptureController.kt`, `data/local/CameraTransferStore.kt`: durable baseline plus pending objects; reconcile all handles, periodically refresh existing metadata, retain gaps/failures. Manual selection is saved before transfer. Retry summary survives stopped watches. |
 | Transfer and account boundary | `data/local/CameraTransferStore.kt`, `worker/PhotoUploadWorker.kt`, `data/remote/SessionAuthInterceptor.kt`: generated paths, bounded streaming, fsync/rename, local SHA-256, transactional enqueue, missing-file-safe dedupe, owner-specific draining and authentication refresh. |
 
-Room migration 1 -> 2 adds the camera ledger; migration 2 -> 3 adds upload checkpoints/retry deadlines. Both preserve existing uploads; exported schemas are under `app/schemas/`. Existing UI and upload processing remain the integration path.
+Room migrations preserve existing uploads; exported schemas are under `app/schemas/`. The storage-safety increment above adds receipts and local-deletion tracking to the camera ledger and upload checkpoint foundation.
 
 ## Current compatibility boundary
 
@@ -224,7 +309,7 @@ Hardware release gate (requires available bodies/phone): R6 and R10 plus at leas
 | Offline/low storage, then recovery; logout/login another account | No lost retry intent, no cross-account publication, uploads resume for the owning account. |
 | Two-hour session on two phone models | Record p50/p95 capture-to-local and local-to-cloud latency, memory and battery, compare with prior build; no sustained queue growth at the tested shooting rate. |
 
-Record exact body, firmware, camera USB/save mode, phone/Android version and cable/hub for each result. Compare hashes against independently copied originals before the upload worker replaces completed local files with preview thumbnails.
+Record exact body, firmware, camera USB/save mode, phone/Android version and cable/hub for each result. Compare hashes against independently copied card originals before confirming phone cleanup.
 
 ## Further expansion
 
@@ -240,7 +325,7 @@ Primary references for that spike: [Android USB host](https://developer.android.
 
 ## Future expansion and contract gaps
 
-The USB reader carries generic object bytes; MVP publishes JPEG, including JPEG companions from RAW+JPEG. RAW archival/publishing requires backend content-type/size and processing support. Direct uploads currently accept JPEG/PNG/WebP up to 25 MiB and commit a client-asserted hash; independently verified cloud checksums are a separate backend change. Partial transfer resume requires verified camera support and stable object identity.
+The USB reader carries generic object bytes; MVP publishes JPEG, including JPEG companions from RAW+JPEG. RAW archival/publishing requires backend content-type/size and processing support. Direct uploads currently accept JPEG/PNG/WebP up to 25 MiB and commit a client-asserted hash; server-issued verified checksum receipts need a backend change. Phone cleanup independently verifies downloaded original bytes as described above. Partial transfer resume requires verified camera support and stable object identity.
 
 ## Expansion file manifest
 

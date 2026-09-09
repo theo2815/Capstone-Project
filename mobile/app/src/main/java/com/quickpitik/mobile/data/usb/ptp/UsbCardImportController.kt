@@ -3,6 +3,7 @@ package com.quickpitik.mobile.data.usb.ptp
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.quickpitik.mobile.BuildConfig
+import com.quickpitik.mobile.data.local.LowCameraStorage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.currentCoroutineContext
@@ -113,7 +114,11 @@ class UsbCardImportController(
                         pulledBytes = camera.readObject(photo.handle, sink, photo.objectInfo?.expectedSize)
                         ptpMs = System.currentTimeMillis() - ptpStart
                     }
-                } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                } catch (e: CancellationException) { throw e }
+                catch (e: LowCameraStorage) {
+                    emit(Progress.Failed(e.message.orEmpty()))
+                    return // Remaining selections stay pending; storage pressure spends no retry budget.
+                } catch (e: Exception) {
                     onFailed(photo, e.message ?: MSG_READ_FAILED)
                     false
                 }

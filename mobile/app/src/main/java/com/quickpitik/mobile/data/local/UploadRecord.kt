@@ -21,4 +21,7 @@ data class UploadRecord(
     @ColumnInfo(defaultValue = "NULL") val directKey: String? = null,
     @ColumnInfo(defaultValue = "NULL") val directBackend: String? = null,
     @ColumnInfo(defaultValue = "0") val retryAfter: Long = 0,
+    @ColumnInfo(defaultValue = "NULL") val uploadedPhotoId: String? = null,
+    @ColumnInfo(defaultValue = "NULL") val uploadedBackend: String? = null,
+    @ColumnInfo(defaultValue = "NULL") val localDeletedAt: Long? = null,
 )

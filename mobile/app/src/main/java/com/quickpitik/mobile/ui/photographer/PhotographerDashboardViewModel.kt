@@ -17,6 +17,7 @@ import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.TetherEvents
 import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.local.UploadSpool
+import com.quickpitik.mobile.data.local.TetherStorageCleanup
 import com.quickpitik.mobile.data.readAtMost
 import com.quickpitik.mobile.data.remote.EarningsOverviewDto
 import com.quickpitik.mobile.data.remote.PayoutBalanceDto
@@ -218,6 +219,70 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     private val coordinator = CameraIngestCoordinator.get(application)
     private val cameraManager = coordinator.cameraManager
     val cameraConnectionState: StateFlow<CameraConnectionState> = cameraManager.state
+
+    val phoneSpace = UploadSpool.observeSpace(application)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UploadSpool.Space())
+    data class CleanupState(
+        val review: TetherStorageCleanup.Review? = null,
+        val busy: Boolean = false,
+        val message: String? = null,
+    )
+    private val cleanup = TetherStorageCleanup(application, database)
+    private val _cleanupState = MutableStateFlow(CleanupState())
+    val cleanupState: StateFlow<CleanupState> = _cleanupState
+    private var cleanupJob: Job? = null
+
+    fun reviewPhoneCleanup() {
+        if (_cleanupState.value.busy) return
+        _cleanupState.value = CleanupState(busy = true)
+        cleanupJob = viewModelScope.launch {
+            try {
+                val review = cleanup.review()
+                _cleanupState.value = if (review.records.isEmpty()) CleanupState(message =
+                    "No uploaded tether originals are ready to check. Pending, failed and older unverified copies stay on this phone.")
+                else CleanupState(review = review)
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { _cleanupState.value = CleanupState(message = "Couldn't review phone copies. Try again.") }
+        }
+    }
+
+    fun cancelPhoneCleanup() {
+        cleanupJob?.cancel()
+        _cleanupState.value = CleanupState(message = "Cleanup stopped. Unchecked copies stay on this phone.")
+    }
+
+    fun confirmPhoneCleanup() {
+        val review = _cleanupState.value.review ?: return
+        if (_cleanupState.value.busy) return
+        _cleanupState.value = CleanupState(busy = true)
+        cleanupJob = viewModelScope.launch {
+            var removed = 0
+            var freed = 0L
+            var kept = 0
+            var historyFailed = false
+            for (record in review.records) {
+                try {
+                    val result = cleanup.remove(record)
+                    freed += result.bytes
+                    removed++
+                    if (!result.recorded) {
+                        historyFailed = true
+                        kept = review.records.size - removed
+                        break
+                    }
+                }
+                catch (e: CancellationException) { throw e }
+                catch (_: java.io.IOException) { kept = review.records.size - removed; break }
+                catch (_: Exception) { kept++ }
+                _cleanupState.value = CleanupState(busy = true,
+                    message = "Checked ${removed + kept} of ${review.records.size} copies · $removed removed")
+            }
+            _cleanupState.value = CleanupState(message = "$removed phone copies removed · " +
+                android.text.format.Formatter.formatShortFileSize(getApplication(), freed) + " freed." +
+                (if (kept > 0) " $kept kept because verification or removal did not complete. You can try again." else "") +
+                if (historyFailed) " Cleanup stopped because local history couldn't be updated." else "")
+        }
+    }
 
     private val _eventsState = MutableStateFlow<EventsState>(EventsState.Loading)
     val eventsState: StateFlow<EventsState> = _eventsState
@@ -853,21 +918,6 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     fun runSyncEngine() = PhotoUploadScheduler.enqueue(getApplication())
 
-    /** Remove this account's failed upload rows and their app-owned files. */
-    fun clearFailedUploads() {
-        viewModelScope.launch {
-            val owner = sessionManager.getUserEmail() ?: return@launch
-            val dao = database.uploadQueueDao()
-            for (record in dao.getRecordsWithStatus("FAILED", owner)) {
-                val file = File(record.filePath)
-                val app = getApplication<Application>()
-                if (file.canonicalPath.startsWith(app.filesDir.canonicalPath + File.separator) ||
-                    file.canonicalPath.startsWith(app.cacheDir.canonicalPath + File.separator)) file.delete()
-                dao.deleteRecordById(record.id)
-            }
-        }
-    }
-
     /**
      * Flips every FAILED row back to QUEUED with a fresh retry budget and kicks
      * the engine. Terminal-coded rows (duplicate-in-another-event, missing
@@ -1395,6 +1445,11 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                         },
                     )
                 }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                _cardBrowseState.value = CardBrowseState.Error(if (UploadSpool.isFull(e))
+                    "Phone storage is full. Free space, then retry the camera import. Originals remain on the card."
+                    else e.message ?: "Camera import stopped. Pending photos are kept for retry.")
             } finally {
                 watcher?.cancel()
                 if (disconnectWatcherJob === watcher) disconnectWatcherJob = null

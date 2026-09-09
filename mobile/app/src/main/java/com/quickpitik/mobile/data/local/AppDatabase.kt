@@ -7,12 +7,19 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [UploadRecord::class, CameraBaseline::class, CameraTransfer::class], version = 3, exportSchema = true)
+@Database(entities = [UploadRecord::class, CameraBaseline::class, CameraTransfer::class], version = 4, exportSchema = true)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun uploadQueueDao(): UploadQueueDao
     abstract fun cameraTransferDao(): CameraTransferDao
 
     companion object {
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE upload_queue ADD COLUMN uploadedPhotoId TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE upload_queue ADD COLUMN uploadedBackend TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE upload_queue ADD COLUMN localDeletedAt INTEGER DEFAULT NULL")
+            }
+        }
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE upload_queue ADD COLUMN directPhotoId TEXT DEFAULT NULL")
@@ -40,7 +47,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "quickpitik_db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
                 INSTANCE = instance
                 instance
             }

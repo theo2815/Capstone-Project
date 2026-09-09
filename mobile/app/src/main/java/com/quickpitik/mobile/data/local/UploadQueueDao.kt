@@ -12,6 +12,18 @@ data class StatusCount(val status: String, val count: Int)
 
 @Dao
 interface UploadQueueDao {
+    @Query("UPDATE upload_queue SET uploadStatus = 'COMPLETED', errorMessage = NULL, uploadedPhotoId = :photoId, uploadedBackend = :backend, directPhotoId = NULL, directKey = NULL, directBackend = NULL WHERE id = :id")
+    suspend fun completeUpload(id: Long, photoId: String, backend: String)
+
+    @Query("SELECT * FROM upload_queue WHERE photographerId = :owner AND uploadStatus = 'COMPLETED' AND uploadedPhotoId IS NOT NULL AND uploadedBackend = :backend AND sourceKey IS NOT NULL AND contentHash IS NOT NULL AND localDeletedAt IS NULL ORDER BY id ASC")
+    suspend fun cleanupCandidates(owner: String, backend: String): List<UploadRecord>
+
+    @Query("UPDATE upload_queue SET localDeletedAt = :at WHERE id = :id AND uploadStatus = 'COMPLETED'")
+    suspend fun markLocalDeleted(id: Long, at: Long)
+
+    @Query("SELECT COUNT(*) FROM upload_queue WHERE filePath = :path AND id != :id AND localDeletedAt IS NULL")
+    suspend fun otherFileReferences(path: String, id: Long): Int
+
     @Query("UPDATE upload_queue SET contentHash = :hash WHERE id = :id")
     suspend fun setContentHash(id: Long, hash: String)
 
@@ -23,7 +35,7 @@ interface UploadQueueDao {
 
     @Query("SELECT COALESCE(MAX(retryAfter), 0) FROM upload_queue WHERE photographerId = :owner AND uploadStatus = 'QUEUED'")
     suspend fun retryNotBefore(owner: String): Long
-    @Query("SELECT * FROM upload_queue WHERE photographerId = :owner AND eventId = :event AND contentHash = :hash AND uploadStatus != 'FAILED' LIMIT 1")
+    @Query("SELECT * FROM upload_queue WHERE photographerId = :owner AND eventId = :event AND contentHash = :hash AND localDeletedAt IS NULL AND (uploadStatus IN ('QUEUED', 'UPLOADING') OR (uploadStatus = 'COMPLETED' AND uploadedPhotoId IS NOT NULL)) LIMIT 1")
     suspend fun findContent(owner: String, event: String, hash: String): UploadRecord?
 
     @Query("SELECT * FROM upload_queue WHERE photographerId = :owner AND uploadStatus = :status AND id > :afterId ORDER BY id ASC LIMIT 24")
@@ -46,11 +58,8 @@ interface UploadQueueDao {
     @Query("SELECT errorMessage FROM upload_queue WHERE uploadStatus = 'FAILED' AND (:owner IS NULL OR photographerId = :owner) ORDER BY id DESC LIMIT 1")
     fun getLatestFailedMessage(owner: String? = null): Flow<String?>
 
-    // Prune completed local previews only; backend content dedup survives this retention window.
-    @Query("SELECT filePath FROM upload_queue WHERE uploadStatus = 'COMPLETED' AND captureTimestamp < :before AND (:owner IS NULL OR photographerId = :owner)")
-    suspend fun getCompletedPathsBefore(before: Long, owner: String? = null): List<String>
-
-    @Query("DELETE FROM upload_queue WHERE uploadStatus = 'COMPLETED' AND captureTimestamp < :before AND (:owner IS NULL OR photographerId = :owner)")
+    // Only retire rows whose local copy was explicitly removed after backup verification.
+    @Query("DELETE FROM upload_queue WHERE uploadStatus = 'COMPLETED' AND localDeletedAt < :before AND (:owner IS NULL OR photographerId = :owner)")
     suspend fun deleteCompletedBefore(before: Long, owner: String? = null): Int
 
     // Newest first, so a just-shot live frame uploads ahead of an old

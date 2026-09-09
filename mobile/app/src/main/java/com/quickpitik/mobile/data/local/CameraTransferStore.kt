@@ -7,7 +7,6 @@ import com.quickpitik.mobile.data.usb.ptp.fingerprint
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.io.IOException
@@ -16,7 +15,8 @@ import java.security.DigestOutputStream
 import java.security.MessageDigest
 import java.util.UUID
 
-class LowCameraStorage : IOException("Phone storage is nearly full. Free space to resume; pending photos remain on the camera.")
+class LowCameraStorage(val transferStarted: Boolean = false, cause: Throwable? = null) :
+    IOException("Phone storage is low or unavailable. Free space to resume camera transfers; keep the camera card originals.", cause)
 
 /** Durable boundary between camera bytes and the existing upload queue. */
 class CameraTransferStore(private val context: Context, private val db: AppDatabase) {
@@ -43,7 +43,7 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
     }
 
     /** Persist the entire selection before USB I/O so an interrupted batch can be retried. */
-    suspend fun selectForImport(records: List<CameraTransfer>) = persistence.withLock {
+    suspend fun selectForImport(records: List<CameraTransfer>) = UploadSpool.filesMutex.withLock {
         db.withTransaction {
             dao.insert(records)
             for (record in records) {
@@ -59,7 +59,7 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
         owner: String, event: String, camera: String, handle: Long, info: PtpObjectInfo,
         write: (OutputStream) -> Unit,
     ): Long {
-        if (!UploadSpool.hasRoom(context, info.expectedSize ?: 0)) throw LowCameraStorage()
+        if (!UploadSpool.hasRoom(context, info.expectedSize ?: MAX_PUBLISH_BYTES)) throw LowCameraStorage()
         val source = "transient:${UUID.randomUUID()}"
         val record = transfer(owner, event, camera, handle, info).let {
             it.copy(key = fingerprint(it.scope, source), sourceKey = source)
@@ -76,8 +76,9 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
         }
     }
 
-    suspend fun save(record: CameraTransfer, write: (OutputStream) -> Unit): Long = persistence.withLock {
+    suspend fun save(record: CameraTransfer, write: (OutputStream) -> Unit): Long = try { UploadSpool.filesMutex.withLock {
         require(record.owner.isNotBlank() && record.owner != "unknown") { "Sign in before importing photos." }
+        if (!UploadSpool.hasRoom(context, record.expectedBytes ?: MAX_PUBLISH_BYTES)) throw LowCameraStorage()
         dao.insert(listOf(record))
         val existing = dao.get(record.key)?.uploadId?.let { db.uploadQueueDao().getRecordById(it) }
         if (existing != null && existing.uploadStatus != "FAILED" && File(existing.filePath).exists()) return@withLock existing.id
@@ -89,9 +90,9 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
         val file = File(UploadSpool.dir(context), "camera_${record.key}.jpg")
         val partial = File(file.path + ".part")
         val working = record.copy(status = "TRANSFERRING", filePath = file.absolutePath, error = null)
-        if (!UploadSpool.hasRoom(context, record.expectedBytes ?: 0)) throw LowCameraStorage()
-        dao.update(working)
+        if (!UploadSpool.hasRoom(context, record.expectedBytes ?: MAX_PUBLISH_BYTES)) throw LowCameraStorage()
         try {
+            dao.update(working)
             val digest = MessageDigest.getInstance("SHA-256")
             val coroutine = currentCoroutineContext()
             partial.outputStream().use { raw ->
@@ -117,9 +118,17 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            if (UploadSpool.isFull(e)) {
+                // A full DB may reject this update too. TRANSFERRING remains recoverable.
+                if (!file.exists()) runCatching { dao.update(record.copy(status = "PENDING", error = LowCameraStorage().message)) }
+                throw LowCameraStorage(transferStarted = true, cause = e)
+            }
             if (!file.exists()) fail(record, e.message ?: "Camera transfer failed.")
             throw e
         } finally { partial.delete() }
+    } } catch (e: Exception) {
+        if (e !is LowCameraStorage && UploadSpool.isFull(e)) throw LowCameraStorage(cause = e)
+        throw e
     }
 
     private suspend fun enqueue(record: CameraTransfer, file: File, hash: String): Long {
@@ -140,7 +149,7 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
         return result.first
     }
 
-    suspend fun recover(owner: String) = persistence.withLock {
+    suspend fun recover(owner: String) = UploadSpool.filesMutex.withLock {
         for (record in dao.interrupted(owner)) {
             val file = record.filePath?.let(::File) ?: continue
             File(file.path + ".part").delete()
@@ -162,8 +171,6 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
     }
 
     companion object {
-        // ponytail: one camera writer per app; use per-transfer locks if multi-camera ingestion is added.
-        private val persistence = Mutex()
         // Existing direct-upload contract; RAW publishing needs a backend contract change.
         const val MAX_PUBLISH_BYTES = 25L * 1024 * 1024
         const val MAX_TRANSFER_ATTEMPTS = 5

@@ -12,6 +12,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.shadows.ShadowStatFs
 import java.io.File
 import java.io.IOException
 
@@ -26,6 +27,7 @@ class CameraTransferStoreTest {
 
     @Before fun setup() {
         context = ApplicationProvider.getApplicationContext()
+        ShadowStatFs.registerStats(context.filesDir.absolutePath, 4_000_000, 2_000_000, 2_000_000)
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
         store = CameraTransferStore(context, db)
         UploadSpool.dir(context).listFiles()?.filter { it.name.startsWith("camera_") }?.forEach { it.delete() }
@@ -128,14 +130,59 @@ class CameraTransferStoreTest {
             old.version = 1
         }
         val migrated = Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3).allowMainThreadQueries().build()
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4).allowMainThreadQueries().build()
         try {
             val record = requireNotNull(migrated.uploadQueueDao().getRecordById(1))
             assertEquals("/original.jpg", record.filePath)
             assertEquals("QUEUED", record.uploadStatus)
             assertNull(record.sourceKey)
+            assertNull(record.uploadedPhotoId)
+            assertNull(record.uploadedBackend)
+            assertNull(record.localDeletedAt)
+            assertTrue(migrated.uploadQueueDao().cleanupCandidates("owner", "server").isEmpty())
             assertEquals(0, migrated.cameraTransferDao().baselineExists("scope"))
         } finally { migrated.close(); context.deleteDatabase(name) }
+    }
+
+    @Test fun `low volume space prevents a camera read and resumes after space is freed`() = runTest {
+        val record = photo(1)
+        store.selectForImport(listOf(record))
+        ShadowStatFs.registerStats(context.filesDir.absolutePath, 4_000_000, 0, 0)
+        assertEquals(UploadSpool.Level.BLOCKED, UploadSpool.space(context).level)
+        try { store.save(record) { fail("Camera must not be read when storage is full") }; fail("Expected pause") }
+        catch (_: LowCameraStorage) { }
+        assertEquals("PENDING", store.dao.get(record.key)?.status)
+        assertEquals(0, store.dao.get(record.key)?.attempts)
+        ShadowStatFs.registerStats(context.filesDir.absolutePath, 4_000_000, 2_000_000, 2_000_000)
+        assertEquals(UploadSpool.Level.READY, UploadSpool.space(context).level)
+        val id = store.save(record) { it.write(jpeg) }
+        assertArrayEquals(jpeg, File(requireNotNull(db.uploadQueueDao().getRecordById(id)).filePath).readBytes())
+    }
+
+    @Test fun `ENOSPC during camera write preserves retry intent without spending attempts`() = runTest {
+        val record = photo(1)
+        try {
+            store.save(record) {
+                it.write(jpeg, 0, 2)
+                throw IOException("write failed", android.system.ErrnoException("write", android.system.OsConstants.ENOSPC))
+            }
+            fail("Expected storage pause")
+        } catch (e: LowCameraStorage) { assertTrue(e.transferStarted) }
+        assertEquals("PENDING", store.dao.get(record.key)?.status)
+        assertEquals(0, store.dao.get(record.key)?.attempts)
+        assertTrue(db.uploadQueueDao().getRecordsWithStatus("QUEUED").isEmpty())
+        assertFalse(UploadSpool.dir(context).listFiles().orEmpty().any { it.name.endsWith(".part") })
+    }
+
+    @Test fun `capacity accounts for next file and reserve with safe unknown and overflow bounds`() {
+        val reserve = UploadSpool.MIN_FREE_BYTES
+        assertFalse(UploadSpool.Space().hasRoom(4))
+        assertEquals(UploadSpool.Level.UNKNOWN, UploadSpool.Space().level)
+        assertFalse(UploadSpool.Space(reserve + 3).hasRoom(4))
+        assertTrue(UploadSpool.Space(reserve + 4).hasRoom(4))
+        assertFalse(UploadSpool.Space(Long.MAX_VALUE).hasRoom(Long.MAX_VALUE))
+        assertEquals(UploadSpool.Level.LOW, UploadSpool.Space(UploadSpool.LOW_FREE_BYTES - 1).level)
+        assertEquals(UploadSpool.Level.READY, UploadSpool.Space(UploadSpool.LOW_FREE_BYTES).level)
     }
 
     @Test fun `successive temporary frames reuse a handle without losing different content`() = runTest {

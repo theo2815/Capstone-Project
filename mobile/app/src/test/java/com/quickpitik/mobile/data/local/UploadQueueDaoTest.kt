@@ -180,14 +180,13 @@ class UploadQueueDaoTest {
     }
 
     @Test
-    fun `pruning removes only COMPLETED rows older than the cutoff`() = runTest {
+    fun `pruning removes only completed rows with verified local deletion older than cutoff`() = runTest {
         val old = 1_600_000_000_000L
         val cutoff = 1_650_000_000_000L
-        dao.insertRecord(record(status = "COMPLETED", filePath = "/spool/old-done.jpg").copy(captureTimestamp = old))
+        dao.insertRecord(record(status = "COMPLETED", filePath = "/spool/old-done.jpg").copy(captureTimestamp = old, localDeletedAt = old))
         val oldQueued = dao.insertRecord(record(status = "QUEUED", filePath = "/spool/old-queued.jpg").copy(captureTimestamp = old))
         val newDone = dao.insertRecord(record(status = "COMPLETED", filePath = "/spool/new-done.jpg"))
 
-        assertEquals(listOf("/spool/old-done.jpg"), dao.getCompletedPathsBefore(cutoff))
         assertEquals(1, dao.deleteCompletedBefore(cutoff))
         assertEquals(setOf(oldQueued, newDone), dao.getAllRecords().first().map { it.id }.toSet())
         assertEquals(mapOf("QUEUED" to 1, "COMPLETED" to 1), dao.getStatusCounts().first().associate { it.status to it.count })

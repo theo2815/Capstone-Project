@@ -457,16 +457,8 @@ class PhotoUploadWorkerTest {
         assertEquals(2, http.requestCount)
     }
 
-    /**
-     * A completed upload's spool copy in OUR cacheDir is shrunk in place to a
-     * ~320px thumbnail (the server has the full bytes; the strip keeps showing
-     * the frame); the Room row survives as the re-import dedupe ledger. Under
-     * Robolectric's legacy graphics shadows, BitmapFactory "decodes" the garbage
-     * test bytes into a fake bitmap and compress writes real JPEG bytes, so the
-     * rewrite is observable as changed content at the same path.
-     */
     @Test
-    fun `a completed upload shrinks its cacheDir spool file to a thumbnail`() = runTest {
+    fun `upload acknowledgment saves a receipt and preserves every original byte`() = runTest {
         signIn()
         startServer(ok())
         val original = ByteArray(64) { 0xFF.toByte() }
@@ -477,21 +469,20 @@ class PhotoUploadWorkerTest {
 
         runWorker()
 
-        assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
+        val record = requireNotNull(db.uploadQueueDao().getRecordById(id))
+        assertEquals("COMPLETED", record.uploadStatus)
+        assertEquals("photo-1", record.uploadedPhotoId)
+        assertEquals(RetrofitClient.BASE_URL, record.uploadedBackend)
         assertTrue(spooled.exists())
         assertTrue(spooled.length() > 0)
-        assertTrue(!spooled.readBytes().contentEquals(original))
+        assertTrue(spooled.readBytes().contentEquals(original))
+        runWorker() // Old captureTimestamp must not make a subsequent drain delete the original.
+        assertTrue(spooled.readBytes().contentEquals(original))
+        assertEquals(record, db.uploadQueueDao().getRecordById(id))
     }
 
-    /**
-     * When the spool bytes can't be decoded, the shrink falls back to the
-     * pre-2026-08-28 behavior: delete the file outright so undecodable
-     * originals can't hoard cacheDir. setAllowInvalidImageData(false) makes
-     * the shadow decoder return null for the garbage bytes (auto-reset by
-     * Robolectric between tests).
-     */
     @Test
-    fun `an undecodable completed upload falls back to deleting its spool file`() = runTest {
+    fun `undecodable originals are retained after upload acknowledgment`() = runTest {
         ShadowBitmapFactory.setAllowInvalidImageData(false)
         signIn()
         startServer(ok())
@@ -503,7 +494,8 @@ class PhotoUploadWorkerTest {
         runWorker()
 
         assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
-        assertTrue(!spooled.exists())
+        assertTrue(spooled.exists())
+        assertEquals(64L, spooled.length())
     }
 
     /**

@@ -226,7 +226,12 @@ class UsbEventCaptureController(
                 onLog("${info.filename} saved on phone and queued.")
                 onPaused(null)
             } catch (e: CancellationException) { throw e }
-            catch (e: LowCameraStorage) { onPaused(e.message); delay(2000) }
+            catch (e: LowCameraStorage) {
+                onPaused(e.message)
+                if (e.transferStarted) throw CameraSetupException(
+                    "Phone storage filled during a camera buffer transfer. Free space, import the camera card backup, then restart auto-upload.")
+                delay(2000)
+            }
             catch (e: Exception) {
                 // GetObject may have advanced the camera's RAM queue even if local persistence failed.
                 throw CameraSetupException("Camera buffer transfer interrupted. Import the backup from the camera card, then restart auto-upload. ${e.message.orEmpty()}")

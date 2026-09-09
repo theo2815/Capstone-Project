@@ -339,9 +339,12 @@ Android persists the slot before PUT and retries commit first after interruption
 only `UPLOAD_OBJECT_MISSING` starts another transfer. Transient storage failures do
 not fall back to multipart. Network/401/408/429/5xx failures retain originals and
 use WorkManager backoff; `Retry-After` also defers the account queue. Actionable
-validation failures wait for user correction. Full local originals may be replaced
-with previews only after a successful backend response. See
-[mobile capture/recovery and hardware acceptance](../mobile/docs/usb-tethering-plan.md).
+validation failures wait for user correction. A successful response persists a
+phone-side receipt; it no longer permits automatic replacement or deletion of the
+local original. Confirmed Android cleanup reads the owner-only original through
+`GET /api/v1/me/photographer/photos/{photoId}/download` and verifies byte count and
+SHA-256 before local removal. No backend deletion endpoint is involved. See
+[mobile storage safety and acceptance](../mobile/docs/usb-tethering-plan.md#phone-storage-management--2026-09-09).
 
 **Photographer watermark settings — website/mobile integration:**
 `PUT /api/v1/me/photographer/watermark/settings` takes `opacity`, `scale`,

@@ -14,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.shadow.api.Shadow
+import org.robolectric.shadows.ShadowStatFs
 import java.io.OutputStream
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -24,6 +25,8 @@ class UsbEventCaptureControllerTest {
         emptyList(), emptyList(), emptyList(), listOf(0x3801), "Test", "Camera", "1", "serial")
 
     @Before fun clearSpool() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ShadowStatFs.registerStats(context.filesDir.absolutePath, 4_000_000, 2_000_000, 2_000_000)
         UploadSpool.dir(ApplicationProvider.getApplicationContext()).listFiles()
             ?.filter { it.name.startsWith("camera_") }?.forEach { it.delete() }
     }
@@ -48,6 +51,38 @@ class UsbEventCaptureControllerTest {
     private suspend fun watch(controller: UsbEventCaptureController, capture: (String) -> Unit = {}) = controller.run(
         "owner", "event", { true }, {}, {}, {}, {}, capture,
     )
+
+    @Test fun `live watch pauses before reading a full phone and resumes the same photo after cleanup`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        try {
+            val store = CameraTransferStore(context, db)
+            var scans = 0
+            val camera = Camera {
+                if (scans++ == 0) listOf(1) else {
+                    if (scans == 2) ShadowStatFs.registerStats(context.filesDir.absolutePath, 4_000_000, 0, 0)
+                    listOf(1, 2)
+                }
+            }
+            val device = Shadow.newInstanceOf(UsbDevice::class.java)
+            val controller = UsbEventCaptureController(context.getSystemService(Context.USB_SERVICE) as UsbManager,
+                { device }, store, openCamera = { _, _ -> camera }, nowMs = { testScheduler.currentTime })
+            var paused = false
+            try {
+                controller.run("owner", "event", { true }, {}, {}, {}, { reason ->
+                    if (reason != null) {
+                        paused = true
+                        assertTrue(camera.transfers.isEmpty())
+                        ShadowStatFs.registerStats(context.filesDir.absolutePath, 4_000_000, 2_000_000, 2_000_000)
+                    }
+                }, { throw CancellationException("Photo safely queued") })
+            } catch (_: CancellationException) { }
+            assertTrue(paused)
+            assertEquals(listOf(2L), camera.transfers)
+            assertEquals(1, db.uploadQueueDao().getRecordsWithStatus("QUEUED").size)
+            assertTrue(store.dao.forScope(fingerprint("owner", "event", "camera")).all { it.attempts == 0 })
+        } finally { db.close() }
+    }
 
     @Test fun `one hundred rapid shots preserve every original and ignore the baseline`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
