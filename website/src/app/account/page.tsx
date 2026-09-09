@@ -104,7 +104,10 @@ function AccountBody() {
               user={user}
               number={isPhotographer ? "02" : "03"}
             />
-            <PasswordSlab number={isPhotographer ? "03" : "04"} />
+            <PasswordSlab
+              user={user}
+              number={isPhotographer ? "03" : "04"}
+            />
             <DangerSlab number={isPhotographer ? "04" : "05"} />
             {process.env.NODE_ENV === "development" && (
               <DevRoleSlab
@@ -243,7 +246,11 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
         (nextEmail.trim().toLowerCase() === user.email.toLowerCase()
           ? "That's already your sign-in email."
           : null),
-      password: password ? null : "Current password is required.",
+      password: user.hasGoogleAuth
+        ? null
+        : password
+          ? null
+          : "Current password is required.",
     };
     setErrors(nextErrors);
     setSubmitError(null);
@@ -253,7 +260,7 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
     try {
       const message = await requestEmailChange({
         newEmail: nextEmail.trim(),
-        currentPassword: password,
+        currentPassword: user.hasGoogleAuth ? undefined : password,
       });
       setNextEmail("");
       setPassword("");
@@ -302,9 +309,16 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
           <Kicker as="p" tone="soft">
             Current
           </Kicker>
-          <p className="font-mono text-xl md:text-2xl text-ink mt-3 break-all">
-            {user.email}
-          </p>
+          <div className="flex flex-wrap items-center gap-3 mt-3">
+            <p className="font-mono text-xl md:text-2xl text-ink break-all">
+              {user.email}
+            </p>
+            {user.hasGoogleAuth && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono bg-blue-50 text-blue-700 border border-blue-200">
+                Google account
+              </span>
+            )}
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} noValidate className="space-y-6">
@@ -331,17 +345,19 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
             />
           </FieldShell>
 
-          <PasswordField
-            id="email-current-password"
-            label="Current password"
-            autoComplete="current-password"
-            value={password}
-            error={errors.password}
-            onChange={(v) => {
-              setPassword(v);
-              clearFieldError("password");
-            }}
-          />
+          {!user.hasGoogleAuth && (
+            <PasswordField
+              id="email-current-password"
+              label="Current password"
+              autoComplete="current-password"
+              value={password}
+              error={errors.password}
+              onChange={(v) => {
+                setPassword(v);
+                clearFieldError("password");
+              }}
+            />
+          )}
 
           <FieldError message={submitError} id="account-email-submit-error" />
 
@@ -371,7 +387,7 @@ interface PasswordErrors {
   confirm?: string | null;
 }
 
-function PasswordSlab({ number }: { number: string }) {
+function PasswordSlab({ user, number }: { user: User; number: string }) {
   const { showToast } = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -390,7 +406,11 @@ function PasswordSlab({ number }: { number: string }) {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const nextErrors: PasswordErrors = {
-      current: current ? null : "Current password is required.",
+      current: user.hasGoogleAuth
+        ? null
+        : current
+          ? null
+          : "Current password is required.",
       next: validateNewPassword(next),
       confirm: !confirm
         ? "Confirm the new password."
@@ -405,7 +425,7 @@ function PasswordSlab({ number }: { number: string }) {
     setIsSaving(true);
     try {
       const { sessionKept } = await changePassword({
-        currentPassword: current,
+        currentPassword: user.hasGoogleAuth ? undefined : current,
         newPassword: next,
       });
       reset();
@@ -414,9 +434,11 @@ function PasswordSlab({ number }: { number: string }) {
         // Without a stored refresh token the BE couldn't exempt this device
         // from the revoke sweep, so the session dies with the access token.
         // Saying nothing here means a silent bounce ~15 min later.
-        message: sessionKept
-          ? "Password updated."
-          : "Password updated. You'll need to sign in again on this device.",
+        message: user.hasGoogleAuth
+          ? "Password saved. You can now sign in with your email and password as well as Google."
+          : sessionKept
+            ? "Password updated."
+            : "Password updated. You'll need to sign in again on this device.",
         duration: sessionKept ? undefined : 8000,
       });
     } catch (err) {
@@ -455,24 +477,30 @@ function PasswordSlab({ number }: { number: string }) {
     <Slab
       id="password"
       number={number}
-      title="Password"
-      caption={`Min. ${PASSWORD_MIN} characters`}
+      title={user.hasGoogleAuth ? "Set password" : "Password"}
+      caption={
+        user.hasGoogleAuth
+          ? `Add a password to sign in directly with email (min. ${PASSWORD_MIN} characters)`
+          : `Min. ${PASSWORD_MIN} characters`
+      }
     >
       <form onSubmit={handleSubmit} noValidate className="space-y-6">
-        <PasswordField
-          id="current-password"
-          label="Current password"
-          autoComplete="current-password"
-          value={current}
-          error={errors.current}
-          onChange={(v) => {
-            setCurrent(v);
-            clearFieldError("current");
-          }}
-        />
+        {!user.hasGoogleAuth && (
+          <PasswordField
+            id="current-password"
+            label="Current password"
+            autoComplete="current-password"
+            value={current}
+            error={errors.current}
+            onChange={(v) => {
+              setCurrent(v);
+              clearFieldError("current");
+            }}
+          />
+        )}
         <PasswordField
           id="new-password"
-          label="New password"
+          label={user.hasGoogleAuth ? "Password" : "New password"}
           autoComplete="new-password"
           value={next}
           error={errors.next}
@@ -483,7 +511,7 @@ function PasswordSlab({ number }: { number: string }) {
         />
         <PasswordField
           id="confirm-password"
-          label="Confirm new password"
+          label={user.hasGoogleAuth ? "Confirm password" : "Confirm new password"}
           autoComplete="new-password"
           value={confirm}
           error={errors.confirm}
@@ -500,7 +528,7 @@ function PasswordSlab({ number }: { number: string }) {
           disabled={isSaving}
           className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
         >
-          {isSaving ? "Saving…" : "Change password"}
+          {isSaving ? "Saving…" : user.hasGoogleAuth ? "Set password" : "Change password"}
           {!isSaving && <span aria-hidden="true">→</span>}
         </button>
       </form>

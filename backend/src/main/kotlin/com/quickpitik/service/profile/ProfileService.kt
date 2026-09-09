@@ -64,17 +64,27 @@ class ProfileService(
         val user = userRepository.findById(userId).orElseThrow {
             UnauthorizedException(code = ErrorCodes.UNAUTHORIZED, message = "User not found")
         }
-        if (!passwordEncoder.matches(request.currentPassword, user.passwordHash)) {
-            throw UnauthorizedException(
-                code = ErrorCodes.INVALID_CREDENTIALS,
-                message = "Current password is incorrect",
-            )
-        }
-        if (passwordEncoder.matches(request.newPassword, user.passwordHash)) {
-            throw ConflictException(
-                code = ErrorCodes.SAME_PASSWORD,
-                message = "New password must differ from current password",
-            )
+        val isGoogleUser = user.googleSub != null
+        if (request.currentPassword.isNullOrBlank()) {
+            if (!isGoogleUser) {
+                throw UnauthorizedException(
+                    code = ErrorCodes.INVALID_CREDENTIALS,
+                    message = "Current password is required",
+                )
+            }
+        } else {
+            if (!passwordEncoder.matches(request.currentPassword, user.passwordHash)) {
+                throw UnauthorizedException(
+                    code = ErrorCodes.INVALID_CREDENTIALS,
+                    message = "Current password is incorrect",
+                )
+            }
+            if (passwordEncoder.matches(request.newPassword, user.passwordHash)) {
+                throw ConflictException(
+                    code = ErrorCodes.SAME_PASSWORD,
+                    message = "New password must differ from current password",
+                )
+            }
         }
         // Deliberately after the current-password check — an unauthenticated
         // caller learns nothing about our password rules.

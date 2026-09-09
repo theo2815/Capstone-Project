@@ -20,6 +20,8 @@ export interface User {
   name: string;
   role: Role;
   avatarUrl?: string;
+  emailVerified?: boolean;
+  hasGoogleAuth?: boolean;
   createdAt: string;
 }
 

@@ -27,7 +27,7 @@ export async function updateProfileName(name: string): Promise<User> {
 }
 
 export interface ChangePasswordArgs {
-  currentPassword: string;
+  currentPassword?: string;
   newPassword: string;
 }
 
@@ -51,7 +51,7 @@ export async function changePassword(
 
 export interface RequestEmailChangeArgs {
   newEmail: string;
-  currentPassword: string;
+  currentPassword?: string;
 }
 
 /**

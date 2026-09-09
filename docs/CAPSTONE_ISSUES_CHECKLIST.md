@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 31
-- **✅ Already Solved:** 22 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 26, 27, 28, 29, 31, 32, 33, 34)
-- **⏳ Pending / To Be Worked On:** 9 (Items 16, 17, 19, 21, 22, 23, 24, 25, 30)
+- **✅ Already Solved:** 23 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 25, 26, 27, 28, 29, 31, 32, 33, 34)
+- **⏳ Pending / To Be Worked On:** 8 (Items 16, 17, 19, 21, 22, 23, 24, 30)
 
 ---
 
@@ -164,13 +164,26 @@
     - `backend/src/main/kotlin/com/quickpitik/controller/AdminFlagsController.kt`
   - **Action Plan:** Add a "Report / Flag Photo" button and modal to `PhotoPreviewCard.tsx` allowing runners to submit reason categories (inappropriate content, privacy, incorrect bib tag), and connect to a backend flag submission endpoint.
 
-- [ ] **25. Website — Google OAuth Users Locked Out of Password Setting & Email Changes**
-  - **Issue:** Users who register via Google OAuth are assigned a random 64-character unguessable password hash (`GoogleAuthService.kt`). On `/account` (`account/page.tsx`), both the "Sign-in email" slab (`requestEmailChange`) and the "Password" slab (`changePassword`) mandate entering the "Current password". Because OAuth users do not possess a password, any entry fails with `INVALID_CREDENTIALS`, permanently locking them out of updating their email or creating an initial password.
+- [x] **25. Website — Google OAuth Users Password Setting & Email Changes on `/account`**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated `UserDto.kt` and `UserDtoMapper.kt` in backend to expose `hasGoogleAuth = (user.googleSub != null)`.
+    - Made `currentPassword` optional in `PasswordChangeRequest.kt` and `EmailChangeRequest.kt`.
+    - Updated `ProfileService.kt` and `EmailChangeService.kt` to allow Google OAuth users to set their initial password or request an email change without entering a nonexistent legacy password, while continuing to mandate `currentPassword` for standard password accounts.
+    - Updated `account/page.tsx` on website to show a Google account badge in the current email card, bypass current password requirement for Google OAuth users in `EmailSlab`, and render a dedicated "Set password" flow in `PasswordSlab`.
+    - Added unit test suites in `backend/.../ProfileServiceTest.kt` and `EmailChangeServiceTest.kt` verifying password and email change flows for both Google OAuth and standard accounts.
   - **Affected Files:**
-    - `website/src/app/account/page.tsx`
-    - `backend/src/main/kotlin/com/quickpitik/service/GoogleAuthService.kt`
+    - `backend/src/main/kotlin/com/quickpitik/dto/auth/UserDto.kt`
+    - `backend/src/main/kotlin/com/quickpitik/service/profile/UserDtoMapper.kt`
+    - `backend/src/main/kotlin/com/quickpitik/dto/profile/PasswordChangeRequest.kt`
+    - `backend/src/main/kotlin/com/quickpitik/dto/profile/EmailChangeRequest.kt`
     - `backend/src/main/kotlin/com/quickpitik/service/profile/ProfileService.kt`
-  - **Action Plan:** Detect OAuth accounts (via user profile response), display a Google badge on credentials, and provide a dedicated "Set password" flow for OAuth users that does not require a prior password.
+    - `backend/src/main/kotlin/com/quickpitik/service/profile/EmailChangeService.kt`
+    - `backend/src/test/kotlin/com/quickpitik/service/profile/ProfileServiceTest.kt`
+    - `backend/src/test/kotlin/com/quickpitik/service/profile/EmailChangeServiceTest.kt`
+    - `website/src/types/user.ts`
+    - `website/src/lib/api-account.ts`
+    - `website/src/app/account/page.tsx`
 
 - [x] **26. Website — Incomplete Base64URL Sanitization in `isTokenExpired()`**
   - **Status:** **ALREADY SOLVED**
