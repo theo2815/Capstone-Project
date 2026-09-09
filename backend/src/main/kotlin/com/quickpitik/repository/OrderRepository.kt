@@ -70,6 +70,10 @@ interface OrderRepository : JpaRepository<Order, UUID> {
     @Query("SELECT o FROM Order o WHERE o.id = :id")
     fun findByIdForUpdate(@Param("id") id: UUID): Order?
 
+    @Query("SELECT o FROM Order o WHERE o.id IN " +
+        "(SELECT oi.id.orderId FROM OrderItem oi WHERE oi.id.photoId = :photoId) ORDER BY o.id")
+    fun findReferencingPhoto(@Param("photoId") photoId: UUID): List<Order>
+
     // Guest order lookup. Used by `GET /orders/{id}/status?token=…` so the
     // /orders/return page can poll an unauthenticated session. UNIQUE column
     // guarantees at most one match.

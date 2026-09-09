@@ -158,6 +158,7 @@ export interface PhotographerLibraryPhoto {
   /** Soft-delete timestamp (V52); non-null = in the photographer's trash.
    *  Null on the active tab, set on the Deleted Photos tab. */
   deletedAt?: string | null;
+  deletionStartedAt?: string | null;
 }
 
 function hashStr(s: string): number {

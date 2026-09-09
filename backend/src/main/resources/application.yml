@@ -1,6 +1,10 @@
 spring:
   application:
     name: quickpitik-backend
+  mvc:
+    async:
+      # Event-sized original downloads routinely exceed the servlet default.
+      request-timeout: ${HTTP_STREAM_TIMEOUT:30m}
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:quickpitik}
     username: ${DB_USER:quickpitik}

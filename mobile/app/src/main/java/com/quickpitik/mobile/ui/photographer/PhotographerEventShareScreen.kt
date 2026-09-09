@@ -347,6 +347,15 @@ fun PhotographerEventShareScreen(
                 }
                 Spacer(modifier = Modifier.height(16.dp))
 
+                if (currentPhotos.any { it.deletionStartedAt != null }) {
+                    Text(
+                        "Some photos have started permanent deletion and cannot be restored. Select them and retry Delete forever to finish cleanup.",
+                        style = Typography.bodyMedium,
+                        color = Slate,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
                 when (val state = currentState) {
                     is SharePhotosState.Loading -> {
                         Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
@@ -392,7 +401,11 @@ fun PhotographerEventShareScreen(
                                             selected = photo.id in selected,
                                             modifier = Modifier.weight(1f),
                                             onClick = {
-                                                if (selecting) toggle(photo.id) else selectedIndex = flatIdx
+                                                if (selecting) toggle(photo.id)
+                                                else if (photo.deletionStartedAt != null) {
+                                                    selecting = true
+                                                    toggle(photo.id)
+                                                } else selectedIndex = flatIdx
                                             }
                                         )
                                     }
@@ -402,10 +415,20 @@ fun PhotographerEventShareScreen(
                                 }
                                 Spacer(modifier = Modifier.height(12.dp))
                             }
-                            if (visiblePhotoLimit < state.photos.size) {
+                            if (state.loadMoreError != null) {
+                                Text(state.loadMoreError, style = Typography.bodyMedium, color = ErrorRed)
+                            }
+                            if (visiblePhotoLimit < state.photos.size || state.hasMore) {
                                 GhostCta(
-                                    text = "Load more",
-                                    onClick = { visiblePhotoLimit += 20 },
+                                    text = if (state.loadingMore) "Loading…" else if (state.loadMoreError != null) "Retry load more" else "Load more",
+                                    enabled = !state.loadingMore,
+                                    onClick = {
+                                        if (visiblePhotoLimit >= state.photos.size) {
+                                            if (section == PhotoSection.Deleted) viewModel.fetchTrashPhotos(event.id, loadMore = true)
+                                            else viewModel.fetchSharePhotos(event.id, loadMore = true)
+                                        }
+                                        visiblePhotoLimit += 20
+                                    },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             }
@@ -423,6 +446,7 @@ fun PhotographerEventShareScreen(
                 modifier = Modifier.align(Alignment.BottomCenter),
                 section = section,
                 count = selected.size,
+                restoreCount = currentPhotos.count { it.id in selected && it.deletionStartedAt == null },
                 allSelected = currentPhotos.isNotEmpty() && selected.size == currentPhotos.size,
                 busy = busy,
                 onToggleAll = {
@@ -445,7 +469,7 @@ fun PhotographerEventShareScreen(
                 onRestore = {
                     if (busy || selected.isEmpty()) return@SelectionActionBar
                     busy = true
-                    val ids = selected.toList()
+                    val ids = currentPhotos.filter { it.id in selected && it.deletionStartedAt == null }.map { it.id }
                     scope.launch {
                         val message = viewModel.restorePhotos(event.id, ids).fold(
                             onSuccess = { n -> "$n photo${if (n > 1) "s" else ""} restored." },
@@ -533,17 +557,17 @@ fun PhotographerEventShareScreen(
                         scope.launch {
                             val message = viewModel.permanentDeletePhotos(event.id, ids).fold(
                                 onSuccess = { r ->
-                                    if (r.blockedSold.isNotEmpty()) {
-                                        "${r.deleted.size} deleted · ${r.blockedSold.size} kept (already sold)."
-                                    } else {
-                                        "${r.deleted.size} photo${if (r.deleted.size > 1) "s" else ""} permanently deleted."
-                                    }
+                                    selected = r.failed.toSet()
+                                    "${r.deleted.size} permanently deleted." +
+                                        (if (r.blockedSold.isNotEmpty()) " ${r.blockedSold.size} kept for buyers." else "") +
+                                        (if (r.blockedPending.isNotEmpty()) " ${r.blockedPending.size} kept while payment is pending or being checked." else "") +
+                                        (if (r.failed.isNotEmpty()) " ${r.failed.size} couldn't be deleted. Retry Delete forever to finish cleanup." else "")
                                 },
                                 onFailure = { it.message ?: "Couldn't delete." },
                             )
                             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                             confirmPermanent = false
-                            exitSelect()
+                            if (selected.isEmpty()) exitSelect()
                             busy = false
                         }
                     },
@@ -609,6 +633,7 @@ private fun HeaderPill(text: String, onClick: () -> Unit) {
 private fun SelectionActionBar(
     section: PhotoSection,
     count: Int,
+    restoreCount: Int,
     allSelected: Boolean,
     busy: Boolean,
     onToggleAll: () -> Unit,
@@ -652,8 +677,8 @@ private fun SelectionActionBar(
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 GhostCta(
-                    text = if (busy) "Working…" else "Restore $count",
-                    enabled = !busy && count > 0,
+                    text = if (busy) "Working…" else "Restore $restoreCount",
+                    enabled = !busy && restoreCount > 0,
                     onClick = onRestore,
                     modifier = Modifier.weight(1f),
                 )

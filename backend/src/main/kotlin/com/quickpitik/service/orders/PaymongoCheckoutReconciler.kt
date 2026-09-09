@@ -4,6 +4,7 @@ import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.repository.OrderRepository
+import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.PaymentRepository
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
@@ -21,6 +22,7 @@ class PaymongoCheckoutReconciler(
     private val paymentRepository: PaymentRepository,
     private val orderRepository: OrderRepository,
     private val transactionTemplate: TransactionTemplate,
+    private val orderItemRepository: OrderItemRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -64,6 +66,73 @@ class PaymongoCheckoutReconciler(
 
     // Runner-initiated cancel: same terminal state as a timeout.
     fun expireOrder(orderId: UUID) = markExpired(listOf(orderId))
+
+    // Permanent photo deletion may release an abandoned checkout only after
+    // its provider payment is conclusively closed. Local EXPIRED alone is not
+    // proof: a late paid webhook must still be allowed to fulfil the order.
+    // Provider I/O happens before the short payment/order lock transaction.
+    fun releaseExpiredPhotoReservations(photoId: UUID): Boolean {
+        val orders = orderRepository.findReferencingPhoto(photoId)
+        if (orders.isEmpty()) return true
+        if (orders.any { it.status != OrderStatus.EXPIRED || it.paidAt != null }) return false
+        val orderIds = orders.map { it.id }
+        val payments = orderIds.flatMap(paymentRepository::findByOrderId)
+        if (payments.any { it.status == PaymentStatus.SUCCEEDED || it.paidAt != null ||
+                it.provider != "paymongo" || it.providerRef.isNullOrBlank() }) return false
+        val refs = payments.map { it.providerRef!! }.distinct()
+        if (!refs.all(::closeUnpaidPayment)) return false
+
+        return transactionTemplate.execute {
+            // Same lock order as fulfillment; recheck after any late webhook.
+            val lockedPayments = paymentRepository.findAllByOrderIdInForUpdate(orderIds)
+            val lockedOrders = orderIds.mapNotNull(orderRepository::findByIdForUpdate)
+            if (lockedOrders.size != orderIds.size || lockedOrders.any {
+                    it.status != OrderStatus.EXPIRED || it.paidAt != null
+                } || lockedPayments.any {
+                    it.status == PaymentStatus.SUCCEEDED || it.paidAt != null || it.providerRef !in refs
+                } || lockedPayments.map { it.id }.toSet() != payments.map { it.id }.toSet()) {
+                false
+            } else {
+                orderItemRepository.deleteUnpaidReferences(photoId, orderIds)
+                true
+            }
+        } == true
+    }
+
+    private fun closeUnpaidPayment(ref: String): Boolean {
+        if (ref.startsWith("pi_")) return closeUnpaidIntent(ref, ref)
+        if (!ref.startsWith("cs_")) return false
+        var checkout = paymongoClient.retrieveCheckoutSession(ref)
+        checkout.data.attributes.payments.firstOrNull { it.attributes.status == "paid" }?.let {
+            webhookService.settleCheckoutSession(ref, it.id)
+            return false
+        }
+        if (checkout.data.attributes.status != "expired") {
+            checkout = paymongoClient.expireCheckoutSession(ref)
+        }
+        val paid = checkout.data.attributes.payments.firstOrNull { it.attributes.status == "paid" }
+        if (paid != null) {
+            webhookService.settleCheckoutSession(ref, paid.id)
+            return false
+        }
+        if (checkout.data.attributes.status != "expired") return false
+        // Expiring the page stops new attempts; also close an existing intent
+        // so a payment already opened in another tab cannot settle after purge.
+        return checkout.data.attributes.paymentIntent?.id?.let { closeUnpaidIntent(it, ref) } ?: true
+    }
+
+    private fun closeUnpaidIntent(intentId: String, paymentRef: String): Boolean {
+        var intent = paymongoClient.retrievePaymentIntent(intentId)
+        if (intent.data.attributes.status == "succeeded") {
+            webhookService.settleCheckoutSession(paymentRef, intent.data.attributes.payments.firstOrNull()?.id)
+            return false
+        }
+        if (intent.data.attributes.status !in setOf("cancelled", "canceled")) {
+            intent = paymongoClient.cancelPaymentIntent(intentId)
+        }
+        return intent.data.attributes.status in setOf("cancelled", "canceled") &&
+            intent.data.attributes.payments.none { it.attributes.status == "paid" }
+    }
 
     private fun reconcilePaymentIntent(payments: List<com.quickpitik.entity.Payment>) {
         val intentId = payments.first().providerRef!!

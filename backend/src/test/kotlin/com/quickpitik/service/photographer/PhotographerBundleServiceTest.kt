@@ -135,7 +135,7 @@ class PhotographerBundleServiceTest {
 
     @Test
     fun `writeTo streams a zip whose entries match the spec`() {
-        Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(byteArrayOf(1, 2, 3))
+        Mockito.`when`(storageService.open(anyArg())).thenAnswer { ByteArrayInputStream(byteArrayOf(1, 2, 3)) }
         val spec = PhotographerBundleService.BundleSpec(
             filename = "quickpitik-fun-run-abcd1234.zip",
             contentType = "application/zip",
@@ -179,5 +179,20 @@ class PhotographerBundleServiceTest {
         val grant = tokenService.issue(photographerId, eventId)
         val tampered = grant.token.dropLast(1) + if (grant.token.last() == 'A') 'B' else 'A'
         assertNull(tokenService.verify(tampered, eventId))
+    }
+
+    @Test
+    fun `failed second original aborts instead of finalizing a partial archive`() {
+        Mockito.`when`(storageService.open("k1")).thenReturn(ByteArrayInputStream(byteArrayOf(1, 2, 3)))
+        Mockito.`when`(storageService.open("k2")).thenAnswer { throw java.io.IOException("storage unavailable") }
+        val spec = PhotographerBundleService.BundleSpec("photos.zip", "application/zip", listOf(
+            PhotographerBundleService.BundleEntryRef("k1", "a.jpg"),
+            PhotographerBundleService.BundleEntryRef("k2", "b.jpg"),
+        ))
+        val out = ByteArrayOutputStream()
+        assertFailsWith<java.io.IOException> { service.writeTo(spec, out) }
+        // No ZIP end-of-central-directory record means consumers cannot mistake
+        // the successfully copied first photo for the complete event archive.
+        assertTrue(out.toByteArray().toList().windowed(4).none { it == listOf<Byte>(0x50, 0x4b, 0x05, 0x06) })
     }
 }

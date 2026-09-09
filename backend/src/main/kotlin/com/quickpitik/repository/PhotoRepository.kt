@@ -21,6 +21,29 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Query("SELECT DISTINCT p FROM Photo p WHERE p.id IN :ids ORDER BY p.id")
     fun findAllByIdForUpdate(@Param("ids") ids: Collection<UUID>): List<Photo>
 
+    @Modifying
+    @Query("UPDATE Photo p SET p.deletedAt = :now WHERE p.photographerId = :photographerId " +
+        "AND p.eventId = :eventId AND p.id IN :ids AND p.deletedAt IS NULL")
+    fun trashOwned(@Param("photographerId") photographerId: UUID, @Param("eventId") eventId: UUID,
+        @Param("ids") ids: Collection<UUID>, @Param("now") now: OffsetDateTime): Int
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.deletedAt = NULL WHERE p.photographerId = :photographerId " +
+        "AND p.eventId = :eventId AND p.id IN :ids AND p.deletedAt IS NOT NULL AND p.deletionStartedAt IS NULL")
+    fun restoreOwned(@Param("photographerId") photographerId: UUID, @Param("eventId") eventId: UUID,
+        @Param("ids") ids: Collection<UUID>): Int
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.deletionStartedAt = :now WHERE p.id = :id " +
+        "AND p.deletedAt IS NOT NULL AND p.deletionStartedAt IS NULL")
+    fun startDeletion(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.indexingStatus = com.quickpitik.entity.IndexingStatus.SKIPPED " +
+        "WHERE p.id = :id AND p.deletedAt IS NULL " +
+        "AND p.indexingStatus <> com.quickpitik.entity.IndexingStatus.INDEXED")
+    fun skipIndexing(@Param("id") id: UUID): Int
+
     // Bulk re-prices every photo under the event. Used by admin event PATCH
     // when the operator changes events.price_per_photo so existing photos
     // pick up the new price across runner-facing galleries. Carts follow
@@ -67,6 +90,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         """
         SELECT p FROM Photo p
         WHERE p.status = com.quickpitik.entity.PhotoStatus.PROCESSING
+          AND p.deletedAt IS NULL
           AND p.processingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -89,7 +113,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, p.phash = :phash, " +
             "p.phashClean = :phashClean, p.phashCentre = :phashCentre, p.publishedAt = CURRENT_TIMESTAMP, " +
             "p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
-            "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING",
+            "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING AND p.deletedAt IS NULL",
     )
     fun publishWatermarked(
         @Param("id") id: UUID,
@@ -110,6 +134,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         SELECT p FROM Photo p
         WHERE p.status = com.quickpitik.entity.PhotoStatus.LIVE
           AND p.phash IS NULL
+          AND p.deletedAt IS NULL
           AND p.watermarkS3Key IS NOT NULL
         ORDER BY p.uploadedAt ASC
         """,
@@ -390,6 +415,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         """
         SELECT p FROM Photo p
         WHERE p.indexingStatus IN :statuses
+          AND p.deletedAt IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -409,6 +435,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         """
         SELECT DISTINCT p.eventId FROM Photo p
         WHERE p.indexingStatus IN :statuses
+          AND p.deletedAt IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         """,
@@ -453,6 +480,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         SELECT p FROM Photo p
         WHERE p.eventId = :eventId
           AND p.indexingStatus IN :statuses
+          AND p.deletedAt IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC

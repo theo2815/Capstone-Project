@@ -103,4 +103,10 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         @Param("photographerId") photographerId: UUID,
         @Param("now") now: OffsetDateTime,
     ): Int
+
+    @Modifying
+    @Query("UPDATE EventPhotographer ep SET ep.photoCount = GREATEST(0, ep.photoCount + :delta) " +
+        "WHERE ep.id.eventId = :eventId AND ep.id.photographerId = :photographerId")
+    fun adjustPhotoCount(@Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID,
+        @Param("delta") delta: Int): Int
 }

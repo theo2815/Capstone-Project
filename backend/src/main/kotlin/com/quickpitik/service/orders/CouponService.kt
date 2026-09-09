@@ -216,7 +216,8 @@ class CouponService(
     @Transactional(readOnly = true)
     fun preview(req: CouponPreviewRequest): CouponPreviewDto {
         val manual = req.code?.takeIf { it.isNotBlank() }?.let(::resolveForCheckout)
-        val photos = photoRepository.findAllById(req.photoIds.distinct()).filter { it.status == PhotoStatus.LIVE }
+        val photos = photoRepository.findAllById(req.photoIds.distinct())
+            .filter { it.status == PhotoStatus.LIVE && it.deletedAt == null }
         // Read-only quote: no lock, and findLiveForEvent already filters
         // active / expiry / usage-limit.
         val auto = autoFor(photos) { eventIds ->

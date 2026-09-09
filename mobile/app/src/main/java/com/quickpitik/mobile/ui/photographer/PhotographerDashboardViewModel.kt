@@ -124,7 +124,15 @@ data class OwnedEventFormInput(
 
 sealed class SharePhotosState {
     object Loading : SharePhotosState()
-    data class Success(val photos: List<com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto>) : SharePhotosState()
+    data class Success(
+        val photos: List<com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto>,
+        val total: Long = photos.size.toLong(),
+        val nextOffset: Int = photos.size,
+        val loadingMore: Boolean = false,
+        val loadMoreError: String? = null,
+    ) : SharePhotosState() {
+        val hasMore: Boolean get() = nextOffset < total
+    }
     data class Error(val message: String) : SharePhotosState()
 }
 
@@ -551,7 +559,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     // Returns the Job so pull-to-refresh can join() it (fire-and-forget
     // callers unaffected).
     fun fetchEvents(): Job = viewModelScope.launch {
-            _eventsState.value = EventsState.Loading
+            val cached = _eventsState.value as? EventsState.Success
+            if (cached == null) _eventsState.value = EventsState.Loading
             val token = sessionManager.getAccessToken()
             if (token == null) {
                 _eventsState.value = EventsState.Error("No valid session. Please log in again.")
@@ -563,10 +572,11 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 if (response.success && response.data != null) {
                     _eventsState.value = EventsState.Success(response.data.items)
                 } else {
-                    _eventsState.value = EventsState.Error(response.error ?: "Failed to load events.")
+                    _eventsState.value = cached ?: EventsState.Error(response.error ?: "Failed to load events.")
                 }
             } catch (e: Exception) {
-                _eventsState.value = EventsState.Error(e.localizedMessage ?: "Failed to connect to server.")
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _eventsState.value = cached ?: EventsState.Error(e.localizedMessage ?: "Failed to connect to server.")
             }
         }
 
@@ -871,22 +881,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
-    fun fetchSharePhotos(eventId: String) {
-        val token = sessionManager.getAccessToken() ?: return
-        viewModelScope.launch {
-            _sharePhotosState.value = SharePhotosState.Loading
-            try {
-                val response = RetrofitClient.apiService.getPhotographerEventPhotos("Bearer $token", eventId)
-                if (response.success && response.data != null) {
-                    _sharePhotosState.value = SharePhotosState.Success(response.data.items)
-                } else {
-                    _sharePhotosState.value = SharePhotosState.Error(response.error ?: "Failed to load photos.")
-                }
-            } catch (e: Exception) {
-                _sharePhotosState.value = SharePhotosState.Error(RetrofitClient.parseError(e))
-            }
-        }
-    }
+    fun fetchSharePhotos(eventId: String, loadMore: Boolean = false) =
+        fetchPhotoPage(eventId, deleted = false, loadMore = loadMore)
 
     /**
      * Resolves the presigned URL for the photographer's own un-watermarked
@@ -915,45 +911,66 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     private val _trashPhotosState = MutableStateFlow<SharePhotosState>(SharePhotosState.Loading)
     val trashPhotosState: StateFlow<SharePhotosState> = _trashPhotosState
 
-    fun fetchTrashPhotos(eventId: String) {
+    private val photoPageJobs = mutableMapOf<Boolean, Job>()
+    private val photoPageEvents = mutableMapOf<Boolean, String>()
+
+    fun fetchTrashPhotos(eventId: String, loadMore: Boolean = false) =
+        fetchPhotoPage(eventId, deleted = true, loadMore = loadMore)
+
+    private fun fetchPhotoPage(eventId: String, deleted: Boolean, loadMore: Boolean) {
         val token = sessionManager.getAccessToken() ?: return
-        viewModelScope.launch {
-            _trashPhotosState.value = SharePhotosState.Loading
+        val state = if (deleted) _trashPhotosState else _sharePhotosState
+        val previous = if (loadMore && photoPageEvents[deleted] == eventId) state.value as? SharePhotosState.Success else null
+        if (loadMore && (previous == null || !previous.hasMore || previous.loadingMore)) return
+        photoPageJobs[deleted]?.cancel()
+        photoPageEvents[deleted] = eventId
+        state.value = previous?.copy(loadingMore = true, loadMoreError = null) ?: SharePhotosState.Loading
+        photoPageJobs[deleted] = viewModelScope.launch {
             try {
                 val response = RetrofitClient.apiService
-                    .getPhotographerEventPhotos("Bearer $token", eventId, deleted = true)
+                    .getPhotographerEventPhotos("Bearer $token", eventId,
+                        offset = previous?.nextOffset ?: 0, deleted = deleted)
                 if (response.success && response.data != null) {
-                    _trashPhotosState.value = SharePhotosState.Success(response.data.items)
+                    val page = response.data
+                    state.value = SharePhotosState.Success(
+                        photos = ((previous?.photos ?: emptyList()) + page.items).distinctBy { it.id },
+                        total = page.total,
+                        nextOffset = if (page.items.isEmpty()) page.total.toInt() else page.offset + page.items.size,
+                    )
                 } else {
-                    _trashPhotosState.value =
-                        SharePhotosState.Error(response.error ?: "Failed to load deleted photos.")
+                    throw IllegalStateException(response.error ?: "Failed to load photos.")
                 }
             } catch (e: Exception) {
-                _trashPhotosState.value = SharePhotosState.Error(RetrofitClient.parseError(e))
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                val message = RetrofitClient.parseError(e)
+                state.value = previous?.copy(loadingMore = false, loadMoreError = message) ?: SharePhotosState.Error(message)
             }
         }
     }
 
     // Trash / restore are bulk; the per-photo UI sends a one-element list.
-    // Returns the affected count. On success both photo lists + the events list
-    // are refreshed (a photo moved between them; photoCount changed).
+    // Returns the affected count; refresh also runs after a partial batch failure.
     suspend fun trashPhotos(eventId: String, photoIds: List<String>): Result<Int> =
-        mutatePhotos(eventId) { token ->
-            RetrofitClient.apiService.trashPhotographerPhotos(
-                "Bearer $token", eventId, com.quickpitik.mobile.data.remote.PhotoIdsRequest(photoIds),
-            ).let {
-                if (it.success && it.data != null) Result.success(it.data.affected)
-                else Result.failure(IllegalStateException(it.error ?: "Couldn't delete the photos."))
-            }
-        }
+        movePhotos(eventId, photoIds, restore = false)
 
     suspend fun restorePhotos(eventId: String, photoIds: List<String>): Result<Int> =
+        movePhotos(eventId, photoIds, restore = true)
+
+    private suspend fun movePhotos(eventId: String, photoIds: List<String>, restore: Boolean): Result<Int> =
         mutatePhotos(eventId) { token ->
-            RetrofitClient.apiService.restorePhotographerPhotos(
-                "Bearer $token", eventId, com.quickpitik.mobile.data.remote.PhotoIdsRequest(photoIds),
-            ).let {
-                if (it.success && it.data != null) Result.success(it.data.affected)
-                else Result.failure(IllegalStateException(it.error ?: "Couldn't restore the photos."))
+            var affected = 0
+            try {
+                for (batch in photoIds.distinct().chunked(500)) {
+                    val request = com.quickpitik.mobile.data.remote.PhotoIdsRequest(batch)
+                    val response = if (restore) RetrofitClient.apiService.restorePhotographerPhotos("Bearer $token", eventId, request)
+                        else RetrofitClient.apiService.trashPhotographerPhotos("Bearer $token", eventId, request)
+                    if (!response.success || response.data == null) error(response.error ?: "Photo action failed")
+                    affected += response.data.affected
+                }
+                Result.success(affected)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Result.failure(IllegalStateException("$affected photos updated. Couldn't finish the remaining photos; refresh or retry."))
             }
         }
 
@@ -962,16 +979,29 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         photoIds: List<String>,
     ): Result<com.quickpitik.mobile.data.remote.PermanentDeleteResponseDto> =
         mutatePhotos(eventId) { token ->
-            RetrofitClient.apiService.permanentDeletePhotographerPhotos(
-                "Bearer $token", eventId, com.quickpitik.mobile.data.remote.PhotoIdsRequest(photoIds),
-            ).let {
-                if (it.success && it.data != null) Result.success(it.data)
-                else Result.failure(IllegalStateException(it.error ?: "Couldn't delete the photos."))
+            val deleted = mutableListOf<String>()
+            val sold = mutableListOf<String>()
+            val pending = mutableListOf<String>()
+            val failed = mutableListOf<String>()
+            for (batch in photoIds.distinct().chunked(100)) {
+                try {
+                    val response = RetrofitClient.apiService.permanentDeletePhotographerPhotos(
+                        "Bearer $token", eventId, com.quickpitik.mobile.data.remote.PhotoIdsRequest(batch))
+                    if (!response.success || response.data == null) error(response.error ?: "Photo deletion failed")
+                    val result = response.data
+                    deleted += result.deleted
+                    sold += result.blockedSold
+                    pending += result.blockedPending
+                    failed += batch - (result.deleted + result.blockedSold + result.blockedPending).toSet()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    failed += batch
+                }
             }
+            Result.success(com.quickpitik.mobile.data.remote.PermanentDeleteResponseDto(deleted, sold, pending, failed))
         }
 
-    // Runs a mutation, and on success refreshes the active list, the trash
-    // list, and the events list so every count stays honest.
+    // Refresh both photo lists and event counts after any mutation attempt.
     private suspend fun <T> mutatePhotos(
         eventId: String,
         call: suspend (String) -> Result<T>,
@@ -979,13 +1009,15 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         val token = sessionManager.getAccessToken()
             ?: return Result.failure(IllegalStateException("You're signed out. Sign in and try again."))
         return try {
-            call(token).onSuccess {
-                fetchSharePhotos(eventId)
-                fetchTrashPhotos(eventId)
-                fetchEvents()
-            }
+            call(token)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Result.failure(IllegalStateException(RetrofitClient.parseError(e)))
+        } finally {
+            // A later batch can fail after earlier batches committed.
+            fetchSharePhotos(eventId)
+            fetchTrashPhotos(eventId)
+            fetchEvents()
         }
     }
 

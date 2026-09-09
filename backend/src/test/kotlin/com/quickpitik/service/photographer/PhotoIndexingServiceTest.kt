@@ -211,7 +211,8 @@ class PhotoIndexingServiceTest {
 
         disabled.index(p.id)
 
-        assertEquals(IndexingStatus.SKIPPED, p.indexingStatus)
+        Mockito.verify(photoRepo).skipIndexing(p.id)
+        Mockito.verify(photoRepo, Mockito.never()).save(p)
         Mockito.verifyNoInteractions(aiClient)
         Mockito.verifyNoInteractions(storage)
     }

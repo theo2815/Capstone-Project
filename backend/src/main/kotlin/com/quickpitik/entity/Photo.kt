@@ -76,8 +76,13 @@ class Photo(
     // trash → restore cycle. Every runner / public / search / checkout query
     // excludes rows where this is set; only the photographer's own trash view
     // returns them.
-    @Column(name = "deleted_at")
+    // Only the conditional repository transitions write these columns. A
+    // detached indexing/admin save must never undo trash or a purge claim.
+    @Column(name = "deleted_at", updatable = false)
     var deletedAt: OffsetDateTime? = null,
+
+    @Column(name = "deletion_started_at", updatable = false)
+    var deletionStartedAt: OffsetDateTime? = null,
 
     @Column(name = "price_php", nullable = false, precision = 12, scale = 2)
     var pricePhp: BigDecimal,

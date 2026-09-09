@@ -146,6 +146,7 @@ class PhotographerEventService(
     // pull the same S3 object. Falls back to the original (uncomposited) key
     // only if both thumbnail + watermark keys are unset (legacy rows).
     private fun resolveThumbnailUrl(photo: com.quickpitik.entity.Photo): String? {
+        if (photo.deletionStartedAt != null) return null
         val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
@@ -155,6 +156,7 @@ class PhotographerEventService(
         // a foreign photographer's photoId returns null → 404 (Q-015 anti-IDOR
         // — never leak existence by 403 vs 404).
         val photo = photoRepository.findFirstByIdAndPhotographerId(photoId, photographerId)
+            ?.takeIf { it.deletionStartedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
         val ttl = storageProperties.presignedTtl.photographerDownload
         val url = storageService.presignedGetUrl(photo.s3Key, ttl)

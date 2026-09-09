@@ -10,6 +10,8 @@ import java.util.UUID
 interface DownloadGrantRepository : JpaRepository<DownloadGrant, DownloadGrantId> {
     fun findByIdOrderId(orderId: UUID): List<DownloadGrant>
 
+    fun existsByIdPhotoId(photoId: UUID): Boolean
+
     // Subset of `photoIds` that the given user owns via an unexpired
     // DownloadGrant. Backs G-2 — the public event-photo list populates
     // PhotoDto.cleanUrl for these ids. Empty input returns empty (Hibernate

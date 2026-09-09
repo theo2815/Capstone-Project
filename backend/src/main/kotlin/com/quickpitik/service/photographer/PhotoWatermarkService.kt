@@ -55,6 +55,7 @@ class PhotoWatermarkService(
     // transaction so the WS publish fires AFTER_COMMIT of the visible state.
     fun process(photoId: UUID) {
         val photo = photoRepository.findById(photoId).orElse(null) ?: return
+        if (photo.deletedAt != null) return
         if (photo.status != PhotoStatus.PROCESSING) return
         if (photo.processingAttempts >= maxAttempts) return
         val photographerId = photo.photographerId
@@ -153,6 +154,13 @@ class PhotoWatermarkService(
         val watermarkKey = "events/${photo.eventId}/photos/${photo.id}/watermark.jpg"
         try {
             storageService.put(watermarkKey, marked.jpeg, "image/jpeg")
+            // A purge can finish while this already-running worker is doing
+            // external I/O. Never leave its late derivative behind.
+            val current = photoRepository.findById(photoId).orElse(null)
+            if (current == null || current.deletionStartedAt != null) {
+                storageService.delete(watermarkKey)
+                return
+            }
         } catch (ex: Exception) {
             log.warn("Watermark PUT failed for photo {}: {}", photoId, ex.message)
             meterRegistry.counter("qp.watermark.outcome", "outcome", "transport").increment()

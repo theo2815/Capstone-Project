@@ -116,4 +116,8 @@ interface EventRepository : JpaRepository<Event, UUID> {
     @Modifying
     @Query("UPDATE Event e SET e.photoCount = e.photoCount + 1 WHERE e.id = :id")
     fun incrementPhotoCount(@Param("id") id: UUID): Int
+
+    @Modifying
+    @Query("UPDATE Event e SET e.photoCount = GREATEST(0, e.photoCount + :delta) WHERE e.id = :id")
+    fun adjustPhotoCount(@Param("id") id: UUID, @Param("delta") delta: Int): Int
 }

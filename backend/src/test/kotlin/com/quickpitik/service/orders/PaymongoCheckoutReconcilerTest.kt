@@ -13,6 +13,7 @@ import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
+import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.support.testTransactionTemplate
@@ -23,6 +24,8 @@ import java.math.BigDecimal
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 
 class PaymongoCheckoutReconcilerTest {
     @Test
@@ -73,7 +76,7 @@ class PaymongoCheckoutReconcilerTest {
             webhooks,
             payments,
             orders,
-            testTransactionTemplate(),
+            testTransactionTemplate(), Mockito.mock(OrderItemRepository::class.java),
         )
 
         reconciler.reconcile()
@@ -100,7 +103,7 @@ class PaymongoCheckoutReconcilerTest {
             providerCallWasTransactional = TransactionSynchronizationManager.isActualTransactionActive()
             intent("succeeded")
         }
-        val reconciler = PaymongoCheckoutReconciler(PaymongoProperties(), client, webhooks, payments, orders, testTransactionTemplate())
+        val reconciler = PaymongoCheckoutReconciler(PaymongoProperties(), client, webhooks, payments, orders, testTransactionTemplate(), Mockito.mock(OrderItemRepository::class.java))
 
         reconciler.reconcileOrder(order.id)
 
@@ -127,7 +130,7 @@ class PaymongoCheckoutReconcilerTest {
         Mockito.`when`(payments.findAllByOrderIdInForUpdate(anyArg())).thenReturn(listOf(payment))
         Mockito.`when`(orders.findByIdForUpdate(order.id)).thenReturn(order)
         Mockito.`when`(client.retrievePaymentIntent("pi_test")).thenReturn(intent("awaiting_next_action"))
-        val reconciler = PaymongoCheckoutReconciler(PaymongoProperties(), client, webhooks, payments, orders, testTransactionTemplate())
+        val reconciler = PaymongoCheckoutReconciler(PaymongoProperties(), client, webhooks, payments, orders, testTransactionTemplate(), Mockito.mock(OrderItemRepository::class.java))
 
         reconciler.reconcileOrder(order.id)
 
@@ -165,7 +168,7 @@ class PaymongoCheckoutReconcilerTest {
                 ),
             ),
         )
-        val reconciler = PaymongoCheckoutReconciler(PaymongoProperties(), client, webhooks, payments, orders, testTransactionTemplate())
+        val reconciler = PaymongoCheckoutReconciler(PaymongoProperties(), client, webhooks, payments, orders, testTransactionTemplate(), Mockito.mock(OrderItemRepository::class.java))
 
         reconciler.reconcileOrder(order.id)
 
@@ -184,7 +187,7 @@ class PaymongoCheckoutReconcilerTest {
         Mockito.`when`(payments.findAllByOrderIdInForUpdate(anyArg())).thenReturn(listOf(payment))
         Mockito.`when`(orders.findByIdForUpdate(order.id)).thenReturn(order)
         val reconciler = PaymongoCheckoutReconciler(
-            PaymongoProperties(), client, Mockito.mock(PaymongoWebhookService::class.java), payments, orders, testTransactionTemplate(),
+            PaymongoProperties(), client, Mockito.mock(PaymongoWebhookService::class.java), payments, orders, testTransactionTemplate(), Mockito.mock(OrderItemRepository::class.java),
         )
 
         reconciler.expireOrder(order.id)
@@ -206,12 +209,128 @@ class PaymongoCheckoutReconcilerTest {
             Mockito.mock(PaymongoWebhookService::class.java),
             payments,
             Mockito.mock(OrderRepository::class.java),
-            testTransactionTemplate(),
+            testTransactionTemplate(), Mockito.mock(OrderItemRepository::class.java),
         )
 
         reconciler.reconcileOrder(orderId)
 
         Mockito.verifyNoInteractions(client)
+    }
+
+    @Test
+    fun `purge closes an unpaid intent before releasing expired order items`() {
+        val fixture = expiredReservation("pi_test")
+        Mockito.`when`(fixture.client.retrievePaymentIntent("pi_test")).thenReturn(intent("awaiting_next_action"))
+        Mockito.`when`(fixture.client.cancelPaymentIntent("pi_test")).thenAnswer {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
+            intent("canceled")
+        }
+
+        assertTrue(fixture.reconciler.releaseExpiredPhotoReservations(fixture.photoId))
+
+        val sequence = Mockito.inOrder(fixture.client, fixture.items)
+        sequence.verify(fixture.client).cancelPaymentIntent("pi_test")
+        sequence.verify(fixture.items).deleteUnpaidReferences(fixture.photoId, listOf(fixture.order.id))
+    }
+
+    @Test
+    fun `purge also closes the payment intent behind an expired checkout page`() {
+        val fixture = expiredReservation("cs_test")
+        Mockito.`when`(fixture.client.retrieveCheckoutSession("cs_test")).thenReturn(checkout("active"))
+        Mockito.`when`(fixture.client.expireCheckoutSession("cs_test")).thenReturn(
+            PaymongoCheckoutSessionResponse(PaymongoCheckoutSessionResponseEnvelope(
+                id = "cs_test",
+                attributes = PaymongoCheckoutSessionResponseAttributes(
+                    status = "expired", paymentIntent = intent("awaiting_next_action").data,
+                ),
+            )),
+        )
+        Mockito.`when`(fixture.client.retrievePaymentIntent("pi_test")).thenReturn(intent("awaiting_next_action"))
+        Mockito.`when`(fixture.client.cancelPaymentIntent("pi_test")).thenReturn(intent("cancelled"))
+
+        assertTrue(fixture.reconciler.releaseExpiredPhotoReservations(fixture.photoId))
+
+        Mockito.verify(fixture.client).cancelPaymentIntent("pi_test")
+        Mockito.verify(fixture.items).deleteUnpaidReferences(fixture.photoId, listOf(fixture.order.id))
+    }
+
+    @Test
+    fun `purge preserves expired reservations when provider closure is not proven`() {
+        for (status in listOf("awaiting_next_action", "processing", "succeeded")) {
+            val fixture = expiredReservation("pi_test")
+            Mockito.`when`(fixture.client.retrievePaymentIntent("pi_test")).thenReturn(intent("awaiting_next_action"))
+            Mockito.`when`(fixture.client.cancelPaymentIntent("pi_test")).thenReturn(intent(status))
+
+            assertFalse(fixture.reconciler.releaseExpiredPhotoReservations(fixture.photoId))
+            Mockito.verifyNoInteractions(fixture.items)
+        }
+        val fixture = expiredReservation("pi_test")
+        Mockito.`when`(fixture.client.retrievePaymentIntent("pi_test")).thenThrow(IllegalStateException("provider unavailable"))
+        assertFailsWith<IllegalStateException> { fixture.reconciler.releaseExpiredPhotoReservations(fixture.photoId) }
+        Mockito.verifyNoInteractions(fixture.items)
+    }
+
+    @Test
+    fun `purge hands a late successful payment to settlement and keeps its photos`() {
+        val fixture = expiredReservation("pi_test")
+        Mockito.`when`(fixture.client.retrievePaymentIntent("pi_test")).thenReturn(intent("succeeded"))
+
+        assertFalse(fixture.reconciler.releaseExpiredPhotoReservations(fixture.photoId))
+
+        Mockito.verify(fixture.webhooks).settleCheckoutSession(eqArg("pi_test"), eqArg("pay_test"), anyArg())
+        Mockito.verify(fixture.client, Mockito.never()).cancelPaymentIntent(anyArg())
+        Mockito.verifyNoInteractions(fixture.items)
+    }
+
+    @Test
+    fun `purge rechecks payment and order under locks after provider IO`() {
+        val fixture = expiredReservation("pi_test")
+        Mockito.`when`(fixture.client.retrievePaymentIntent("pi_test")).thenAnswer {
+            fixture.order.status = OrderStatus.FULFILLED
+            fixture.payment.status = PaymentStatus.SUCCEEDED
+            intent("canceled")
+        }
+
+        assertFalse(fixture.reconciler.releaseExpiredPhotoReservations(fixture.photoId))
+        Mockito.verifyNoInteractions(fixture.items)
+    }
+
+    @Test
+    fun `purge keeps reservations with a pending order or unknown provider outcome`() {
+        for (ref in listOf(null, "", "unknown_ref", "pi_test")) {
+            val fixture = expiredReservation(ref)
+            if (ref == "pi_test") fixture.order.status = OrderStatus.PENDING
+            assertFalse(fixture.reconciler.releaseExpiredPhotoReservations(fixture.photoId))
+            Mockito.verifyNoInteractions(fixture.client, fixture.items)
+        }
+    }
+
+    private class ReservationFixture(
+        val photoId: UUID,
+        val order: Order,
+        val payment: Payment,
+        val client: PaymongoClient,
+        val webhooks: PaymongoWebhookService,
+        val items: OrderItemRepository,
+        val reconciler: PaymongoCheckoutReconciler,
+    )
+
+    private fun expiredReservation(ref: String?): ReservationFixture {
+        val photoId = UUID.randomUUID()
+        val order = qrphOrder().apply { status = OrderStatus.EXPIRED }
+        val payment = Payment(orderId = order.id, provider = "paymongo", providerRef = ref, amountPhp = order.totalPhp,
+            status = PaymentStatus.FAILED)
+        val client = Mockito.mock(PaymongoClient::class.java)
+        val payments = Mockito.mock(PaymentRepository::class.java)
+        val orders = Mockito.mock(OrderRepository::class.java)
+        val items = Mockito.mock(OrderItemRepository::class.java)
+        val webhooks = Mockito.mock(PaymongoWebhookService::class.java)
+        Mockito.`when`(orders.findReferencingPhoto(photoId)).thenReturn(listOf(order))
+        Mockito.`when`(orders.findByIdForUpdate(order.id)).thenReturn(order)
+        Mockito.`when`(payments.findByOrderId(order.id)).thenReturn(listOf(payment))
+        Mockito.`when`(payments.findAllByOrderIdInForUpdate(listOf(order.id))).thenReturn(listOf(payment))
+        return ReservationFixture(photoId, order, payment, client, webhooks, items,
+            PaymongoCheckoutReconciler(PaymongoProperties(), client, webhooks, payments, orders, testTransactionTemplate(), items))
     }
 
     private fun qrphOrder() = Order(

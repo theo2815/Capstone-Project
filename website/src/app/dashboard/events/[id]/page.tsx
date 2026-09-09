@@ -743,21 +743,25 @@ function PhotoLibrary({
     );
 
   async function runTrashOrRestore(kind: "trash" | "restore") {
-    const ids = [...selected];
+    const ids = photos.filter((photo) => selected.has(photo.id) &&
+      (kind === "trash" || !photo.deletionStartedAt)).map((photo) => photo.id);
     if (ids.length === 0) return;
     setBusy(true);
     try {
-      if (kind === "trash") await trashPhotographerPhotos(eventId, ids);
-      else await restorePhotographerPhotos(eventId, ids);
+      const result = kind === "trash"
+        ? await trashPhotographerPhotos(eventId, ids)
+        : await restorePhotographerPhotos(eventId, ids);
       await invalidate();
-      exitSelect();
-      const n = ids.length;
+      if (result.failed.length) setSelected(new Set(result.failed));
+      else exitSelect();
+      const n = result.affected;
+      const remaining = ids.length - n;
       showToast({
-        kind: "success",
-        message:
-          kind === "trash"
+        kind: remaining > 0 ? "info" : "success",
+        message: (kind === "trash"
             ? `${n} photo${n > 1 ? "s" : ""} moved to Deleted.`
-            : `${n} photo${n > 1 ? "s" : ""} restored.`,
+            : `${n} photo${n > 1 ? "s" : ""} restored.`) +
+          (remaining > 0 ? ` ${remaining} unchanged. Refresh or retry the remaining photos.` : ""),
       });
     } catch {
       showToast({ kind: "error", message: "Something went wrong. Try again." });
@@ -782,20 +786,19 @@ function PhotoLibrary({
     try {
       const res = await permanentDeletePhotographerPhotos(eventId, ids);
       await invalidate();
-      exitSelect();
+      if (res.failed?.length) setSelected(new Set(res.failed));
+      else exitSelect();
       const del = res.deleted.length;
       const blocked = res.blockedSold.length;
-      showToast(
-        blocked > 0
-          ? {
-              kind: "info",
-              message: `${del} deleted · ${blocked} kept (already sold — buyers keep access).`,
-            }
-          : {
-              kind: "success",
-              message: `${del} photo${del > 1 ? "s" : ""} permanently deleted.`,
-            },
-      );
+      const pending = res.blockedPending?.length ?? 0;
+      const failed = res.failed?.length ?? 0;
+      showToast({
+        kind: failed ? "error" : blocked || pending ? "info" : "success",
+        message: `${del} permanently deleted.` +
+          (blocked ? ` ${blocked} kept for buyers.` : "") +
+          (pending ? ` ${pending} kept while payment is pending or being checked.` : "") +
+          (failed ? ` ${failed} couldn't be deleted. Retry Delete forever to finish cleanup.` : ""),
+      });
     } catch {
       showToast({ kind: "error", message: "Couldn't delete. Try again." });
     } finally {
@@ -922,6 +925,13 @@ function PhotoLibrary({
         {section === "active" ? "uploaded" : "in Deleted"}
       </p>
 
+      {photos.some((photo) => photo.deletionStartedAt) && (
+        <p className="text-sm text-slate mb-6">
+          Some photos have started permanent deletion and cannot be restored.
+          Select them and retry Delete forever to finish cleanup.
+        </p>
+      )}
+
       {list.isLoading ? (
         <div className={gridClass}>
           {Array.from({ length: 8 }, (_, i) => (
@@ -943,7 +953,12 @@ function PhotoLibrary({
               index={i}
               selecting={selecting}
               selected={selected.has(photo.id)}
-              onOpen={() => setOpenIndex(i)}
+              onOpen={() => {
+                if (photo.deletionStartedAt) {
+                  setSelecting(true);
+                  toggle(photo.id);
+                } else setOpenIndex(i);
+              }}
               onToggle={() => toggle(photo.id)}
             />
           ))}
@@ -964,6 +979,7 @@ function PhotoLibrary({
         <SelectionBar
           section={section}
           count={selected.size}
+          restoreCount={photos.filter((photo) => selected.has(photo.id) && !photo.deletionStartedAt).length}
           allSelected={photos.length > 0 && selected.size === photos.length}
           busy={busy}
           onToggleAll={toggleAll}
@@ -1038,6 +1054,7 @@ function EmptyTrash() {
 function SelectionBar({
   section,
   count,
+  restoreCount,
   allSelected,
   busy,
   onToggleAll,
@@ -1048,6 +1065,7 @@ function SelectionBar({
 }: {
   section: "active" | "deleted";
   count: number;
+  restoreCount: number;
   allSelected: boolean;
   busy: boolean;
   onToggleAll: () => void;
@@ -1090,14 +1108,14 @@ function SelectionBar({
               <button
                 type="button"
                 onClick={onRestore}
-                disabled={busy || count === 0}
+                disabled={busy || restoreCount === 0}
                 className={cn(
                   BTN_PRIMARY,
                   BTN_SIZE.sm,
                   "disabled:hover:bg-fresh",
                 )}
               >
-                {busy ? "Working…" : `Restore ${count}`}
+                {busy ? "Working…" : `Restore ${restoreCount}`}
               </button>
               <button
                 type="button"

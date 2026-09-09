@@ -158,6 +158,18 @@ class PhotoWatermarkServiceTest {
     // ── Per-event watermark policy (V46) ──────────────────────────────────
 
     @Test
+    fun `an in-flight worker removes a derivative written after permanent deletion`() {
+        stubHappyPath()
+        Mockito.`when`(photoRepository.findById(photoId)).thenReturn(Optional.of(photo()), Optional.empty())
+
+        service().process(photoId)
+
+        Mockito.verify(storageService).delete("events/$eventId/photos/$photoId/watermark.jpg")
+        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
+        Mockito.verifyNoInteractions(eventPublisher)
+    }
+
+    @Test
     fun `a platform event composites both marks`() {
         stubHappyPath()
         Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)

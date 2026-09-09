@@ -353,6 +353,7 @@ data class PhotographerLibraryPhotoDto(
     // Soft-delete timestamp (V52); non-null = in the photographer's trash. Null
     // on the active list, set on the ?deleted=true (Deleted tab) list.
     val deletedAt: String? = null,
+    val deletionStartedAt: String? = null,
 )
 
 // Presigned URL for the photographer's own un-watermarked original — the
@@ -381,6 +382,8 @@ data class PhotoActionResponseDto(
 data class PermanentDeleteResponseDto(
     val deleted: List<String> = emptyList(),
     val blockedSold: List<String> = emptyList(),
+    val blockedPending: List<String> = emptyList(),
+    val failed: List<String> = emptyList(),
 )
 
 // "Download all" step 1 → a short-lived tokened URL the client streams the ZIP

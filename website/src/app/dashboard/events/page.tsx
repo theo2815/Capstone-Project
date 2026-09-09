@@ -46,7 +46,6 @@ export default function DashboardEventsPage() {
   const covered = useMemo(
     () =>
       (liveEvents ?? [])
-        .filter((p) => p.photoCount > 0 || p.ownedByMe)
         .map((p) => ({ catalog: summaryToListEvent(p), photographer: p })),
     [liveEvents],
   );

@@ -334,6 +334,39 @@ succeeds, so retry and Cancel retain the saved placement.
 
 ---
 
+**Photographer photo management — website/mobile integration:**
+`GET /api/v1/me/photographer/events/{id}/photos?deleted=true` lists trash using
+the same `items`, `offset`, `limit`, and `total` pagination envelope as the active
+library. Both clients must request additional server pages. Covered events stay
+reachable with `withUploads=false`, including when their active count is zero.
+
+The `photos/trash` and `photos/restore` actions return the actual `affected`
+count. Clients split selections according to `PhotoIdsRequest`'s size constraint
+and `MePhotographerController.PERMANENT_DELETE_BATCH_MAX`. Trash changes neither the
+photo lifecycle status nor existing purchased download grants. Public galleries,
+search, free downloads, carts, coupons and new checkout exclude trash.
+
+`photos/permanent-delete` returns `deleted`, `blockedSold`, `blockedPending`,
+and `failed` ID arrays. Paid orders and download grants prevent deletion.
+Unpaid pending or uncertain payments remain protected; expired unpaid order
+items can be released only after provider closure is verified and payment/order
+state is rechecked under locks. This also closes any intent behind an expired
+checkout page before storage cleanup begins.
+
+The library's additive `deletionStartedAt` field marks irreversible cleanup.
+Once set, restore and original-download requests are refused, including after
+a storage failure. Clients show the failure and retry permanent deletion.
+Ordinary entity saves cannot overwrite either deletion timestamp. Conditional
+trash/restore updates adjust both active counters atomically; migration V60
+repairs previous drift. Mobile refreshes retain cached events so an open gallery
+is not dismissed while counts reload, even after a partially completed action.
+
+Photographer ZIPs stream originals one at a time. A read failure propagates and
+does not finalize a misleading partial archive. The streaming timeout is
+configured by `HTTP_STREAM_TIMEOUT` in `backend/src/main/resources/application.yml`;
+hosting proxies must permit the desired download duration too. Watermarked
+bundles remain outside this contract.
+
 ### 7.4. AI Face Indexing & Bib OCR Pipeline
 Implemented via [FaceBibProvider.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/service/ai/FaceBibProvider.kt):
 - **Providers:**

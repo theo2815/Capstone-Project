@@ -136,6 +136,7 @@ data class PhotographerLibraryPhotoDto(
     // Soft-delete timestamp (V52); non-null = in the photographer's trash.
     // Null on the active tab, set on the Deleted Photos tab.
     val deletedAt: OffsetDateTime? = null,
+    val deletionStartedAt: OffsetDateTime? = null,
 )
 
 // Mirrors website/src/lib/api-photographer.ts PhotographerDownloadResponse.
@@ -162,6 +163,8 @@ data class PhotoActionResponse(val affected: Int)
 data class PermanentDeleteResponse(
     val deleted: List<UUID>,
     val blockedSold: List<UUID>,
+    val blockedPending: List<UUID> = emptyList(),
+    val failed: List<UUID> = emptyList(),
 )
 
 // POST /events/{id}/download-bundle → a short-lived tokened URL the client
@@ -323,6 +326,7 @@ fun Photo.toLibraryDto(
         span = span.wire,
         thumbnailUrl = thumbnailUrlResolver(this),
         deletedAt = deletedAt,
+        deletionStartedAt = deletionStartedAt,
     )
 
 // ── Direct-to-storage upload (2026-09-02) ─────────────────────────────────

@@ -174,21 +174,34 @@ export async function fetchPhotographerPhotoDownload(
 export async function trashPhotographerPhotos(
   eventId: string,
   photoIds: string[],
-): Promise<{ affected: number }> {
-  return api.post<{ affected: number }>(
-    `/me/photographer/events/${encodeURIComponent(eventId)}/photos/trash`,
-    { photoIds },
-  );
+): Promise<{ affected: number; failed: string[] }> {
+  return movePhotographerPhotos(eventId, photoIds, "trash");
 }
 
 export async function restorePhotographerPhotos(
   eventId: string,
   photoIds: string[],
-): Promise<{ affected: number }> {
-  return api.post<{ affected: number }>(
-    `/me/photographer/events/${encodeURIComponent(eventId)}/photos/restore`,
-    { photoIds },
-  );
+): Promise<{ affected: number; failed: string[] }> {
+  return movePhotographerPhotos(eventId, photoIds, "restore");
+}
+
+async function movePhotographerPhotos(eventId: string, photoIds: string[], action: "trash" | "restore") {
+  const result = { affected: 0, failed: [] as string[] };
+  const ids = [...new Set(photoIds)];
+  // PhotoIdsRequest caps trash/restore at 500; the UI can select many pages.
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const batch = ids.slice(offset, offset + 500);
+    try {
+      const res = await api.post<{ affected: number }>(
+        `/me/photographer/events/${encodeURIComponent(eventId)}/photos/${action}`,
+        { photoIds: batch },
+      );
+      result.affected += res.affected;
+    } catch {
+      result.failed.push(...batch);
+    }
+  }
+  return result;
 }
 
 export interface PermanentDeleteResult {
@@ -197,16 +210,34 @@ export interface PermanentDeleteResult {
   /** Photo ids refused because they've been sold — kept so buyers can still
    *  download them. */
   blockedSold: string[];
+  blockedPending?: string[];
+  failed?: string[];
 }
 
 export async function permanentDeletePhotographerPhotos(
   eventId: string,
   photoIds: string[],
 ): Promise<PermanentDeleteResult> {
-  return api.post<PermanentDeleteResult>(
-    `/me/photographer/events/${encodeURIComponent(eventId)}/photos/permanent-delete`,
-    { photoIds },
-  );
+  const result = { deleted: [] as string[], blockedSold: [] as string[], blockedPending: [] as string[], failed: [] as string[] };
+  const ids = [...new Set(photoIds)];
+  // MePhotographerController caps permanent-delete at 100 storage operations.
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const batch = ids.slice(offset, offset + 100);
+    try {
+      const res = await api.post<PermanentDeleteResult>(
+        `/me/photographer/events/${encodeURIComponent(eventId)}/photos/permanent-delete`,
+        { photoIds: batch },
+      );
+      result.deleted.push(...res.deleted);
+      result.blockedSold.push(...res.blockedSold);
+      result.blockedPending.push(...(res.blockedPending ?? []));
+      const handled = new Set([...res.deleted, ...res.blockedSold, ...(res.blockedPending ?? [])]);
+      result.failed.push(...batch.filter((id) => !handled.has(id)));
+    } catch {
+      result.failed.push(...batch);
+    }
+  }
+  return result;
 }
 
 export interface PhotographerBundleResponse {

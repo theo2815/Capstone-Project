@@ -7,7 +7,6 @@ import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.storage.StorageService
-import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.io.OutputStream
@@ -34,8 +33,6 @@ class PhotographerBundleService(
     private val tokenService: PhotographerBundleTokenService,
     private val publicProperties: PublicProperties,
 ) {
-    private val log = LoggerFactory.getLogger(javaClass)
-
     // Called by the authenticated POST: verify there is something to download
     // (an empty set also means "no coverage" here, since the row query is
     // photographer-scoped) and mint the tokened <a>-navigable URL.
@@ -92,20 +89,22 @@ class PhotographerBundleService(
     }
 
     private fun writeZipTo(spec: BundleSpec, out: OutputStream) {
-        ZipOutputStream(out).use { zip ->
+        // Finish only when ALL entries were copied. Closing ZipOutputStream
+        // on failure would otherwise finalize a deceptively valid partial ZIP.
+        // The servlet owns out; release the native deflater on either path.
+        val zip = object : ZipOutputStream(out) {
+            override fun close() { def.end() }
+        }
+        zip.use {
             spec.entries.forEach { entry ->
-                try {
-                    val bytes = storageService.getBytes(entry.s3Key)
+                storageService.open(entry.s3Key).use { original ->
                     zip.putNextEntry(ZipEntry(entry.entryName))
-                    zip.write(bytes)
+                    original.transferTo(zip)
                     zip.closeEntry()
-                } catch (ex: Exception) {
-                    // Per-photo failure is non-fatal — the rest of the event
-                    // still bundles. Matches OrderBundleService behaviour.
-                    log.warn("Skipping {} in photographer bundle: {}", entry.s3Key, ex.message)
                 }
             }
             zip.finish()
+            zip.flush()
         }
     }
 

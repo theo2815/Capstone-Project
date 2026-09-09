@@ -318,6 +318,7 @@ fun PhotographerEventsScreen(
                                     EventState.LIVE -> LiveEventCard(
                                         event = event,
                                         isActive = activeEvent?.id == event.id,
+                                        canManagePhotos = coveredEvents.any { it.id == event.id },
                                         onSync = { guardAction { onSyncEvent(event) } },
                                         onOpenShare = { guardAction { onOpenShare(event) } },
                                     )
@@ -436,6 +437,7 @@ private fun EventsSectionHeader(label: String) {
 private fun LiveEventCard(
     event: PhotographerEventSummaryDto,
     isActive: Boolean,
+    canManagePhotos: Boolean,
     onSync: () -> Unit,
     onOpenShare: () -> Unit,
 ) {
@@ -514,7 +516,7 @@ private fun LiveEventCard(
                 onClick = onSync,
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (event.photoCount > 0) {
+            if (canManagePhotos) {
                 Spacer(modifier = Modifier.height(6.dp))
                 TextButton(
                     onClick = onOpenShare,
