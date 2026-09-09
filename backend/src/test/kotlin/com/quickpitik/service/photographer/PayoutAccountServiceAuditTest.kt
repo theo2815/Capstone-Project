@@ -45,6 +45,8 @@ class PayoutAccountServiceAuditTest {
         storageService,
         storageProperties,
         eventPublisher,
+        Mockito.mock(com.quickpitik.repository.PayoutCycleRepository::class.java),
+        Mockito.mock(com.quickpitik.repository.UserRepository::class.java),
     )
 
     @Test

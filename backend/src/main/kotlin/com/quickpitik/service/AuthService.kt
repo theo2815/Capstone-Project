@@ -113,6 +113,12 @@ class AuthService(
             throw UnauthorizedException("Account suspended", "ACCOUNT_SUSPENDED")
         }
         loginAttemptService.recordSuccess(user.id)
+        return completeLogin(user)
+    }
+
+    // Both first-factor paths use this gate. Refresh and successful MFA
+    // verification mint tokens directly, without starting another challenge.
+    internal fun completeLogin(user: User): AuthResponse {
         // Opt-in admin MFA: a first-factor-passed admin who has enrolled gets a
         // challenge, not tokens. Everyone else (incl. admins without MFA) takes
         // the unchanged path below.
@@ -129,7 +135,7 @@ class AuthService(
     }
 
     // Second step of an admin MFA login. The mfaPending token proves the first
-    // factor (password) already passed; the code is the second factor.
+    // factor (password or Google identity) already passed; the code is the second factor.
     fun verifyMfa(mfaToken: String, code: String): AuthResponse {
         val userId = tokenProvider.parseMfaPending(mfaToken)
             ?: throw UnauthorizedException("Invalid or expired MFA session", ErrorCodes.INVALID_TOKEN)

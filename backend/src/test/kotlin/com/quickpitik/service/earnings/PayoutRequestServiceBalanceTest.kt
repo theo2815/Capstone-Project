@@ -15,6 +15,7 @@ import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PayoutStatusHistoryRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
+import com.quickpitik.repository.UserRepository
 import com.quickpitik.repository.TransactionRepository
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -69,6 +70,7 @@ class PayoutRequestServiceBalanceTest {
         payoutAccountAuditRepository,
         payoutStatusRecorder,
         platformProperties,
+        Mockito.mock(UserRepository::class.java),
     )
 
     // Stub the four money sums; each test sets the numbers it cares about.
@@ -90,6 +92,19 @@ class PayoutRequestServiceBalanceTest {
 
     private fun assertAmount(expected: String, actual: BigDecimal) =
         assertEquals(0, BigDecimal(expected).compareTo(actual), "expected $expected but was $actual")
+
+    @Test
+    fun `an account without a QR is incomplete and cannot request money`() {
+        stubSums(cleared = "1000", lifetime = "1000", paid = "0", reserved = "0")
+        noOpenRequest()
+        Mockito.`when`(payoutAccountRepository.findByUserIdAndIsPrimaryTrue(photographerId)).thenReturn(
+            PayoutAccount(userId = photographerId, method = PayoutMethod.GCASH,
+                accountNumber = "09171234567", accountName = "Test", isPrimary = true),
+        )
+        assertEquals(false, service().getBalance(photographerId).primaryAccount?.hasQr)
+        assertEquals(ErrorCodes.PAYOUT_QR_REQUIRED, assertFailsWith<ValidationException> { service().request(photographerId) }.code)
+        Mockito.verify(payoutCycleRepository, Mockito.never()).saveAndFlush(anyArg<PayoutCycle>())
+    }
 
     @Test
     fun `unpaidBalance excludes funds reserved by an open cycle`() {
@@ -143,17 +158,18 @@ class PayoutRequestServiceBalanceTest {
                     method = PayoutMethod.GCASH,
                     accountNumber = "09171234567",
                     accountName = "Juan Dela Cruz",
+                    qrS3Key = "test/qr.png",
                 ),
             )
         Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.empty())
         Mockito.`when`(payoutCycleRepository.countByPhotographerId(photographerId)).thenReturn(0L)
         Mockito.`when`(transactionRepository.countSalesWindow(anyArg(), anyArg(), anyArg())).thenReturn(3L)
-        Mockito.`when`(payoutCycleRepository.save(anyArg<PayoutCycle>())).thenAnswer { it.getArgument(0) }
+        Mockito.`when`(payoutCycleRepository.saveAndFlush(anyArg<PayoutCycle>())).thenAnswer { it.getArgument(0) }
         val captor = ArgumentCaptor.forClass(PayoutCycle::class.java)
 
         service().request(photographerId)
 
-        Mockito.verify(payoutCycleRepository).save(captor.capture())
+        Mockito.verify(payoutCycleRepository).saveAndFlush(captor.capture())
         assertAmount("600", captor.value.amountPhp)
     }
 
@@ -182,12 +198,13 @@ class PayoutRequestServiceBalanceTest {
                     method = PayoutMethod.GCASH,
                     accountNumber = "09171234567",
                     accountName = "Juan Dela Cruz",
+                    qrS3Key = "test/qr.png",
                 ),
             )
         Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.empty())
         Mockito.`when`(payoutCycleRepository.countByPhotographerId(photographerId)).thenReturn(0L)
         Mockito.`when`(transactionRepository.countSalesWindow(anyArg(), anyArg(), anyArg())).thenReturn(3L)
-        Mockito.`when`(payoutCycleRepository.save(anyArg<PayoutCycle>()))
+        Mockito.`when`(payoutCycleRepository.saveAndFlush(anyArg<PayoutCycle>()))
             .thenThrow(DataIntegrityViolationException("uq_payout_open_per_photographer"))
 
         val ex = assertFailsWith<ApiException> { service().request(photographerId) }
@@ -234,12 +251,13 @@ class PayoutRequestServiceBalanceTest {
                     method = PayoutMethod.GCASH,
                     accountNumber = "09171234567",
                     accountName = "Juan Dela Cruz",
+                    qrS3Key = "test/qr.png",
                 ),
             )
         Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.empty())
         Mockito.`when`(payoutCycleRepository.countByPhotographerId(photographerId)).thenReturn(0L)
         Mockito.`when`(transactionRepository.countSalesWindow(anyArg(), anyArg(), anyArg())).thenReturn(3L)
-        Mockito.`when`(payoutCycleRepository.save(anyArg<PayoutCycle>())).thenAnswer { it.getArgument(0) }
+        Mockito.`when`(payoutCycleRepository.saveAndFlush(anyArg<PayoutCycle>())).thenAnswer { it.getArgument(0) }
 
         service().request(photographerId)
 

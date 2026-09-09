@@ -1,50 +1,60 @@
 package com.quickpitik.service.disbursement
 
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.quickpitik.config.PaymongoProperties
+import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import java.net.InetSocketAddress
+import kotlin.test.*
 
-// The HTTP call is owed (KYB-gated, verify-in-test-mode). What IS testable is
-// the pure request-building: money conversion, the reference key, and the
-// institution mapping.
 class PayMongoDisbursementProviderTest {
-
-    private val req = DisbursementRequest(
-        cycleId = "PAY-JUANDC-007",
-        amountPhp = BigDecimal("1234.50"),
-        method = "gcash",
-        accountNumber = "09171234567",
-        accountName = "Juan Dela Cruz",
+    private val req = DisbursementRequest("PAY-TEST-001", BigDecimal("1234.50"), "gcash", "09171234567", "Test Recipient")
+    private val properties = PaymongoProperties(
+        secretKey = "sk_test_fixture", transferSourceNumber = "source-wallet",
+        transferSourceName = "Test Platform", transferSourceBic = "TESTSOURCE",
+        transferGcashBic = "TESTGCASH", transferCallbackUrl = "https://example.test/paymongo-transfers",
     )
 
-    @Test
-    fun `converts pesos to centavos exactly`() {
-        assertEquals(123450L, PayMongoDisbursementProvider.toCentavos(BigDecimal("1234.50")))
-        assertEquals(50000L, PayMongoDisbursementProvider.toCentavos(BigDecimal("500")))
-    }
-
-    @Test
-    fun `builds a transfer carrying centavos and the cycle id as reference`() {
-        val attrs = PayMongoDisbursementProvider.buildTransferRequest(req).data.attributes
-        assertEquals(123450L, attrs.amount)
-        assertEquals("PHP", attrs.currency)
-        assertEquals("PAY-JUANDC-007", attrs.referenceNumber)
-        assertEquals("09171234567", attrs.destination.accountNumber)
-        assertEquals("Juan Dela Cruz", attrs.destination.accountHolderName)
-    }
-
-    @Test
-    fun `maps each e-wallet to an institution code`() {
-        assertEquals("GXCHPHM2XXX", PayMongoDisbursementProvider.bankCodeFor("gcash"))
-        assertEquals("PAPHPHM1XXX", PayMongoDisbursementProvider.bankCodeFor("maya"))
-        assertEquals("GOTYPHM1XXX", PayMongoDisbursementProvider.bankCodeFor("gotyme"))
-    }
-
-    @Test
-    fun `rejects an unknown method`() {
-        assertFailsWith<IllegalArgumentException> {
-            PayMongoDisbursementProvider.bankCodeFor("paypal")
+    @Test fun `HTTP request and response use the Money Movement batch contract`() {
+        val mapper = jacksonObjectMapper()
+        var received = ""
+        var key: String? = null
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/v2/batch_transfers") { exchange ->
+            received = exchange.requestBody.bufferedReader().readText()
+            key = exchange.requestHeaders.getFirst("Idempotency-Key")
+            val body = """{"transfers":[{"id":"tr_test","status":"pending"}]}""".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
         }
+        server.start()
+        try {
+            val adapter = PayMongoDisbursementProvider(properties.copy(disbursementBaseUrl = "http://127.0.0.1:${server.address.port}/v2"))
+            assertEquals("tr_test", adapter.initiate(req).providerTransferId)
+            val json = mapper.readTree(received)
+            assertFalse(json.has("data"))
+            assertEquals(1, json["transfers"].size())
+            val transfer = json["transfers"][0]
+            assertEquals(123450L, transfer["amount"].asLong())
+            assertEquals("PHP", transfer["currency"].asText())
+            assertEquals("instapay", transfer["provider"].asText())
+            assertEquals("source-wallet", transfer["source_account"]["number"].asText())
+            assertEquals("09171234567", transfer["destination_account"]["number"].asText())
+            assertEquals("TESTGCASH", transfer["destination_account"]["bic"].asText())
+            assertEquals(properties.transferCallbackUrl, transfer["callback_url"].asText())
+            assertEquals(req.cycleId, key)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test fun `missing institution configuration and invalid amounts fail before sending`() {
+        assertFailsWith<IllegalArgumentException> { PayMongoDisbursementProvider.buildTransferRequest(req, PaymongoProperties()) }
+        assertFailsWith<IllegalArgumentException> { PayMongoDisbursementProvider.buildTransferRequest(req.copy(method = "unknown"), properties) }
+        assertFailsWith<IllegalArgumentException> { PayMongoDisbursementProvider.buildTransferRequest(req.copy(amountPhp = BigDecimal("50000.01")), properties) }
+        assertFailsWith<ArithmeticException> { PayMongoDisbursementProvider.toCentavos(BigDecimal("1.001")) }
+        assertEquals(50000L, PayMongoDisbursementProvider.toCentavos(BigDecimal("500")))
     }
 }

@@ -1840,11 +1840,15 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         accountNumber: String,
         qrUri: String? = null,
     ) {
+        if (qrUri == null) {
+            _settingsActionState.value = "Error: Upload a payout QR code before saving."
+            return
+        }
         viewModelScope.launch {
             val token = sessionManager.getAccessToken() ?: return@launch
             _settingsActionState.value = "Saving payout..."
             try {
-                val qrBytes = qrUri?.let { readValidatedAsset(it, "QR") ?: return@launch }
+                val qrBytes = readValidatedAsset(qrUri, "QR") ?: return@launch
                 val createResponse = RetrofitClient.apiService.createPayoutAccount(
                     "Bearer $token",
                     com.quickpitik.mobile.data.remote.CreatePayoutRequest(method, accountNumber, accountName),
@@ -1853,15 +1857,13 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     _settingsActionState.value = "Error: " + (createResponse.error ?: "Failed to add payout.")
                     return@launch
                 }
-                if (qrBytes != null) {
-                    val newId = createResponse.data.id
-                    if (!uploadPayoutQr(token, newId, qrBytes)) {
-                        // The account row DID land — refresh so it shows and a
-                        // retry doesn't create a duplicate.
-                        _settingsActionState.value = "Error: Payout was added, but its QR could not be uploaded."
-                        fetchSettings()
-                        return@launch
-                    }
+                val newId = createResponse.data.id
+                if (!uploadPayoutQr(token, newId, qrBytes)) {
+                    // Keep the incomplete account visible so Edit retries the
+                    // QR upload without creating another account.
+                    _settingsActionState.value = "Error: Payout setup is incomplete. Edit this account to upload its required QR."
+                    fetchSettings()
+                    return@launch
                 }
                 _settingsActionState.value = "Success: Payout added."
                 fetchSettings()
@@ -1877,6 +1879,11 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         accountNumber: String,
         qrUri: String? = null,
     ) {
+        val existing = _payoutAccounts.value.find { it.id == id }
+        if (qrUri == null && (existing?.qr == null || existing.accountNumber != accountNumber)) {
+            _settingsActionState.value = "Error: Upload a QR code matching this payout account before saving."
+            return
+        }
         viewModelScope.launch {
             val token = sessionManager.getAccessToken() ?: return@launch
             _settingsActionState.value = "Updating payout..."

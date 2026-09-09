@@ -505,7 +505,8 @@ private fun WalletSlab(
             )
         } else {
             val hasAccount = balance.primaryAccount != null
-            val canWithdraw = hasAccount && balance.unpaidBalance >= balance.minimum
+            val hasQr = balance.primaryAccount?.hasQr == true
+            val canWithdraw = hasAccount && hasQr && balance.unpaidBalance >= balance.minimum
             val isProcessing = payoutActionState == "processing"
             GhostCta(
                 text = when {
@@ -522,6 +523,7 @@ private fun WalletSlab(
                 text = when {
                     !hasAccount ->
                         "Set up a payout account in Settings to request payouts."
+                    !hasQr -> "Upload your payout account QR in Settings before requesting."
                     canWithdraw ->
                         "Minimum withdrawal ₱%,.0f".format(balance.minimum)
                     else ->
@@ -883,10 +885,8 @@ private fun formatWeekLabel(weekOf: String): String = try {
 // cooldown is a coarse ~24h window, and the backend enforces the real cutoff on
 // request anyway). Conservative on parse failure: not-future, so the CTA stays
 // enabled and the server's 409 surfaces if it's genuinely still on cooldown.
-private fun isFutureIso(iso: String): Boolean = try {
-    val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
-    val date = parser.parse(iso.substring(0, 19))
-    date != null && date.after(Date())
+internal fun isFutureIso(iso: String): Boolean = try {
+    java.time.OffsetDateTime.parse(iso).toInstant().isAfter(java.time.Instant.now())
 } catch (e: Exception) {
     false
 }

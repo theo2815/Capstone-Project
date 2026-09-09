@@ -340,7 +340,7 @@ function RequestPayoutHero({
       )}
 
       <div className="mt-6 border-t border-line pt-5 max-w-lg">
-        {primary ? (
+        {primary?.hasQr ? (
           <Kicker as="p" className="flex items-baseline gap-2 flex-wrap">
             <span aria-hidden="true" className="text-slate-soft">
               →
@@ -361,7 +361,7 @@ function RequestPayoutHero({
             className="inline-flex items-center gap-1.5 font-sans text-sm text-fresh hover:text-fresh/80 transition-colors group"
           >
             <span className="underline decoration-fresh/40 underline-offset-4 decoration-1 group-hover:decoration-fresh">
-              Set up your payout account
+              {primary ? "Upload your payout QR in Settings" : "Set up your payout account"}
             </span>
             <span
               aria-hidden="true"
@@ -377,7 +377,7 @@ function RequestPayoutHero({
         <button
           type="button"
           onClick={onRequest}
-          disabled={!eligible || !primary || cooldownActive}
+          disabled={!eligible || !primary?.hasQr || cooldownActive}
           className={`${BTN_PRIMARY} ${BTN_SIZE.md}`}
         >
           Request payout
@@ -406,6 +406,7 @@ interface PrimaryPayoutAccount {
   method: "gcash" | "maya" | "gotyme";
   accountNumber: string;
   accountName: string;
+  hasQr: boolean;
 }
 
 function OpenRequestHero({

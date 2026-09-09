@@ -413,7 +413,23 @@ sequenceDiagram
 ### 7.6. Financial Ledger, Earnings & Payouts
 - **Split Calculation:** By default, each photo is priced at PHP 125. The platform takes a 25% commission (PHP 31.25), and the photographer receives 75% (PHP 93.75).
 - **Coupons:** Photographers can create discount coupons (up to 50% of their cut). Coupons reduce only the photographer's portion; the platform fee is non-discountable.
-- **Disbursements:** Administrators create payout cycles ([AdminPayoutService.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/service/admin/AdminPayoutService.kt)) to aggregate balances, attach disbursement proof receipts, and record transfers to photographer GCash/Maya/Bank accounts.
+- **Payout requests:** Photographers request cleared earnings minus paid and reserved amounts through `PayoutRequestService`. Requests and account edits lock the photographer row; admin decisions and provider callbacks lock the payout row. The database also enforces one open payout per photographer. Amounts remain reserved through approval and processing.
+
+**Payout and MFA client contract (website + Android):**
+
+| Operation | Contract |
+|---|---|
+| Payout setup | `POST /api/v1/me/photographer/payouts` creates an incomplete account; upload its required QR to `POST /{id}/qr` before showing setup as complete. On upload failure, retain the server ID and retry the QR. Changing the account number clears its previous QR; clients must await the account PATCH before uploading its replacement. |
+| Request eligibility | `/me/photographer/payouts/balance` includes `primaryAccount.hasQr`. A request without the primary account QR fails with `PAYOUT_QR_REQUIRED`. Observe the server's account-change cooldown as an absolute timestamp, including its offset. |
+| Recipient integrity | New requests freeze method, number, name, and QR storage key. Replacing/deleting the live account retains QR images referenced by payouts. Legacy payouts do not display today's QR as historical evidence. Migration `V61` preserves legacy approvals as explicit `approved` rows. |
+| Admin decisions | Use returned/refetched server state. A first approval may remain `pending_review` until another admin approves; do not predict `approved`. The admin DTO's `provider` identifies who owns transfer outcomes. Provider-managed transfers cannot be manually held, cancelled, or settled. |
+| Step-up | When enabled, account changes, `mark-processing`, and `mark-paid` require `X-Step-Up`. Website callers share one reauthentication prompt. Defaults and environment mappings live in `backend/src/main/resources/application.yml`; Android step-up UI remains a prerequisite before enabling the flag for all clients. |
+| Admin MFA | Password and Google first factors can return `mfaRequired` + `mfaToken` with empty session tokens. Website exchanges a TOTP/recovery code at `POST /api/v1/auth/mfa/verify`; Android directs administrators to the website. TOTP steps and recovery codes are single-use. Confirm/disable share a per-admin rate limit; `401 INVALID_MFA_CODE` is an inline code error, not a session refresh trigger. |
+| Android persistence | Tokens use encrypted preferences. If the keystore is unavailable, tokens remain in memory and restarting requires sign-in; plaintext migration residue is cleared. |
+
+The default disbursement provider remains manual. The optional PayMongo adapter uses the documented `transfers` array, source/destination accounts, callback URL and `transfers[0].id`. Configure its wallet and receiving-institution BICs through `PaymongoProperties` / `application.yml`; placeholder institution codes are not used. Account-backed testing of wallet funding and signed callbacks is still required before enabling it. See [Money Movement API](https://docs.paymongo.com/docs/money-movement-send-money) and [idempotency guidance](https://docs.paymongo.com/docs/money-movement-best-practices).
+
+Transfer callbacks are recorded as processed only after an outcome is applied or already known. An early callback for an unlinked transfer returns 503 for redelivery. A return can arrive before success and supersedes later success; conflicting terminal outcomes return 503 and require reconciliation. Reconcile ambiguous initiation timeouts before retrying beyond PayMongo's documented idempotency retention window.
 
 ---
 

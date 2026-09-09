@@ -2,9 +2,11 @@ package com.quickpitik.repository
 
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
+import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import org.springframework.stereotype.Repository
@@ -12,6 +14,12 @@ import java.util.UUID
 
 @Repository
 interface UserRepository : JpaRepository<User, UUID> {
+    // Serializes payout destination changes/requests and MFA proof consumption,
+    // including the first account/enrollment when there is no child row to lock.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.id = :id")
+    fun lockById(@Param("id") id: UUID): User?
+
     fun findByEmail(email: String): User?
 
     fun findByGoogleSub(googleSub: String): User?

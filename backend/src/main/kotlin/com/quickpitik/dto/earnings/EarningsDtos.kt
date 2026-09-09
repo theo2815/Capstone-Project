@@ -170,6 +170,7 @@ data class PayoutBalanceAccountDto(
     val method: String,
     val accountNumber: String,
     val accountName: String,
+    val hasQr: Boolean = false,
 )
 
 // ─── Transactions ledger ─────────────────────────────────────────────────

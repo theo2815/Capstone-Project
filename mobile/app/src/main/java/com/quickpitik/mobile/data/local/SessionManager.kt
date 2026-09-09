@@ -15,6 +15,9 @@ fun isPhotographerRole(raw: String?): Boolean =
 
 class SessionManager private constructor(context: Context) {
     private val appContext = context.applicationContext
+    private var secureStorageAvailable = true
+    @Volatile private var memoryAccessToken: String? = null
+    @Volatile private var memoryRefreshToken: String? = null
     // The JWT + refresh token now live in an EncryptedSharedPreferences store
     // (AES-256) instead of the old plaintext prefs — a rooted/backed-up device
     // no longer leaks a bearer that hits the payout endpoints. Same
@@ -22,8 +25,8 @@ class SessionManager private constructor(context: Context) {
     private val prefs: SharedPreferences = buildSecurePrefs(appContext)
 
     // Encrypted store with a one-time migration from the legacy plaintext file,
-    // and a plaintext fallback so a broken keystore (rare, some OEMs) can never
-    // crash sign-in.
+    // and memory-only tokens if the keystore fails. A restart then requires
+    // sign-in; credentials must never fall back to plaintext persistence.
     private fun buildSecurePrefs(ctx: Context): SharedPreferences = try {
         val masterKey = MasterKey.Builder(ctx)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -40,10 +43,14 @@ class SessionManager private constructor(context: Context) {
     } catch (e: Exception) {
         android.util.Log.w(
             "SessionManager",
-            "EncryptedSharedPreferences unavailable — falling back to plaintext",
+            "EncryptedSharedPreferences unavailable; session tokens will not persist",
             e,
         )
-        ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        secureStorageAvailable = false
+        ctx.deleteSharedPreferences(PREF_NAME_ENC)
+        ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).also {
+            check(it.edit().clear().commit()) { "Could not clear legacy session storage" }
+        }
     }
 
     // Copy tokens written by an older plaintext build into the encrypted store,
@@ -63,9 +70,9 @@ class SessionManager private constructor(context: Context) {
                     is Float -> putFloat(k, v)
                 }
             }
-            apply()
+            check(commit()) { "Could not migrate encrypted session" }
         }
-        legacy.edit().clear().apply()
+        check(legacy.edit().clear().commit()) { "Could not clear legacy session storage" }
     }
     private var authGeneration = 0L
     private val accessTokens = LinkedHashSet<String>()
@@ -136,9 +143,13 @@ class SessionManager private constructor(context: Context) {
     ) {
         authGeneration++
         accessTokens.clear()
+        memoryAccessToken = if (secureStorageAvailable) null else token
+        memoryRefreshToken = if (secureStorageAvailable) null else refreshToken
         prefs.edit().apply {
-            putString(KEY_ACCESS_TOKEN, token)
-            putString(KEY_REFRESH_TOKEN, refreshToken)
+            if (secureStorageAvailable) {
+                putString(KEY_ACCESS_TOKEN, token)
+                putString(KEY_REFRESH_TOKEN, refreshToken)
+            }
             putString(KEY_USER_ROLE, role)
             putString(KEY_USER_NAME, name)
             putString(KEY_USER_EMAIL, email)
@@ -162,6 +173,11 @@ class SessionManager private constructor(context: Context) {
     fun updateTokens(accessToken: String, refreshToken: String?) {
         getAccessToken()?.let(accessTokens::add)
         while (accessTokens.size > 8) accessTokens.remove(accessTokens.first())
+        if (!secureStorageAvailable) {
+            memoryAccessToken = accessToken
+            if (refreshToken != null) memoryRefreshToken = refreshToken
+            return
+        }
         prefs.edit().apply {
             putString(KEY_ACCESS_TOKEN, accessToken)
             if (refreshToken != null) putString(KEY_REFRESH_TOKEN, refreshToken)
@@ -178,11 +194,11 @@ class SessionManager private constructor(context: Context) {
     }
 
     fun getAccessToken(): String? {
-        return prefs.getString(KEY_ACCESS_TOKEN, null)
+        return if (secureStorageAvailable) prefs.getString(KEY_ACCESS_TOKEN, null) else memoryAccessToken
     }
 
     fun getRefreshToken(): String? {
-        return prefs.getString(KEY_REFRESH_TOKEN, null)
+        return if (secureStorageAvailable) prefs.getString(KEY_REFRESH_TOKEN, null) else memoryRefreshToken
     }
 
     fun getUserRole(): String? {
@@ -205,6 +221,8 @@ class SessionManager private constructor(context: Context) {
     fun clearSession() {
         authGeneration++
         accessTokens.clear()
+        memoryAccessToken = null
+        memoryRefreshToken = null
         appContext.getSharedPreferences("quickpitik_tether", Context.MODE_PRIVATE).edit()
             .remove("watch_active_event").remove("watch_owner").remove("watch_event_snapshot").apply()
         appContext.stopService(android.content.Intent(appContext, com.quickpitik.mobile.service.TetherIngestService::class.java))

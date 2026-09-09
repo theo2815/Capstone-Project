@@ -11,22 +11,32 @@ import { StepUpModal } from "@/components/auth/step-up-modal";
 export function StepUpProvider() {
   const [open, setOpen] = useState(false);
   const resolverRef = useRef<((token: string | null) => void) | null>(null);
+  const pendingRef = useRef<Promise<string | null> | null>(null);
 
   useEffect(() => {
     setStepUpHandler(
-      () =>
-        new Promise<string | null>((resolve) => {
+      () => {
+        if (pendingRef.current) return pendingRef.current;
+        pendingRef.current = new Promise<string | null>((resolve) => {
           resolverRef.current = resolve;
           setOpen(true);
-        }),
+        });
+        return pendingRef.current;
+      },
     );
-    return () => setStepUpHandler(null);
+    return () => {
+      setStepUpHandler(null);
+      resolverRef.current?.(null);
+      resolverRef.current = null;
+      pendingRef.current = null;
+    };
   }, []);
 
   const handleResolve = useCallback((token: string | null) => {
     setOpen(false);
     const resolve = resolverRef.current;
     resolverRef.current = null;
+    pendingRef.current = null;
     resolve?.(token);
   }, []);
 

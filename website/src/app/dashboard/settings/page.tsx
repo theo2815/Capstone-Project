@@ -281,6 +281,11 @@ function EditModeProvider({ children }: { children: ReactNode }) {
 
     const settings = usePhotographerSettingsStore.getState();
     const pending = pendingFilesRef.current;
+    if (settings.payouts.some((p) => !p.qr)) {
+      showToast({ kind: "error", message: "Upload a QR code for each payout account before saving." });
+      setSaving(false);
+      return;
+    }
 
     // Build the BE call list by diffing snapshot ↔ current store. Only fire
     // the endpoints whose source data actually changed — keeps the network
@@ -448,13 +453,8 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     }
 
     // ── Payouts diff ────────────────────────────────────────────────────
-    // Added rows POST first to obtain a server id; QR (if any) uploads via
-    // a follow-on `POST /payouts/{id}/qr` call. Existing rows PATCH on
-    // account-number / account-name changes, POST QR on QR add/replace,
-    // PATCH primary when the primary toggle flips. Note: there is no
-    // "remove QR" endpoint server-side; removing a QR locally has no BE
-    // effect until the photographer uploads a replacement (acceptable v1
-    // limitation per notes/photographer-settings-backend.md §3).
+    // Save account details before their required QR; retain successful steps
+    // in the snapshot so an upload retry never creates a duplicate account.
     const snapPayoutsById = new Map(snap.payouts.map((p) => [p.id, p]));
     const currentPayoutsById = new Map(
       settings.payouts.map((p) => [p.id, p]),
@@ -514,36 +514,24 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         const accountChanged =
           prev.accountNumber !== p.accountNumber ||
           prev.accountName !== p.accountName;
-        if (accountChanged) {
+        const qrChanged = (prev.qr?.dataUrl ?? null) !== (p.qr?.dataUrl ?? null);
+        if (accountChanged || qrChanged) {
           tasks.push({
             label: "Payout account",
-            run: () =>
-              patchPayoutAccount(p.id, {
-                accountNumber: p.accountNumber,
-                accountName: p.accountName,
-              }),
-            onSuccess: () => {
-              const row = snap.payouts.find((x) => x.id === p.id);
-              if (row) {
-                row.accountNumber = p.accountNumber;
-                row.accountName = p.accountName;
+            run: async () => {
+              // PATCH invalidates the old QR when the number changes. Await it
+              // before uploading so it cannot erase the replacement QR.
+              if (accountChanged) {
+                const updated = await patchPayoutAccount(p.id, {
+                  accountNumber: p.accountNumber,
+                  accountName: p.accountName,
+                });
+                Object.assign(prev, updated);
               }
-            },
-          });
-        }
-        // QR added or replaced — only POST if the data URL changed.
-        const qrChanged =
-          (prev.qr?.dataUrl ?? null) !== (p.qr?.dataUrl ?? null) && !!p.qr;
-        if (qrChanged && p.qr) {
-          tasks.push({
-            label: "Payout QR",
-            run: () => {
-              const file = dataUrlToFile(p.qr!.dataUrl, `qr-${p.id}.png`);
-              return postPayoutQr(p.id, file);
-            },
-            onSuccess: () => {
-              const row = snap.payouts.find((x) => x.id === p.id);
-              if (row) row.qr = p.qr ? { ...p.qr } : null;
+              if (qrChanged && p.qr) {
+                await postPayoutQr(p.id, dataUrlToFile(p.qr.dataUrl, `qr-${p.id}.png`));
+                prev.qr = { ...p.qr };
+              }
             },
           });
         }
@@ -2880,7 +2868,7 @@ function PayoutSlab() {
 
   // Ready when there's at least one account marked primary. Matches the
   // server's MISSING_PAYOUT gate.
-  const ready = payouts.some((p) => p.isPrimary);
+  const ready = payouts.some((p) => p.isPrimary && p.qr);
 
   return (
     <Slab
@@ -3046,7 +3034,7 @@ function PayoutForm({
     nameTouched && accountName.trim().length === 0
       ? "Account name is required."
       : null;
-  const canSave = validNumber && validName;
+  const canSave = validNumber && validName && !!qr && !busy;
 
   const numberLabel = method === "gotyme" ? "Account number" : "Mobile number";
   const numberPlaceholder =
@@ -3182,7 +3170,10 @@ function PayoutForm({
           <input
             id={`payout-number-${method}`}
             value={formatPayoutNumber(method, accountNumber)}
-            onChange={(e) => setAccountNumber(e.target.value)}
+            onChange={(e) => {
+              if (e.target.value.replace(/\D/g, "") !== accountNumber.replace(/\D/g, "")) setQr(null);
+              setAccountNumber(e.target.value);
+            }}
             placeholder={numberPlaceholder}
             inputMode="numeric"
             required
@@ -3213,7 +3204,7 @@ function PayoutForm({
       </div>
 
       <div className="flex flex-col gap-3">
-        <span className="font-sans text-sm text-slate">QR code (optional)</span>
+        <span className="font-sans text-sm text-slate">QR code (required)</span>
         <div className="flex flex-col sm:flex-row sm:items-start gap-4 sm:gap-5">
           <div className="size-32 md:size-36 shrink-0 rounded-2xl border border-line bg-bone overflow-hidden flex items-center justify-center">
             {qr ? (
@@ -3245,7 +3236,8 @@ function PayoutForm({
                 accept={ACCEPTED_IMAGE_MIME.join(",")}
                 onChange={handleQrPick}
                 disabled={busy}
-                aria-describedby={qrError ? `payout-qr-error-${method}` : undefined}
+                aria-describedby={qrError ? `payout-qr-error-${method}` : `payout-qr-help-${method}`}
+                aria-required="true"
                 aria-invalid={qrError ? true : undefined}
                 className="sr-only"
               />
@@ -3259,10 +3251,10 @@ function PayoutForm({
                 Remove QR
               </button>
             )}
-            <p className="font-sans text-sm text-slate-soft max-w-xs">
-              From the {PAYOUT_METHOD_LABEL[method]} app: open your QR, save the
-              image to your gallery, then upload it here. Backed up so finance
-              can scan if a transfer needs to retry.
+            <p id={`payout-qr-help-${method}`} className="font-sans text-sm text-slate-soft max-w-xs">
+              Required to receive payouts. From the {PAYOUT_METHOD_LABEL[method]} app: open your QR, save the
+              image to your gallery, then upload it here. It must match the account
+              number above; changing the number requires a new QR.
             </p>
           </div>
         </div>
@@ -3348,11 +3340,9 @@ function PayoutCard({
           <p className="font-mono tnum text-base text-ink mt-2 break-all">
             {formatted || "—"}
           </p>
-          {account.qr && (
-            <Kicker as="p" tone="soft" className="mt-3">
-              QR uploaded
-            </Kicker>
-          )}
+          <p className="font-sans text-sm text-slate mt-3">
+            {account.qr ? "QR attached" : "QR required. Edit this account to finish setup."}
+          </p>
         </div>
       </div>
 

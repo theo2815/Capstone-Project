@@ -17,6 +17,9 @@ import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import com.quickpitik.exception.ApiException
+import org.springframework.http.HttpStatus
 
 // Provider is the source of truth for whether money moved. Event id dedupe +
 // state-machine mapping are the logic worth proving.
@@ -99,12 +102,21 @@ class PayoutDisbursementWebhookServiceTest {
     }
 
     @Test
-    fun `an unknown transfer id is ignored`() {
-        Mockito.`when`(payoutCycleRepository.findByProviderTransferId(anyArg())).thenReturn(null)
-        assertEquals(
-            "unknown-transfer",
-            service().handle(event("transfer.outward.successful", transferId = "tr_x"))["ignored"],
-        )
+    fun `an early callback is retried after the transfer is linked`() {
+        val evt = event("transfer.outward.successful")
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, assertFailsWith<ApiException> { service().handle(evt) }.status)
+        Mockito.verify(processedWebhookEventRepository, Mockito.never()).save(anyArg())
+        Mockito.`when`(payoutCycleRepository.findByProviderTransferId("tr_1")).thenReturn(cycle(PayoutCycleStatus.PROCESSING))
+        assertEquals("paid", service().handle(evt)["status"])
+    }
+
+    @Test
+    fun `return before success stays returned when success arrives later`() {
+        val c = cycle(PayoutCycleStatus.PROCESSING)
+        Mockito.`when`(payoutCycleRepository.findByProviderTransferId("tr_1")).thenReturn(c)
+        assertEquals("returned", service().handle(event("transfer.outward.returned"))["status"])
+        assertEquals("already-applied", service().handle(event("transfer.outward.successful", eventId = "evt_late"))["skipped"])
+        assertEquals(PayoutCycleStatus.RETURNED, c.status)
     }
 
     @Test
@@ -112,6 +124,6 @@ class PayoutDisbursementWebhookServiceTest {
         // Already PAID; a late "successful" (which expects PROCESSING) is a no-op.
         Mockito.`when`(payoutCycleRepository.findByProviderTransferId("tr_1"))
             .thenReturn(cycle(PayoutCycleStatus.PAID))
-        assertEquals("invalid-from", service().handle(event("transfer.outward.successful"))["skipped"])
+        assertEquals("already-applied", service().handle(event("transfer.outward.successful"))["skipped"])
     }
 }

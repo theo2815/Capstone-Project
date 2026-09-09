@@ -60,7 +60,7 @@ export function StepUpModal({
     <Modal isOpen={open} onClose={cancel} title="Confirm it's you">
       <form onSubmit={handleSubmit} className="space-y-5">
         <p className="font-sans text-sm text-ink-soft">
-          For your security, re-enter your password to change payout details.
+          For your security, re-enter your password to continue with this payout action.
         </p>
         <div className="flex flex-col gap-2">
           <label htmlFor="stepup-password" className="kicker">

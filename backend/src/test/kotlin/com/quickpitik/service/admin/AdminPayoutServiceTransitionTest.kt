@@ -119,8 +119,8 @@ class AdminPayoutServiceTransitionTest {
     }
 
     private fun given(status: PayoutCycleStatus, amount: String = "1000", approvedBy: UUID? = null) {
-        Mockito.`when`(payoutCycleRepository.findById(cycleId))
-            .thenReturn(Optional.of(cycle(status, amount, approvedBy)))
+        Mockito.`when`(payoutCycleRepository.lockById(cycleId))
+            .thenReturn(cycle(status, amount, approvedBy))
     }
 
     private fun recordedToStatus(): String {

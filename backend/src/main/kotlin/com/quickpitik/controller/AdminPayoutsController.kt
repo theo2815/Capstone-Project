@@ -85,7 +85,11 @@ class AdminPayoutsController(
     fun markProcessing(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable payoutId: String,
-    ): AdminPayoutCycleDto = adminPayoutService.markProcessing(principal.userId, payoutId)
+        @RequestHeader(name = "X-Step-Up", required = false) stepUp: String?,
+    ): AdminPayoutCycleDto {
+        stepUpService.enforce(principal.userId, stepUp)
+        return adminPayoutService.markProcessing(principal.userId, payoutId)
+    }
 
     @PostMapping("/{payoutId}/mark-failed")
     fun markFailed(

@@ -145,7 +145,8 @@ data class PayoutBalanceDto(
 data class PayoutBalanceAccountDto(
     val method: String,
     val accountNumber: String,
-    val accountName: String
+    val accountName: String,
+    val hasQr: Boolean = false,
 )
 
 data class PhotographerTransactionDto(

@@ -3,47 +3,37 @@ package com.quickpitik.dto.orders
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 
-// PayMongo Disbursements / Transfers (v2) — request + webhook shapes.
-//
-// ⚠ VERIFY-IN-TEST-MODE (docs §I). The exact v2 attribute nesting, the transfer
-// status strings, and the webhook event type strings are documented ambiguities
-// that must be confirmed against a real test-mode account before the adapter is
-// enabled. The shapes below follow the documented envelope
-// (`{ data: { attributes: {...} } }`) and PayMongo's centavos-as-integer money
-// convention, but treat them as provisional. The adapter is disabled by default
-// (app.platform.disbursement-provider=manual) precisely so these can't move real
-// money until verified.
-
-// ── Create transfer: POST /v2/batch_transfers (single = a one-element batch) ──
+// POST /v2/batch_transfers uses a transfers array, unlike v1 checkout's data envelope.
+// https://docs.paymongo.com/docs/money-movement-send-money
 data class PaymongoTransferRequest(
-    val data: PaymongoTransferRequestData,
-)
-
-data class PaymongoTransferRequestData(
-    val attributes: PaymongoTransferRequestAttributes,
+    val transfers: List<PaymongoTransferRequestAttributes>,
 )
 
 data class PaymongoTransferRequestAttributes(
     // Centavos, matching the checkout boundary (peso × 100).
     val amount: Long,
     val currency: String = "PHP",
-    // Our cycle id — the provider-side idempotency + reconciliation key.
-    @JsonProperty("reference_number") val referenceNumber: String,
     val description: String,
-    val destination: PaymongoTransferDestination,
+    @JsonProperty("source_account") val sourceAccount: PaymongoTransferAccount,
+    @JsonProperty("destination_account") val destinationAccount: PaymongoTransferAccount,
+    val provider: String,
+    @JsonProperty("callback_url") val callbackUrl: String,
 )
 
-data class PaymongoTransferDestination(
-    @JsonProperty("account_number") val accountNumber: String,
-    @JsonProperty("account_holder_name") val accountHolderName: String,
-    // ⚠ BIC / institution code from GET /v2/transfers/receiving_institutions —
-    // NOT the wire method string. Mapped best-effort until verified.
-    @JsonProperty("bank_code") val bankCode: String,
+data class PaymongoTransferAccount(
+    val number: String,
+    val name: String,
+    val bic: String,
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PaymongoTransferResponse(
-    val data: PaymongoTransferNode?,
+    val transfers: List<PaymongoTransferResult> = emptyList(),
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class PaymongoTransferResult(
+    val id: String?,
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

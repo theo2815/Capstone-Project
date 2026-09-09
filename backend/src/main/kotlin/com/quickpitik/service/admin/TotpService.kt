@@ -41,14 +41,23 @@ class TotpService {
         code: String,
         nowSeconds: Long = System.currentTimeMillis() / 1000,
         digits: Int = DIGITS,
-    ): Boolean {
+    ): Boolean = matchingStep(secret, code, nowSeconds, digits) != null
+
+    fun matchingStep(
+        secret: ByteArray,
+        code: String,
+        nowSeconds: Long = System.currentTimeMillis() / 1000,
+        digits: Int = DIGITS,
+    ): Long? {
         val candidate = code.trim()
-        if (candidate.length != digits || candidate.any { !it.isDigit() }) return false
+        if (candidate.length != digits || candidate.any { !it.isDigit() }) return null
         for (delta in -1..1) {
             val expected = generate(secret, nowSeconds + delta * STEP_SECONDS, digits)
-            if (MessageDigest.isEqual(expected.toByteArray(), candidate.toByteArray())) return true
+            if (MessageDigest.isEqual(expected.toByteArray(), candidate.toByteArray())) {
+                return Math.floorDiv(nowSeconds, STEP_SECONDS) + delta
+            }
         }
-        return false
+        return null
     }
 
     /** RFC 4648 base32, uppercase, unpadded — the form authenticator apps expect. */

@@ -22,7 +22,7 @@ import {
   useAdminPayoutStore,
   mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
-import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-data";
+import { useAdminPayouts, usePayoutActions, EMPTY_PAYOUTS } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -100,15 +100,7 @@ function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
 
 export function PayoutsQueue() {
   const overrides = useAdminPayoutStore((s) => s.overrides);
-  const approve = useAdminPayoutStore((s) => s.approve);
-  const hold = useAdminPayoutStore((s) => s.hold);
-  const markPaid = useAdminPayoutStore((s) => s.markPaid);
-  const reject = useAdminPayoutStore((s) => s.reject);
-  const markProcessing = useAdminPayoutStore((s) => s.markProcessing);
-  const markFailed = useAdminPayoutStore((s) => s.markFailed);
-  const markReturned = useAdminPayoutStore((s) => s.markReturned);
-  const bulkApprove = useAdminPayoutStore((s) => s.bulkApprove);
-  const bulkHold = useAdminPayoutStore((s) => s.bulkHold);
+  const { approve, hold, markPaid, reject, markProcessing, markFailed, markReturned, bulkApprove, bulkHold } = usePayoutActions();
   const { showToast } = useToast();
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -124,11 +116,7 @@ export function PayoutsQueue() {
   } | null>(null);
   const [rowId, setRowId] = useUrlState<string>("row", "");
 
-  // A-1: hydrate from BE rather than the mock seed. Local overrides still
-  // layer on top for instant-feedback after admin actions; the store fires
-  // the matching api-admin mutation in the background so the BE catches up
-  // before the next refetch. `useAdminPayouts()` returns null while in
-  // flight — `?? []` keeps the merge stable.
+  // Canonical server rows drive every status and available action.
   const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   const effective = useMemo(
     () => mergePayoutsWithOverrides(serverPayouts, overrides),
@@ -346,7 +334,7 @@ export function PayoutsQueue() {
 
   async function handleSingleApprove(cycle: AdminPayoutCycle) {
     const ok = await approve(cycle.id);
-    if (ok) showToast({ kind: "success", message: `Approved · ${cycle.id}` });
+    if (ok) showToast({ kind: "success", message: `Approval recorded · ${cycle.id}` });
   }
   function handleSingleHoldRequest(cycle: AdminPayoutCycle) {
     setHoldTarget({
@@ -364,7 +352,7 @@ export function PayoutsQueue() {
     const id = openRow.id;
     const ok = await approve(id);
     if (ok) {
-      showToast({ kind: "success", message: `Approved · ${id}` });
+      showToast({ kind: "success", message: `Approval recorded · ${id}` });
       setRowId("");
     }
   }
@@ -437,7 +425,7 @@ export function PayoutsQueue() {
     if (ok) {
       showToast({
         kind: "success",
-        message: `Approved · ${ids.length} payouts`,
+        message: `Approvals recorded · ${ids.length} payouts`,
       });
     }
   }
@@ -492,7 +480,7 @@ export function PayoutsQueue() {
   }
 
   useDrawerVerbs({
-    active: openRow !== null && !drawerEscDisabled,
+    active: openRow !== null && (openRow.provider ?? "manual") === "manual" && !drawerEscDisabled,
     verbs: openRow
       ? {
           E:
@@ -887,6 +875,9 @@ function PayoutDrawerActions({
 
   const s = cycle.status;
 
+  if (cycle.provider && cycle.provider !== "manual") {
+    return <p className="font-sans text-sm text-slate-soft">Payment provider manages this transfer.</p>;
+  }
   if (s === "failed" || s === "returned" || s === "rejected" || s === "cancelled") {
     return (
       <p className="font-sans text-sm text-slate-soft">No further actions.</p>
@@ -1076,8 +1067,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
             Payment
           </Kicker>
           <p className="font-sans text-sm text-ink-soft">
-            Payment in transit — mark it paid once it lands, or mark it failed if
-            it doesn&apos;t go through.
+            {(cycle.provider ?? "manual") === "manual"
+              ? "Payment in transit — mark it paid once it lands, or mark it failed if it doesn't go through."
+              : "Payment in transit. The payment provider will confirm its outcome."}
           </p>
         </section>
       )}

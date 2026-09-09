@@ -1,10 +1,9 @@
 package com.quickpitik.service.disbursement
 
 import com.quickpitik.config.PaymongoProperties
-import com.quickpitik.dto.orders.PaymongoTransferDestination
+import com.quickpitik.dto.orders.PaymongoTransferAccount
 import com.quickpitik.dto.orders.PaymongoTransferRequest
 import com.quickpitik.dto.orders.PaymongoTransferRequestAttributes
-import com.quickpitik.dto.orders.PaymongoTransferRequestData
 import com.quickpitik.dto.orders.PaymongoTransferResponse
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpHeaders
@@ -22,15 +21,11 @@ import java.util.Base64
  * ever resolves the configured provider, so this cannot move money while the
  * default "manual" is in force.
  *
- * ⚠ NOT VERIFIED AGAINST A LIVE ACCOUNT (KYB-gated — docs §I). Before flipping
- * the config to "paymongo", verify in a test-mode account: the exact
- * /batch_transfers attribute shape, the receiving-institution (bank_code) codes
- * from GET /v2/transfers/receiving_institutions, the wallet Available-balance
- * gate, and the transfer/webhook status strings. The request BUILDER is
- * unit-tested; the HTTP call and the doc-ambiguous fields are the owed part.
+ * The HTTP contract follows PayMongo's Money Movement API. A test-mode account
+ * is still needed to verify wallet funding, receiving institutions and callbacks.
  *
- * Idempotency: the transfer carries the cycle id as both reference_number and
- * the Idempotency-Key, so a retry never double-sends.
+ * Idempotency uses the cycle id. PayMongo retains keys for about 24 hours;
+ * ambiguous timeouts must be reconciled before retrying beyond that window.
  */
 @Component
 class PayMongoDisbursementProvider(
@@ -59,7 +54,7 @@ class PayMongoDisbursementProvider(
     }
 
     override fun initiate(request: DisbursementRequest): DisbursementResult {
-        val body = buildTransferRequest(request)
+        val body = buildTransferRequest(request, properties)
         val response = try {
             restClient.post()
                 .uri("/batch_transfers")
@@ -70,14 +65,13 @@ class PayMongoDisbursementProvider(
                 .body(PaymongoTransferResponse::class.java)
         } catch (ex: RestClientResponseException) {
             log.error(
-                "PayMongo POST /batch_transfers failed for cycle {}: status={} body={}",
+                "PayMongo POST /batch_transfers failed for cycle {}: status={}",
                 request.cycleId,
                 ex.statusCode,
-                ex.responseBodyAsString,
             )
             throw ex
         }
-        val transferId = response?.data?.id
+        val transferId = response?.transfers?.singleOrNull()?.id?.takeIf { it.isNotBlank() }
             ?: throw IllegalStateException(
                 "PayMongo transfer created but no id returned for cycle ${request.cycleId}",
             )
@@ -85,37 +79,43 @@ class PayMongoDisbursementProvider(
     }
 
     companion object {
-        // ⚠ VERIFY-IN-TEST-MODE: real receiving-institution / BIC codes come from
-        // GET /v2/transfers/receiving_institutions. These placeholders let the
-        // adapter compile + be unit-tested; they MUST be replaced with the real
-        // codes for each e-wallet before PayMongo is enabled.
-        internal fun bankCodeFor(method: String): String = when (method.lowercase()) {
-            "gcash" -> "GXCHPHM2XXX" // ⚠ placeholder
-            "maya" -> "PAPHPHM1XXX" // ⚠ placeholder
-            "gotyme" -> "GOTYPHM1XXX" // ⚠ placeholder
-            else -> throw IllegalArgumentException(
-                "No PayMongo receiving-institution mapping for method '$method'",
-            )
-        }
-
         // Pesos → centavos, exact (no rounding on a money value).
         internal fun toCentavos(amountPhp: BigDecimal): Long =
             amountPhp.movePointRight(2).longValueExact()
 
-        internal fun buildTransferRequest(request: DisbursementRequest): PaymongoTransferRequest =
-            PaymongoTransferRequest(
-                PaymongoTransferRequestData(
+        internal fun buildTransferRequest(
+            request: DisbursementRequest,
+            properties: PaymongoProperties,
+        ): PaymongoTransferRequest {
+            val bic = when (request.method.lowercase()) {
+                "gcash" -> properties.transferGcashBic
+                "maya" -> properties.transferMayaBic
+                "gotyme" -> properties.transferGotymeBic
+                else -> throw IllegalArgumentException("Unsupported transfer method '${request.method}'")
+            }
+            require(listOf(bic, properties.transferSourceNumber, properties.transferSourceName,
+                properties.transferSourceBic, properties.transferCallbackUrl).all { it.isNotBlank() }) {
+                "PayMongo transfer account, institution and callback configuration is required"
+            }
+            require(properties.transferRail in setOf("instapay", "pesonet")) { "Unsupported transfer rail" }
+            require(request.amountPhp.signum() > 0) { "Transfer amount must be positive" }
+            require(properties.transferRail != "instapay" || request.amountPhp <= BigDecimal("50000")) {
+                "InstaPay supports at most PHP 50,000; use a verified PESONet configuration for larger transfers"
+            }
+            return PaymongoTransferRequest(
+                listOf(
                     PaymongoTransferRequestAttributes(
                         amount = toCentavos(request.amountPhp),
-                        referenceNumber = request.cycleId,
                         description = "QuickPitik payout ${request.cycleId}",
-                        destination = PaymongoTransferDestination(
-                            accountNumber = request.accountNumber,
-                            accountHolderName = request.accountName,
-                            bankCode = bankCodeFor(request.method),
+                        sourceAccount = PaymongoTransferAccount(
+                            properties.transferSourceNumber, properties.transferSourceName, properties.transferSourceBic,
                         ),
+                        destinationAccount = PaymongoTransferAccount(request.accountNumber, request.accountName, bic),
+                        provider = properties.transferRail,
+                        callbackUrl = properties.transferCallbackUrl,
                     ),
                 ),
             )
+        }
     }
 }

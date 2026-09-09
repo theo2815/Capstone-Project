@@ -1834,7 +1834,10 @@ private fun PayoutEditorSheet(
         "gotyme" -> numberDigits.length in 10..16
         else -> numberDigits.length == 11 && numberDigits.startsWith("09")
     }
-    val canSubmit = accountName.trim().isNotBlank() && numberMinSatisfied && numberError == null
+    val storedQr = (mode as? PayoutSheetMode.Edit)?.account
+        ?.takeIf { it.accountNumber == numberDigits }?.qr
+    val hasQr = qrUri != null || storedQr != null
+    val canSubmit = accountName.trim().isNotBlank() && numberMinSatisfied && numberError == null && hasQr
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1865,6 +1868,7 @@ private fun PayoutEditorSheet(
                     DropdownMenuItem(
                         text = { Text(PAYOUT_METHOD_LABEL[m] ?: m, color = Ink, style = Typography.bodyMedium) },
                         onClick = {
+                            if (method != m) qrUri = null
                             method = m
                             accountNumberInput = formatPayoutNumber(m, accountNumberInput.filter { it.isDigit() })
                             methodMenuExpanded = false
@@ -1887,7 +1891,10 @@ private fun PayoutEditorSheet(
             QpFormField(
                 label = if (method == "gotyme") "Account number (16 digits)" else "Mobile number (09…)",
                 value = accountNumberInput,
-                onChange = { raw -> accountNumberInput = formatPayoutNumber(method, raw) },
+                onChange = { raw ->
+                    if (raw.filter { it.isDigit() } != numberDigits) qrUri = null
+                    accountNumberInput = formatPayoutNumber(method, raw)
+                },
                 placeholder = if (method == "gotyme") "1234 5678 9012 3456" else "09XX XXX XXXX",
                 keyboardType = KeyboardType.Number,
                 error = if (numberDigits.isNotBlank()) numberError else null,
@@ -1895,7 +1902,7 @@ private fun PayoutEditorSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Kicker(text = "QR code · optional", color = Slate)
+            Kicker(text = "QR code · required", color = Slate)
             Spacer(modifier = Modifier.height(6.dp))
             QpCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1914,11 +1921,11 @@ private fun PayoutEditorSheet(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
                             )
-                        } else if (mode is PayoutSheetMode.Edit && mode.account.qr != null) {
+                        } else if (storedQr != null) {
                             // Stored QR — a presigned URL, so Coil renders it
                             // like any other remote image. See the card above.
                             AsyncImage(
-                                model = mode.account.qr.dataUrl,
+                                model = storedQr.dataUrl,
                                 contentDescription = "Payout QR on file",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
@@ -1936,7 +1943,7 @@ private fun PayoutEditorSheet(
                             fontWeight = FontWeight.Medium,
                         )
                         Text(
-                            text = "Shown to runners on the checkout receipt.",
+                            text = "Required for payouts. Match the account number above. Only finance staff can view it.",
                             color = SlateSoft,
                             style = Typography.bodySmall,
                         )

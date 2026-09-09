@@ -16,6 +16,7 @@ import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.TransactionRepository
+import com.quickpitik.repository.UserRepository
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
@@ -34,9 +35,9 @@ import java.util.UUID
  * through the existing AdminPayoutService approve/hold/mark-paid pipeline.
  *
  * Constraints:
- *   - One open request at a time (status IN pending / held).
- *   - Minimum unpaid balance: ₱500 (lifetime kept − paid cycles).
- *   - Primary payout account must exist.
+ *   - One open request at a time (pending / approved / processing / held).
+ *   - Configured minimum available balance (cleared earnings minus paid and reserved).
+ *   - Primary payout account must have a QR and be past its change cooldown.
  *   - Cycle IDs are sequence-based per photographer to avoid the week-based
  *     collision when a photographer requests twice in the same ISO week.
  *
@@ -55,6 +56,7 @@ class PayoutRequestService(
     private val payoutAccountAuditRepository: PayoutAccountAuditRepository,
     private val payoutStatusRecorder: PayoutStatusRecorder,
     private val platformProperties: PlatformProperties,
+    private val userRepository: UserRepository,
 ) {
 
     @Transactional(readOnly = true)
@@ -86,14 +88,18 @@ class PayoutRequestService(
                     method = it.method.wire,
                     accountNumber = it.accountNumber,
                     accountName = it.accountName,
+                    hasQr = !it.qrS3Key.isNullOrBlank(),
                 )
             },
         )
     }
 
     fun request(photographerId: UUID): PhotographerPayoutDto {
-        // One open at a time. Pending review, approved (PENDING+settledAt),
-        // and held all count as "open" — admin must resolve the prior cycle
+        // Shares the destination mutation lock so cooldown + QR snapshot are
+        // checked against one committed account version, including first setup.
+        userRepository.lockById(photographerId)
+        // One open at a time. Pending, approved, processing, and held all
+        // count as "open" — admin must resolve the prior cycle
         // before the photographer can submit another.
         payoutCycleRepository.findFirstByPhotographerIdAndStatusWireIn(
             photographerId,
@@ -133,6 +139,14 @@ class PayoutRequestService(
                 field = "payoutAccount",
             )
 
+        if (primary.qrS3Key.isNullOrBlank()) {
+            throw ValidationException(
+                code = ErrorCodes.PAYOUT_QR_REQUIRED,
+                message = "Upload a payment QR code for your primary payout account before requesting a payout",
+                field = "payoutAccount",
+            )
+        }
+
         val settings = photographerSettingsRepository.findById(photographerId).orElse(null)
         val handle = settings?.handle
         val sequence = payoutCycleRepository.countByPhotographerId(photographerId) + 1
@@ -170,9 +184,10 @@ class PayoutRequestService(
         cycle.accountSnapshotMethod = primary.method.wire
         cycle.accountSnapshotNumber = primary.accountNumber
         cycle.accountSnapshotName = primary.accountName
+        cycle.accountSnapshotQrKey = primary.qrS3Key
 
         val saved = try {
-            payoutCycleRepository.save(cycle)
+            payoutCycleRepository.saveAndFlush(cycle)
         } catch (ex: DataIntegrityViolationException) {
             // Lost the race: the partial unique index uq_payout_open_per_photographer
             // rejected a second concurrent open cycle. Same outcome as the findFirst
@@ -195,16 +210,16 @@ class PayoutRequestService(
 
     fun withdraw(photographerId: UUID, cycleId: String) {
         // Ownership gated by the (id, photographerId) lookup.
-        val cycle = payoutCycleRepository.findByIdAndPhotographerId(cycleId, photographerId)
+        val cycle = payoutCycleRepository.lockByIdAndPhotographerId(cycleId, photographerId)
             ?: return // gone entirely → idempotent no-op (client retry after success)
         // Already cancelled → idempotent no-op (double-click / retry after success).
         if (cycle.status == PayoutCycleStatus.CANCELLED) return
         // A non-HELD cycle is a genuine state error, not a replay — keep the 409.
-        if (cycle.status != PayoutCycleStatus.HELD) {
+        if (cycle.status != PayoutCycleStatus.HELD || cycle.provider != "manual") {
             throw ApiException(
                 status = HttpStatus.CONFLICT,
                 code = ErrorCodes.INVALID_STATE_TRANSITION,
-                message = "Can only withdraw a request that is on hold",
+                message = "Can only cancel a manual payout request that is on hold",
             )
         }
         // Soft-cancel: keep the row for the audit trail (was a hard delete, which

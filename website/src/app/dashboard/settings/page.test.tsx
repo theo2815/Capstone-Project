@@ -1,8 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsPage from "./page";
 import { DEFAULT_WATERMARK_PLACEMENT, usePhotographerSettingsStore } from "@/store/photographer-settings-store";
-import { putHandle, putWatermarkSettings } from "@/lib/api-photographer-settings";
+import { putHandle, putWatermarkSettings, postPayoutAccount, patchPayoutAccount, postPayoutQr } from "@/lib/api-photographer-settings";
 
 const mocks = vi.hoisted(() => ({ toast: vi.fn(), confirm: vi.fn(), regions: [] }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ showToast: mocks.toast }) }));
@@ -14,6 +14,7 @@ vi.mock("@/lib/api-photographer-settings", async (importActual) => ({
   ...await importActual<typeof import("@/lib/api-photographer-settings")>(),
   putHandle: vi.fn(),
   putWatermarkSettings: vi.fn(),
+  postPayoutAccount: vi.fn(), patchPayoutAccount: vi.fn(), postPayoutQr: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -29,6 +30,57 @@ beforeEach(() => {
   });
   vi.mocked(putWatermarkSettings).mockResolvedValue();
   vi.mocked(putHandle).mockRejectedValue(new Error("Handle already taken"));
+});
+
+const payout = { id: "account", method: "gcash" as const, accountName: "Test Recipient", accountNumber: "09171234567", isPrimary: true, qr: null };
+const qr = { dataUrl: "data:image/png;base64,AA==", uploadedAt: "2026-09-09T00:00:00Z" };
+
+it("requires a QR before adding an account and invalidates it when its number changes", () => {
+  usePhotographerSettingsStore.setState({ payouts: [{ ...payout, qr }] });
+  const { container } = render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  const section = within(container.querySelector("#payout") as HTMLElement);
+  fireEvent.click(section.getByRole("button", { name: "Edit" }));
+  expect(section.getByRole("button", { name: /Update account/ })).not.toBeDisabled();
+  fireEvent.change(section.getByLabelText("Mobile number"), { target: { value: "09170000002" } });
+  expect(section.getByRole("button", { name: /Update account/ })).toBeDisabled();
+  expect(section.getByText("QR code (required)")).toBeInTheDocument();
+  expect(section.getByLabelText(/Upload QR/)).toHaveAttribute("aria-required", "true");
+});
+
+it("keeps a failed required QR upload retryable without duplicating the account", async () => {
+  vi.mocked(postPayoutAccount).mockResolvedValue(payout);
+  vi.mocked(postPayoutQr).mockRejectedValueOnce(new Error("Upload failed")).mockResolvedValue({ ...payout, qr });
+  render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  act(() => usePhotographerSettingsStore.setState({ payouts: [{ ...payout, id: "local", qr }] }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(postPayoutQr).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Save changes/ })).not.toBeDisabled());
+  expect(usePhotographerSettingsStore.getState().payouts[0].id).toBe("account");
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Edit settings/ })).toBeInTheDocument());
+  expect(postPayoutAccount).toHaveBeenCalledTimes(1);
+  expect(postPayoutQr).toHaveBeenCalledTimes(2);
+});
+
+it("saves a changed number before its QR and only retries the failed upload", async () => {
+  usePhotographerSettingsStore.setState({ payouts: [{ ...payout, qr }] });
+  const next = { ...payout, accountNumber: "09170000002", qr: null };
+  let finishPatch!: (value: typeof next) => void;
+  vi.mocked(patchPayoutAccount).mockImplementation(() => new Promise((resolve) => { finishPatch = resolve; }));
+  vi.mocked(postPayoutQr).mockRejectedValueOnce(new Error("Upload failed")).mockResolvedValue({ ...next, qr });
+  render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  act(() => usePhotographerSettingsStore.setState({ payouts: [{ ...next, qr: { ...qr, dataUrl: "data:image/png;base64,AQ==" } }] }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  expect(postPayoutQr).not.toHaveBeenCalled();
+  await act(async () => { finishPatch(next); });
+  await waitFor(() => expect(postPayoutQr).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Edit settings/ })).toBeInTheDocument());
+  expect(patchPayoutAccount).toHaveBeenCalledTimes(1);
+  expect(postPayoutQr).toHaveBeenCalledTimes(2);
 });
 
 afterEach(() => {

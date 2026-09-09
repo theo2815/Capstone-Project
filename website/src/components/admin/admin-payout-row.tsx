@@ -189,6 +189,7 @@ export function AdminPayoutRow({
 
       <RowActions
         status={cycle.status}
+        provider={cycle.provider ?? "manual"}
         onApprove={(e) => {
           e.stopPropagation();
           onApprove();
@@ -218,17 +219,20 @@ export function AdminPayoutRow({
 //   terminal (paid/failed/returned/rejected/cancelled) → none
 function RowActions({
   status,
+  provider,
   onApprove,
   onHold,
   onMarkPaid,
   onMarkProcessing,
 }: {
   status: AdminPayoutStatus;
+  provider: string;
   onApprove: (e: React.MouseEvent) => void;
   onHold: (e: React.MouseEvent) => void;
   onMarkPaid: (e: React.MouseEvent) => void;
   onMarkProcessing: (e: React.MouseEvent) => void;
 }) {
+  if (provider !== "manual") return null;
   const PILL =
     "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-4 py-1.5";
   const GHOST =

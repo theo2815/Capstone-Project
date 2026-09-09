@@ -26,6 +26,7 @@ class CorsConfig(
                 HttpHeaders.AUTHORIZATION,
                 "Accept",
                 "Idempotency-Key",
+                "X-Step-Up",
             )
             // Retry-After: every 429 (rate limit + lockout) carries it, but
             // browser JS can only read headers listed here. Content-Disposition:

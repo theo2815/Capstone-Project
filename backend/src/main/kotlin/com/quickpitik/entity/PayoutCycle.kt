@@ -100,6 +100,9 @@ class PayoutCycle(
     @Column(name = "account_snapshot_name", length = 200)
     var accountSnapshotName: String? = null,
 
+    @Column(name = "account_snapshot_qr_key", length = 512)
+    var accountSnapshotQrKey: String? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 ) {

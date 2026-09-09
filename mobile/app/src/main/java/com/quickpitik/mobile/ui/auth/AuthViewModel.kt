@@ -63,6 +63,14 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     // Every path that mints a session (login / register / Google) lands here,
     // so SessionManager and the Success transition happen in exactly one place.
     private fun establishSession(authData: AuthResponse) {
+        if (authData.mfaRequired) {
+            _authState.value = AuthState.Error("Complete administrator sign-in on the QuickPitik website using your authenticator.")
+            return
+        }
+        if (authData.accessToken.isBlank() || authData.refreshToken.isBlank()) {
+            _authState.value = AuthState.Error("Sign-in did not return a session. Please try again.")
+            return
+        }
         sessionManager.saveSession(
             token = authData.accessToken,
             role = authData.user.role,

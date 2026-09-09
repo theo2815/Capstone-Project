@@ -87,6 +87,7 @@ object ErrorCodes {
     const val PAYOUT_REQUEST_OPEN = "PAYOUT_REQUEST_OPEN"
     const val PAYOUT_BELOW_MINIMUM = "PAYOUT_BELOW_MINIMUM"
     const val PAYOUT_NO_ACCOUNT = "PAYOUT_NO_ACCOUNT"
+    const val PAYOUT_QR_REQUIRED = "PAYOUT_QR_REQUIRED"
     const val PAYOUT_ACCOUNT_COOLDOWN = "PAYOUT_ACCOUNT_COOLDOWN"
     const val PAYOUT_SECOND_APPROVER_REQUIRED = "PAYOUT_SECOND_APPROVER_REQUIRED"
     // Sensitive action needs a fresh password re-entry (step-up). Only enforced

@@ -76,7 +76,7 @@ class GoogleAuthService(
 
         userRepository.findByGoogleSub(sub)?.let { user ->
             ensureNotSuspended(user)
-            return authService.buildAuthResponse(user)
+            return authService.completeLogin(user)
         }
 
         userRepository.findByEmail(email)?.let { user ->
@@ -90,7 +90,7 @@ class GoogleAuthService(
             }
             user.googleSub = sub
             userRepository.save(user)
-            return authService.buildAuthResponse(user)
+            return authService.completeLogin(user)
         }
 
         val role = req.role ?: throw ApiException(
@@ -112,7 +112,7 @@ class GoogleAuthService(
             emailVerifiedAt = OffsetDateTime.now(),
             googleSub = sub,
         )
-        return authService.buildAuthResponse(userRepository.save(user))
+        return authService.completeLogin(userRepository.save(user))
     }
 
     // BadJwtException covers everything wrong with the TOKEN (signature,

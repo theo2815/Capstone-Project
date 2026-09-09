@@ -58,6 +58,7 @@ export interface AdminPayoutCycle {
   itemCount: number; // sales count
   method: PayoutMethod;
   status: AdminPayoutStatus;
+  provider?: string;
   submittedAt: string;
   reviewedAt: string | null;
   paidAt: string | null;

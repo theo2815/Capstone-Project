@@ -216,7 +216,7 @@ class PhotographerSettingsServiceTest {
         Mockito.`when`(userRepository.findById(userId))
             .thenReturn(Optional.of(userNoAvatar().apply { avatarS3Key = "avatars/$userId.jpg" }))
         Mockito.`when`(socialLinkRepository.countByUserId(userId)).thenReturn(1L)
-        Mockito.`when`(payoutAccountRepository.countByUserId(userId)).thenReturn(1L)
+        Mockito.`when`(payoutAccountRepository.countByUserIdAndQrS3KeyIsNotNull(userId)).thenReturn(1L)
 
         val result = service().collectMissing(userId, completeSettings())
 
@@ -257,7 +257,7 @@ class PhotographerSettingsServiceTest {
         Mockito.`when`(userRepository.findById(userId))
             .thenReturn(Optional.of(userNoAvatar().apply { avatarUrl = "https://cdn/avatar.jpg" }))
         Mockito.`when`(socialLinkRepository.countByUserId(userId)).thenReturn(1L)
-        Mockito.`when`(payoutAccountRepository.countByUserId(userId)).thenReturn(1L)
+        Mockito.`when`(payoutAccountRepository.countByUserIdAndQrS3KeyIsNotNull(userId)).thenReturn(1L)
 
         val result = service().collectMissing(userId, completeSettings())
 

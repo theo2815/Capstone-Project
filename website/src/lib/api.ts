@@ -263,6 +263,7 @@ async function postRefresh(refreshToken: string): Promise<string | null> {
 
 const PUBLIC_AUTH_ENDPOINTS = new Set([
   "/auth/login",
+  "/auth/mfa/verify",
   "/auth/register",
   // The Google ID-token exchange — its 401s mean "bad Google token", never
   // "expired QuickPitik session", so a refresh-and-retry is meaningless.
@@ -299,7 +300,7 @@ function isPublicAuthEndpoint(path: string): boolean {
 // Letting it fall through as an ApiError is also what makes the forms' own
 // INVALID_CREDENTIALS branches reachable — they never were.
 function isCredentialRejection<T>(data: ApiResponse<T> | null): boolean {
-  return data?.errors?.some((e) => e.code === "INVALID_CREDENTIALS") ?? false;
+  return data?.errors?.some((e) => e.code === "INVALID_CREDENTIALS" || e.code === "INVALID_MFA_CODE") ?? false;
 }
 
 // Every backend 429 — rate-limit bucket and account lockout alike — carries

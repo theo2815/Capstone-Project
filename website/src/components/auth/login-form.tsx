@@ -37,15 +37,12 @@ export function LoginForm() {
     const raw = searchParams?.get("redirect");
     return isSafeRedirect(raw) ? raw : null;
   })();
-  const { login, verifyMfa } = useAuth();
+  const { login, verifyMfa, pendingMfa: mfaToken, setPendingMfa: setMfaToken } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  // Non-null once the backend returns an MFA challenge — flips the form to the
-  // code-entry step. Holds the short-lived mfaToken for /auth/mfa/verify.
-  const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [code, setCode] = useState("");
   // Guards double-submit. Deliberately NOT `isLoading`: setIsLoading only
   // lands on the next render, so a held Enter — several submit events before a

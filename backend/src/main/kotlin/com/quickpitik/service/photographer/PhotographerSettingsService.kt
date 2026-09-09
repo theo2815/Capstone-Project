@@ -495,7 +495,7 @@ class PhotographerSettingsService(
         if (socialLinkRepository.countByUserId(userId) == 0L) {
             missing.add(MissingRequirement.SOCIAL_LINK)
         }
-        if (payoutAccountRepository.countByUserId(userId) == 0L) {
+        if (payoutAccountRepository.countByUserIdAndQrS3KeyIsNotNull(userId) == 0L) {
             missing.add(MissingRequirement.PAYOUT_ACCOUNT)
         }
         return IncompleteFields(missing = missing)

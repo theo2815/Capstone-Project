@@ -21,12 +21,7 @@ data class AdminPayoutQrDto(
     val uploadedAt: String,
 )
 
-// Mirrors AdminPayoutCycle. The DB enum has scheduled / pending / paid / held;
-// the FE filter uses pending_review / approved / held / paid. We translate
-// at the boundary: DB pending → wire pending_review; once the admin approves
-// a row it stays at DB pending until mark-paid (held is held); approved
-// state is internal — service layer decides the wire form by inspecting
-// settledAt + paymentReference + holdReason.
+// Mirrors AdminPayoutCycle. Only pending uses a different wire label (pending_review).
 data class AdminPayoutCycleDto(
     val id: String,
     val photographerId: UUID,
@@ -49,6 +44,7 @@ data class AdminPayoutCycleDto(
     // large cycle the FE shows "1 of 2 approvals" until secondApprovedBy is set.
     val approvedBy: String? = null,
     val secondApprovedBy: String? = null,
+    val provider: String = "manual",
     val payoutAccount: AdminPayoutAccountSnapshotDto,
 )
 

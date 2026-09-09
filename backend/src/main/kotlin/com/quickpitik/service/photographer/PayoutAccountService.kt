@@ -14,12 +14,16 @@ import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
+import com.quickpitik.repository.PayoutCycleRepository
+import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
@@ -36,6 +40,8 @@ class PayoutAccountService(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val eventPublisher: ApplicationEventPublisher,
+    private val payoutCycleRepository: PayoutCycleRepository,
+    private val userRepository: UserRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -45,6 +51,7 @@ class PayoutAccountService(
             .map { it.toDto(qrUrl = qrUrlFor(it), qrUploadedAt = it.createdAt) }
 
     fun create(userId: UUID, req: CreatePayoutRequest): PayoutAccountDto {
+        userRepository.lockById(userId)
         val method = PayoutMethod.fromWire(req.method) ?: throw ValidationException(
             code = ErrorCodes.VALIDATION_ERROR,
             message = "method must be one of gcash|maya|gotyme",
@@ -70,6 +77,7 @@ class PayoutAccountService(
     }
 
     fun patch(userId: UUID, id: UUID, req: PatchPayoutRequest): PayoutAccountDto {
+        userRepository.lockById(userId)
         val account = payoutAccountRepository.findByIdAndUserId(id, userId)
             ?: throw NotFoundException(code = ErrorCodes.PAYOUT_NOT_FOUND, message = "Payout account not found")
         val oldNumber = account.accountNumber
@@ -83,12 +91,18 @@ class PayoutAccountService(
             validateAccountName(trimmed)
             account.accountName = trimmed
         }
+        if (account.accountNumber != oldNumber) {
+            val oldQr = account.qrS3Key
+            account.qrS3Key = null
+            deleteUnusedQrAfterCommit(oldQr)
+        }
         val saved = payoutAccountRepository.save(account)
         recordChange(userId, "update", account.method, oldNumber = oldNumber, newNumber = saved.accountNumber)
         return saved.toDto(qrUrl = qrUrlFor(saved), qrUploadedAt = saved.createdAt)
     }
 
     fun delete(userId: UUID, id: UUID) {
+        userRepository.lockById(userId)
         val account = payoutAccountRepository.findByIdAndUserId(id, userId) ?: return
         val wasPrimary = account.isPrimary
         val qrKey = account.qrS3Key
@@ -106,10 +120,7 @@ class PayoutAccountService(
                 payoutAccountRepository.save(next)
             }
         }
-        if (qrKey != null) {
-            runCatching { storageService.delete(qrKey) }
-                .onFailure { log.warn("payout qr delete of {} failed: {}", qrKey, it.message) }
-        }
+        deleteUnusedQrAfterCommit(qrKey)
         recordChange(userId, "delete", auditMethod, oldNumber = auditNumber)
     }
 
@@ -117,6 +128,7 @@ class PayoutAccountService(
     // commit time. Returns the full canonical list so the FE can refresh the
     // primary chip across all rows from a single response.
     fun setPrimary(userId: UUID, id: UUID): List<PayoutAccountDto> {
+        userRepository.lockById(userId)
         val target = payoutAccountRepository.findByIdAndUserId(id, userId)
             ?: throw NotFoundException(code = ErrorCodes.PAYOUT_NOT_FOUND, message = "Payout account not found")
         if (target.isPrimary) {
@@ -133,6 +145,7 @@ class PayoutAccountService(
     }
 
     fun uploadQr(userId: UUID, id: UUID, bytes: ByteArray, contentType: String?): PayoutAccountDto {
+        userRepository.lockById(userId)
         val account = payoutAccountRepository.findByIdAndUserId(id, userId)
             ?: throw NotFoundException(code = ErrorCodes.PAYOUT_NOT_FOUND, message = "Payout account not found")
         val mime = (contentType ?: "").lowercase()
@@ -170,10 +183,9 @@ class PayoutAccountService(
         account.qrS3Key = newKey
         val saved = payoutAccountRepository.save(account)
         recordChange(userId, "qr", account.method, newNumber = account.accountNumber)
-        if (previousKey != null && previousKey != newKey) {
-            runCatching { storageService.delete(previousKey) }
-                .onFailure { log.warn("payout qr delete of {} failed: {}", previousKey, it.message) }
-        }
+        // A payout's immutable QR stays available even after account replacement
+        // or deletion. Keys are unique per upload and retained for its audit trail.
+        deleteUnusedQrAfterCommit(previousKey)
         return saved.toDto(
             qrUrl = qrUrlFor(saved),
             qrUploadedAt = OffsetDateTime.now(),
@@ -182,6 +194,20 @@ class PayoutAccountService(
 
     private fun qrUrlFor(account: PayoutAccount): String? = account.qrS3Key?.let {
         storageService.presignedGetUrl(it, storageProperties.presignedTtl.cover)
+    }
+
+    private fun deleteUnusedQrAfterCommit(key: String?) {
+        if (key == null || payoutCycleRepository.existsByAccountSnapshotQrKey(key)) return
+        val cleanup = {
+            runCatching { storageService.delete(key) }
+                .onFailure { log.warn("payout qr delete of {} failed: {}", key, it.message) }
+            Unit
+        }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                override fun afterCommit() = cleanup()
+            })
+        } else cleanup()
     }
 
     private fun sanitizeNumber(raw: String): String = raw.filter { it.isDigit() }

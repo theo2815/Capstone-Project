@@ -1,15 +1,27 @@
 package com.quickpitik.repository
 
 import com.quickpitik.entity.PayoutCycle
+import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import java.math.BigDecimal
 import java.util.UUID
 
 interface PayoutCycleRepository : JpaRepository<PayoutCycle, String> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM PayoutCycle c WHERE c.id = :id")
+    fun lockById(@Param("id") id: String): PayoutCycle?
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM PayoutCycle c WHERE c.id = :id AND c.photographerId = :photographerId")
+    fun lockByIdAndPhotographerId(@Param("id") id: String, @Param("photographerId") photographerId: UUID): PayoutCycle?
+
+    fun existsByAccountSnapshotQrKey(key: String): Boolean
 
     fun findByIdAndPhotographerId(id: String, photographerId: UUID): PayoutCycle?
 
@@ -36,7 +48,7 @@ interface PayoutCycleRepository : JpaRepository<PayoutCycle, String> {
         """
         SELECT COALESCE(SUM(c.amountPhp), 0) FROM PayoutCycle c
         WHERE c.photographerId = :photographerId
-          AND c.statusWire IN ('scheduled', 'pending')
+          AND c.statusWire IN ('scheduled', 'pending', 'approved', 'processing')
         """,
     )
     fun sumOpenAmount(@Param("photographerId") photographerId: UUID): BigDecimal
@@ -47,7 +59,7 @@ interface PayoutCycleRepository : JpaRepository<PayoutCycle, String> {
         """
         SELECT c FROM PayoutCycle c
         WHERE c.photographerId = :photographerId
-          AND c.statusWire IN ('scheduled', 'pending')
+          AND c.statusWire IN ('scheduled', 'pending', 'approved', 'processing')
         ORDER BY (CASE WHEN c.settledAt IS NULL THEN 1 ELSE 0 END) ASC,
                  c.settledAt ASC,
                  c.weekOf ASC
@@ -76,6 +88,7 @@ interface PayoutCycleRepository : JpaRepository<PayoutCycle, String> {
 
     // The PayMongo transfer webhook resolves a cycle by the id it stored at
     // disbursement time (Phase 11).
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     fun findByProviderTransferId(providerTransferId: String): PayoutCycle?
 
     @Query(

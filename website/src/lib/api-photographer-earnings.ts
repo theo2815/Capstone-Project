@@ -128,6 +128,7 @@ export interface PayoutBalancePrimaryAccount {
   method: "gcash" | "maya" | "gotyme";
   accountNumber: string;
   accountName: string;
+  hasQr: boolean;
 }
 
 export interface PayoutBalanceResponse {

@@ -40,6 +40,7 @@ class AdminMfaService(
         adminMfaRepository.findById(userId).map { it.enabled }.orElse(false)
 
     fun enroll(userId: UUID): MfaEnrollResponse {
+        userRepository.lockById(userId)
         val existing = adminMfaRepository.findById(userId).orElse(null)
         if (existing?.enabled == true) {
             throw ApiException(HttpStatus.CONFLICT, ErrorCodes.MFA_ALREADY_ENABLED, "MFA is already enabled.")
@@ -49,6 +50,7 @@ class AdminMfaService(
         row.secretEnc = mfaSecretCipher.encrypt(secret)
         row.enabled = false
         row.confirmedAt = null
+        row.lastUsedStep = null
         adminMfaRepository.save(row)
         val email = userRepository.findById(userId).map { it.email }.orElse("admin")
         return MfaEnrollResponse(
@@ -58,11 +60,14 @@ class AdminMfaService(
     }
 
     fun confirm(userId: UUID, code: String): MfaConfirmResponse {
+        userRepository.lockById(userId)
         val row = adminMfaRepository.findById(userId).orElseThrow {
             ApiException(HttpStatus.CONFLICT, ErrorCodes.MFA_NOT_ENROLLED, "Start MFA enrollment first.")
         }
-        val secret = mfaSecretCipher.decrypt(row.secretEnc)
-        if (!totpService.verify(secret, code)) {
+        if (row.enabled) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.MFA_ALREADY_ENABLED, "MFA is already enabled.")
+        }
+        if (!consumeTotp(row, code)) {
             throw ApiException(HttpStatus.UNAUTHORIZED, ErrorCodes.INVALID_MFA_CODE, "That code is not valid.")
         }
         row.enabled = true
@@ -78,6 +83,7 @@ class AdminMfaService(
     }
 
     fun disable(userId: UUID, code: String): Map<String, Boolean> {
+        userRepository.lockById(userId)
         val row = adminMfaRepository.findById(userId).orElseThrow {
             ApiException(HttpStatus.CONFLICT, ErrorCodes.MFA_NOT_ENROLLED, "MFA is not set up.")
         }
@@ -91,15 +97,25 @@ class AdminMfaService(
 
     /** Login-verify (Phase 5b): true if the code is a valid TOTP or an unused recovery code. */
     fun verifyCode(userId: UUID, code: String): Boolean {
+        // The user row also exists before enrollment. One lock serializes
+        // setup, disable, TOTP replay checks, and recovery-code consumption.
+        userRepository.lockById(userId)
         val row = adminMfaRepository.findById(userId).orElse(null) ?: return false
         if (!row.enabled) return false
         return verifyAgainst(userId, code, row)
     }
 
     private fun verifyAgainst(userId: UUID, code: String, row: AdminMfa): Boolean {
-        val secret = mfaSecretCipher.decrypt(row.secretEnc)
-        if (totpService.verify(secret, code)) return true
+        if (consumeTotp(row, code)) return true
         return consumeRecovery(userId, code)
+    }
+
+    private fun consumeTotp(row: AdminMfa, code: String): Boolean {
+        val step = totpService.matchingStep(mfaSecretCipher.decrypt(row.secretEnc), code) ?: return false
+        if (row.lastUsedStep?.let { step <= it } == true) return false
+        row.lastUsedStep = step
+        adminMfaRepository.save(row)
+        return true
     }
 
     private fun consumeRecovery(userId: UUID, code: String): Boolean {

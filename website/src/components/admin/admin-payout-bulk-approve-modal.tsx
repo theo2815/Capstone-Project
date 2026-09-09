@@ -37,13 +37,11 @@ export function AdminPayoutBulkApproveModal({
         <span className="text-ink font-display text-base tnum">
           {formatPrice(totalAmount)}
         </span>
-        ? Approved payouts enter the queue for marking paid.
+        ? Payouts enter the payment queue once all required approvals are recorded.
       </p>
       <p className="font-sans text-sm text-slate">
-        Photographers see their request move to{" "}
-        <span className="text-ink">Approved</span> on /dashboard/billing.
-        Funds are not released until each payout is marked paid with a
-        reference number.
+        Requests that need two admins stay pending until a different admin
+        records the second approval. Approving a payout does not send funds.
       </p>
     </AdminConfirmModal>
   );

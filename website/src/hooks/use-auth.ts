@@ -22,8 +22,10 @@ export function useAuth() {
     isAuthenticated,
     isLoading,
     pendingOAuth,
+    pendingMfa,
     setUser,
     setPendingOAuth,
+    setPendingMfa,
     logout: clearUser,
   } = useAuthStore();
 
@@ -52,6 +54,16 @@ export function useAuth() {
     [setUser, queryClient],
   );
 
+  // Password and Google first factors share the same in-memory MFA challenge.
+  const completeFirstFactor = useCallback((data: AuthResponse): LoginOutcome => {
+    if (data.mfaRequired) {
+      if (!data.mfaToken) throw new Error("Missing MFA challenge");
+      setPendingMfa(data.mfaToken);
+      return { kind: "mfa", mfaToken: data.mfaToken };
+    }
+    return { kind: "authed", user: establishSession(data) };
+  }, [establishSession, setPendingMfa]);
+
   // Returns the freshly-authed user so callers can route by role without
   // racing the React render of `useAuthStore.user`. Zustand's setState is
   // synchronous, so getState() would also work — but returning the value
@@ -59,14 +71,9 @@ export function useAuth() {
   const login = useCallback(
     async (credentials: LoginRequest): Promise<LoginOutcome> => {
       const data = await api.post<AuthResponse>("/auth/login", credentials);
-      // Admin MFA: the backend withholds tokens and returns a challenge. The
-      // caller collects a code and calls verifyMfa; only then is a session set.
-      if (data.mfaRequired && data.mfaToken) {
-        return { kind: "mfa", mfaToken: data.mfaToken };
-      }
-      return { kind: "authed", user: establishSession(data) };
+      return completeFirstFactor(data);
     },
-    [establishSession],
+    [completeFirstFactor],
   );
 
   // Second factor: exchange the challenge token + a TOTP or recovery code for a
@@ -91,7 +98,7 @@ export function useAuth() {
   );
 
   // Exchange a Google ID token (from the GIS button) for a session. Returns
-  // the user, or null when the backend answered 422 ROLE_REQUIRED — a brand
+  // a login outcome, or null when the backend answered 422 ROLE_REQUIRED — a brand
   // new Google account that must pick RUNNER/PHOTOGRAPHER on /onboarding
   // first. In that case the identity (plus the raw token, for the re-POST)
   // is parked in pendingOAuth and <OnboardingGate> takes over routing.
@@ -99,7 +106,7 @@ export function useAuth() {
     async (idToken: string) => {
       try {
         const data = await api.post<AuthResponse>("/auth/google", { idToken });
-        return establishSession(data);
+        return completeFirstFactor(data);
       } catch (err) {
         if (
           err instanceof ApiError &&
@@ -115,7 +122,7 @@ export function useAuth() {
         throw err;
       }
     },
-    [establishSession, setPendingOAuth],
+    [completeFirstFactor, setPendingOAuth],
   );
 
   // Second leg of the new-Google-user flow: re-POST the parked ID token with
@@ -132,11 +139,11 @@ export function useAuth() {
         idToken: pending.idToken,
         role,
       });
-      const authedUser = establishSession(data);
+      const outcome = completeFirstFactor(data);
       setPendingOAuth(null);
-      return authedUser;
+      return outcome;
     },
-    [pendingOAuth, establishSession, setPendingOAuth],
+    [pendingOAuth, completeFirstFactor, setPendingOAuth],
   );
 
   const cancelOnboarding = useCallback(() => {
@@ -167,6 +174,8 @@ export function useAuth() {
     isAuthenticated,
     isLoading,
     pendingOAuth,
+    pendingMfa,
+    setPendingMfa,
     login,
     verifyMfa,
     register,
