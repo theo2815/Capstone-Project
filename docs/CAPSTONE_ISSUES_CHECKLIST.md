@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 31
-- **✅ Already Solved:** 23 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 25, 26, 27, 28, 29, 31, 32, 33, 34)
-- **⏳ Pending / To Be Worked On:** 8 (Items 16, 17, 19, 21, 22, 23, 24, 30)
+- **✅ Already Solved:** 22 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 25, 26, 27, 28, 29, 31, 32, 33)
+- **⏳ Pending / To Be Worked On:** 9 (Items 16, 17, 19, 21, 22, 23, 24, 30, 34)
 
 ---
 
@@ -105,7 +105,7 @@
 - [x] **31. Mobile & Web — Rebrand "Race Log" / "Race Logs" Terminology to "Saved Events"**
   - **Status:** **ALREADY SOLVED**
   - **Verification:**
-    - Updated navigation JumpSection and Slab heading in `website/src/app/profile/page.tsx` (`id: "saved-events"`, `label: "Saved events"`, `title="Saved events"`).
+    - Updated navigation JumpSection and Slab heading in `website/src/app/profile/page.tsx` (visible copy "Saved events"); both `#saved-events` and legacy `#race-log` anchors resolve.
     - Updated toast redirect link in `website/src/components/events/save-button.tsx` to `#saved-events`.
     - Updated logout modal message in `website/src/app/account/page.tsx` to `"profile, saved events, and orders"`.
     - Updated runner profile kicker in `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileScreen.kt` to `Kicker("02 · Saved events")`.
@@ -120,21 +120,17 @@
 - [x] **33. Mobile — Hide "Live Now" Badge Once Actual Event Date Has Passed**
   - **Status:** **ALREADY SOLVED**
   - **Verification:**
-    - Updated `deriveEventState()` in `EventCatalog.kt` to restrict `EventState.LIVE` strictly to race day (`days == 0L`).
-    - Decoupled photographer upload grace window (`canUploadToEvent()`, `days in 0L..3L`) from the runner-facing event state derivation, ensuring past events (`days > 0L`) transition directly to `OPEN` (Finished/Ready) with no lingering "Live now" badge.
+    - Added `deriveEventDisplayState()` for race-day-only discovery labels and filters.
+    - Kept `deriveEventState()` and `canUploadToEvent()` aligned on days 0..3 so gallery sockets and photographer Sync controls survive the grace window; later-day upload cards say "Uploading".
   - **Affected Files:**
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventCatalog.kt`
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventsDiscoveryScreen.kt`
   - **Action Plan:** Restrict `EventState.LIVE` (or the "Live now" UI indicator) strictly to the actual day of the event (`days == 0L`), while preserving photographer upload capability window separately if needed.
 
-- [x] **34. Mobile — Replace City Filtration with Philippine Regions Filtration**
-  - **Status:** **ALREADY SOLVED**
-  - **Verification:**
-    - Defined `PH_REGIONS` dataset and `resolveRegion(location: String)` in `EventCatalog.kt` covering all 17 administrative regions with keyword and province mappings matching the backend canonical regions.
-    - Updated `EventsDiscoveryScreen.kt` to replace raw city extraction with region-based filtering (`regionFilter`, "All regions" dropdown, and matching predicate).
-  - **Affected Files:**
-    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventCatalog.kt`
-    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventsDiscoveryScreen.kt`
+- [ ] **34. Mobile — Replace City Filtration with Philippine Regions Filtration**
+  - **Status:** **DEFERRED — structured event region data required**
+  - **Current behavior:** City filtering uses the existing `extractCity()` helper. The duplicate keyword region table was removed because it misclassified Carcar, Cagayan de Oro, and Caraga.
+  - **Next:** Add trustworthy region codes to event data before wiring discovery to the canonical backend `GET /regions` catalog.
 
 ---
 
@@ -168,10 +164,10 @@
   - **Status:** **ALREADY SOLVED**
   - **Verification:**
     - Updated `UserDto.kt` and `UserDtoMapper.kt` in backend to expose `hasGoogleAuth = (user.googleSub != null)`.
-    - Made `currentPassword` optional in `PasswordChangeRequest.kt` and `EmailChangeRequest.kt`.
-    - Updated `ProfileService.kt` and `EmailChangeService.kt` to allow Google OAuth users to set their initial password or request an email change without entering a nonexistent legacy password, while continuing to mandate `currentPassword` for standard password accounts.
-    - Updated `account/page.tsx` on website to show a Google account badge in the current email card, bypass current password requirement for Google OAuth users in `EmailSlab`, and render a dedicated "Set password" flow in `PasswordSlab`.
-    - Added unit test suites in `backend/.../ProfileServiceTest.kt` and `EmailChangeServiceTest.kt` verifying password and email change flows for both Google OAuth and standard accounts.
+    - `PUT /me/password` requires current-password proof for all accounts. Google users without a password use the existing email OTP reset flow.
+    - Google email changes retain the current-password exemption by user choice; its accepted session-takeover risk and the password setup contract are documented in `ai-api/docs/integration-contracts.md` (Shared client account and event rules).
+    - Updated `account/page.tsx` on website to show a Google account badge in the current email card, bypass current password requirement for Google OAuth users in `EmailSlab`, and link to verified password setup/reset from `PasswordSlab`. Google sign-in remains passwordless.
+    - Added unit test suites in `backend/.../ProfileServiceTest.kt` and `EmailChangeServiceTest.kt` verifying password and email change flows for both Google OAuth and standard accounts. `GoogleAccountIntegrationTest` exercises OTP setup and rejects duplicate registration of the Google email.
   - **Affected Files:**
     - `backend/src/main/kotlin/com/quickpitik/dto/auth/UserDto.kt`
     - `backend/src/main/kotlin/com/quickpitik/service/profile/UserDtoMapper.kt`
@@ -185,12 +181,12 @@
     - `website/src/lib/api-account.ts`
     - `website/src/app/account/page.tsx`
 
-- [x] **26. Website — Incomplete Base64URL Sanitization in `isTokenExpired()`**
+- [x] **26. Website — Base64URL Decoding for Google Onboarding**
   - **Status:** **ALREADY SOLVED**
   - **Verification:**
     - Added `decodeBase64Url()` in `website/src/lib/auth.ts` to replace Base64URL characters (`-` $\rightarrow$ `+`, `_` $\rightarrow$ `/`) and apply standard padding (`==`, `=`).
-    - Updated `isTokenExpired()` to decode JWT payloads through `decodeBase64Url()` without triggering DOMExceptions on valid active tokens.
-    - Added unit test suite in `website/src/lib/auth.test.ts`.
+    - Removed the unused `isTokenExpired()` helper. The active Google onboarding parser in `use-auth.ts` now uses `decodeBase64Url()` with UTF-8 decoding.
+    - Regression fixtures in `website/src/lib/auth.test.ts` contain both actual URL-safe symbols and Unicode; malformed input is rejected.
   - **Affected Files:**
     - `website/src/lib/auth.ts`
     - `website/src/lib/auth.test.ts`
@@ -199,6 +195,7 @@
   - **Status:** **ALREADY SOLVED**
   - **Verification:**
     - Updated `RESERVED_HANDLES` set in `website/src/lib/reserved-handles.ts` to include missing core auth/verification routes: `"verify"`, `"verify-email"`, `"confirm-email-change"`, `"reset-password"`, `"logout"`, `"signin"`, and `"signup"`.
+    - V62 seeds the missing backend reservations. `FlywayMigrationIntegrationTest` verifies database rows and server-side rejection; collision preflight is in the integration contract.
     - Created comprehensive unit test suite in `website/src/lib/reserved-handles.test.ts` verifying case-insensitive reserved handle rejection, valid handle rules, and required route collision protections.
   - **Affected Files:**
     - `website/src/lib/reserved-handles.ts`

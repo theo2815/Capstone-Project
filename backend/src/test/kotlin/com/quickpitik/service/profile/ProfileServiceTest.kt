@@ -91,18 +91,29 @@ class ProfileServiceTest {
     }
 
     @Test
-    fun `Google OAuth user can set initial password without current password`() {
-        val user = stubUser(googleSub = "google-sub-xyz", passwordHash = "opaque-random-hash")
+    fun `Google linkage never bypasses password verification for initial or existing passwords`() {
+        for (hash in listOf("opaque-random-hash", "existing-password-hash")) {
+            val user = stubUser(googleSub = "google-sub-xyz", passwordHash = hash)
+            for (current in listOf(null, "", "   ")) {
+                assertThrows<UnauthorizedException> {
+                    service().changePassword(userId, PasswordChangeRequest(current, "NewPassword123!"))
+                }
+                assertEquals(hash, user.passwordHash)
+            }
+        }
+        Mockito.verifyNoInteractions(passwordEncoder, refreshTokenService)
+    }
+
+    @Test
+    fun `Google linked user can change an existing password with the correct current password`() {
+        val user = stubUser(googleSub = "google-sub-xyz")
+        Mockito.`when`(passwordEncoder.matches("correct-password", "old-hash")).thenReturn(true)
         Mockito.`when`(passwordEncoder.encode("NewPassword123!")).thenReturn("new-hash")
 
-        service().changePassword(
-            userId,
-            PasswordChangeRequest(currentPassword = null, newPassword = "NewPassword123!", refreshToken = "token-456"),
-        )
+        service().changePassword(userId, PasswordChangeRequest("correct-password", "NewPassword123!"))
 
         assertEquals("new-hash", user.passwordHash)
-        Mockito.verify(userRepository).save(user)
-        Mockito.verify(refreshTokenService).revokeAllForUserExcept(userId, "token-456")
+        Mockito.verify(refreshTokenService).revokeAllForUserExcept(userId, null)
     }
 
     @Test

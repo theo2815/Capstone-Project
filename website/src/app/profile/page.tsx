@@ -176,6 +176,22 @@ function RaceLogSection() {
   const syncEnabled = useSavedEventsStore((s) => s.syncEnabled);
   const { orders } = useOrdersList();
 
+  // ProtectedRoute renders after authentication hydrates, so the browser's
+  // initial fragment jump may happen before this section exists.
+  useEffect(() => {
+    const jump = () => {
+      if (["#race-log", "#saved-events"].includes(window.location.hash)) {
+        document.getElementById("saved-events")?.scrollIntoView();
+      }
+    };
+    const frame = requestAnimationFrame(jump);
+    window.addEventListener("hashchange", jump);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("hashchange", jump);
+    };
+  }, []);
+
   // Defensive re-fetch on mount. AuthHydrator's merge is the canonical hydration,
   // but it runs once per signed-in user — a direct /profile visit after a long
   // idle (or another tab toggling a save) can still see stale summaries. One
@@ -203,6 +219,7 @@ function RaceLogSection() {
   const trailing = `${log.length} race${log.length === 1 ? "" : "s"}`;
   return (
     <Slab id="saved-events" number="02" title="Saved events" trailing={trailing}>
+      <span id="race-log" className="block scroll-mt-24" aria-hidden="true" />
       {log.length === 0 ? (
         <RaceLogEmpty />
       ) : (

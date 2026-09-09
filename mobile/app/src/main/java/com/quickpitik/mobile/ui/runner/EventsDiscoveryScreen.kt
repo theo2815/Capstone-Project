@@ -56,7 +56,7 @@ private data class EventSegment(
 private val SEGMENTS = listOf(
     EventSegment("Upcoming", "Save the date · Photos coming soon", EventState.UPCOMING, false),
     EventSegment("Live now", "Race day · Photos uploading", EventState.LIVE, true),
-    EventSegment("Recent", "Last 30 days · Photos all in", EventState.OPEN, false),
+    EventSegment("Recent", "Last 90 days · Photos may still arrive", EventState.OPEN, false),
     EventSegment("Archive", "Older races · Still searchable", EventState.PAST, false),
 )
 
@@ -78,7 +78,7 @@ fun EventsDiscoveryScreen(
     // rememberSaveable: filters survive rotation (they still reset on
     // navigation away — URL-persisted filters are a web-only affordance).
     var query by rememberSaveable { mutableStateOf("") }
-    var regionFilter by rememberSaveable { mutableStateOf("all") }
+    var cityFilter by rememberSaveable { mutableStateOf("all") }
     var dateFilter by rememberSaveable { mutableStateOf(DateFilter.ANY) }
 
     val inboxMessages by inboxViewModel.messages.collectAsState()
@@ -218,14 +218,14 @@ fun EventsDiscoveryScreen(
                 is RunnerEventsState.Success -> {
                     val events = state.events
                     val today = remember(events) { java.time.LocalDate.now() }
-                    val withState = remember(events) { events.map { it to it.lifecycleState(today) } }
-                    val regions = remember { PH_REGIONS.map { it.name } }
+                    val withState = remember(events) { events.map { it to it.displayState(today) } }
+                    val cities = remember(events) { events.map { extractCity(it.location) }.filter { it.isNotBlank() }.distinct().sorted() }
                     val liveCount = withState.count { it.second == EventState.LIVE }
                     val trimmed = query.trim().lowercase()
-                    val filtersActive = regionFilter != "all" || dateFilter != DateFilter.ANY || trimmed.isNotEmpty()
+                    val filtersActive = cityFilter != "all" || dateFilter != DateFilter.ANY || trimmed.isNotEmpty()
 
                     val filtered = withState.filter { (event, eventState) ->
-                        if (regionFilter != "all" && resolveRegion(event.location) != regionFilter) return@filter false
+                        if (cityFilter != "all" && extractCity(event.location) != cityFilter) return@filter false
                         if (!dateFilter.matches(eventState)) return@filter false
                         if (trimmed.isNotEmpty()) {
                             val hay = "${event.name} ${event.location} ${event.date}".lowercase()
@@ -266,10 +266,10 @@ fun EventsDiscoveryScreen(
                     Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                         FilterDropdown(
-                            label = if (regionFilter == "all") "All regions" else regionFilter,
-                            options = listOf("all") + regions,
-                            optionLabel = { if (it == "all") "All regions" else it },
-                            onSelect = { regionFilter = it },
+                            label = if (cityFilter == "all") "All cities" else cityFilter,
+                            options = listOf("all") + cities,
+                            optionLabel = { if (it == "all") "All cities" else it },
+                            onSelect = { cityFilter = it },
                             modifier = Modifier.weight(1f)
                         )
                         FilterDropdown(
@@ -288,7 +288,7 @@ fun EventsDiscoveryScreen(
                             color = Fresh,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.clickable {
-                                query = ""; regionFilter = "all"; dateFilter = DateFilter.ANY
+                                query = ""; cityFilter = "all"; dateFilter = DateFilter.ANY
                             }
                         )
                     }
@@ -333,15 +333,15 @@ fun EventsDiscoveryScreen(
                         }
                     } else {
                         // Flat filtered view with load-more, like the web's FlatResults.
-                        var visibleCount by rememberSaveable(query, regionFilter, dateFilter) { mutableStateOf(FLAT_PAGE_SIZE) }
-                        val regionLabel = if (regionFilter == "all") "All regions" else regionFilter
+                        var visibleCount by rememberSaveable(query, cityFilter, dateFilter) { mutableStateOf(FLAT_PAGE_SIZE) }
+                        val cityLabel = if (cityFilter == "all") "All cities" else cityFilter
                         Text(
                             "${filtered.size} of ${withState.size} ${if (withState.size == 1) "race" else "races"}",
                             style = Typography.labelMedium,
                             color = Slate,
                             fontWeight = FontWeight.Bold
                         )
-                        Text("$regionLabel · ${dateFilter.label}", style = Typography.bodySmall, color = SlateSoft)
+                        Text("$cityLabel · ${dateFilter.label}", style = Typography.bodySmall, color = SlateSoft)
                         Spacer(Modifier.height(12.dp))
                         if (filtered.isEmpty()) {
                             EmptyState(

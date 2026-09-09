@@ -27,7 +27,7 @@ export async function updateProfileName(name: string): Promise<User> {
 }
 
 export interface ChangePasswordArgs {
-  currentPassword?: string;
+  currentPassword: string;
   newPassword: string;
 }
 

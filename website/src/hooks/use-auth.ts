@@ -4,7 +4,7 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/store/auth-store";
 import { api, ApiError } from "@/lib/api";
-import { getRefreshToken, setTokens, clearTokens } from "@/lib/auth";
+import { getRefreshToken, setTokens, clearTokens, decodeBase64Url } from "@/lib/auth";
 import { captureGuestBuffer, resetUserScopedStores } from "@/lib/auth-reset";
 import type {
   AuthResponse,
@@ -167,7 +167,7 @@ function decodeGoogleIdentity(
 ): Pick<OAuthIdentity, "sub" | "email" | "name" | "avatarUrl"> {
   try {
     const payload = JSON.parse(
-      atob(idToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
+      decodeBase64Url(idToken.split(".")[1]),
     );
     return {
       sub: payload.sub ?? "",

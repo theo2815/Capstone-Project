@@ -31,18 +31,7 @@ export function decodeBase64Url(input: string): string {
   } else if (pad === 1) {
     throw new Error("Invalid base64url string length");
   }
-  return atob(base64);
-}
-
-export function isTokenExpired(token: string): boolean {
-  try {
-    const parts = token.split(".");
-    if (parts.length < 2) return true;
-    const json = decodeBase64Url(parts[1]);
-    const payload = JSON.parse(json);
-    if (typeof payload.exp !== "number") return true;
-    return payload.exp * 1000 < Date.now();
-  } catch {
-    return true;
-  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(
+    Uint8Array.from(atob(base64), (character) => character.charCodeAt(0)),
+  );
 }

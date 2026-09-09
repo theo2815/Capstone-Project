@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/auth/protected-route";
@@ -19,6 +20,7 @@ import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useToast } from "@/hooks/use-toast";
 import { FieldError } from "@/components/ui/field-error";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { Eye, EyeOff } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { resetUserScopedStores } from "@/lib/auth-reset";
@@ -406,11 +408,7 @@ function PasswordSlab({ user, number }: { user: User; number: string }) {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const nextErrors: PasswordErrors = {
-      current: user.hasGoogleAuth
-        ? null
-        : current
-          ? null
-          : "Current password is required.",
+      current: current ? null : "Current password is required.",
       next: validateNewPassword(next),
       confirm: !confirm
         ? "Confirm the new password."
@@ -425,7 +423,7 @@ function PasswordSlab({ user, number }: { user: User; number: string }) {
     setIsSaving(true);
     try {
       const { sessionKept } = await changePassword({
-        currentPassword: user.hasGoogleAuth ? undefined : current,
+        currentPassword: current,
         newPassword: next,
       });
       reset();
@@ -434,11 +432,9 @@ function PasswordSlab({ user, number }: { user: User; number: string }) {
         // Without a stored refresh token the BE couldn't exempt this device
         // from the revoke sweep, so the session dies with the access token.
         // Saying nothing here means a silent bounce ~15 min later.
-        message: user.hasGoogleAuth
-          ? "Password saved. You can now sign in with your email and password as well as Google."
-          : sessionKept
-            ? "Password updated."
-            : "Password updated. You'll need to sign in again on this device.",
+        message: sessionKept
+          ? "Password updated."
+          : "Password updated. You'll need to sign in again on this device.",
         duration: sessionKept ? undefined : 8000,
       });
     } catch (err) {
@@ -473,34 +469,37 @@ function PasswordSlab({ user, number }: { user: User; number: string }) {
     }
   }
 
+  if (user.hasGoogleAuth) {
+    return (
+      <Slab id="password" number={number} title="Password" caption="Optional for Google sign-in">
+        <p className="font-sans text-sm text-slate mb-6">
+          You can keep signing in with Google without a QuickPitik password.
+          To set or replace a password for email sign-in, verify the code sent to your sign-in email.
+        </p>
+        <Link href={ROUTES.FORGOT_PASSWORD} className={`${BTN_SECONDARY} ${BTN_SIZE.md}`}>
+          Set or reset password <span aria-hidden="true">→</span>
+        </Link>
+      </Slab>
+    );
+  }
+
   return (
-    <Slab
-      id="password"
-      number={number}
-      title={user.hasGoogleAuth ? "Set password" : "Password"}
-      caption={
-        user.hasGoogleAuth
-          ? `Add a password to sign in directly with email (min. ${PASSWORD_MIN} characters)`
-          : `Min. ${PASSWORD_MIN} characters`
-      }
-    >
+    <Slab id="password" number={number} title="Password" caption={`Min. ${PASSWORD_MIN} characters`}>
       <form onSubmit={handleSubmit} noValidate className="space-y-6">
-        {!user.hasGoogleAuth && (
-          <PasswordField
-            id="current-password"
-            label="Current password"
-            autoComplete="current-password"
-            value={current}
-            error={errors.current}
-            onChange={(v) => {
-              setCurrent(v);
-              clearFieldError("current");
-            }}
-          />
-        )}
+        <PasswordField
+          id="current-password"
+          label="Current password"
+          autoComplete="current-password"
+          value={current}
+          error={errors.current}
+          onChange={(v) => {
+            setCurrent(v);
+            clearFieldError("current");
+          }}
+        />
         <PasswordField
           id="new-password"
-          label={user.hasGoogleAuth ? "Password" : "New password"}
+          label="New password"
           autoComplete="new-password"
           value={next}
           error={errors.next}
@@ -511,7 +510,7 @@ function PasswordSlab({ user, number }: { user: User; number: string }) {
         />
         <PasswordField
           id="confirm-password"
-          label={user.hasGoogleAuth ? "Confirm password" : "Confirm new password"}
+          label="Confirm new password"
           autoComplete="new-password"
           value={confirm}
           error={errors.confirm}
@@ -528,7 +527,7 @@ function PasswordSlab({ user, number }: { user: User; number: string }) {
           disabled={isSaving}
           className="font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
         >
-          {isSaving ? "Saving…" : user.hasGoogleAuth ? "Set password" : "Change password"}
+          {isSaving ? "Saving…" : "Change password"}
           {!isSaving && <span aria-hidden="true">→</span>}
         </button>
       </form>

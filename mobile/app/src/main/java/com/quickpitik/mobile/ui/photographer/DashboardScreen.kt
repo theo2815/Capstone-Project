@@ -89,6 +89,7 @@ import com.quickpitik.mobile.data.usb.CameraConnectionState
 import com.quickpitik.mobile.ui.runner.EventState
 import com.quickpitik.mobile.ui.runner.canUploadToEvent
 import com.quickpitik.mobile.ui.runner.deriveEventState
+import com.quickpitik.mobile.ui.runner.deriveEventDisplayState
 import com.quickpitik.mobile.ui.runner.eventDateLabel
 import com.quickpitik.mobile.ui.runner.extractCity
 import com.quickpitik.mobile.ui.theme.Bone
@@ -1171,7 +1172,8 @@ private fun EventPickerCard(
     val stateLabel = when {
         isUpcoming -> "OPENS ON ${eventDateLabel(event.date)}"
         isClosed -> "CLOSED"
-        else -> "LIVE"
+        deriveEventDisplayState(event.date) == EventState.LIVE -> "LIVE"
+        else -> "OPEN FOR UPLOADS"
     }
     val tone = when {
         isUpcoming -> StatusTone.Neutral

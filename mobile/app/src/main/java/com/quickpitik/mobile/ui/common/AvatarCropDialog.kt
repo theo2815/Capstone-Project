@@ -7,7 +7,6 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -57,15 +56,17 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -91,6 +92,7 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * Interactive Avatar Cropper & Alignment Dialog.
@@ -215,6 +217,7 @@ fun AvatarCropDialog(
                         }
                     } else {
                         val bitmap = originalBitmap!!
+                        val imageSize = IntSize(bitmap.width, bitmap.height)
 
                         // Cropping viewport box
                         Box(
@@ -225,28 +228,31 @@ fun AvatarCropDialog(
                                 .background(Ink)
                                 .onGloballyPositioned { coordinates ->
                                     containerSize = coordinates.size
+                                    offset = clampAvatarOffset(imageSize, containerSize, scale, offset)
                                 }
                                 .pointerInput(Unit) {
                                     detectTransformGestures { _, pan, zoom, _ ->
                                         scale = (scale * zoom).coerceIn(1f, 5f)
-                                        offset += pan
+                                        offset = clampAvatarOffset(imageSize, containerSize, scale, offset + pan)
                                     }
                                 }
                         ) {
-                            // Render the transformable image
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "Cropping target",
-                                contentScale = ContentScale.Crop,
+                            // Draw the same source rectangle that Save exports.
+                            // Image(ContentScale.Crop) clips before a layer transform.
+                            Canvas(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .graphicsLayer {
-                                        scaleX = scale
-                                        scaleY = scale
-                                        translationX = offset.x
-                                        translationY = offset.y
-                                    }
-                            )
+                                    .semantics { contentDescription = "Cropping target" }
+                            ) {
+                                val viewport = IntSize(size.width.roundToInt(), size.height.roundToInt())
+                                val crop = avatarCropRect(imageSize, viewport, scale, offset)
+                                drawImage(
+                                    image = bitmap.asImageBitmap(),
+                                    srcOffset = crop.topLeft,
+                                    srcSize = crop.size,
+                                    dstSize = viewport,
+                                )
+                            }
 
                             // Circular cutout stencil overlay
                             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -323,7 +329,10 @@ fun AvatarCropDialog(
                             ) {
                                 Slider(
                                     value = scale,
-                                    onValueChange = { scale = it },
+                                    onValueChange = {
+                                        scale = it
+                                        offset = clampAvatarOffset(imageSize, containerSize, scale, offset)
+                                    },
                                     valueRange = 1f..5f,
                                     colors = SliderDefaults.colors(
                                         thumbColor = Fresh,
@@ -374,6 +383,8 @@ fun AvatarCropDialog(
                                 val cSize = containerSize
                                 if (cSize.width == 0 || cSize.height == 0) return@PrimaryCta
 
+                                val cropScale = scale
+                                val cropOffset = offset
                                 isSaving = true
                                 scope.launch {
                                     try {
@@ -383,8 +394,8 @@ fun AvatarCropDialog(
                                                 bitmap = bmp,
                                                 containerWidth = cSize.width.toFloat(),
                                                 containerHeight = cSize.height.toFloat(),
-                                                scale = scale,
-                                                offset = offset
+                                                scale = cropScale,
+                                                offset = cropOffset
                                             )
                                         }
                                         if (croppedUri != null) {
@@ -462,7 +473,7 @@ private fun loadOrientedBitmap(context: Context, uri: Uri): Bitmap? {
 }
 
 /**
- * Calculates exact crop coordinates based on ContentScale.Crop and user transform (scale & offset),
+ * Uses the preview's source rectangle,
  * cuts the 1:1 square region, scales it to standard 512x512 avatar size, and saves to a cache file.
  */
 private fun cropBitmapToSquare(
@@ -473,38 +484,15 @@ private fun cropBitmapToSquare(
     scale: Float,
     offset: Offset,
 ): Uri? {
-    val bmpW = bitmap.width.toFloat()
-    val bmpH = bitmap.height.toFloat()
-
-    // ContentScale.Crop base scale
-    val baseScale = max(containerWidth / bmpW, containerHeight / bmpH)
-    val totalScale = baseScale * scale
-
-    val dispW = bmpW * totalScale
-    val dispH = bmpH * totalScale
-
-    val centerX = (containerWidth / 2f) + offset.x
-    val centerY = (containerHeight / 2f) + offset.y
-
-    val imgLeft = centerX - (dispW / 2f)
-    val imgTop = centerY - (dispH / 2f)
-
-    // Crop circle bounds on screen = [0, 0, containerWidth, containerHeight]
-    val cropRelX = (0f - imgLeft) / totalScale
-    val cropRelY = (0f - imgTop) / totalScale
-    val cropRelW = containerWidth / totalScale
-    val cropRelH = containerHeight / totalScale
-
-    val clampedX = cropRelX.toInt().coerceIn(0, bitmap.width - 1)
-    val clampedY = cropRelY.toInt().coerceIn(0, bitmap.height - 1)
-    val clampedW = cropRelW.toInt().coerceIn(1, bitmap.width - clampedX)
-    val clampedH = cropRelH.toInt().coerceIn(1, bitmap.height - clampedY)
-
-    // Ensure square crop
-    val squareSize = min(clampedW, clampedH)
-    if (squareSize <= 0) return null
-
-    val cropped = Bitmap.createBitmap(bitmap, clampedX, clampedY, squareSize, squareSize)
+    if (containerWidth <= 0 || containerHeight <= 0) return null
+    val crop = avatarCropRect(
+        IntSize(bitmap.width, bitmap.height),
+        IntSize(containerWidth.roundToInt(), containerHeight.roundToInt()),
+        scale,
+        offset,
+    )
+    val squareSize = crop.width
+    val cropped = Bitmap.createBitmap(bitmap, crop.left, crop.top, squareSize, squareSize)
 
     // Resize to high-quality standard avatar resolution (512x512)
     val finalBitmap = if (squareSize != 512) {
@@ -521,4 +509,21 @@ private fun cropBitmapToSquare(
     }
 
     return Uri.fromFile(outputFile)
+}
+
+internal fun clampAvatarOffset(image: IntSize, viewport: IntSize, scale: Float, offset: Offset): Offset {
+    if (viewport.width == 0 || viewport.height == 0) return Offset.Zero
+    val zoom = max(viewport.width.toFloat() / image.width, viewport.height.toFloat() / image.height) * scale
+    val maxX = max(0f, (image.width * zoom - viewport.width) / 2f)
+    val maxY = max(0f, (image.height * zoom - viewport.height) / 2f)
+    return Offset(offset.x.coerceIn(-maxX, maxX), offset.y.coerceIn(-maxY, maxY))
+}
+
+internal fun avatarCropRect(image: IntSize, viewport: IntSize, scale: Float, offset: Offset): IntRect {
+    val zoom = max(viewport.width.toFloat() / image.width, viewport.height.toFloat() / image.height) * scale
+    val pan = clampAvatarOffset(image, viewport, scale, offset)
+    val side = (min(viewport.width, viewport.height) / zoom).roundToInt().coerceIn(1, min(image.width, image.height))
+    val left = ((image.width - side) / 2f - pan.x / zoom).roundToInt().coerceIn(0, image.width - side)
+    val top = ((image.height - side) / 2f - pan.y / zoom).roundToInt().coerceIn(0, image.height - side)
+    return IntRect(IntOffset(left, top), IntSize(side, side))
 }

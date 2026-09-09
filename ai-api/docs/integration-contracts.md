@@ -207,6 +207,17 @@ The desktop UI doesn't need raw ai-api responses. Shape them:
 
 The Web/Mobile Backend uses ai-api's **face and bib** features and manages events, participants, and photo galleries.
 
+### Shared client account and event rules
+
+These routes belong to Spring Boot under `/api/v1`; clients never send account data to ai-api.
+
+- Google sign-in needs a verified Google ID token, never a QuickPitik password. Registration shares the same normalized, unique email namespace and returns `EMAIL_TAKEN` for an existing Google account.
+- `PUT /me/password` requires the current password even when Google is linked. To set an initial password or recover one, use the existing `/auth/forgot-password` → `/auth/verify-reset-otp` → `/auth/reset-password` flow. The continuation token is issued only after email OTP verification; reset revokes every refresh token.
+- `PUT /me/email` retains the Google-linked exemption from current-password verification (product decision, 2026-09-09). Confirmation goes to the new inbox. This accepts the risk that a stolen authenticated Google-linked session can move the sign-in email and then use password recovery.
+- Mobile race-day labels use `deriveEventDisplayState`. Gallery sockets and photographer syncing use `deriveEventState`, preserving the existing post-race upload window. Discovery uses `extractCity` until events provide structured region data; `GET /regions` remains the canonical region catalog for photographer settings.
+- Handle changes are validated server-side against `reserved_handles`; V62 adds the account routes introduced in the client guard. Before release, query `SELECT p.user_id, p.handle FROM photographer_settings p JOIN reserved_handles r ON r.handle = lower(p.handle)` and arrange replacement handles with affected owners through the existing settings flow. The migration warns about collisions and preserves ownership.
+- The profile's `#race-log` and `#saved-events` fragments both reach Saved events.
+
 > **Blur is desktop-only — the web/mobile backend does NOT call it.** Per root `CLAUDE.md` rule 6, web + mobile upload paths MUST NOT call any `/blur/*` endpoint (no `BLUR_REJECTED` gate, no `blur_score` writes), and the Spring Boot `AiApiClient` intentionally has no `blurDetect()` method. Photographers cull blurry shots in BatchMyPhotos (desktop) before upload, so uploaded photos are already culled. All blur usage lives in Contract 1 (Desktop) only.
 
 ### Endpoints Used
