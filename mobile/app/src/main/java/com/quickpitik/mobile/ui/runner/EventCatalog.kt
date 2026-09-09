@@ -10,12 +10,12 @@ import java.time.temporal.ChronoUnit
 // Keeping the same buckets here means mobile segments events identically to /events
 // on the web (upcoming / live / open / past), so both surfaces agree day to day.
 //
-// Day math (anchored to local midnight, exactly like daysSinceEvent on the web):
+// Day math (anchored to local midnight):
 //   days = today - eventDate  →  event today = 0, future < 0, past > 0
 //   upcoming  days < 0
-//   live      0..3   (race day + 3-day upload grace)
-//   open      4..89  (recent, photos all in, still searchable)
-//   past      >= 90  (archive)
+//   live      days == 0L  (race day strictly)
+//   open      1..89       (recent, photos all in, still searchable)
+//   past      >= 90       (archive)
 enum class EventState { UPCOMING, LIVE, OPEN, PAST }
 
 fun deriveEventState(date: String, today: LocalDate = LocalDate.now()): EventState {
@@ -23,7 +23,7 @@ fun deriveEventState(date: String, today: LocalDate = LocalDate.now()): EventSta
     val days = ChronoUnit.DAYS.between(eventDate, today)
     return when {
         days < 0L -> EventState.UPCOMING
-        days <= 3L -> EventState.LIVE
+        days == 0L -> EventState.LIVE
         days <= 89L -> EventState.OPEN
         else -> EventState.PAST
     }
@@ -43,8 +43,10 @@ fun eventDateLabel(date: String): String =
 // Lifecycle stage paired with the event, computed once so filtering/segmenting reuses it.
 fun EventDto.lifecycleState(today: LocalDate = LocalDate.now()): EventState = deriveEventState(date, today)
 
-// Mirrors the website's `canUploadToEvent` (event-catalog.ts) — uploadable only
-// during the race-day + 3-day grace window. Verbatim: uploadable ⟺ state == LIVE.
+// Photographer upload window: race-day + 3-day grace window (days 0..3).
 // Backend enforces the same window server-side as EVENT_NOT_UPLOADABLE.
-fun canUploadToEvent(date: String, today: LocalDate = LocalDate.now()): Boolean =
-    deriveEventState(date, today) == EventState.LIVE
+fun canUploadToEvent(date: String, today: LocalDate = LocalDate.now()): Boolean {
+    val eventDate = runCatching { LocalDate.parse(date) }.getOrNull() ?: return false
+    val days = ChronoUnit.DAYS.between(eventDate, today)
+    return days in 0L..3L
+}
