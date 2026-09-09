@@ -85,12 +85,12 @@ object PhotoDownloader {
         Result.Saved(uri, filename)
     }
 
-    // Standard filename mirroring the website's buildPhotoDownloadFilename.
-    // bib slug stays human-readable; untagged photos use the first 8 chars of
-    // the photo UUID so duplicate runner-untagged shots don't collide.
+    // Standard filename: bib slug stays human-readable and includes the first 8
+    // chars of the photo UUID so multiple photos of the same bib never collide.
+    // Untagged photos also use the first 8 chars of the photo UUID.
     fun buildFilename(photoId: String, bib: String?): String {
         val tag = if (!bib.isNullOrBlank()) {
-            "bib-${bib.lowercase()}"
+            "bib-${bib.lowercase().trim()}-${photoId.take(8)}"
         } else {
             "untagged-${photoId.take(8)}"
         }

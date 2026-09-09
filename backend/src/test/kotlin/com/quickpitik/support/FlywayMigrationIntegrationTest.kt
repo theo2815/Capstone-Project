@@ -1,11 +1,17 @@
 package com.quickpitik.support
 
 import jakarta.persistence.EntityManager
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.dto.photographer.HandlePatchRequest
+import com.quickpitik.exception.ApiException
+import com.quickpitik.service.photographer.PhotographerSettingsService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.JdbcTemplate
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
+import java.util.UUID
 
 /**
  * The migrations apply, in order, on a database that has never seen them — and
@@ -30,6 +36,22 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
 
     @Autowired
     private lateinit var entityManager: EntityManager
+
+    @Autowired
+    private lateinit var photographerSettings: PhotographerSettingsService
+
+    @Test
+    fun `account route handles are reserved by the database and rejected by the service`() {
+        for (handle in listOf("reset-password", "verify", "verify-email", "confirm-email-change")) {
+            assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM reserved_handles WHERE handle = ?", Int::class.java, handle,
+            ))
+            val error = assertFailsWith<ApiException> {
+                photographerSettings.putHandle(UUID.randomUUID(), HandlePatchRequest("  ${handle.uppercase()}  "))
+            }
+            assertEquals(ErrorCodes.RESERVED_HANDLE, error.code)
+        }
+    }
 
     @Test
     fun `every migration applied cleanly`() {

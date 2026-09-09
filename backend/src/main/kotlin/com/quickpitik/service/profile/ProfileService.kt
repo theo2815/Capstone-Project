@@ -64,6 +64,14 @@ class ProfileService(
         val user = userRepository.findById(userId).orElseThrow {
             UnauthorizedException(code = ErrorCodes.UNAUTHORIZED, message = "User not found")
         }
+        // Google sign-in proves identity at login, not permission to replace a
+        // password from an existing session. Google-only users use OTP reset.
+        if (request.currentPassword.isNullOrBlank()) {
+            throw UnauthorizedException(
+                code = ErrorCodes.INVALID_CREDENTIALS,
+                message = "Enter your current password or verify your email through password reset",
+            )
+        }
         if (!passwordEncoder.matches(request.currentPassword, user.passwordHash)) {
             throw UnauthorizedException(
                 code = ErrorCodes.INVALID_CREDENTIALS,

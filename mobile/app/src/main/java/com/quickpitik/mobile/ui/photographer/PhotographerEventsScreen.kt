@@ -36,6 +36,7 @@ import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.runner.EventState
 import com.quickpitik.mobile.ui.runner.deriveEventState
+import com.quickpitik.mobile.ui.runner.deriveEventDisplayState
 import com.quickpitik.mobile.ui.runner.eventDateLabel
 import com.quickpitik.mobile.ui.runner.extractCity
 import com.quickpitik.mobile.ui.theme.*
@@ -44,7 +45,7 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 private enum class StatusFilter(val label: String, val tone: StatusTone) {
-    LIVE("Live", StatusTone.Approved),
+    LIVE("Uploading", StatusTone.Approved),
     // Neutral, not amber — a routine future event isn't a caution state (the
     // website renders UPCOMING as plain slate).
     UPCOMING("Upcoming", StatusTone.Neutral),
@@ -262,7 +263,7 @@ fun PhotographerEventsScreen(
 
                 EventsSectionHeader(
                     label = when (selectedFilter) {
-                        StatusFilter.LIVE -> "Live today"
+                        StatusFilter.LIVE -> "Open for uploads"
                         StatusFilter.UPCOMING -> "Upcoming"
                         StatusFilter.COMPLETED -> "Completed"
                     }
@@ -466,7 +467,8 @@ private fun LiveEventCard(
                 )
             }
             StatusChip(
-                text = if (isActive) "Live · syncing here" else "Live",
+                text = if (isActive) "Syncing here"
+                    else if (deriveEventDisplayState(event.date) == EventState.LIVE) "Live" else "Uploading",
                 tone = StatusTone.Approved,
                 modifier = Modifier
                     .align(Alignment.TopStart)

@@ -4,8 +4,7 @@ import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 
 data class PasswordChangeRequest(
-    @field:NotBlank(message = "currentPassword is required")
-    val currentPassword: String,
+    val currentPassword: String? = null,
 
     @field:NotBlank(message = "newPassword is required")
     // 72 = bcrypt's truncation point; see PasswordValidator.MAX_BYTES.

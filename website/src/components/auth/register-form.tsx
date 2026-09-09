@@ -14,6 +14,7 @@ import {
   OAUTH_ENABLED,
 } from "@/components/auth/google-button";
 import { FieldError } from "@/components/ui/field-error";
+import { Eye, EyeOff } from "lucide-react";
 import {
   NAME_MAX,
   splitApiFieldErrors,
@@ -71,6 +72,7 @@ export function RegisterForm() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<Role>(() =>
     resolveInitialRole(searchParams.get("role")),
   );
@@ -247,20 +249,34 @@ export function RegisterForm() {
               min. 8 characters
             </span>
           </label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
-              clearFieldError("password");
-            }}
-            placeholder="••••••••"
-            autoComplete="new-password"
-            aria-invalid={!!errors.password}
-            aria-describedby={errors.password ? "password-error" : undefined}
-            className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
-          />
+          <div className="relative">
+            <input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                clearFieldError("password");
+              }}
+              placeholder="••••••••"
+              autoComplete="new-password"
+              aria-invalid={!!errors.password}
+              aria-describedby={errors.password ? "password-error" : undefined}
+              className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 pr-10 text-base text-ink placeholder:text-slate-soft transition-colors"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((prev) => !prev)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              className="absolute right-0 top-1/2 -translate-y-1/2 p-2 text-slate hover:text-ink transition-colors focus:outline-none focus-visible:text-fresh"
+            >
+              {showPassword ? (
+                <EyeOff className="size-4" aria-hidden="true" />
+              ) : (
+                <Eye className="size-4" aria-hidden="true" />
+              )}
+            </button>
+          </div>
           <FieldError
             message={errors.password}
             id="password-error"

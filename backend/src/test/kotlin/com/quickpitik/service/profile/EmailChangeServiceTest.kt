@@ -89,6 +89,27 @@ class EmailChangeServiceTest {
     }
 
     @Test
+    fun `a standard user omitting current password is rejected`() {
+        stubUser() // googleSub is null
+
+        assertThrows<UnauthorizedException> {
+            service().requestChange(userId, EmailChangeRequest(newEmail = newEmail, currentPassword = null))
+        }
+
+        Mockito.verify(emailService, Mockito.never()).sendEmailChangeConfirmation(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a Google OAuth user can request email change without current password`() {
+        val user = stubUser()
+        user.googleSub = "google-sub-123"
+
+        service().requestChange(userId, EmailChangeRequest(newEmail = newEmail, currentPassword = null))
+
+        Mockito.verify(emailService).sendEmailChangeConfirmation(eqArg(newEmail), anyArg())
+    }
+
+    @Test
     fun `an address already registered to someone else is refused`() {
         stubUser()
         stubPasswordMatches(true)

@@ -35,15 +35,13 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 import kotlinx.coroutines.launch
 
-// Date-filter chips, mirroring the website's date dropdown. Each (except ANY) maps
-// to a single lifecycle bucket; selecting one collapses the segmented view into a
-// flat list of just that bucket — same behaviour as /events on the web.
-private enum class DateFilter(val label: String, val match: EventState?) {
-    ANY("Any time", null),
-    UPCOMING("Upcoming", EventState.UPCOMING),
-    LIVE("Live now", EventState.LIVE),
-    RECENT("Recent", EventState.OPEN),
-    ARCHIVE("Archive", EventState.PAST),
+// Date-filter choices: 3 primary lifecycle options (Live, Upcoming, Finished),
+// with Finished matching both recent and archived races.
+private enum class DateFilter(val label: String, val matches: (EventState) -> Boolean) {
+    ANY("All events", { true }),
+    LIVE("Live", { it == EventState.LIVE }),
+    UPCOMING("Upcoming", { it == EventState.UPCOMING }),
+    FINISHED("Finished", { it == EventState.OPEN || it == EventState.PAST }),
 }
 
 // The four segment blocks rendered (in this order) when no filter is active, matching
@@ -58,7 +56,7 @@ private data class EventSegment(
 private val SEGMENTS = listOf(
     EventSegment("Upcoming", "Save the date · Photos coming soon", EventState.UPCOMING, false),
     EventSegment("Live now", "Race day · Photos uploading", EventState.LIVE, true),
-    EventSegment("Recent", "Last 30 days · Photos all in", EventState.OPEN, false),
+    EventSegment("Recent", "Last 90 days · Photos may still arrive", EventState.OPEN, false),
     EventSegment("Archive", "Older races · Still searchable", EventState.PAST, false),
 )
 
@@ -220,17 +218,15 @@ fun EventsDiscoveryScreen(
                 is RunnerEventsState.Success -> {
                     val events = state.events
                     val today = remember(events) { java.time.LocalDate.now() }
-                    val withState = remember(events) { events.map { it to it.lifecycleState(today) } }
-                    val cities = remember(events) {
-                        events.map { extractCity(it.location) }.filter { it.isNotBlank() }.distinct().sorted()
-                    }
+                    val withState = remember(events) { events.map { it to it.displayState(today) } }
+                    val cities = remember(events) { events.map { extractCity(it.location) }.filter { it.isNotBlank() }.distinct().sorted() }
                     val liveCount = withState.count { it.second == EventState.LIVE }
                     val trimmed = query.trim().lowercase()
                     val filtersActive = cityFilter != "all" || dateFilter != DateFilter.ANY || trimmed.isNotEmpty()
 
                     val filtered = withState.filter { (event, eventState) ->
                         if (cityFilter != "all" && extractCity(event.location) != cityFilter) return@filter false
-                        dateFilter.match?.let { if (eventState != it) return@filter false }
+                        if (!dateFilter.matches(eventState)) return@filter false
                         if (trimmed.isNotEmpty()) {
                             val hay = "${event.name} ${event.location} ${event.date}".lowercase()
                             if (!hay.contains(trimmed)) return@filter false
@@ -350,7 +346,7 @@ fun EventsDiscoveryScreen(
                         if (filtered.isEmpty()) {
                             EmptyState(
                                 "No races match your filters.",
-                                "Try adjusting the date, city, or search above."
+                                "Try adjusting the date, region, or search above."
                             )
                         } else {
                             EventGrid(filtered.take(visibleCount), savedIds, onEventSelected, savedEventsViewModel::toggle)
@@ -455,7 +451,9 @@ private fun FilterDropdown(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.background(Bone)
+            modifier = Modifier
+                .background(Bone)
+                .heightIn(max = 280.dp)
         ) {
             options.forEach { option ->
                 DropdownMenuItem(

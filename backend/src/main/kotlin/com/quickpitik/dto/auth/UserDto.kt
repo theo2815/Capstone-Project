@@ -19,5 +19,6 @@ data class UserDto(
     // the website's TypeScript types and by mobile's Retrofit converter alike.
     // No client reads it yet; nothing on the server gates on it either.
     val emailVerified: Boolean = false,
+    val hasGoogleAuth: Boolean = false,
     val createdAt: OffsetDateTime,
 )
