@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 31
-- **✅ Already Solved:** 17 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 31, 32, 33, 34)
-- **⏳ Pending / To Be Worked On:** 14 (Items 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
+- **✅ Already Solved:** 18 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 31, 32, 33, 34)
+- **⏳ Pending / To Be Worked On:** 13 (Items 16, 17, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
 
 ---
 
@@ -72,11 +72,13 @@
     - `mobile/app/src/main/java/com/quickpitik/mobile/worker/PhotoUploadWorker.kt`
   - **Action Plan:** Clear or cancel pending upload queue items on logout, or enforce scoping by `photographerId` in `PhotoUploadWorker`.
 
-- [ ] **20. Mobile — Download Photo Filename Collisions on Multi-Photo Downloads**
-  - **Issue:** `PhotoDownloader.buildFilename(photoId, bib)` returns `quickpitik-bib-${bib.lowercase()}.jpg`. When a runner clicks "Download all" on an order containing multiple photos of the same bib number, every photo is assigned the identical filename `quickpitik-bib-101.jpg`. While MediaStore disambiguates with numerical suffixes, individual photo traceability is lost and filenames collide across events.
+- [x] **20. Mobile — Download Photo Filename Collisions on Multi-Photo Downloads**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated `PhotoDownloader.buildFilename()` to append `${photoId.take(8)}` to the bib slug (`quickpitik-bib-$bib-${photoId.take(8)}.jpg`).
+    - Disambiguated multi-photo downloads for identical bib numbers across `OrdersScreen.kt`, `OrderReturnScreen.kt`, `GalleryScreen.kt`, and `PhotographerEventShareScreen.kt` while preserving human-readable bib labels.
   - **Affected Files:**
     - `mobile/app/src/main/java/com/quickpitik/mobile/data/download/PhotoDownloader.kt`
-  - **Action Plan:** Include the photo ID snippet in the filename: `quickpitik-bib-$bib-${photoId.take(8)}.jpg`.
 
 - [ ] **21. Mobile — Deprecated Framework `android.media.ExifInterface` in Sync Worker**
   - **Issue:** `PhotoUploadWorker.kt` imports the legacy platform `android.media.ExifInterface` rather than AndroidX `androidx.exifinterface.media.ExifInterface`. The framework implementation has known orientation extraction bugs on older Android versions and can fail on vendor-specific camera EXIF metadata.
