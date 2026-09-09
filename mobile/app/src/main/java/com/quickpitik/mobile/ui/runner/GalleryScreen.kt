@@ -258,7 +258,14 @@ fun RunnerGalleryScreen(
     val selfieCameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
-        if (success) pendingSelfieUri?.let { onSelfiePicked(it) }
+        if (success) {
+            pendingSelfieUri?.let { onSelfiePicked(it) }
+        } else {
+            pendingSelfieUri?.let { uri ->
+                runCatching { context.contentResolver.delete(uri, null, null) }
+            }
+        }
+        pendingSelfieUri = null
     }
     val selfieGalleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()

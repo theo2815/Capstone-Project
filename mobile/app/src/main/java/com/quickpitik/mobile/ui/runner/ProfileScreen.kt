@@ -113,7 +113,12 @@ fun ProfileScreen(
             tempImageUri?.let { uri ->
                 viewModel.uploadSelfie(uri)
             }
+        } else {
+            tempImageUri?.let { uri ->
+                runCatching { context.contentResolver.delete(uri, null, null) }
+            }
         }
+        tempImageUri = null
     }
     val launchCamera: () -> Unit = {
         try {

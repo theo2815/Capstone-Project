@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 31
-- **✅ Already Solved:** 16 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 31, 32, 33, 34)
-- **⏳ Pending / To Be Worked On:** 15 (Items 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
+- **✅ Already Solved:** 17 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 31, 32, 33, 34)
+- **⏳ Pending / To Be Worked On:** 14 (Items 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
 
 ---
 
@@ -56,12 +56,14 @@
     - `mobile/app/src/main/java/com/quickpitik/mobile/data/ftp/FtpReceiverServer.kt`
   - **Action Plan:** Stream incoming socket bytes directly to a temporary `File` via `OutputStream` (matching `UsbEventCaptureController.kt`) instead of buffering the entire image into RAM.
 
-- [ ] **18. Mobile — Orphaned MediaStore Rows & 0-Byte Placeholders on Camera Dismissal**
-  - **Issue:** A MediaStore entry is inserted into `MediaStore.Images.Media.EXTERNAL_CONTENT_URI` prior to launching the system camera contract `ActivityResultContracts.TakePicture()`. When the user opens the camera and cancels (or presses back without capturing a photo), `success == false`. Because no cleanup runs on cancellation, an empty 0-byte corrupt image placeholder is permanently orphaned in the user's public device gallery.
+- [x] **18. Mobile — Orphaned MediaStore Rows & 0-Byte Placeholders on Camera Dismissal**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - In `ProfileScreen.kt`, updated `cameraLauncher` result callback to invoke `contentResolver.delete(uri, null, null)` and clear `tempImageUri` whenever `success == false`.
+    - In `GalleryScreen.kt`, updated `selfieCameraLauncher` result callback to invoke `contentResolver.delete(uri, null, null)` and clear `pendingSelfieUri` whenever `success == false`.
   - **Affected Files:**
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileScreen.kt`
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/GalleryScreen.kt`
-  - **Action Plan:** In the `TakePicture()` result callback, delete the inserted URI via `contentResolver.delete(uri, null, null)` whenever `success == false`.
 
 - [ ] **19. Mobile — Cross-User Upload Queue Leakage on Device Logout**
   - **Issue:** User sign-out (`AuthViewModel.logout()`) clears credentials via `sessionManager.clearSession()`, but the local SQLite `upload_queue` table is left unpurged. If a photographer logs out while frames are queued/failed and another photographer logs in on the same phone, `PhotoUploadWorker` will attempt to drain and upload Photographer A's photos under Photographer B's authentication token.
