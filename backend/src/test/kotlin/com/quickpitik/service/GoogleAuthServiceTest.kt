@@ -98,6 +98,7 @@ class GoogleAuthServiceTest {
             userDtoMapper,
             loginAttemptService,
             eventPublisher,
+            Mockito.mock(com.quickpitik.service.admin.AdminMfaService::class.java),
         ),
         googleJwtDecoder,
         GoogleAuthProperties(clientId = clientId),

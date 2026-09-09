@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.isPhotographerRole
 import com.quickpitik.mobile.data.remote.CartItemDto
+import com.quickpitik.mobile.data.remote.CouponPreviewDto
 import com.quickpitik.mobile.data.remote.OrderDetailDto
 import com.quickpitik.mobile.data.remote.OrderListItemDto
 import com.quickpitik.mobile.data.remote.OrderResponse
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 sealed class CheckoutState {
     object Idle : CheckoutState()
@@ -68,6 +70,20 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         .map { items -> items.sumOf { it.price } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
+    // Coupon preview for the checkout sheet (V47/V50). Null until fetched; the net
+    // the runner is actually charged is cartTotal − discountTotal. code == null →
+    // auto-applied photographer coupons; a typed code overrides. couponPreview.code
+    // is the typed override that produced the current preview — what checkout()
+    // sends on CreateOrderRequest (auto coupons need no code).
+    private val _couponPreview = MutableStateFlow<CouponPreviewDto?>(null)
+    val couponPreview: StateFlow<CouponPreviewDto?> = _couponPreview
+
+    private val _couponError = MutableStateFlow<String?>(null)
+    val couponError: StateFlow<String?> = _couponError
+
+    private val _couponLoading = MutableStateFlow(false)
+    val couponLoading: StateFlow<Boolean> = _couponLoading
+
     private val _checkoutState = MutableStateFlow<CheckoutState>(CheckoutState.Idle)
     val checkoutState: StateFlow<CheckoutState> = _checkoutState
 
@@ -87,6 +103,27 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _ordersState = MutableStateFlow<OrdersState>(OrdersState.Loading)
     val ordersState: StateFlow<OrdersState> = _ordersState
+
+    // Photo IDs the runner already owns — a PAID/FULFILLED order covers them.
+    // Derived from the same /me/orders data OrdersScreen loads, so the cart and
+    // checkout sheets can flag a duplicate before checkout instead of on the
+    // 409. Kept fresh by a fetchOrders() call when those sheets open. Narrower
+    // than the server gate (no PENDING/guest), so the backend 409 stays the net.
+    val ownedPhotoIds: StateFlow<Set<String>> = _ordersState
+        .map { state ->
+            if (state is OrdersState.Success) {
+                state.orders
+                    .filter { order ->
+                        val status = order.status?.uppercase()
+                        status != null && status in OWNED_ORDER_STATUSES
+                    }
+                    .flatMap { it.photoIds }
+                    .toSet()
+            } else {
+                emptySet()
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     private val _orderDetailState = MutableStateFlow<OrderDetailState>(OrderDetailState.Idle)
     val orderDetailState: StateFlow<OrderDetailState> = _orderDetailState
@@ -167,13 +204,45 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Fetch the coupon preview for the current cart. code null/blank → auto
+    // photographer coupons; a typed code validates + overrides. On an invalid
+    // typed code the backend 400s — surface the message and KEEP the previous
+    // preview so the shown total never jumps back up to list price.
+    fun previewCoupon(code: String?) {
+        val photoIds = cartItems.value.map { it.photoId }
+        if (photoIds.isEmpty()) {
+            _couponPreview.value = null
+            return
+        }
+        val token = sessionManager.getAccessToken()
+        viewModelScope.launch {
+            _couponLoading.value = true
+            _couponError.value = null
+            repository.previewCoupon(token, photoIds, code?.takeIf { it.isNotBlank() })
+                .onSuccess { _couponPreview.value = it }
+                .onFailure {
+                    _couponError.value = it.localizedMessage ?: "That code can't be applied."
+                }
+            _couponLoading.value = false
+        }
+    }
+
+    fun resetCoupon() {
+        _couponPreview.value = null
+        _couponError.value = null
+    }
+
     fun checkout(recipientEmail: String?, paymentMethod: String) {
         val token = sessionManager.getAccessToken()
         val email = recipientEmail ?: sessionManager.getUserEmail() ?: ""
-        
+        // Send only a typed override; auto photographer coupons are applied
+        // server-side without a code. couponPreview.code is the typed code that
+        // produced the current preview (null for auto-only).
+        val couponCode = _couponPreview.value?.code
+
         viewModelScope.launch {
             _checkoutState.value = CheckoutState.Loading
-            val result = repository.checkout(token, email, paymentMethod)
+            val result = repository.checkout(token, email, paymentMethod, couponCode)
             result.onSuccess { order ->
                 _checkoutState.value = CheckoutState.Success(order)
             }.onFailure { exception ->
@@ -192,7 +261,10 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         _cartSheetOpen.value = false
         _checkoutSheetOpen.value = true
     }
-    fun closeCheckoutSheet() { _checkoutSheetOpen.value = false }
+    fun closeCheckoutSheet() {
+        _checkoutSheetOpen.value = false
+        resetCoupon()
+    }
     fun triggerExpressCheckout() { _expressCheckoutPending.value = true }
     fun clearExpressCheckout() { _expressCheckoutPending.value = false }
 
@@ -326,39 +398,86 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
             _orderReturnState.value = OrderReturnState.Failed("Please log in to view this order.")
             return
         }
+        val isGuest = !shareToken.isNullOrBlank()
         viewModelScope.launch {
             var attempts = 0
             while (attempts < POLL_MAX_ATTEMPTS) {
                 attempts++
                 _orderReturnState.value = OrderReturnState.Polling(attempts)
-                val result = if (!shareToken.isNullOrBlank()) {
-                    repository.getGuestOrderDetail(orderId, shareToken)
+                // V39: poll status-only (lighter than full detail). On the last
+                // attempt, ask PayMongo to actively settle/expire a stuck pending
+                // intent (?verify=true) rather than just timing out.
+                val verify = attempts == POLL_MAX_ATTEMPTS
+                val statusResult = if (isGuest) {
+                    repository.getGuestOrderStatus(orderId, shareToken!!, verify)
                 } else {
-                    repository.getOrderDetail(token!!, orderId)
+                    repository.getOrderStatus(token!!, orderId, verify)
                 }
 
-                result.onSuccess { order ->
-                    when (order.status?.uppercase()) {
-                        "PAID", "FULFILLED" -> {
-                            repository.clearCart(token)
-                            _orderReturnState.value = OrderReturnState.Paid(order)
-                            return@launch
+                val terminal = statusResult.fold(
+                    onSuccess = { status ->
+                        when (status.status.uppercase()) {
+                            "PAID", "FULFILLED" -> {
+                                repository.clearCart(token)
+                                hydrateReturnDetail(orderId, token, shareToken)
+                                true
+                            }
+                            "EXPIRED" -> {
+                                _orderReturnState.value = OrderReturnState.Failed(
+                                    "This payment session expired. Start checkout again if you still want the photos."
+                                )
+                                true
+                            }
+                            "REFUNDED" -> {
+                                _orderReturnState.value = OrderReturnState.Failed(
+                                    "This order was refunded. Check your email or open it from Orders."
+                                )
+                                true
+                            }
+                            else -> false // PENDING — keep polling
                         }
-                        "REFUNDED" -> {
+                    },
+                    onFailure = { e ->
+                        // A fresh order can 404 briefly on read lag — tolerate the
+                        // first couple of polls; past that a 404 is a definite
+                        // not-found, so fail fast instead of spinning 60s (F7).
+                        if (attempts >= 3 && (e as? HttpException)?.code() == 404) {
                             _orderReturnState.value = OrderReturnState.Failed(
-                                "This order was refunded. Check your email or open it from /orders."
+                                "We couldn't find that order. Open it from Orders."
                             )
-                            return@launch
+                            true
+                        } else {
+                            false // transient (visibility lag / BE hiccup) — keep polling
                         }
-                        else -> { /* still pending — keep polling */ }
-                    }
-                }
-                // Transient errors (token visibility lag, BE hiccup) are expected
-                // during the first few polls — swallow and keep going.
+                    },
+                )
+                if (terminal) return@launch
                 delay(POLL_INTERVAL_MS)
             }
             _orderReturnState.value = OrderReturnState.Timeout
         }
+    }
+
+    // Fetch the full order once after a terminal PAID/FULFILLED — a status poll
+    // carries no photos/download URLs, and the receipt needs them.
+    private suspend fun hydrateReturnDetail(orderId: String, token: String?, shareToken: String?) {
+        val detail = when {
+            !shareToken.isNullOrBlank() -> repository.getGuestOrderDetail(orderId, shareToken)
+            token != null -> repository.getOrderDetail(token, orderId)
+            else -> null
+        }
+        detail
+            ?.onSuccess { _orderReturnState.value = OrderReturnState.Paid(it) }
+            ?.onFailure {
+                _orderReturnState.value = OrderReturnState.Failed(
+                    it.localizedMessage ?: "Payment received — open the receipt from Orders."
+                )
+            }
+            ?: run {
+                _orderReturnState.value = OrderReturnState.Failed(
+                    "Payment received — open the receipt from Orders."
+                )
+            }
     }
 
     fun resetOrderReturnState() {
@@ -368,5 +487,6 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         const val POLL_INTERVAL_MS = 2_000L
         const val POLL_MAX_ATTEMPTS = 30 // 60s
+        val OWNED_ORDER_STATUSES = setOf("PAID", "FULFILLED")
     }
 }

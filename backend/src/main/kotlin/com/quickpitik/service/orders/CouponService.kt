@@ -15,8 +15,6 @@ import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerCoupon
 import com.quickpitik.entity.OrderStatus
-import com.quickpitik.entity.VerificationStatus
-import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -27,8 +25,8 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.photographer.PhotographerAccessGuard
 import org.springframework.dao.DataIntegrityViolationException
-import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
@@ -56,6 +54,7 @@ class CouponService(
     private val eventRepository: EventRepository,
     private val eventPhotographerRepository: EventPhotographerRepository,
     private val orderRepository: OrderRepository,
+    private val accessGuard: PhotographerAccessGuard,
 ) {
     @Transactional(readOnly = true)
     fun get(photographerId: UUID, eventId: UUID): CouponDto? {
@@ -217,7 +216,8 @@ class CouponService(
     @Transactional(readOnly = true)
     fun preview(req: CouponPreviewRequest): CouponPreviewDto {
         val manual = req.code?.takeIf { it.isNotBlank() }?.let(::resolveForCheckout)
-        val photos = photoRepository.findAllById(req.photoIds.distinct()).filter { it.status == PhotoStatus.LIVE }
+        val photos = photoRepository.findAllById(req.photoIds.distinct())
+            .filter { it.status == PhotoStatus.LIVE && it.deletedAt == null }
         // Read-only quote: no lock, and findLiveForEvent already filters
         // active / expiry / usage-limit.
         val auto = autoFor(photos) { eventIds ->
@@ -303,24 +303,7 @@ class CouponService(
 
     private fun requireEligibleCoverage(photographerId: UUID, eventId: UUID): Event {
         val event = requireCoveredEvent(photographerId, eventId)
-        val user = userRepository.findById(photographerId).orElse(null)
-            ?: throw NotFoundException(code = ErrorCodes.USER_NOT_FOUND, message = "User not found")
-        if (user.suspendedAt != null) {
-            throw ApiException(
-                status = HttpStatus.FORBIDDEN,
-                code = ErrorCodes.ACCOUNT_SUSPENDED,
-                message = "Your account is suspended. Contact support before creating coupons.",
-            )
-        }
-        if (photographerSettingsRepository.findById(photographerId).orElse(null)?.verificationStatus !=
-            VerificationStatus.APPROVED
-        ) {
-            throw ApiException(
-                status = HttpStatus.FORBIDDEN,
-                code = ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED,
-                message = "Complete photographer verification before creating coupons.",
-            )
-        }
+        accessGuard.requireApproved(photographerId, "creating coupons")
         if (event.isFree) {
             throw ValidationException(
                 message = "Free events cannot use coupons",

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useCartStore } from "@/store/cart-store";
+import { useOwnedPhotoIds } from "@/hooks/use-owned-photo-ids";
+import { useAuthStore } from "@/store/auth-store";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { fetchEventDetail } from "@/lib/api-events";
 import { ROUTES } from "@/lib/constants";
@@ -52,6 +54,12 @@ export function CartModal({
   const total = useCartStore((s) => s.total());
   const syncEnabled = useCartStore((s) => s.syncEnabled);
   const { confirm } = useConfirmation();
+
+  // Photos the runner already owns — flagged in the row and callable out in one
+  // tap, so a duplicate is caught here instead of on the checkout 409.
+  const ownedPhotoIds = useOwnedPhotoIds();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const ownedItems = items.filter((i) => ownedPhotoIds.has(i.photoId));
 
   // Guest carts carry the price captured at browse time. A signed-in runner's
   // cart self-corrects — the server owns the row and `GET /me/cart` renders
@@ -305,12 +313,22 @@ export function CartModal({
           <EmptyCart onClose={onClose} />
         ) : (
           <>
+            {ownedItems.length > 0 && (
+              <AlreadyPurchasedBanner
+                count={ownedItems.length}
+                isAuthenticated={isAuthenticated}
+                onRemoveAll={() =>
+                  ownedItems.forEach((i) => removeItem(i.photoId))
+                }
+              />
+            )}
             <ul className="flex-1 overflow-y-auto divide-y divide-line">
               {items.map((item, i) => (
                 <CartRow
                   key={item.photoId}
                   item={item}
                   index={i}
+                  owned={ownedPhotoIds.has(item.photoId)}
                   onPreview={() => setPreviewIndex(i)}
                   onRemove={() => removeItem(item.photoId)}
                 />
@@ -397,11 +415,13 @@ export function CartModal({
 function CartRow({
   item,
   index,
+  owned,
   onPreview,
   onRemove,
 }: {
   item: CartItem;
   index: number;
+  owned: boolean;
   onPreview: () => void;
   onRemove: () => void;
 }) {
@@ -465,6 +485,15 @@ function CartRow({
               {item.time}
             </p>
           ) : null}
+          {owned && (
+            <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-bone-deep px-2.5 py-1 font-mono uppercase tracking-[0.14em] text-[13px] text-slate whitespace-nowrap">
+              <span
+                aria-hidden="true"
+                className="size-1.5 rounded-full bg-slate-soft"
+              />
+              Already purchased
+            </span>
+          )}
         </div>
       </button>
 
@@ -483,6 +512,52 @@ function CartRow({
         </button>
       </div>
     </li>
+  );
+}
+
+// Shown above the cart list when the runner already owns one or more carted
+// photos. Explains they're already theirs (re-download is free) and offers to
+// call them all out in one tap. Neutral tone — owning a photo isn't an error.
+function AlreadyPurchasedBanner({
+  count,
+  isAuthenticated,
+  onRemoveAll,
+}: {
+  count: number;
+  isAuthenticated: boolean;
+  onRemoveAll: () => void;
+}) {
+  const noun = count === 1 ? "photo" : "photos";
+  return (
+    <div
+      role="status"
+      className="border-b border-line bg-bone-deep px-6 md:px-7 py-4"
+    >
+      <div className="flex items-start gap-3">
+        <span
+          aria-hidden="true"
+          className="mt-1.5 size-2 shrink-0 rounded-full bg-slate-soft"
+        />
+        <div className="min-w-0 flex-1">
+          <p className="font-display text-base font-medium text-ink">
+            You already own <span className="tnum">{count}</span> of these {noun}.
+          </p>
+          <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
+            {isAuthenticated
+              ? "They're in your account — re-download them free from your Orders. Remove them here to check out the rest."
+              : "Re-download them free from your email receipt. Remove them here to check out the rest."}
+          </p>
+          <button
+            type="button"
+            onClick={onRemoveAll}
+            className="mt-3 inline-flex items-center gap-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors focus:outline-none focus-visible:text-fresh"
+          >
+            <span aria-hidden="true">✕</span>
+            Remove already-purchased{count > 1 ? ` (${count})` : ""}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

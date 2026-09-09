@@ -11,6 +11,7 @@ import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Font
 import java.awt.Graphics2D
+import java.awt.Rectangle
 import java.awt.RenderingHints
 import java.awt.font.TextLayout
 import java.awt.geom.AffineTransform
@@ -29,6 +30,7 @@ import kotlin.math.PI
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -36,6 +38,35 @@ import kotlin.random.Random
 // name (falls back to the account name), `handle` is null until verification,
 // `photoId` seeds the per-photo tile jitter and goes into the XMP packet.
 data class WatermarkCredit(val name: String, val handle: String?, val photoId: UUID)
+
+// How the photographer's own logo is placed — the three photographer-controlled
+// knobs. Everything is normalized so one setting reproduces on any photo size:
+// `scale` is the logo width as a fraction of the photo width (its height follows
+// the logo's own aspect ratio, so the ratio is always preserved); `opacity` is
+// the SRC_OVER alpha; `(x,y)` are free-space fractions in [0,1] where (0,0) is
+// the padded top-left and (1,1) the padded bottom-right. Position is split by
+// orientation (a wide photo uses landscape, a tall one portrait); scale and
+// opacity are shared. DEFAULT is the historical fixed mark — an unconfigured
+// photographer keeps the former mark wherever it fits within the frame.
+data class WatermarkPlacement(
+    val opacity: Float,
+    val scale: Double,
+    val landscapeX: Double,
+    val landscapeY: Double,
+    val portraitX: Double,
+    val portraitY: Double,
+) {
+    companion object {
+        val DEFAULT = WatermarkPlacement(
+            opacity = 0.70f,
+            scale = 0.15,
+            landscapeX = 1.0,
+            landscapeY = 1.0,
+            portraitX = 1.0,
+            portraitY = 1.0,
+        )
+    }
+}
 
 // The preview JPEG plus its fingerprints, all computed from the same pixels
 // before encoding so the caller never has to decode the output again:
@@ -89,6 +120,7 @@ class WatermarkService(
         watermarkImage: ByteArray?,
         credit: WatermarkCredit,
         platformMark: Boolean,
+        placement: WatermarkPlacement = WatermarkPlacement.DEFAULT,
     ): MarkedPreview {
         val source = ImageIO.read(ByteArrayInputStream(input))
             ?: throw IllegalArgumentException("Unreadable image bytes")
@@ -98,6 +130,14 @@ class WatermarkService(
             ImageIO.read(ByteArrayInputStream(it))
                 ?: throw IllegalArgumentException("Unreadable watermark image bytes")
         }
+        val landscape = target.width >= target.height
+        val logoBox = watermark?.let {
+            watermarkBox(
+                target.width, target.height, it.width.toDouble() / it.height, placement.scale,
+                if (landscape) placement.landscapeX else placement.portraitX,
+                if (landscape) placement.landscapeY else placement.portraitY,
+            )
+        }
         // Fingerprints of the frame BEFORE any mark: a copy someone has
         // cleaned or cropped still hashes to these.
         val phashClean = PerceptualHash.of(target)
@@ -106,9 +146,9 @@ class WatermarkService(
             val rnd = Random(seed(credit.photoId))
             drawCreditTiles(target, credit, rnd)
             drawStatement(target, credit)
-            drawCaption(target, credit)
+            drawCaption(target, credit, logoBox?.width ?: (target.width * placement.scale).toInt().coerceAtLeast(48))
         }
-        if (watermark != null) drawWatermarkImage(target, watermark)
+        if (watermark != null && logoBox != null) drawWatermarkImage(target, watermark, placement.opacity, logoBox)
         val phash = PerceptualHash.of(target)
         val out = ByteArrayOutputStream()
         ImageIO.write(target, "jpg", out)
@@ -313,12 +353,15 @@ class WatermarkService(
         }
     }
 
-    private fun drawCaption(photo: BufferedImage, credit: WatermarkCredit) {
+    private fun drawCaption(photo: BufferedImage, credit: WatermarkCredit, logoWidth: Int) {
         val w = photo.width
         val h = photo.height
         val pad = (w * 0.025).toInt().coerceAtLeast(12)
-        // Leave the bottom-right free for the photographer's corner logo.
-        val budget = w - (w * CORNER_WIDTH_RATIO).toInt().coerceAtLeast(48) - 3 * pad
+        // Reserve room on the right for the photographer's logo, tracking its
+        // fitted size so a bigger logo doesn't collide with the caption.
+        // ponytail: reserves by size only, not position — if the photographer
+        // drags the logo onto the caption it's drawn on top (last) and wins.
+        val budget = w - logoWidth - 3 * pad
         val g = photo.createGraphics()
         try {
             hints(g)
@@ -349,26 +392,33 @@ class WatermarkService(
         }
     }
 
-    private fun drawWatermarkImage(photo: BufferedImage, watermark: BufferedImage) {
-        // Corner mark — identifies the photographer. ~15% of photo width,
-        // padded from edges, 70% opacity. This is the "this photo is mine" mark.
-        val cornerWidth = (photo.width * CORNER_WIDTH_RATIO).toInt().coerceAtLeast(48)
-        val cornerScale = cornerWidth.toDouble() / watermark.width
-        val cornerHeight = (watermark.height * cornerScale).toInt().coerceAtLeast(1)
-        val cornerPad = (photo.width * 0.025).toInt().coerceAtLeast(12)
+    // Render-pixel geometry, mirrored in both client editors. Preserve the
+    // historical minimums and rounding, then shrink both axes together if the
+    // logo would exceed the padded frame. Tiny photos reduce the inset first.
+    internal fun watermarkBox(w: Int, h: Int, logoAspect: Double, scale: Double, nx: Double, ny: Double): Rectangle {
+        val pad = minOf((w * 0.025).toInt().coerceAtLeast(12), (minOf(w, h) - 1) / 2)
+        val requestedWidth = (w * scale).toInt().coerceAtLeast(48)
+        val requestedHeight = (requestedWidth / logoAspect).toInt().coerceAtLeast(1)
+        val fit = minOf(1.0, (w - 2 * pad).toDouble() / requestedWidth, (h - 2 * pad).toDouble() / requestedHeight)
+        val width = (requestedWidth * fit).toInt().coerceAtLeast(1)
+        val height = (requestedHeight * fit).toInt().coerceAtLeast(1)
+        return Rectangle(
+            (pad + nx.coerceIn(0.0, 1.0) * (w - width - 2 * pad)).roundToInt(),
+            (pad + ny.coerceIn(0.0, 1.0) * (h - height - 2 * pad)).roundToInt(),
+            width, height,
+        )
+    }
 
+    private fun drawWatermarkImage(photo: BufferedImage, watermark: BufferedImage, opacity: Float, box: Rectangle) {
+        // Draw last: the photographer's logo stays above all protection layers.
         val gCorner = photo.createGraphics()
         try {
             hints(gCorner)
-            gCorner.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, CORNER_OPACITY)
-            gCorner.drawImage(
-                watermark,
-                photo.width - cornerWidth - cornerPad,
-                photo.height - cornerHeight - cornerPad,
-                cornerWidth,
-                cornerHeight,
-                null,
+            gCorner.composite = AlphaComposite.getInstance(
+                AlphaComposite.SRC_OVER,
+                opacity.coerceIn(0.05f, 1f),
             )
+            gCorner.drawImage(watermark, box.x, box.y, box.width, box.height, null)
         } finally {
             gCorner.dispose()
         }
@@ -510,8 +560,8 @@ class WatermarkService(
         // Bottom-left credit caption — the legible-at-phone-size attribution.
         private const val CAPTION_TEXT_RATIO = 0.028
         private const val CAPTION_OPACITY = 0.85f
-        // Photographer's logo — corner 15% of photo width, 70% opacity.
-        private const val CORNER_WIDTH_RATIO = 0.15
-        private const val CORNER_OPACITY = 0.70f
+        // The photographer's logo geometry (size 15% of width, opacity 70%,
+        // bottom-right) is no longer hardcoded here — it is per-photographer
+        // and lives in WatermarkPlacement (DEFAULT reproduces those values).
     }
 }

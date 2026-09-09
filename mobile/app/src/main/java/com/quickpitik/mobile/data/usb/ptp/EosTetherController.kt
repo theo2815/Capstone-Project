@@ -261,6 +261,7 @@ object EosEvents {
         while (off + 8 <= blob.size) {
             val size = bb.getInt(off)
             if (size < 8) break // size 0 / terminator / malformed
+            if (size > blob.size - off) throw PtpException("Truncated EOS event record.")
             val code = bb.getInt(off + 4)
             // size >= 12 keeps a payload-less (8-byte) record from reading the
             // NEXT record's size field as its handle.
@@ -268,7 +269,6 @@ object EosEvents {
                 val handle = bb.getInt(off + 8).toLong() and 0xFFFFFFFFL
                 events.add(EosEvent(code, handle))
             }
-            if (size > blob.size - off) break
             off += size
         }
         return events

@@ -30,8 +30,8 @@ export function OnboardingForm() {
     setIsSubmitting(true);
     setError(null);
     try {
-      await completeOnboarding(role);
-      router.replace(roleHome(role));
+      const outcome = await completeOnboarding(role);
+      router.replace(outcome.kind === "mfa" ? ROUTES.LOGIN : roleHome(outcome.user.role));
     } catch (err) {
       // The parked Google token lives ~1h. If it expired while this page sat
       // open, the pick cannot complete — restart the flow from /login, where

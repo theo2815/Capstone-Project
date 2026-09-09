@@ -131,6 +131,8 @@ export interface PhotographerEventPhotosArgs {
   offset?: number;
   limit?: number;
   order?: "newest" | "oldest";
+  /** true → the Deleted Photos (trash) list; false/omitted → active gallery. */
+  deleted?: boolean;
 }
 
 export async function fetchPhotographerEventPhotos(
@@ -141,6 +143,7 @@ export async function fetchPhotographerEventPhotos(
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? 120));
   if (args.order) p.set("order", args.order);
+  if (args.deleted) p.set("deleted", "true");
   return api.get<PaginatedResponse<PhotographerLibraryPhoto>>(
     `/me/photographer/events/${encodeURIComponent(eventId)}/photos?${p.toString()}`,
   );
@@ -156,6 +159,99 @@ export async function fetchPhotographerPhotoDownload(
 ): Promise<PhotographerDownloadResponse | null> {
   return api.get<PhotographerDownloadResponse>(
     `/me/photographer/photos/${encodeURIComponent(photoId)}/download`,
+  );
+}
+
+// ── Photo library management (V52) ────────────────────────────────────────
+// Trash / restore / permanent-delete are bulk endpoints; the per-photo action
+// in the UI just sends a one-element list. Ownership + event scoping are
+// enforced server-side, so a foreign id is silently ignored.
+//   POST /me/photographer/events/{id}/photos/trash            { photoIds } → { affected }
+//   POST /me/photographer/events/{id}/photos/restore          { photoIds } → { affected }
+//   POST /me/photographer/events/{id}/photos/permanent-delete { photoIds } → { deleted, blockedSold }
+//   POST /me/photographer/events/{id}/download-bundle                      → { url, expiresAt }
+
+export async function trashPhotographerPhotos(
+  eventId: string,
+  photoIds: string[],
+): Promise<{ affected: number; failed: string[] }> {
+  return movePhotographerPhotos(eventId, photoIds, "trash");
+}
+
+export async function restorePhotographerPhotos(
+  eventId: string,
+  photoIds: string[],
+): Promise<{ affected: number; failed: string[] }> {
+  return movePhotographerPhotos(eventId, photoIds, "restore");
+}
+
+async function movePhotographerPhotos(eventId: string, photoIds: string[], action: "trash" | "restore") {
+  const result = { affected: 0, failed: [] as string[] };
+  const ids = [...new Set(photoIds)];
+  // PhotoIdsRequest caps trash/restore at 500; the UI can select many pages.
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const batch = ids.slice(offset, offset + 500);
+    try {
+      const res = await api.post<{ affected: number }>(
+        `/me/photographer/events/${encodeURIComponent(eventId)}/photos/${action}`,
+        { photoIds: batch },
+      );
+      result.affected += res.affected;
+    } catch {
+      result.failed.push(...batch);
+    }
+  }
+  return result;
+}
+
+export interface PermanentDeleteResult {
+  /** Photo ids actually purged (row + R2 objects gone). */
+  deleted: string[];
+  /** Photo ids refused because they've been sold — kept so buyers can still
+   *  download them. */
+  blockedSold: string[];
+  blockedPending?: string[];
+  failed?: string[];
+}
+
+export async function permanentDeletePhotographerPhotos(
+  eventId: string,
+  photoIds: string[],
+): Promise<PermanentDeleteResult> {
+  const result = { deleted: [] as string[], blockedSold: [] as string[], blockedPending: [] as string[], failed: [] as string[] };
+  const ids = [...new Set(photoIds)];
+  // MePhotographerController caps permanent-delete at 100 storage operations.
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const batch = ids.slice(offset, offset + 100);
+    try {
+      const res = await api.post<PermanentDeleteResult>(
+        `/me/photographer/events/${encodeURIComponent(eventId)}/photos/permanent-delete`,
+        { photoIds: batch },
+      );
+      result.deleted.push(...res.deleted);
+      result.blockedSold.push(...res.blockedSold);
+      result.blockedPending.push(...(res.blockedPending ?? []));
+      const handled = new Set([...res.deleted, ...res.blockedSold, ...(res.blockedPending ?? [])]);
+      result.failed.push(...batch.filter((id) => !handled.has(id)));
+    } catch {
+      result.failed.push(...batch);
+    }
+  }
+  return result;
+}
+
+export interface PhotographerBundleResponse {
+  /** Short-lived tokened URL to navigate to for the ZIP of all active photos. */
+  url: string;
+  expiresAt: string;
+}
+
+export async function preparePhotographerBundle(
+  eventId: string,
+): Promise<PhotographerBundleResponse> {
+  return api.post<PhotographerBundleResponse>(
+    `/me/photographer/events/${encodeURIComponent(eventId)}/download-bundle`,
+    {},
   );
 }
 

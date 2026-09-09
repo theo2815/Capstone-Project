@@ -58,6 +58,9 @@ class SecurityConfig(
                 auth.requestMatchers(
                     "/api/v1/auth/register",
                     "/api/v1/auth/login",
+                    // Second step of an admin MFA login — the caller holds a
+                    // short-lived mfaPending token (in the body), not a session.
+                    "/api/v1/auth/mfa/verify",
                     // Google ID-token exchange — the token in the body is the
                     // credential, verified against Google's JWKS.
                     "/api/v1/auth/google",
@@ -133,6 +136,10 @@ class SecurityConfig(
                 // Bundle download (token-gated; works for both runners + guests
                 // because a top-level navigation can't carry the JWT).
                 auth.requestMatchers(guestOrderGet("/download-bundle")).permitAll()
+                // Photographer "Download All" ZIP — same token-gated shape as the
+                // order bundle above (a top-level <a> nav carries no JWT). The
+                // signed token is verified in the service layer.
+                auth.requestMatchers(photographerBundleGet()).permitAll()
                 // Guest order detail (token-gated, anti-IDOR via service layer).
                 // The UUID regex keeps future named sibling routes private.
                 auth.requestMatchers(guestOrderGet("")).permitAll()
@@ -171,5 +178,12 @@ class SecurityConfig(
 
         internal fun guestOrderRoute(method: HttpMethod, suffix: String): RegexRequestMatcher =
             RegexRequestMatcher.regexMatcher(method, "$GUEST_ORDER_PATH$suffix(?:\\?.*)?\$")
+
+        private const val PHOTOGRAPHER_BUNDLE_PATH = "^/api/v1/photographer-bundles/$UUID_PATH"
+
+        // GET /api/v1/photographer-bundles/{eventId}?token=... — token-gated in
+        // the service layer, same query-string-tolerant shape as guestOrderGet.
+        internal fun photographerBundleGet(): RegexRequestMatcher =
+            RegexRequestMatcher.regexMatcher(HttpMethod.GET, "$PHOTOGRAPHER_BUNDLE_PATH(?:\\?.*)?\$")
     }
 }

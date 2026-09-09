@@ -10,6 +10,7 @@ import { CheckoutResumeWatcher } from "@/components/cart/checkout-resume-watcher
 import { PendingPaymentWatcher } from "@/components/cart/pending-payment-watcher";
 import { AuthHydrator } from "@/components/layout/auth-hydrator";
 import { OnboardingGate } from "@/components/onboarding/onboarding-gate";
+import { StepUpProvider } from "@/components/auth/step-up-provider";
 
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -46,6 +47,7 @@ export function Providers({ children }: { children: ReactNode }) {
       {children}
       <ToastContainer />
       <ConfirmationOverlay />
+      <StepUpProvider />
       <Suspense fallback={null}>
         <FloatingCart />
       </Suspense>

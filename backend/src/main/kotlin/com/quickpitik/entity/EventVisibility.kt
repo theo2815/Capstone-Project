@@ -1,8 +1,10 @@
 package com.quickpitik.entity
 
-// PUBLIC events are listed on /events; UNLISTED events are reachable only by
-// link (slug, share page, coverage). Only EventRepository.search filters on
-// this — everything else must keep working for a link-holder.
+// Admin (createdBy == null) PUBLIC events are listed on /events. UNLISTED
+// events — and ALL photographer-owned events, whatever their visibility — are
+// reachable only by link (slug, share page, coverage) or the owner's profile.
+// EventRepository.search filters on visibility AND createdBy; everything else
+// must keep working for a link-holder.
 enum class EventVisibility(val wire: String) {
     PUBLIC("public"),
     UNLISTED("unlisted");

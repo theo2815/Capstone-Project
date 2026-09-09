@@ -13,6 +13,7 @@ import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.JwtTokenProvider
+import com.quickpitik.service.admin.AdminMfaService
 import com.quickpitik.service.profile.UserDtoMapper
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -50,6 +51,7 @@ class AuthServiceTest {
     private lateinit var userDtoMapper: UserDtoMapper
     private lateinit var loginAttemptService: LoginAttemptService
     private lateinit var eventPublisher: ApplicationEventPublisher
+    private lateinit var adminMfaService: AdminMfaService
 
     private val tokenProvider = JwtTokenProvider(
         JwtProperties(
@@ -77,6 +79,9 @@ class AuthServiceTest {
         // left" and every login in this class 429s. Default it to unlocked;
         // the lockout tests below override it.
         Mockito.`when`(loginAttemptService.lockRemaining(anyArg(), anyArg())).thenReturn(null)
+        adminMfaService = Mockito.mock(AdminMfaService::class.java)
+        // Default: no admin has MFA — keeps the existing login tests unchanged.
+        Mockito.`when`(adminMfaService.isEnabled(anyArg())).thenReturn(false)
     }
 
     private fun service() = AuthService(
@@ -87,6 +92,15 @@ class AuthServiceTest {
         userDtoMapper,
         loginAttemptService,
         eventPublisher,
+        adminMfaService,
+    )
+
+    private fun dtoFor(user: User) = UserDto(
+        id = user.id,
+        email = user.email,
+        name = user.name,
+        role = user.role,
+        createdAt = OffsetDateTime.now(),
     )
 
     @Test
@@ -246,11 +260,76 @@ class AuthServiceTest {
         Mockito.verify(loginAttemptService, Mockito.never()).recordSuccess(anyArg())
     }
 
-    private fun newUser(): User = User(
+    private fun newUser(role: Role = Role.RUNNER): User = User(
         id = UUID.randomUUID(),
         email = "runner@example.com",
         passwordHash = "\$2a\$12\$stub",
         name = "Test Runner",
-        role = Role.RUNNER,
+        role = role,
     )
+
+    // ─── Phase 5b — admin MFA login challenge ───────────────────────────────
+
+    @Test
+    fun `an admin with MFA enabled gets a challenge, not tokens`() {
+        val admin = newUser(Role.ADMIN)
+        Mockito.`when`(userRepository.findByEmail(admin.email)).thenReturn(admin)
+        Mockito.`when`(passwordEncoder.matches(anyArg(), anyArg())).thenReturn(true)
+        Mockito.`when`(adminMfaService.isEnabled(admin.id)).thenReturn(true)
+        Mockito.`when`(userDtoMapper.toDto(anyArg())).thenReturn(dtoFor(admin))
+
+        val res = service().login(LoginRequest(email = admin.email, password = "correct-horse-battery"))
+
+        assertEquals(true, res.mfaRequired)
+        assertEquals("", res.accessToken)
+        assertEquals(true, !res.mfaToken.isNullOrBlank())
+        Mockito.verify(refreshTokenService, Mockito.never()).issue(anyArg())
+    }
+
+    @Test
+    fun `an admin without MFA logs in normally`() {
+        val admin = newUser(Role.ADMIN)
+        Mockito.`when`(userRepository.findByEmail(admin.email)).thenReturn(admin)
+        Mockito.`when`(passwordEncoder.matches(anyArg(), anyArg())).thenReturn(true)
+        Mockito.`when`(adminMfaService.isEnabled(admin.id)).thenReturn(false)
+        Mockito.`when`(refreshTokenService.issue(admin.id)).thenReturn("issued")
+        Mockito.`when`(userDtoMapper.toDto(anyArg())).thenReturn(dtoFor(admin))
+
+        val res = service().login(LoginRequest(email = admin.email, password = "correct-horse-battery"))
+
+        assertEquals(false, res.mfaRequired)
+        assertEquals(true, res.accessToken.isNotBlank())
+    }
+
+    @Test
+    fun `verifyMfa issues tokens for a valid code`() {
+        val admin = newUser(Role.ADMIN)
+        val mfaToken = tokenProvider.createMfaPendingToken(admin.id)
+        Mockito.`when`(userRepository.findById(admin.id)).thenReturn(Optional.of(admin))
+        Mockito.`when`(adminMfaService.verifyCode(admin.id, "123456")).thenReturn(true)
+        Mockito.`when`(refreshTokenService.issue(admin.id)).thenReturn("issued")
+        Mockito.`when`(userDtoMapper.toDto(anyArg())).thenReturn(dtoFor(admin))
+
+        val res = service().verifyMfa(mfaToken, "123456")
+
+        assertEquals(true, res.accessToken.isNotBlank())
+        assertEquals(false, res.mfaRequired)
+    }
+
+    @Test
+    fun `verifyMfa rejects an invalid code`() {
+        val admin = newUser(Role.ADMIN)
+        val mfaToken = tokenProvider.createMfaPendingToken(admin.id)
+        Mockito.`when`(userRepository.findById(admin.id)).thenReturn(Optional.of(admin))
+        Mockito.`when`(adminMfaService.verifyCode(admin.id, "000000")).thenReturn(false)
+
+        val ex = assertFailsWith<ApiException> { service().verifyMfa(mfaToken, "000000") }
+        assertEquals(ErrorCodes.INVALID_MFA_CODE, ex.code)
+    }
+
+    @Test
+    fun `verifyMfa rejects a garbage token`() {
+        val ex = assertFailsWith<UnauthorizedException> { service().verifyMfa("not-a-jwt", "123456") }
+        assertEquals(ErrorCodes.INVALID_TOKEN, ex.code)
+    }
 }

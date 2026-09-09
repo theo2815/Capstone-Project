@@ -1,7 +1,9 @@
 package com.quickpitik.mobile.data.repository
 
 import com.quickpitik.mobile.data.remote.CartItemDto
+import com.quickpitik.mobile.data.remote.CouponPreviewDto
 import com.quickpitik.mobile.data.remote.OrderDetailDto
+import com.quickpitik.mobile.data.remote.OrderStatusDto
 import com.quickpitik.mobile.data.remote.OrderListItemDto
 import com.quickpitik.mobile.data.remote.OrderResponse
 import com.quickpitik.mobile.data.remote.PhotoDto
@@ -18,15 +20,30 @@ interface CartRepository {
     suspend fun clearCart(token: String?): Result<Boolean>
     suspend fun mergeCart(token: String): Result<List<CartItemDto>>
     
+    // code == null/blank → the auto-applied photographer coupons for these
+    // photos; a typed code validates + overrides. Server prices it; mobile just
+    // displays the result. Public (guest checkout allowed).
+    suspend fun previewCoupon(
+        token: String?,
+        photoIds: List<String>,
+        code: String?
+    ): Result<CouponPreviewDto>
+
     suspend fun checkout(
         token: String?,
         recipientEmail: String?,
-        paymentMethod: String
+        paymentMethod: String,
+        couponCode: String?
     ): Result<OrderResponse>
     
     suspend fun getOrders(token: String): Result<List<OrderListItemDto>>
     suspend fun getOrderDetail(token: String, orderId: String): Result<OrderDetailDto>
     suspend fun getGuestOrderDetail(orderId: String, shareToken: String): Result<OrderDetailDto>
+
+    // V39 status-only poll (lighter than full detail). verify=true asks PayMongo
+    // to settle/expire a stuck pending intent — used on the last poll attempt.
+    suspend fun getOrderStatus(token: String, orderId: String, verify: Boolean): Result<OrderStatusDto>
+    suspend fun getGuestOrderStatus(orderId: String, shareToken: String, verify: Boolean): Result<OrderStatusDto>
 
     suspend fun submitRefund(
         token: String,

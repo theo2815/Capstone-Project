@@ -34,11 +34,13 @@ class TokenAuthenticator(
         if (responseCount(response) >= 2) return null
 
         val failedAuthHeader = response.request.header("Authorization")
+        val snapshot = response.request.tag(SessionManager.AuthSession::class.java) ?: return null
 
         // Serialised so a burst of parallel 401s (the upload worker runs 3
         // concurrent uploads) performs ONE refresh, not three. The backend
         // rotates refresh tokens, so racing refreshes would invalidate here.
         synchronized(this) {
+            if (!sessionManager.isCurrent(snapshot)) return null
             val currentToken = sessionManager.getAccessToken()
 
             // Another thread already refreshed while this request was in flight.
@@ -47,7 +49,7 @@ class TokenAuthenticator(
                 return retryWith(response.request, currentToken)
             }
 
-            val refreshToken = sessionManager.getRefreshToken() ?: return giveUp()
+            val refreshToken = sessionManager.getRefreshToken() ?: return giveUp(snapshot)
 
             // Blocking execute() is correct here: authenticate() is already off
             // the main thread, and refreshApi is a client with NO authenticator
@@ -71,6 +73,8 @@ class TokenAuthenticator(
             // refresh must land on login with the reason shown, not read like an
             // ordinary expiry.
             if (!refreshed.isSuccessful || auth == null) {
+                // An outage or rate limit does not revoke the photographer's login.
+                if (refreshed.code() !in setOf(401, 403)) return null
                 val err = runCatching {
                     com.google.gson.Gson().fromJson(
                         refreshed.errorBody()?.string(),
@@ -78,17 +82,16 @@ class TokenAuthenticator(
                     )?.errors?.firstOrNull()
                 }.getOrNull()
                 val reason = err?.message?.takeIf { err.code == "ACCOUNT_SUSPENDED" }
-                return giveUp(reason)
+                return giveUp(snapshot, reason)
             }
 
-            sessionManager.updateTokens(auth.accessToken, auth.refreshToken)
+            if (!sessionManager.refreshIfCurrent(snapshot, auth.accessToken, auth.refreshToken)) return null
             return retryWith(response.request, auth.accessToken)
         }
     }
 
-    private fun giveUp(reason: String? = null): Request? {
-        sessionManager.clearSession()
-        SessionEvents.raiseForcedLogout(reason)
+    private fun giveUp(snapshot: SessionManager.AuthSession, reason: String? = null): Request? {
+        if (sessionManager.clearIfCurrent(snapshot)) SessionEvents.raiseForcedLogout(reason)
         return null
     }
 

@@ -7,6 +7,7 @@ import com.quickpitik.dto.auth.GoogleLoginRequest
 import com.quickpitik.dto.auth.LoginRequest
 import com.quickpitik.dto.auth.LogoutRequest
 import com.quickpitik.dto.auth.MessageResponse
+import com.quickpitik.dto.auth.MfaVerifyRequest
 import com.quickpitik.dto.auth.RefreshRequest
 import com.quickpitik.dto.auth.RegisterRequest
 import com.quickpitik.dto.auth.ResetPasswordRequest
@@ -59,6 +60,18 @@ class AuthController(
     ): AuthResponse {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, clientIp(request))
         return authService.login(req)
+    }
+
+    // Second step of an admin MFA login. Shares the login rate policy — same
+    // threat shape (a credential, here the code, in the body). Public: the
+    // caller holds only the short-lived mfaPending token, not a session.
+    @PostMapping("/mfa/verify")
+    fun mfaVerify(
+        @Valid @RequestBody req: MfaVerifyRequest,
+        request: HttpServletRequest,
+    ): AuthResponse {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, clientIp(request))
+        return authService.verifyMfa(req.mfaToken, req.code)
     }
 
     // "Continue with Google" — website (GIS button) and mobile (Credential

@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminPayoutAccountSnapshotDto
 import com.quickpitik.dto.admin.AdminPayoutCycleDto
@@ -20,6 +21,7 @@ import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.entity.PayoutMethod
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
+import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
@@ -30,6 +32,9 @@ import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.disbursement.DisbursementRequest
+import com.quickpitik.service.disbursement.DisbursementService
+import com.quickpitik.service.earnings.PayoutStatusRecorder
 import com.quickpitik.service.storage.StorageService
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
@@ -53,6 +58,9 @@ class AdminPayoutService(
     private val storageProperties: StorageProperties,
     private val adminDecisionLogService: AdminDecisionLogService,
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
+    private val payoutStatusRecorder: PayoutStatusRecorder,
+    private val platformProperties: PlatformProperties,
+    private val disbursementService: DisbursementService,
 ) {
 
     @Transactional(readOnly = true)
@@ -73,23 +81,56 @@ class AdminPayoutService(
 
     fun approve(adminId: UUID, payoutId: String): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
-        // approve = surface as "approved" without actually paying out yet.
-        // Mirror the FE state machine: pending_review → approved → paid.
-        // DB stays at PENDING; the admin-facing wire form is computed from
-        // `settledAt + paymentReference + holdReason` — see toAdminWireStatus.
-        if (cycle.status == PayoutCycleStatus.PAID) {
-            throw ApiException(
-                status = HttpStatus.CONFLICT,
-                code = ErrorCodes.INVALID_STATE_TRANSITION,
-                message = "Cycle is already paid",
-            )
-        }
-        // Use settledAt as "reviewedAt" once the admin approves, with no
-        // paymentReference until mark-paid lands.
+        val from = cycle.status
+        ensureFrom(cycle, setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.HELD))
         cycle.holdReason = null
-        cycle.status = PayoutCycleStatus.PENDING
-        cycle.settledAt = cycle.settledAt ?: OffsetDateTime.now()
+        val needsTwo = requiresTwoPerson(cycle)
+
+        // Two-person second-approval leg (large amount, already first-approved).
+        if (needsTwo && cycle.approvedBy != null) {
+            if (cycle.approvedBy == adminId) {
+                throw ApiException(
+                    status = HttpStatus.CONFLICT,
+                    code = ErrorCodes.PAYOUT_SECOND_APPROVER_REQUIRED,
+                    message = "A different admin must give the second approval for this amount.",
+                )
+            }
+            cycle.secondApprovedBy = adminId
+            cycle.status = PayoutCycleStatus.APPROVED
+            payoutCycleRepository.save(cycle)
+            payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.APPROVED, "admin", adminId, "second approval")
+            val decision = adminDecisionLogService.logPayoutDecision(
+                adminId = adminId, targetPayoutId = cycle.id, decision = "approved-second",
+            )
+            adminDecisionLogService.pushMessage(
+                photographerId = cycle.photographerId,
+                kind = PhotographerMessageKind.PAYOUT_APPROVED,
+                body = "Payout cycle ${cycle.id} was approved and is being processed.",
+                sourceAdminId = adminId,
+                sourceDecisionId = decision.id,
+            )
+            return hydrateOne(cycle)
+        }
+
+        // Two-person first-approval leg — awaits a second, different admin. The
+        // cycle stays PENDING (not payable) until the second approval lands.
+        if (needsTwo) {
+            cycle.status = PayoutCycleStatus.PENDING
+            cycle.approvedBy = adminId
+            cycle.approvedAt = OffsetDateTime.now()
+            payoutCycleRepository.save(cycle)
+            adminDecisionLogService.logPayoutDecision(
+                adminId = adminId, targetPayoutId = cycle.id, decision = "approved-first",
+            )
+            return hydrateOne(cycle)
+        }
+
+        // Single approval (below threshold, or fewer than two admins).
+        cycle.status = PayoutCycleStatus.APPROVED
+        cycle.approvedBy = adminId
+        cycle.approvedAt = OffsetDateTime.now()
         payoutCycleRepository.save(cycle)
+        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.APPROVED, "admin", adminId)
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,
@@ -105,18 +146,22 @@ class AdminPayoutService(
         return hydrateOne(cycle)
     }
 
+    // Payouts >= the configured threshold need a second, distinct admin — but
+    // only once >= 2 admins exist, so a lone admin can still run the business.
+    private fun requiresTwoPerson(cycle: PayoutCycle): Boolean {
+        if (cycle.amountPhp < platformProperties.payoutTwoPersonThresholdPhp) return false
+        return userRepository.countByRole(Role.ADMIN) >= 2
+    }
+
     fun hold(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
-        if (cycle.status == PayoutCycleStatus.PAID) {
-            throw ApiException(
-                status = HttpStatus.CONFLICT,
-                code = ErrorCodes.INVALID_STATE_TRANSITION,
-                message = "Cannot hold a paid cycle",
-            )
-        }
+        ensureManual(cycle)
+        val from = cycle.status
+        ensureFrom(cycle, setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.APPROVED, PayoutCycleStatus.PROCESSING))
         cycle.status = PayoutCycleStatus.HELD
         cycle.holdReason = reason.take(255)
         payoutCycleRepository.save(cycle)
+        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.HELD, "admin", adminId, reason)
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,
@@ -135,18 +180,18 @@ class AdminPayoutService(
 
     fun markPaid(adminId: UUID, payoutId: String, req: MarkPayoutPaidRequest): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
-        if (cycle.status == PayoutCycleStatus.PAID) {
-            throw ApiException(
-                status = HttpStatus.CONFLICT,
-                code = ErrorCodes.INVALID_STATE_TRANSITION,
-                message = "Cycle is already paid",
-            )
-        }
+        ensureManual(cycle)
+        val from = cycle.status
+        // APPROVED/PROCESSING only — a cycle must be (fully) approved before it
+        // can be paid, which also enforces two-person approval for large amounts.
+        ensureFrom(cycle, setOf(PayoutCycleStatus.APPROVED, PayoutCycleStatus.PROCESSING))
         cycle.status = PayoutCycleStatus.PAID
         cycle.paymentReference = req.paymentReference.trim()
+        cycle.paidBy = adminId
         cycle.holdReason = null
         cycle.settledAt = OffsetDateTime.now()
         payoutCycleRepository.save(cycle)
+        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.PAID, "admin", adminId)
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,
@@ -163,6 +208,139 @@ class AdminPayoutService(
         return hydrateOne(cycle)
     }
 
+    // ─── Explicit lifecycle transitions (Phase 4b) ─────────────────────────
+    // reject / mark-processing / mark-failed / mark-returned. Each records a
+    // payout_status_history row + admin_decision_log in the same TX. Reservation
+    // release is automatic: REJECTED/FAILED/RETURNED aren't in the "open" set
+    // (sumReservedByPhotographer), so the funds re-enter the photographer's
+    // available balance the moment the status flips.
+
+    fun reject(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
+        val cycle = loadCycle(payoutId)
+        val from = cycle.status
+        ensureFrom(cycle, setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.HELD, PayoutCycleStatus.APPROVED))
+        cycle.status = PayoutCycleStatus.REJECTED
+        cycle.rejectedReason = reason.take(255)
+        cycle.holdReason = null
+        payoutCycleRepository.save(cycle)
+        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.REJECTED, "admin", adminId, reason)
+        val decision = adminDecisionLogService.logPayoutDecision(
+            adminId = adminId, targetPayoutId = cycle.id, decision = "rejected", reason = reason,
+        )
+        adminDecisionLogService.pushMessage(
+            photographerId = cycle.photographerId,
+            kind = PhotographerMessageKind.ADMIN_MESSAGE,
+            body = "Your payout request ${cycle.id} was rejected. Reason: $reason",
+            sourceAdminId = adminId,
+            sourceDecisionId = decision.id,
+            title = "Payout rejected",
+        )
+        return hydrateOne(cycle)
+    }
+
+    fun markProcessing(adminId: UUID, payoutId: String): AdminPayoutCycleDto {
+        val cycle = loadCycle(payoutId)
+        val from = cycle.status
+        ensureFrom(cycle, setOf(PayoutCycleStatus.APPROVED))
+        // Route the money movement through the disbursement seam. Manual = no-op
+        // (admin sends by hand, then attests via mark-paid); PayMongo = creates a
+        // Transfer and returns its id, with the webhook confirming later (Phase 11).
+        cycle.provider = disbursementService.activeName
+        disbursementRequestFor(cycle)?.let { req ->
+            cycle.providerTransferId = disbursementService.initiate(req).providerTransferId
+        }
+        cycle.status = PayoutCycleStatus.PROCESSING
+        cycle.processingAt = OffsetDateTime.now()
+        payoutCycleRepository.save(cycle)
+        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.PROCESSING, "admin", adminId)
+        // Internal step — no photographer inbox message; the status shows on billing.
+        adminDecisionLogService.logPayoutDecision(
+            adminId = adminId, targetPayoutId = cycle.id, decision = "processing",
+        )
+        return hydrateOne(cycle)
+    }
+
+    // Automated transfers require a frozen destination. Legacy cycles can still
+    // be settled manually after the admin verifies the recipient.
+    private fun disbursementRequestFor(cycle: PayoutCycle): DisbursementRequest? {
+        val method = cycle.accountSnapshotMethod
+        val number = cycle.accountSnapshotNumber
+        val name = cycle.accountSnapshotName
+        if (method != null && number != null && name != null) {
+            return DisbursementRequest(cycle.id, cycle.amountPhp, method, number, name)
+        }
+        if (cycle.provider != "manual") throw ApiException(
+            HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+            "This legacy payout has no verified destination snapshot. Settle it manually.",
+        )
+        return null
+    }
+
+    fun markFailed(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
+        val cycle = loadCycle(payoutId)
+        ensureManual(cycle)
+        val from = cycle.status
+        ensureFrom(cycle, setOf(PayoutCycleStatus.PROCESSING))
+        cycle.status = PayoutCycleStatus.FAILED
+        cycle.failedReason = reason.take(255)
+        payoutCycleRepository.save(cycle)
+        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.FAILED, "admin", adminId, reason)
+        val decision = adminDecisionLogService.logPayoutDecision(
+            adminId = adminId, targetPayoutId = cycle.id, decision = "failed", reason = reason,
+        )
+        adminDecisionLogService.pushMessage(
+            photographerId = cycle.photographerId,
+            kind = PhotographerMessageKind.ADMIN_MESSAGE,
+            body = "Your payout ${cycle.id} could not be sent (no money left your side). Reason: $reason. It can be retried.",
+            sourceAdminId = adminId,
+            sourceDecisionId = decision.id,
+            title = "Payout failed",
+        )
+        return hydrateOne(cycle)
+    }
+
+    fun markReturned(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
+        val cycle = loadCycle(payoutId)
+        ensureManual(cycle)
+        val from = cycle.status
+        ensureFrom(cycle, setOf(PayoutCycleStatus.PAID))
+        cycle.status = PayoutCycleStatus.RETURNED
+        cycle.returnedAt = OffsetDateTime.now()
+        payoutCycleRepository.save(cycle)
+        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.RETURNED, "admin", adminId, reason)
+        val decision = adminDecisionLogService.logPayoutDecision(
+            adminId = adminId, targetPayoutId = cycle.id, decision = "returned", reason = reason,
+        )
+        adminDecisionLogService.pushMessage(
+            photographerId = cycle.photographerId,
+            kind = PhotographerMessageKind.ADMIN_MESSAGE,
+            body = "Your payout ${cycle.id} was returned by the bank/e-wallet. Reason: $reason. Please check your payout account.",
+            sourceAdminId = adminId,
+            sourceDecisionId = decision.id,
+            title = "Payout returned",
+        )
+        return hydrateOne(cycle)
+    }
+
+    private fun ensureManual(cycle: PayoutCycle) {
+        if (cycle.provider != "manual") {
+            throw ApiException(
+                HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+                "This transfer is managed by the payment provider. Wait for its confirmed outcome.",
+            )
+        }
+    }
+
+    private fun ensureFrom(cycle: PayoutCycle, allowed: Set<PayoutCycleStatus>) {
+        if (cycle.status !in allowed) {
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "Cannot do that to a ${cycle.statusWire} payout",
+            )
+        }
+    }
+
     /**
      * POST /api/v1/admin/payouts/bulk (C-3).
      *
@@ -173,14 +351,13 @@ class AdminPayoutService(
      * `uq_admin_decision_log_admin_idem_target_payout` so duplicates are
      * locked out at the DB even under concurrent retries.
      *
-     * State mutations on the cycle (status / holdReason / settledAt) are
-     * applied unconditionally — they're idempotent under the same final
-     * state, so re-applying them on retry is a no-op. Errors raised by
+     * Replays are checked under the lock before any state mutation. Errors raised by
      * per-item validation (already-paid, missing-reason, unknown-action)
      * are caught per-row and reported in the result list, exactly as in
      * the non-replay path.
      */
     fun bulk(adminId: UUID, idempotencyKey: String, req: BulkPayoutsRequest): BulkPayoutResultDto {
+        userRepository.lockById(adminId)
         // Fast path: a prior bulk run with this (admin_id, idempotency_key)
         // already minted a group_id — reuse it so the dashboard kpi
         // (`COUNT(DISTINCT group_id)`) still collapses retries into one
@@ -191,7 +368,7 @@ class AdminPayoutService(
         ) ?: UUID.randomUUID()
 
         val results = try {
-            req.ids.map { id ->
+            req.ids.distinct().sorted().map { id ->
                 try {
                     when (req.action.trim().lowercase()) {
                         "approve" -> {
@@ -243,42 +420,58 @@ class AdminPayoutService(
 
     private fun bulkApprove(adminId: UUID, payoutId: String, groupId: UUID, idempotencyKey: String) {
         val cycle = loadCycle(payoutId)
-        if (cycle.status == PayoutCycleStatus.PAID) {
-            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION, "Already paid")
-        }
+        if (adminDecisionLogRepository.existsByAdminIdAndIdempotencyKeyAndTargetPayoutId(
+                adminId, idempotencyKey, payoutId,
+            )) return
+        val from = cycle.status
+        ensureFrom(cycle, setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.HELD))
+        val needsTwo = requiresTwoPerson(cycle)
+        if (needsTwo && cycle.approvedBy == adminId) throw ApiException(
+            HttpStatus.CONFLICT, ErrorCodes.PAYOUT_SECOND_APPROVER_REQUIRED,
+            "A different admin must give the second approval for this amount.",
+        )
         cycle.holdReason = null
-        cycle.status = PayoutCycleStatus.PENDING
-        cycle.settledAt = cycle.settledAt ?: OffsetDateTime.now()
+        val reachedApproved = when {
+            needsTwo && cycle.approvedBy != null && cycle.approvedBy != adminId -> {
+                cycle.secondApprovedBy = adminId
+                cycle.status = PayoutCycleStatus.APPROVED
+                true
+            }
+            needsTwo && cycle.approvedBy == null -> {
+                cycle.status = PayoutCycleStatus.PENDING
+                cycle.approvedBy = adminId
+                cycle.approvedAt = OffsetDateTime.now()
+                false
+            }
+            needsTwo -> false // same admin already first-approved (or retry) — hold at PENDING
+            else -> {
+                cycle.status = PayoutCycleStatus.APPROVED
+                cycle.approvedBy = adminId
+                cycle.approvedAt = OffsetDateTime.now()
+                true
+            }
+        }
         payoutCycleRepository.save(cycle)
 
-        // C-3: per-row dedup gate. On a retry, an audit-log row already
-        // exists for (admin, key, payoutId) — skip the second
-        // logPayoutDecision + pushMessage so the photographer inbox
-        // doesn't get a duplicate "approved" notification and the audit
-        // trail stays a single logical decision.
-        if (adminDecisionLogRepository.existsByAdminIdAndIdempotencyKeyAndTargetPayoutId(
-                adminId,
-                idempotencyKey,
-                payoutId,
-            )
-        ) {
-            return
+        if (reachedApproved) {
+            payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.APPROVED, "admin", adminId)
         }
-
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,
-            decision = "approved",
+            decision = if (reachedApproved) "approved" else "approved-first",
             groupId = groupId,
             idempotencyKey = idempotencyKey,
         )
-        adminDecisionLogService.pushMessage(
-            photographerId = cycle.photographerId,
-            kind = PhotographerMessageKind.PAYOUT_APPROVED,
-            body = "Payout cycle ${cycle.id} was approved.",
-            sourceAdminId = adminId,
-            sourceDecisionId = decision.id,
-        )
+        if (reachedApproved) {
+            adminDecisionLogService.pushMessage(
+                photographerId = cycle.photographerId,
+                kind = PhotographerMessageKind.PAYOUT_APPROVED,
+                body = "Payout cycle ${cycle.id} was approved.",
+                sourceAdminId = adminId,
+                sourceDecisionId = decision.id,
+            )
+        }
     }
 
     private fun bulkHold(
@@ -289,23 +482,25 @@ class AdminPayoutService(
         idempotencyKey: String,
     ) {
         val cycle = loadCycle(payoutId)
-        if (cycle.status == PayoutCycleStatus.PAID) {
-            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION, "Already paid")
-        }
+        if (adminDecisionLogRepository.existsByAdminIdAndIdempotencyKeyAndTargetPayoutId(
+                adminId, idempotencyKey, payoutId,
+            )) return
+        ensureManual(cycle)
+        val from = cycle.status
+        ensureFrom(
+            cycle,
+            setOf(
+                PayoutCycleStatus.PENDING,
+                PayoutCycleStatus.APPROVED,
+                PayoutCycleStatus.PROCESSING,
+                PayoutCycleStatus.HELD,
+            ),
+        )
         cycle.status = PayoutCycleStatus.HELD
         cycle.holdReason = reason.take(255)
         payoutCycleRepository.save(cycle)
 
-        // C-3: per-row dedup gate, see bulkApprove above.
-        if (adminDecisionLogRepository.existsByAdminIdAndIdempotencyKeyAndTargetPayoutId(
-                adminId,
-                idempotencyKey,
-                payoutId,
-            )
-        ) {
-            return
-        }
-
+        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.HELD, "admin", adminId, reason)
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,
@@ -332,7 +527,7 @@ class AdminPayoutService(
      *
      * Idempotent: re-running for the same week refreshes pending-review rows
      * in place. Rows that already carry an admin decision (paid, held,
-     * approved=PENDING+settledAt) are skipped so the generator cannot clobber
+     * approved, or awaiting a second approval) are skipped so the generator cannot clobber
      * human judgment.
      *
      * Eligibility: any photographer with net amount > ₱0 in the window. The
@@ -378,8 +573,9 @@ class AdminPayoutService(
         var skipped = 0
         var totalAmount = BigDecimal.ZERO
 
-        for (row in rows) {
+        for (row in rows.sortedBy { it[0].toString() }) {
             val photographerId = row[0] as UUID
+            userRepository.lockById(photographerId)
             val amount = row[1] as BigDecimal
             val itemCount = (row[2] as Number).toInt()
 
@@ -390,7 +586,7 @@ class AdminPayoutService(
             val primaryAccount = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(photographerId)
             val method = primaryAccount?.method ?: PayoutMethod.GCASH
 
-            val existing = payoutCycleRepository.findById(cycleId).orElse(null)
+            val existing = payoutCycleRepository.lockById(cycleId)
 
             when {
                 existing == null -> {
@@ -399,6 +595,10 @@ class AdminPayoutService(
                         photographerId = photographerId,
                         weekOf = weekOf,
                         methodWire = method.wire,
+                        accountSnapshotMethod = primaryAccount?.method?.wire,
+                        accountSnapshotNumber = primaryAccount?.accountNumber,
+                        accountSnapshotName = primaryAccount?.accountName,
+                        accountSnapshotQrKey = primaryAccount?.qrS3Key,
                     )
                     cycle.amountPhp = amount
                     cycle.itemCount = itemCount
@@ -409,23 +609,24 @@ class AdminPayoutService(
                     created++
                     totalAmount = totalAmount.add(amount)
                 }
-                existing.status == PayoutCycleStatus.PAID ||
-                    existing.status == PayoutCycleStatus.HELD ||
-                    (existing.status == PayoutCycleStatus.PENDING && existing.settledAt != null) -> {
-                    // Paid, held, or already-approved (PENDING + settledAt set) —
-                    // leave alone. Re-summing would silently rewrite an amount
-                    // the admin already decided on.
-                    skipped++
-                }
-                else -> {
+                existing.status == PayoutCycleStatus.SCHEDULED ||
+                    (existing.status == PayoutCycleStatus.PENDING && existing.approvedBy == null) -> {
+                    // Only refresh a truly undecided cycle (scheduled, or
+                    // pending-review with no review yet). Any decided/terminal
+                    // state (approved/processing/paid/held/failed/returned/
+                    // rejected/cancelled) is left alone — re-summing would
+                    // silently rewrite an amount the admin already acted on.
                     existing.amountPhp = amount
                     existing.itemCount = itemCount
-                    existing.method = method
+                    existing.methodWire = existing.accountSnapshotMethod ?: method.wire
                     existing.status = PayoutCycleStatus.PENDING
                     existing.settledAt = null
                     payoutCycleRepository.save(existing)
                     updated++
                     totalAmount = totalAmount.add(amount)
+                }
+                else -> {
+                    skipped++
                 }
             }
         }
@@ -441,22 +642,21 @@ class AdminPayoutService(
 
     // ─── Helpers ──────────────────────────────────────────────────────────
     private fun loadCycle(payoutId: String): PayoutCycle =
-        payoutCycleRepository.findById(payoutId).orElseThrow {
+        payoutCycleRepository.lockById(payoutId) ?: throw
             NotFoundException(code = ErrorCodes.PAYOUT_NOT_FOUND, message = "Payout cycle not found")
-        }
 
-    // FE filter values pending_review / approved / held / paid map to our DB
-    // states differently — pending_review and approved both live as DB
-    // PENDING. For list filtering we accept either FE-form value: the
-    // listing query just constrains on the DB enum value. approved is a
-    // presentation-only state; the FE relies on settledAt being non-null
-    // to differentiate it from pending_review.
+    // Approval is a stored state. Only pending_review needs a wire alias.
     private fun mapAdminStatusFilter(filter: String): String? {
         return when (filter.trim().lowercase()) {
             "pending_review", "pending" -> PayoutCycleStatus.PENDING.wire
-            "approved" -> PayoutCycleStatus.PENDING.wire
+            "approved" -> PayoutCycleStatus.APPROVED.wire
+            "processing" -> PayoutCycleStatus.PROCESSING.wire
             "held" -> PayoutCycleStatus.HELD.wire
             "paid" -> PayoutCycleStatus.PAID.wire
+            "failed" -> PayoutCycleStatus.FAILED.wire
+            "returned" -> PayoutCycleStatus.RETURNED.wire
+            "rejected" -> PayoutCycleStatus.REJECTED.wire
+            "cancelled" -> PayoutCycleStatus.CANCELLED.wire
             "scheduled" -> PayoutCycleStatus.SCHEDULED.wire
             else -> null
         }
@@ -504,48 +704,57 @@ class AdminPayoutService(
             method = cycle.methodWire,
             status = toAdminWireStatus(cycle),
             submittedAt = cycle.createdAt.toString(),
-            reviewedAt = if (cycle.status == PayoutCycleStatus.PENDING && cycle.settledAt != null)
-                cycle.settledAt?.toString()
-            else null,
+            reviewedAt = cycle.approvedAt?.toString(),
             paidAt = if (cycle.status == PayoutCycleStatus.PAID) cycle.settledAt?.toString() else null,
             paymentReference = cycle.paymentReference,
             holdReason = cycle.holdReason,
-            payoutAccount = snapshotAccount(account),
+            rejectedReason = cycle.rejectedReason,
+            failedReason = cycle.failedReason,
+            approvedBy = cycle.approvedBy?.toString(),
+            secondApprovedBy = cycle.secondApprovedBy?.toString(),
+            provider = cycle.provider,
+            payoutAccount = snapshotAccount(cycle, account),
         )
     }
 
     private fun toAdminWireStatus(cycle: PayoutCycle): String {
         return when (cycle.status) {
-            // approved is settledAt-set + still PENDING; before that it's
-            // pending_review for the admin queue.
-            PayoutCycleStatus.PENDING -> if (cycle.settledAt != null) "approved" else "pending_review"
+            PayoutCycleStatus.PENDING -> "pending_review"
             PayoutCycleStatus.SCHEDULED -> "pending_review"
+            PayoutCycleStatus.APPROVED -> "approved"
+            PayoutCycleStatus.PROCESSING -> "processing"
             PayoutCycleStatus.HELD -> "held"
             PayoutCycleStatus.PAID -> "paid"
+            PayoutCycleStatus.FAILED -> "failed"
+            PayoutCycleStatus.RETURNED -> "returned"
+            PayoutCycleStatus.REJECTED -> "rejected"
+            PayoutCycleStatus.CANCELLED -> "cancelled"
         }
     }
 
-    private fun snapshotAccount(account: PayoutAccount?): AdminPayoutAccountSnapshotDto {
-        if (account == null) {
-            return AdminPayoutAccountSnapshotDto(
-                method = "",
-                accountNumber = "",
-                accountName = "",
-                qr = null,
-            )
-        }
-        val qr = account.qrS3Key?.let { key ->
+    // Prefer the cycle's immutable destination snapshot (where the money will
+    // actually go) so a later payout-account change can't make the admin send to
+    // a new number; fall back to the live account for legacy cycles without a
+    // snapshot. Only the captured QR is safe to show beside a frozen number.
+    private fun snapshotAccount(
+        cycle: PayoutCycle,
+        account: PayoutAccount?,
+    ): AdminPayoutAccountSnapshotDto {
+        val method = cycle.accountSnapshotMethod ?: account?.method?.wire ?: ""
+        val number = cycle.accountSnapshotNumber ?: account?.accountNumber ?: ""
+        val name = cycle.accountSnapshotName ?: account?.accountName ?: ""
+        val qr = cycle.accountSnapshotQrKey?.let { key ->
             AdminPayoutQrDto(
                 // Reuse the cover TTL — both are private images surfaced via
                 // a presigned GET that the FE renders straight into <img src>.
                 dataUrl = storageService.presignedGetUrl(key, storageProperties.presignedTtl.cover),
-                uploadedAt = account.createdAt.toString(),
+                uploadedAt = cycle.createdAt.toString(),
             )
         }
         return AdminPayoutAccountSnapshotDto(
-            method = account.method.wire,
-            accountNumber = account.accountNumber,
-            accountName = account.accountName,
+            method = method,
+            accountNumber = number,
+            accountName = name,
             qr = qr,
         )
     }

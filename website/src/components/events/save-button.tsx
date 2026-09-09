@@ -107,7 +107,7 @@ export function SaveButton({
       // Link to race log only on save — on unsave, navigating there to verify
       // the row is gone is more confusing than useful (purchased events remain).
       link: willBeSaved
-        ? { label: "View", href: `${ROUTES.PROFILE}#race-log` }
+        ? { label: "View", href: `${ROUTES.PROFILE}#saved-events` }
         : undefined,
       action: {
         label: "Undo",

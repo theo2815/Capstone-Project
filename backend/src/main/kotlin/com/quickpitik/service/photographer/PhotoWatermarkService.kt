@@ -55,6 +55,7 @@ class PhotoWatermarkService(
     // transaction so the WS publish fires AFTER_COMMIT of the visible state.
     fun process(photoId: UUID) {
         val photo = photoRepository.findById(photoId).orElse(null) ?: return
+        if (photo.deletedAt != null) return
         if (photo.status != PhotoStatus.PROCESSING) return
         if (photo.processingAttempts >= maxAttempts) return
         val photographerId = photo.photographerId
@@ -100,6 +101,18 @@ class PhotoWatermarkService(
             handle = settings.handle,
             photoId = photo.id,
         )
+        // The photographer's own logo placement (V51) — position (per
+        // orientation), size and opacity. Applies under every policy that draws
+        // the logo. Settings writes reject non-finite values; the compositor
+        // fits the logo inside the frame. Defaults keep the bottom-right mark.
+        val placement = WatermarkPlacement(
+            opacity = settings.watermarkOpacity.toFloat(),
+            scale = settings.watermarkScale,
+            landscapeX = settings.watermarkPosLandscapeX,
+            landscapeY = settings.watermarkPosLandscapeY,
+            portraitX = settings.watermarkPosPortraitX,
+            portraitY = settings.watermarkPosPortraitY,
+        )
 
         val marked = try {
             val original = storageService.getBytes(photo.s3Key)
@@ -120,6 +133,7 @@ class PhotoWatermarkService(
                     logo,
                     credit,
                     platformMark = policy == WatermarkPolicy.PLATFORM,
+                    placement = placement,
                 )
             } catch (ex: IllegalArgumentException) {
                 settleSemanticFailure(photo.id, photo.processingAttempts, ex.message ?: "undecodable image")
@@ -140,6 +154,13 @@ class PhotoWatermarkService(
         val watermarkKey = "events/${photo.eventId}/photos/${photo.id}/watermark.jpg"
         try {
             storageService.put(watermarkKey, marked.jpeg, "image/jpeg")
+            // A purge can finish while this already-running worker is doing
+            // external I/O. Never leave its late derivative behind.
+            val current = photoRepository.findById(photoId).orElse(null)
+            if (current == null || current.deletionStartedAt != null) {
+                storageService.delete(watermarkKey)
+                return
+            }
         } catch (ex: Exception) {
             log.warn("Watermark PUT failed for photo {}: {}", photoId, ex.message)
             meterRegistry.counter("qp.watermark.outcome", "outcome", "transport").increment()

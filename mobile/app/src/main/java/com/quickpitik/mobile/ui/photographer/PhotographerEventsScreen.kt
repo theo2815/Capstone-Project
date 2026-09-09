@@ -36,6 +36,7 @@ import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.runner.EventState
 import com.quickpitik.mobile.ui.runner.deriveEventState
+import com.quickpitik.mobile.ui.runner.deriveEventDisplayState
 import com.quickpitik.mobile.ui.runner.eventDateLabel
 import com.quickpitik.mobile.ui.runner.extractCity
 import com.quickpitik.mobile.ui.theme.*
@@ -44,12 +45,17 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 private enum class StatusFilter(val label: String, val tone: StatusTone) {
-    LIVE("Live", StatusTone.Approved),
+    LIVE("Uploading", StatusTone.Approved),
     // Neutral, not amber — a routine future event isn't a caution state (the
     // website renders UPCOMING as plain slate).
     UPCOMING("Upcoming", StatusTone.Neutral),
     COMPLETED("Completed", StatusTone.Neutral),
 }
+
+// Primary owner split the user asked for: events the photographer created vs
+// admin-created races they can cover. Web parity: /dashboard/events renders
+// these as two sections; on a phone one bucket shows at a time.
+private enum class OwnerTab(val label: String) { MINE("My events"), ADMIN("Admin events") }
 
 private fun PhotographerEventSummaryDto.filterBucket(today: LocalDate = LocalDate.now()): StatusFilter =
     when (deriveEventState(date, today)) {
@@ -65,18 +71,26 @@ fun PhotographerEventsScreen(
     modifier: Modifier = Modifier,
     onOpenShare: (PhotographerEventSummaryDto) -> Unit = {},
     onSyncEvent: (PhotographerEventSummaryDto) -> Unit = {},
+    onCreateEvent: () -> Unit = {},
+    onEditEvent: (PhotographerEventSummaryDto) -> Unit = {},
 ) {
     val eventsState by viewModel.eventsState.collectAsState()
     val publicEventsState by viewModel.publicEventsState.collectAsState()
     val activeEvent by viewModel.activeEvent.collectAsState()
     val verificationState by viewModel.verificationState.collectAsState()
     val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase()
-    // null = status not loaded yet or fetch failed. Never block on unknown; the backend enforces.
-    val isApproved = currentStatus == null || currentStatus == "approved"
+    // Railguard gate comes from the shared VM flag (fail-open, one definition for
+    // every restricted action). Never block on unknown; the backend enforces.
+    val isApproved by viewModel.dashboardApproved.collectAsState()
     val isPending = currentStatus == "pending"
     var showSetupAlert by remember { mutableStateOf(false) }
     var alertIsPending by remember { mutableStateOf(false) }
+    var couponEvent by remember { mutableStateOf<PhotographerEventSummaryDto?>(null) }
     val today = remember { LocalDate.now() }
+    // Owner bucket + name filter hoisted so both survive tab visits and the
+    // search persists as you toggle between My / Admin events.
+    var ownerTab by rememberSaveable { mutableStateOf(OwnerTab.MINE) }
+    var nameQuery by rememberSaveable { mutableStateOf("") }
 
     val guardAction: (() -> Unit) -> Unit = { action ->
         if (!isApproved) {
@@ -94,6 +108,15 @@ fun PhotographerEventsScreen(
         )
     }
 
+    couponEvent?.let { ev ->
+        EventCouponSheet(
+            eventId = ev.id,
+            eventName = ev.name,
+            viewModel = viewModel,
+            onDismiss = { couponEvent = null },
+        )
+    }
+
     // No mount-time fetch: with the tabs as NavHost routes this composable
     // recomposes on every tab visit AND on state restoration, so a
     // LaunchedEffect(Unit) here would double the refetch MainActivity's
@@ -106,7 +129,7 @@ fun PhotographerEventsScreen(
             .padding(horizontal = 16.dp)
             .padding(top = 12.dp),
     ) {
-        Kicker(text = "Covered events", color = Slate)
+        Kicker(text = "Events", color = Slate)
         Spacer(modifier = Modifier.height(16.dp))
 
         val coveredEvents = (eventsState as? EventsState.Success)?.events.orEmpty()
@@ -114,6 +137,9 @@ fun PhotographerEventsScreen(
         val all = remember(coveredEvents, publicEvents) {
             (coveredEvents + publicEvents).distinctBy { it.id }
         }
+        // Owner split: events I created (ownedByMe) vs admin-created races.
+        val mineAll = remember(all) { all.filter { it.ownedByMe } }
+        val adminAll = remember(all) { all.filter { !it.ownedByMe } }
 
         val isLoading = (eventsState is EventsState.Loading || publicEventsState is EventsState.Loading) && all.isEmpty()
         val isError = eventsState is EventsState.Error && publicEventsState is EventsState.Error && all.isEmpty()
@@ -134,10 +160,40 @@ fun PhotographerEventsScreen(
                 },
             )
         } else {
+            // Create owned event (V46) — gated on approved like every studio action.
+            GhostCta(
+                text = "＋ Create an event",
+                onClick = { guardAction(onCreateEvent) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Owner split (web parity): My events vs Admin-created races. One
+            // bucket at a time — the phone form of the web page's two sections.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OwnerTabChip(
+                    label = OwnerTab.MINE.label,
+                    count = mineAll.size,
+                    selected = ownerTab == OwnerTab.MINE,
+                    onClick = { ownerTab = OwnerTab.MINE },
+                )
+                OwnerTabChip(
+                    label = OwnerTab.ADMIN.label,
+                    count = adminAll.size,
+                    selected = ownerTab == OwnerTab.ADMIN,
+                    onClick = { ownerTab = OwnerTab.ADMIN },
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            val scoped = if (ownerTab == OwnerTab.MINE) mineAll else adminAll
+
             // Name filter — web EventFilterBar parity (its date dropdown is
             // covered by the status chips below; the search is what's needed
             // to find one event in a long roster).
-            var nameQuery by rememberSaveable { mutableStateOf("") }
             TextField(
                 value = nameQuery,
                 onValueChange = { nameQuery = it },
@@ -156,17 +212,17 @@ fun PhotographerEventsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            val filteredAll = remember(all, nameQuery) {
+            val filteredAll = remember(scoped, nameQuery) {
                 val q = nameQuery.trim()
-                if (q.isEmpty()) all
-                else all.filter { it.name.contains(q, ignoreCase = true) }
+                if (q.isEmpty()) scoped
+                else scoped.filter { it.name.contains(q, ignoreCase = true) }
             }
             val buckets = remember(filteredAll, today) { filteredAll.groupBy { it.filterBucket(today) } }
             val liveCount = buckets[StatusFilter.LIVE]?.size ?: 0
             val upcomingCount = buckets[StatusFilter.UPCOMING]?.size ?: 0
             val completedCount = buckets[StatusFilter.COMPLETED]?.size ?: 0
 
-            var selectedFilter by remember(liveCount, upcomingCount, completedCount) {
+            var selectedFilter by remember(ownerTab, liveCount, upcomingCount, completedCount) {
                 mutableStateOf(
                     when {
                         liveCount > 0 -> StatusFilter.LIVE
@@ -207,7 +263,7 @@ fun PhotographerEventsScreen(
 
                 EventsSectionHeader(
                     label = when (selectedFilter) {
-                        StatusFilter.LIVE -> "Live today"
+                        StatusFilter.LIVE -> "Open for uploads"
                         StatusFilter.UPCOMING -> "Upcoming"
                         StatusFilter.COMPLETED -> "Completed"
                     }
@@ -218,10 +274,16 @@ fun PhotographerEventsScreen(
                 val visible = buckets[selectedFilter].orEmpty()
                 if (visible.isEmpty()) {
                     EmptyEventsCard(
-                        message = when (selectedFilter) {
-                            StatusFilter.LIVE -> "Nothing live right now. Race-day coverage will land here."
-                            StatusFilter.UPCOMING -> "No upcoming events on your roster yet."
-                            StatusFilter.COMPLETED -> "Your completed coverage will land here."
+                        message = when {
+                            scoped.isEmpty() && ownerTab == OwnerTab.MINE ->
+                                "You haven't created any events yet. Tap ＋ Create an event to add one."
+                            scoped.isEmpty() ->
+                                "No admin-created races to cover yet."
+                            selectedFilter == StatusFilter.LIVE ->
+                                "Nothing live in this view. Race-day coverage lands here."
+                            selectedFilter == StatusFilter.UPCOMING ->
+                                "No upcoming events in this view yet."
+                            else -> "No completed events in this view yet."
                         },
                     )
                 } else {
@@ -248,25 +310,36 @@ fun PhotographerEventsScreen(
                         contentPadding = PaddingValues(bottom = 24.dp),
                     ) {
                         items(visible, key = { it.id }) { event ->
-                            // Per-event variant — picked from the same client-side
-                            // lifecycle as the bucket. The filter union (OPEN+PAST →
-                            // COMPLETED) does NOT change the card variant; each row
-                            // still renders against its own state.
-                            when (deriveEventState(event.date, today)) {
-                                EventState.LIVE -> LiveEventCard(
-                                    event = event,
-                                    isActive = activeEvent?.id == event.id,
-                                    onSync = { guardAction { onSyncEvent(event) } },
-                                    onOpenShare = { guardAction { onOpenShare(event) } },
-                                )
-                                EventState.UPCOMING -> UpcomingEventCard(
-                                    event = event,
-                                    today = today,
-                                )
-                                EventState.OPEN, EventState.PAST -> CompletedEventCard(
-                                    event = event,
-                                    onOpenShare = { guardAction { onOpenShare(event) } },
-                                )
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                // Per-event variant — picked from the same client-side
+                                // lifecycle as the bucket. The filter union (OPEN+PAST →
+                                // COMPLETED) does NOT change the card variant; each row
+                                // still renders against its own state.
+                                when (deriveEventState(event.date, today)) {
+                                    EventState.LIVE -> LiveEventCard(
+                                        event = event,
+                                        isActive = activeEvent?.id == event.id,
+                                        canManagePhotos = coveredEvents.any { it.id == event.id },
+                                        onSync = { guardAction { onSyncEvent(event) } },
+                                        onOpenShare = { guardAction { onOpenShare(event) } },
+                                    )
+                                    EventState.UPCOMING -> UpcomingEventCard(
+                                        event = event,
+                                        today = today,
+                                    )
+                                    EventState.OPEN, EventState.PAST -> CompletedEventCard(
+                                        event = event,
+                                        onOpenShare = { guardAction { onOpenShare(event) } },
+                                    )
+                                }
+                                // Owned events (V46): review chip + edit/coupon controls.
+                                if (event.ownedByMe) {
+                                    OwnedEventControls(
+                                        event = event,
+                                        onEdit = { guardAction { onEditEvent(event) } },
+                                        onCoupon = { guardAction { couponEvent = event } },
+                                    )
+                                }
                             }
                         }
                 }
@@ -318,6 +391,34 @@ private fun StatusFilterChip(
 }
 
 @Composable
+private fun OwnerTabChip(
+    label: String,
+    count: Int,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Neutral segmented control (no lifecycle dot) — selected fills Ink, matching
+    // the StatusFilterChip family so the two rows read as one control stack.
+    val bg = if (selected) Ink else BoneDeep
+    val textColor = if (selected) Bone else Slate
+    Row(
+        modifier = modifier
+            .clip(BadgeShape)
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "${label.uppercase()} · $count",
+            style = Typography.labelMedium,
+            color = textColor,
+        )
+    }
+}
+
+@Composable
 private fun EventsSectionHeader(label: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -337,6 +438,7 @@ private fun EventsSectionHeader(label: String) {
 private fun LiveEventCard(
     event: PhotographerEventSummaryDto,
     isActive: Boolean,
+    canManagePhotos: Boolean,
     onSync: () -> Unit,
     onOpenShare: () -> Unit,
 ) {
@@ -365,7 +467,8 @@ private fun LiveEventCard(
                 )
             }
             StatusChip(
-                text = if (isActive) "Live · syncing here" else "Live",
+                text = if (isActive) "Syncing here"
+                    else if (deriveEventDisplayState(event.date) == EventState.LIVE) "Live" else "Uploading",
                 tone = StatusTone.Approved,
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -415,7 +518,7 @@ private fun LiveEventCard(
                 onClick = onSync,
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (event.photoCount > 0) {
+            if (canManagePhotos) {
                 Spacer(modifier = Modifier.height(6.dp))
                 TextButton(
                     onClick = onOpenShare,
@@ -521,6 +624,46 @@ private fun CompletedEventCard(
                 modifier = Modifier.size(20.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun OwnedEventControls(
+    event: PhotographerEventSummaryDto,
+    onEdit: () -> Unit,
+    onCoupon: () -> Unit,
+) {
+    val (chipText, chipTone) = when (event.reviewStatus) {
+        "pending" -> "In review" to StatusTone.Warning
+        "rejected" -> "Changes needed" to StatusTone.Danger
+        "change_pending" -> "Pricing change pending" to StatusTone.Warning
+        else -> "Approved" to StatusTone.Approved
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        StatusChip(text = chipText.uppercase(), tone = chipTone)
+        Spacer(modifier = Modifier.weight(1f))
+        TextButton(onClick = onEdit) {
+            Text("Edit", style = Typography.bodyMedium, color = Ink, fontWeight = FontWeight.Medium)
+        }
+        if (event.pricingMode != "free") {
+            TextButton(onClick = onCoupon) {
+                Text("Coupon", style = Typography.bodyMedium, color = Ink, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+    if (event.reviewStatus == "rejected" && !event.reviewNote.isNullOrBlank()) {
+        Text(
+            text = event.reviewNote!!,
+            style = Typography.bodySmall,
+            color = SlateSoft,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
     }
 }
 

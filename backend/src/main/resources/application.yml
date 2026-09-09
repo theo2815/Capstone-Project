@@ -1,6 +1,10 @@
 spring:
   application:
     name: quickpitik-backend
+  mvc:
+    async:
+      # Event-sized original downloads routinely exceed the servlet default.
+      request-timeout: ${HTTP_STREAM_TIMEOUT:30m}
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:quickpitik}
     username: ${DB_USER:quickpitik}
@@ -282,6 +286,16 @@ app:
     # Largest photographer coupon (whole percent of the photographer's share).
     # The platform cut never moves, whatever this is set to.
     coupon-max-percent: ${COUPON_MAX_PERCENT:50}
+    # Earnings clear (become withdrawable) this long after the sale, so a refund
+    # in the window is absorbed before payout. Align to the refund window.
+    payout-clearing-window: ${PAYOUT_CLEARING_WINDOW:P7D}
+    # After any payout-account change, hold payout requests this long (anti-fraud:
+    # a changed destination cannot be withdrawn to immediately).
+    payout-account-cooldown: ${PAYOUT_ACCOUNT_COOLDOWN:PT24H}
+    # Payouts >= this amount need a second admin's approval (dormant until 2+ admins).
+    payout-two-person-threshold-php: ${PAYOUT_TWO_PERSON_THRESHOLD_PHP:10000}
+    payout-step-up-enabled: ${PAYOUT_STEP_UP_ENABLED:false}
+    disbursement-provider: ${PAYOUT_DISBURSEMENT_PROVIDER:manual}
     # Upper bound for emailed bundle capabilities and migrated legacy tokens.
     share-token-ttl: ${SHARE_TOKEN_TTL:P90D}
     order-return-ttl: ${ORDER_RETURN_TOKEN_TTL:PT35M}
@@ -315,6 +329,15 @@ app:
       mobile-success-url: ${PAYMONGO_MOBILE_SUCCESS_URL:http://10.0.2.2:8080/api/v1/orders/mobile-return}
       mobile-cancel-url: ${PAYMONGO_MOBILE_CANCEL_URL:http://10.0.2.2:8080/api/v1/orders/mobile-cancel}
       base-url: ${PAYMONGO_BASE_URL:https://api.paymongo.com/v1}
+      disbursement-base-url: ${PAYMONGO_DISBURSEMENT_BASE_URL:https://api.paymongo.com/v2}
+      transfer-source-number: ${PAYMONGO_TRANSFER_SOURCE_NUMBER:}
+      transfer-source-name: ${PAYMONGO_TRANSFER_SOURCE_NAME:}
+      transfer-source-bic: ${PAYMONGO_TRANSFER_SOURCE_BIC:}
+      transfer-callback-url: ${PAYMONGO_TRANSFER_CALLBACK_URL:}
+      transfer-rail: ${PAYMONGO_TRANSFER_RAIL:instapay}
+      transfer-gcash-bic: ${PAYMONGO_TRANSFER_GCASH_BIC:}
+      transfer-maya-bic: ${PAYMONGO_TRANSFER_MAYA_BIC:}
+      transfer-gotyme-bic: ${PAYMONGO_TRANSFER_GOTYME_BIC:}
       connect-timeout: PT5S
       read-timeout: PT15S
       checkout-ttl: ${PAYMONGO_CHECKOUT_TTL:PT30M}

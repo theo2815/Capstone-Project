@@ -21,11 +21,17 @@ export function clearTokens(): void {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
-export function isTokenExpired(token: string): boolean {
-  try {
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return payload.exp * 1000 < Date.now();
-  } catch {
-    return true;
+export function decodeBase64Url(input: string): string {
+  let base64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = base64.length % 4;
+  if (pad === 2) {
+    base64 += "==";
+  } else if (pad === 3) {
+    base64 += "=";
+  } else if (pad === 1) {
+    throw new Error("Invalid base64url string length");
   }
+  return new TextDecoder("utf-8", { fatal: true }).decode(
+    Uint8Array.from(atob(base64), (character) => character.charCodeAt(0)),
+  );
 }

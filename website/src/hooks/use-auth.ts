@@ -4,10 +4,11 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/store/auth-store";
 import { api, ApiError } from "@/lib/api";
-import { getRefreshToken, setTokens, clearTokens } from "@/lib/auth";
+import { getRefreshToken, setTokens, clearTokens, decodeBase64Url } from "@/lib/auth";
 import { captureGuestBuffer, resetUserScopedStores } from "@/lib/auth-reset";
 import type {
   AuthResponse,
+  LoginOutcome,
   LoginRequest,
   OAuthIdentity,
   RegisterRequest,
@@ -21,8 +22,10 @@ export function useAuth() {
     isAuthenticated,
     isLoading,
     pendingOAuth,
+    pendingMfa,
     setUser,
     setPendingOAuth,
+    setPendingMfa,
     logout: clearUser,
   } = useAuthStore();
 
@@ -51,13 +54,36 @@ export function useAuth() {
     [setUser, queryClient],
   );
 
+  // Password and Google first factors share the same in-memory MFA challenge.
+  const completeFirstFactor = useCallback((data: AuthResponse): LoginOutcome => {
+    if (data.mfaRequired) {
+      if (!data.mfaToken) throw new Error("Missing MFA challenge");
+      setPendingMfa(data.mfaToken);
+      return { kind: "mfa", mfaToken: data.mfaToken };
+    }
+    return { kind: "authed", user: establishSession(data) };
+  }, [establishSession, setPendingMfa]);
+
   // Returns the freshly-authed user so callers can route by role without
   // racing the React render of `useAuthStore.user`. Zustand's setState is
   // synchronous, so getState() would also work — but returning the value
   // keeps the dataflow explicit at the call site.
   const login = useCallback(
-    async (credentials: LoginRequest) => {
+    async (credentials: LoginRequest): Promise<LoginOutcome> => {
       const data = await api.post<AuthResponse>("/auth/login", credentials);
+      return completeFirstFactor(data);
+    },
+    [completeFirstFactor],
+  );
+
+  // Second factor: exchange the challenge token + a TOTP or recovery code for a
+  // real session. Owes the same establishSession wipe as every other entry point.
+  const verifyMfa = useCallback(
+    async (mfaToken: string, code: string) => {
+      const data = await api.post<AuthResponse>("/auth/mfa/verify", {
+        mfaToken,
+        code,
+      });
       return establishSession(data);
     },
     [establishSession],
@@ -72,7 +98,7 @@ export function useAuth() {
   );
 
   // Exchange a Google ID token (from the GIS button) for a session. Returns
-  // the user, or null when the backend answered 422 ROLE_REQUIRED — a brand
+  // a login outcome, or null when the backend answered 422 ROLE_REQUIRED — a brand
   // new Google account that must pick RUNNER/PHOTOGRAPHER on /onboarding
   // first. In that case the identity (plus the raw token, for the re-POST)
   // is parked in pendingOAuth and <OnboardingGate> takes over routing.
@@ -80,7 +106,7 @@ export function useAuth() {
     async (idToken: string) => {
       try {
         const data = await api.post<AuthResponse>("/auth/google", { idToken });
-        return establishSession(data);
+        return completeFirstFactor(data);
       } catch (err) {
         if (
           err instanceof ApiError &&
@@ -96,7 +122,7 @@ export function useAuth() {
         throw err;
       }
     },
-    [establishSession, setPendingOAuth],
+    [completeFirstFactor, setPendingOAuth],
   );
 
   // Second leg of the new-Google-user flow: re-POST the parked ID token with
@@ -113,11 +139,11 @@ export function useAuth() {
         idToken: pending.idToken,
         role,
       });
-      const authedUser = establishSession(data);
+      const outcome = completeFirstFactor(data);
       setPendingOAuth(null);
-      return authedUser;
+      return outcome;
     },
-    [pendingOAuth, establishSession, setPendingOAuth],
+    [pendingOAuth, completeFirstFactor, setPendingOAuth],
   );
 
   const cancelOnboarding = useCallback(() => {
@@ -148,7 +174,10 @@ export function useAuth() {
     isAuthenticated,
     isLoading,
     pendingOAuth,
+    pendingMfa,
+    setPendingMfa,
     login,
+    verifyMfa,
     register,
     googleLogin,
     completeOnboarding,
@@ -167,7 +196,7 @@ function decodeGoogleIdentity(
 ): Pick<OAuthIdentity, "sub" | "email" | "name" | "avatarUrl"> {
   try {
     const payload = JSON.parse(
-      atob(idToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
+      decodeBase64Url(idToken.split(".")[1]),
     );
     return {
       sub: payload.sub ?? "",

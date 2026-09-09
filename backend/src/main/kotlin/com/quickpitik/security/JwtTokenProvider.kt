@@ -7,8 +7,10 @@ import io.jsonwebtoken.Jwts
 import io.jsonwebtoken.security.Keys
 import org.springframework.stereotype.Component
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 import java.time.Instant
 import java.util.Date
+import java.util.UUID
 import javax.crypto.SecretKey
 
 @Component
@@ -43,4 +45,54 @@ class JwtTokenProvider(private val props: JwtProperties) {
             .build()
             .parseSignedClaims(token)
             .payload
+
+    // Short-lived "first factor passed, second factor pending" token. Carries the
+    // mfaPending claim and NO role/email, so it is not a usable access token — the
+    // auth filter rejects any bearer with this claim. Only /auth/mfa/verify accepts it.
+    fun createMfaPendingToken(userId: UUID): String {
+        val now = Instant.now()
+        return Jwts.builder()
+            .subject(userId.toString())
+            .claim("mfaPending", true)
+            .issuedAt(Date.from(now))
+            .expiration(Date.from(now.plus(MFA_PENDING_TTL)))
+            .signWith(key)
+            .compact()
+    }
+
+    // Returns the userId only for a valid, unexpired mfaPending token; null otherwise.
+    fun parseMfaPending(token: String): UUID? = try {
+        val claims = parse(token)
+        if (claims["mfaPending"] == true) UUID.fromString(claims.subject) else null
+    } catch (_: Exception) {
+        null
+    }
+
+    // Short-lived proof that the user just re-entered their password. Carries the
+    // stepUp claim and NO role/email, so it is not a usable access token — the
+    // auth filter rejects any bearer with a non-access claim, and only StepUpGuard
+    // reads it (from the X-Step-Up header, never Authorization).
+    fun createStepUpToken(userId: UUID): String {
+        val now = Instant.now()
+        return Jwts.builder()
+            .subject(userId.toString())
+            .claim("stepUp", true)
+            .issuedAt(Date.from(now))
+            .expiration(Date.from(now.plus(STEP_UP_TTL)))
+            .signWith(key)
+            .compact()
+    }
+
+    // Returns the userId only for a valid, unexpired stepUp token; null otherwise.
+    fun parseStepUp(token: String): UUID? = try {
+        val claims = parse(token)
+        if (claims["stepUp"] == true) UUID.fromString(claims.subject) else null
+    } catch (_: Exception) {
+        null
+    }
+
+    private companion object {
+        val MFA_PENDING_TTL: Duration = Duration.ofMinutes(5)
+        val STEP_UP_TTL: Duration = Duration.ofMinutes(5)
+    }
 }

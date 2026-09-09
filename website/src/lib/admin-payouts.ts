@@ -18,7 +18,20 @@ import {
 // current primary account) means an account-info update by the photographer
 // after submission does NOT silently re-route an in-flight transfer.
 
-export type AdminPayoutStatus = "pending_review" | "approved" | "held" | "paid";
+// Admin wire vocabulary (AdminPayoutService.toAdminWireStatus). pending_review →
+// approved → processing → paid is the happy path; held pauses; reject/failed/
+// returned/cancelled are terminal-with-a-reason. failed = money never left
+// (safe), returned = money left and bounced back.
+export type AdminPayoutStatus =
+  | "pending_review"
+  | "approved"
+  | "processing"
+  | "held"
+  | "paid"
+  | "failed"
+  | "returned"
+  | "rejected"
+  | "cancelled";
 
 export type PayoutAccountSnapshot = {
   method: PayoutMethod;
@@ -45,19 +58,35 @@ export interface AdminPayoutCycle {
   itemCount: number; // sales count
   method: PayoutMethod;
   status: AdminPayoutStatus;
+  provider?: string;
   submittedAt: string;
   reviewedAt: string | null;
   paidAt: string | null;
   paymentReference: string | null;
   holdReason: string | null;
+  /** Admin's reason when rejected / failed; null otherwise. */
+  rejectedReason: string | null;
+  failedReason: string | null;
+  /**
+   * Two-person approval (large cycles). approvedBy is the first approver;
+   * secondApprovedBy the distinct second. Both null until someone approves;
+   * a large cycle sits at "1 of 2" until secondApprovedBy fills in.
+   */
+  approvedBy: string | null;
+  secondApprovedBy: string | null;
   payoutAccount: PayoutAccountSnapshot;
 }
 
 export const ADMIN_PAYOUT_STATUS_LABEL: Record<AdminPayoutStatus, string> = {
   pending_review: "Pending review",
   approved: "Approved",
+  processing: "Processing",
   held: "Held",
   paid: "Paid",
+  failed: "Failed",
+  returned: "Returned",
+  rejected: "Rejected",
+  cancelled: "Cancelled",
 };
 
 export function payoutMethodLabel(method: PayoutMethod): string {

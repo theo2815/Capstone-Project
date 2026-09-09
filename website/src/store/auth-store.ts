@@ -11,9 +11,11 @@ interface AuthState {
   // pick goes through useAuth.completeOnboarding (a real backend call), so
   // this store never fabricates a session.
   pendingOAuth: OAuthIdentity | null;
+  pendingMfa: string | null;
   setUser: (user: User | null) => void;
   setLoading: (loading: boolean) => void;
   setPendingOAuth: (identity: OAuthIdentity | null) => void;
+  setPendingMfa: (token: string | null) => void;
   logout: () => void;
 }
 
@@ -22,15 +24,18 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
   isLoading: true,
   pendingOAuth: null,
+  pendingMfa: null,
   setUser: (user) =>
-    set({ user, isAuthenticated: !!user, isLoading: false }),
+    set({ user, isAuthenticated: !!user, isLoading: false, pendingMfa: null }),
   setLoading: (isLoading) => set({ isLoading }),
   setPendingOAuth: (pendingOAuth) => set({ pendingOAuth, isLoading: false }),
+  setPendingMfa: (pendingMfa) => set({ pendingMfa }),
   logout: () =>
     set({
       user: null,
       isAuthenticated: false,
       isLoading: false,
       pendingOAuth: null,
+      pendingMfa: null,
     }),
 }));

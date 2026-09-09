@@ -20,7 +20,9 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
+import com.quickpitik.service.storage.StoredObject
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import jakarta.persistence.EntityManager
 import org.hibernate.exception.ConstraintViolationException
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -55,6 +57,7 @@ class PhotoUploadServiceTest {
     private lateinit var photographerSettingsRepository: PhotographerSettingsRepository
     private lateinit var userRepository: UserRepository
     private lateinit var eventPublisher: ApplicationEventPublisher
+    private lateinit var entityManager: EntityManager
     private val storageProperties = StorageProperties()
 
     private val photographerId = UUID.randomUUID()
@@ -79,6 +82,7 @@ class PhotoUploadServiceTest {
         photographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
         userRepository = Mockito.mock(UserRepository::class.java)
         eventPublisher = Mockito.mock(ApplicationEventPublisher::class.java)
+        entityManager = Mockito.mock(EntityManager::class.java)
     }
 
     private fun service(aiApiProperties: AiApiProperties) = PhotoUploadService(
@@ -87,8 +91,7 @@ class PhotoUploadServiceTest {
         photoRepository,
         eventPhotographerRepository,
         eventRepository,
-        photographerSettingsRepository,
-        userRepository,
+        PhotographerAccessGuard(userRepository, photographerSettingsRepository),
         aiApiProperties,
         eventPublisher,
         // Real template over a stubbed manager: execute { } runs the callback
@@ -101,6 +104,7 @@ class PhotoUploadServiceTest {
             },
         ),
         SimpleMeterRegistry(),
+        entityManager,
     )
 
     private fun event(id: UUID = eventId, name: String = "Cebu Marathon 2026"): Event =
@@ -177,7 +181,7 @@ class PhotoUploadServiceTest {
         assertEquals(existing.id, dto.id)
         assertEquals("https://thumb", dto.thumbnailUrl)
         // No new photo, no S3 write, no events fired — the re-upload is a no-op.
-        Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
         Mockito.verify(storageService, Mockito.never())
             .put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
         Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg())
@@ -198,7 +202,7 @@ class PhotoUploadServiceTest {
 
         assertEquals("PHOTO_DUPLICATE_DIFFERENT_EVENT", ex.code)
         assertTrue(ex.message!!.contains("Other Event"))
-        Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
         Mockito.verify(storageService, Mockito.never())
             .put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
     }
@@ -223,6 +227,7 @@ class PhotoUploadServiceTest {
         Mockito.`when`(storageService.supportsDirectUpload).thenReturn(true)
         Mockito.`when`(storageService.presignedPutUrl(anyArg(), anyArg(), anyArg())).thenReturn("https://put")
         Mockito.`when`(storageService.exists(anyArg())).thenReturn(true)
+        Mockito.`when`(storageService.metadata(anyArg())).thenAnswer { StoredObject(it.getArgument(0), 1_000, "image/jpeg") }
         Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
             .thenReturn(null)
         val svc = service(AiApiProperties(enabled = false))
@@ -235,13 +240,70 @@ class PhotoUploadServiceTest {
         val dto = svc.commitDirectUpload(photographerId, eventId, begin.photoId!!, begin.key!!, helloSha256)
 
         val captor = ArgumentCaptor.forClass(Photo::class.java)
-        Mockito.verify(photoRepository).saveAndFlush(capture(captor))
+        Mockito.verify(entityManager).persist(capture(captor))
         assertEquals(helloSha256, captor.value.contentHash)
         assertEquals(begin.key, captor.value.s3Key)
         assertEquals("processing", dto.status)
         // The bytes never touched this server: no storage PUT in either step.
         Mockito.verify(storageService, Mockito.never()).put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
         Mockito.verify(eventPublisher).publishEvent(anyArg<PhotoUploadedForWatermark>())
+    }
+
+    @Test
+    fun `direct commit refuses incomplete or oversized stored bytes before registering a photo`() {
+        stubValidationsPass()
+        val id = UUID.randomUUID()
+        val key = "events/$eventId/photos/$id/original.jpg"
+        for (size in listOf(0L, 500L, 26L * 1024 * 1024)) {
+            Mockito.`when`(storageService.metadata(key)).thenReturn(StoredObject(key, size, "image/jpeg"))
+            val error = assertFailsWith<ApiException> {
+                service(AiApiProperties(enabled = false)).commitDirectUpload(
+                    photographerId, eventId, id, key, helloSha256, sizeBytes = 1_000, contentType = "image/jpeg",
+                )
+            }
+            assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, error.code)
+        }
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
+        Mockito.verify(storageService, Mockito.never()).delete(anyArg())
+    }
+
+    @Test
+    fun `retrying direct commit never deletes the referenced original`() {
+        stubValidationsPass()
+        val existing = existingPhoto(eventId)
+        existing.s3Key = "events/$eventId/photos/${existing.id}/original.jpg"
+        Mockito.`when`(storageService.exists(existing.s3Key)).thenReturn(true)
+        Mockito.`when`(photoRepository.findById(existing.id)).thenReturn(Optional.of(existing))
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(photographerId, helloSha256))
+            .thenReturn(existing)
+
+        val dto = service(AiApiProperties(enabled = false)).commitDirectUpload(
+            photographerId, eventId, existing.id, existing.s3Key, helloSha256,
+        )
+
+        assertEquals(existing.id, dto.id)
+        Mockito.verify(storageService, Mockito.never()).delete(anyArg())
+        Mockito.verify(eventRepository, Mockito.never()).incrementPhotoCount(anyArg())
+        Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg())
+    }
+
+    @Test
+    fun `direct commit cannot overwrite another photographers photo id`() {
+        stubValidationsPass()
+        val existing = existingPhoto(eventId).also { it.photographerId = UUID.randomUUID() }
+        existing.s3Key = "events/$eventId/photos/${existing.id}/original.jpg"
+        Mockito.`when`(storageService.exists(existing.s3Key)).thenReturn(true)
+        Mockito.`when`(photoRepository.findById(existing.id)).thenReturn(Optional.of(existing))
+
+        val ex = assertFailsWith<ApiException> {
+            service(AiApiProperties(enabled = false)).commitDirectUpload(
+                photographerId, eventId, existing.id, existing.s3Key, helloSha256,
+            )
+        }
+
+        assertEquals(ErrorCodes.UPLOAD_KEY_MISMATCH, ex.code)
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
+        Mockito.verify(storageService, Mockito.never()).delete(anyArg())
     }
 
     @Test
@@ -252,7 +314,7 @@ class PhotoUploadServiceTest {
                 .commitDirectUpload(photographerId, eventId, UUID.randomUUID(), "events/other/original.jpg", helloSha256)
         }
         assertEquals(ErrorCodes.UPLOAD_KEY_MISMATCH, ex.code)
-        Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
     }
 
     @Test
@@ -265,7 +327,7 @@ class PhotoUploadServiceTest {
         val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
 
         val captor = ArgumentCaptor.forClass(Photo::class.java)
-        Mockito.verify(photoRepository).saveAndFlush(capture(captor))
+        Mockito.verify(entityManager).persist(capture(captor))
         assertEquals(helloSha256, captor.value.contentHash)
         // Async watermark (2026-08-28): the row is inserted PROCESSING with no
         // watermark keys — PhotoWatermarkService flips it LIVE off-request.
@@ -310,9 +372,10 @@ class PhotoUploadServiceTest {
     }
 
     // ── Photographer-owned events (V46) ──────────────────────────────────
-    // The owner is not bound to the race-day window (they set the date), but a
-    // pending event takes nothing and nobody else may upload into their event.
-    // A NONE watermark policy is the one case that needs no logo at all.
+    // The owner uploads before/during and up to one month after the event date
+    // (not the 4-day race-day window), but a pending event takes nothing and
+    // nobody else may upload into their event. A NONE watermark policy is the
+    // one case that needs no logo at all.
 
     private fun ownedEvent(
         date: LocalDate,
@@ -341,12 +404,12 @@ class PhotoUploadServiceTest {
 
     @Test
     fun `the owner may upload to their live event outside the race-day window`() {
-        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")).minusDays(30)))
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")).minusDays(20)))
 
         val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
 
         assertEquals("processing", dto.status)
-        Mockito.verify(photoRepository).saveAndFlush(anyArg<Photo>())
+        Mockito.verify(entityManager).persist(anyArg<Photo>())
     }
 
     @Test
@@ -357,7 +420,7 @@ class PhotoUploadServiceTest {
             service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
         }
         assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, ex.code)
-        Mockito.verify(photoRepository, Mockito.never()).saveAndFlush(anyArg<Photo>())
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
     }
 
     @Test
@@ -395,6 +458,45 @@ class PhotoUploadServiceTest {
         assertEquals(ErrorCodes.WATERMARK_MISSING, ex.code)
     }
 
+    @Test
+    fun `the owner may upload before the event date`() {
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")).plusDays(10)))
+
+        val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        assertEquals("processing", dto.status)
+        Mockito.verify(entityManager).persist(anyArg<Photo>())
+    }
+
+    @Test
+    fun `the owner is closed out more than one month after the event date`() {
+        stubOwnedUpload(ownedEvent(date = LocalDate.now(ZoneId.of("Asia/Manila")).minusMonths(1).minusDays(5)))
+
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+        assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, ex.code)
+        assertTrue(ex.message!!.contains("1-month"))
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
+    }
+
+    // Refactoring the owned window into an if/else must not loosen the admin
+    // race-day window (createdBy == null): a past admin event is still closed.
+    @Test
+    fun `an admin event outside the race-day window is still closed`() {
+        val adminEvent = event().apply { date = LocalDate.now(ZoneId.of("Asia/Manila")).minusDays(10) }
+        Mockito.`when`(eventRepository.findById(eventId)).thenReturn(Optional.of(adminEvent))
+        Mockito.`when`(userRepository.findById(photographerId)).thenReturn(Optional.of(photographer()))
+        Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.of(approvedSettings()))
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+
+        val ex = org.junit.jupiter.api.assertThrows<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+        assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, ex.code)
+        assertTrue(ex.message!!.contains("has closed"))
+    }
+
     // The race-safe backstop: when a concurrent identical-bytes upload slips past
     // the pre-check and the (photographer_id, content_hash) unique index trips on
     // saveAndFlush, the violation is translated to a terminal duplicate conflict
@@ -402,17 +504,17 @@ class PhotoUploadServiceTest {
     // service can't re-query to tell same- from different-event — it emits the
     // same-event conflict and relies on the retry's pre-check for precision.
     @Test
-    fun `race-lost insert on the dedup index surfaces a same-event duplicate conflict`() {
+    fun `race-lost insert returns the committed photo after rollback`() {
         stubValidationsPass()
+        val existing = existingPhoto(eventId)
         Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
-            .thenReturn(null)
-        Mockito.`when`(photoRepository.saveAndFlush(anyArg<Photo>()))
-            .thenThrow(dataIntegrityViolation("uq_photos_photographer_content_hash"))
+            .thenReturn(null, existing)
+        Mockito.doThrow(dataIntegrityViolation("uq_photos_photographer_content_hash"))
+            .`when`(entityManager).flush()
 
-        val ex = assertFailsWith<ConflictException> {
-            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
-        }
-        assertEquals("PHOTO_DUPLICATE_SAME_EVENT", ex.code)
+        val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        assertEquals(existing.id, dto.id)
+        Mockito.verify(eventRepository, Mockito.never()).incrementPhotoCount(anyArg())
     }
 
     // A genuinely-unexpected constraint (e.g. a future FK) must surface as the
@@ -422,8 +524,8 @@ class PhotoUploadServiceTest {
         stubValidationsPass()
         Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
             .thenReturn(null)
-        Mockito.`when`(photoRepository.saveAndFlush(anyArg<Photo>()))
-            .thenThrow(dataIntegrityViolation("fk_photos_some_other_constraint"))
+        Mockito.doThrow(dataIntegrityViolation("fk_photos_some_other_constraint"))
+            .`when`(entityManager).flush()
 
         assertFailsWith<DataIntegrityViolationException> {
             service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())

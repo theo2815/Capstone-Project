@@ -31,6 +31,21 @@ data class PaymongoProperties(
     val mobileSuccessUrl: String = "http://10.0.2.2:8080/api/v1/orders/mobile-return",
     val mobileCancelUrl: String = "http://10.0.2.2:8080/api/v1/orders/mobile-cancel",
     val baseUrl: String = "https://api.paymongo.com/v1",
+    // Disbursements / Transfers live on the v2 API root (checkout is v1). Used
+    // only by PayMongoDisbursementProvider, which is inactive unless
+    // app.platform.disbursement-provider=paymongo. Auth reuses `secretKey`;
+    // inbound transfer webhooks reuse `webhookSecret` (same HMAC scheme).
+    val disbursementBaseUrl: String = "https://api.paymongo.com/v2",
+    // Required only when using the PayMongo transfer adapter. Institution BICs
+    // must come from /v1/wallets/receiving_institutions for the selected rail.
+    val transferSourceNumber: String = "",
+    val transferSourceName: String = "",
+    val transferSourceBic: String = "",
+    val transferCallbackUrl: String = "",
+    val transferRail: String = "instapay",
+    val transferGcashBic: String = "",
+    val transferMayaBic: String = "",
+    val transferGotymeBic: String = "",
     val connectTimeout: Duration = Duration.ofSeconds(5),
     val readTimeout: Duration = Duration.ofSeconds(15),
     val checkoutTtl: Duration = Duration.ofMinutes(30),

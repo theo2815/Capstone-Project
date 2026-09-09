@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
+import com.quickpitik.mobile.data.remote.OrderResponse
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.Ink
@@ -57,7 +58,7 @@ import com.quickpitik.mobile.ui.theme.Typography
 fun FloatingCart(
     navController: NavController,
     cartViewModel: CartViewModel,
-    onAfterCheckoutSuccess: () -> Unit,
+    onAfterCheckoutSuccess: (OrderResponse?) -> Unit,
 ) {
     // The cart is RUNNER-role-gated server-side. A photographer never gets a
     // pill or the sheets — including in runner view (ViewMode) — matching the
@@ -280,9 +281,9 @@ fun FloatingCart(
         CheckoutSheet(
             cartViewModel = cartViewModel,
             onDismiss = { cartViewModel.closeCheckoutSheet() },
-            onCheckoutSuccess = {
+            onCheckoutSuccess = { order ->
                 cartViewModel.closeCheckoutSheet()
-                onAfterCheckoutSuccess()
+                onAfterCheckoutSuccess(order)
             },
         )
     }

@@ -59,6 +59,11 @@ export interface PendingPricingChange {
 export interface PhotographerEventSummary {
   id: string;
   slug: string;
+  /** The caller's own public handle, from the backend — pair with `slug` to
+   *  build the shareable gallery URL (quickpitik.com/{handle}/events/{slug}).
+   *  null/absent until the photographer sets a handle; the share UI gates on it
+   *  rather than copying a `your-handle` placeholder. */
+  handle?: string | null;
   name: string;
   /** Event date, ISO date-only (YYYY-MM-DD). */
   date: string;
@@ -150,6 +155,10 @@ export interface PhotographerLibraryPhoto {
    *  /events/[slug]?browse=1). Null while the BE hasn't responded or for
    *  legacy mock-generated rows that never carried one. */
   thumbnailUrl?: string | null;
+  /** Soft-delete timestamp (V52); non-null = in the photographer's trash.
+   *  Null on the active tab, set on the Deleted Photos tab. */
+  deletedAt?: string | null;
+  deletionStartedAt?: string | null;
 }
 
 function hashStr(s: string): number {
@@ -228,10 +237,23 @@ export function generatePhotographerLibrary(
 // Billing
 // ─────────────────────────────────────────────────────────────────────────
 
-// "held" added for the request-based flow: admin can hold a photographer's
-// request pending a fix (e.g. update payout account); photographer sees the
-// reason and can Withdraw to re-request after addressing it.
-export type PayoutStatus = "paid" | "pending" | "scheduled" | "held";
+// The full payout lifecycle wire vocabulary (matches the backend
+// PayoutCycleStatus enum). "held" lets admin pause a request pending a fix; the
+// photographer sees the reason and can Cancel to re-request. approved →
+// processing → paid is the happy path; failed/returned/rejected/cancelled are
+// terminal-with-a-reason. scheduled is a legacy weekly-model state, kept so old
+// rows still render.
+export type PayoutStatus =
+  | "paid"
+  | "pending"
+  | "scheduled"
+  | "held"
+  | "approved"
+  | "processing"
+  | "failed"
+  | "returned"
+  | "rejected"
+  | "cancelled";
 
 export interface PhotographerPayout {
   id: string;

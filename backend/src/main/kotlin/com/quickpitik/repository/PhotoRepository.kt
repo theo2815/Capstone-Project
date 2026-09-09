@@ -21,6 +21,29 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Query("SELECT DISTINCT p FROM Photo p WHERE p.id IN :ids ORDER BY p.id")
     fun findAllByIdForUpdate(@Param("ids") ids: Collection<UUID>): List<Photo>
 
+    @Modifying
+    @Query("UPDATE Photo p SET p.deletedAt = :now WHERE p.photographerId = :photographerId " +
+        "AND p.eventId = :eventId AND p.id IN :ids AND p.deletedAt IS NULL")
+    fun trashOwned(@Param("photographerId") photographerId: UUID, @Param("eventId") eventId: UUID,
+        @Param("ids") ids: Collection<UUID>, @Param("now") now: OffsetDateTime): Int
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.deletedAt = NULL WHERE p.photographerId = :photographerId " +
+        "AND p.eventId = :eventId AND p.id IN :ids AND p.deletedAt IS NOT NULL AND p.deletionStartedAt IS NULL")
+    fun restoreOwned(@Param("photographerId") photographerId: UUID, @Param("eventId") eventId: UUID,
+        @Param("ids") ids: Collection<UUID>): Int
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.deletionStartedAt = :now WHERE p.id = :id " +
+        "AND p.deletedAt IS NOT NULL AND p.deletionStartedAt IS NULL")
+    fun startDeletion(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.indexingStatus = com.quickpitik.entity.IndexingStatus.SKIPPED " +
+        "WHERE p.id = :id AND p.deletedAt IS NULL " +
+        "AND p.indexingStatus <> com.quickpitik.entity.IndexingStatus.INDEXED")
+    fun skipIndexing(@Param("id") id: UUID): Int
+
     // Bulk re-prices every photo under the event. Used by admin event PATCH
     // when the operator changes events.price_per_photo so existing photos
     // pick up the new price across runner-facing galleries. Carts follow
@@ -67,6 +90,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         """
         SELECT p FROM Photo p
         WHERE p.status = com.quickpitik.entity.PhotoStatus.PROCESSING
+          AND p.deletedAt IS NULL
           AND p.processingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -89,7 +113,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, p.phash = :phash, " +
             "p.phashClean = :phashClean, p.phashCentre = :phashCentre, p.publishedAt = CURRENT_TIMESTAMP, " +
             "p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
-            "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING",
+            "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING AND p.deletedAt IS NULL",
     )
     fun publishWatermarked(
         @Param("id") id: UUID,
@@ -110,6 +134,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         SELECT p FROM Photo p
         WHERE p.status = com.quickpitik.entity.PhotoStatus.LIVE
           AND p.phash IS NULL
+          AND p.deletedAt IS NULL
           AND p.watermarkS3Key IS NOT NULL
         ORDER BY p.uploadedAt ASC
         """,
@@ -137,7 +162,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
                  COALESCE(bit_count(CAST((p.phash_centre # :h) AS bit(64))), 64)
                ) AS d
         FROM photos p
-        WHERE p.status = 'LIVE' AND p.phash IS NOT NULL
+        WHERE p.status = 'LIVE' AND p.deleted_at IS NULL AND p.phash IS NOT NULL
         ORDER BY d ASC
         LIMIT 1
         """,
@@ -165,6 +190,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
             FROM photos p
             WHERE p.event_id = :eventId
               AND p.status = 'LIVE'
+              AND p.deleted_at IS NULL
               AND p.published_at <= :snapshotAt
         )
         SELECT p.*
@@ -182,6 +208,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         SELECT COUNT(*) FROM photos p
         WHERE p.event_id = :eventId
           AND p.status = 'LIVE'
+          AND p.deleted_at IS NULL
           AND p.published_at <= :snapshotAt
         """,
         nativeQuery = true,
@@ -204,6 +231,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         LEFT JOIN p.bibs b
         WHERE p.eventId = :eventId
           AND p.status = :status
+          AND p.deletedAt IS NULL
           AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
@@ -212,6 +240,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         LEFT JOIN p.bibs b
         WHERE p.eventId = :eventId
           AND p.status = :status
+          AND p.deletedAt IS NULL
           AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
         """,
     )
@@ -228,6 +257,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         JOIN p.facePersons fp
         WHERE p.eventId = :eventId
           AND p.status = :status
+          AND p.deletedAt IS NULL
           AND fp.aiPersonId IN :aiPersonIds
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
@@ -236,6 +266,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         JOIN p.facePersons fp
         WHERE p.eventId = :eventId
           AND p.status = :status
+          AND p.deletedAt IS NULL
           AND fp.aiPersonId IN :aiPersonIds
         """,
     )
@@ -246,23 +277,49 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         pageable: Pageable,
     ): Page<Photo>
 
-    // Photographer-scoped library: every photo in the event uploaded by this
-    // photographer, regardless of status (the photographer can manage HIDDEN
-    // rows from their dashboard). Sort comes from the Pageable so the caller
-    // can flip newest|oldest without a second query.
+    // Photographer-scoped ACTIVE library: every non-trashed photo in the event
+    // uploaded by this photographer, regardless of lifecycle status (the
+    // photographer can manage HIDDEN/PROCESSING rows from their dashboard).
+    // Trashed rows (deleted_at set) are excluded — see findPhotographerTrash.
+    // Sort comes from the Pageable so the caller can flip newest|oldest.
     @Query(
         """
         SELECT p FROM Photo p
         WHERE p.eventId = :eventId
           AND p.photographerId = :photographerId
+          AND p.deletedAt IS NULL
         """,
         countQuery = """
         SELECT COUNT(p) FROM Photo p
         WHERE p.eventId = :eventId
           AND p.photographerId = :photographerId
+          AND p.deletedAt IS NULL
         """,
     )
     fun findPhotographerLibrary(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        pageable: Pageable,
+    ): Page<Photo>
+
+    // The photographer's Deleted Photos for an event: only trashed rows
+    // (deleted_at set). Mirrors findPhotographerLibrary so the same DTO mapper
+    // + pagination serve both the active tab and the trash tab.
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.eventId = :eventId
+          AND p.photographerId = :photographerId
+          AND p.deletedAt IS NOT NULL
+        """,
+        countQuery = """
+        SELECT COUNT(p) FROM Photo p
+        WHERE p.eventId = :eventId
+          AND p.photographerId = :photographerId
+          AND p.deletedAt IS NOT NULL
+        """,
+    )
+    fun findPhotographerTrash(
         @Param("eventId") eventId: UUID,
         @Param("photographerId") photographerId: UUID,
         pageable: Pageable,
@@ -278,12 +335,14 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.eventId = :eventId
           AND p.photographerId = :photographerId
           AND p.status = :status
+          AND p.deletedAt IS NULL
         """,
         countQuery = """
         SELECT COUNT(p) FROM Photo p
         WHERE p.eventId = :eventId
           AND p.photographerId = :photographerId
           AND p.status = :status
+          AND p.deletedAt IS NULL
         """,
     )
     fun findPhotographerLibraryByStatus(
@@ -294,6 +353,40 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     ): Page<Photo>
 
     fun findFirstByIdAndPhotographerId(id: UUID, photographerId: UUID): Photo?
+
+    // Owner+event-scoped bulk load for trash / restore / permanent-delete. A
+    // foreign or wrong-event id simply isn't returned, so a bulk operation can
+    // never touch another photographer's (or another event's) photos.
+    fun findAllByIdInAndPhotographerIdAndEventId(
+        ids: Collection<UUID>,
+        photographerId: UUID,
+        eventId: UUID,
+    ): List<Photo>
+
+    // Guard for the "Download All" prepare: is there anything active to zip?
+    // (Also proves coverage, since it is photographer-scoped.)
+    fun countByEventIdAndPhotographerIdAndDeletedAtIsNull(eventId: UUID, photographerId: UUID): Long
+
+    // Lightweight rows for the "Download All" ZIP: the original key + the
+    // alphabetically-first bib per active photo. A projection, not entities, so
+    // a large event never loads thousands of Photos (with their eager bib/face
+    // collections) into memory just to name ZIP entries.
+    @Query(
+        """
+        SELECT p.id AS id, p.s3Key AS s3Key, MIN(b.bibNumber) AS bib
+        FROM Photo p
+        LEFT JOIN p.bibs b
+        WHERE p.eventId = :eventId
+          AND p.photographerId = :photographerId
+          AND p.deletedAt IS NULL
+        GROUP BY p.id, p.s3Key
+        ORDER BY p.id ASC
+        """,
+    )
+    fun findActiveBundleRows(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+    ): List<PhotoBundleRow>
 
     // Duplicate detection: the photographer's existing photo with this exact
     // content hash, if any. Backed by the partial unique index
@@ -322,6 +415,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         """
         SELECT p FROM Photo p
         WHERE p.indexingStatus IN :statuses
+          AND p.deletedAt IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -341,6 +435,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         """
         SELECT DISTINCT p.eventId FROM Photo p
         WHERE p.indexingStatus IN :statuses
+          AND p.deletedAt IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         """,
@@ -385,6 +480,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         SELECT p FROM Photo p
         WHERE p.eventId = :eventId
           AND p.indexingStatus IN :statuses
+          AND p.deletedAt IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -397,4 +493,11 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("cutoff") cutoff: OffsetDateTime,
         pageable: Pageable,
     ): List<Photo>
+}
+
+// Projection for the photographer "Download All" ZIP — see findActiveBundleRows.
+interface PhotoBundleRow {
+    val id: UUID
+    val s3Key: String
+    val bib: String?
 }

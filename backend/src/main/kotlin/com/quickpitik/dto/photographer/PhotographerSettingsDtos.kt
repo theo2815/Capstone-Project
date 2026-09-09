@@ -28,6 +28,22 @@ data class RegionPatchRequest(
     val provinceCode: String,
 )
 
+// ─── Watermark placement (V51) ────────────────────────────────────────────
+// Position / opacity / size for the photographer's OWN logo (not the platform
+// protection layers). Mirrors the website + mobile watermark settings. Position
+// is a normalized free-space fraction in [0,1], split per orientation; scale is
+// the logo width as a fraction of photo width; opacity is the SRC_OVER alpha.
+// The service rejects non-finite values, then clamps finite values into range
+// (opacity 0.05-1.0, scale 0.05-0.40, position 0-1).
+data class WatermarkSettingsRequest(
+    val opacity: Double,
+    val scale: Double,
+    val landscapeX: Double,
+    val landscapeY: Double,
+    val portraitX: Double,
+    val portraitY: Double,
+)
+
 // ─── Cover / Watermark / QR upload response ───────────────────────────────
 // Mirrors website/src/lib/api-photographer-settings.ts MediaUploadResponse.
 data class MediaUploadResponseDto(
@@ -116,14 +132,37 @@ fun PayoutAccount.toDto(qrUrl: String?, qrUploadedAt: OffsetDateTime?): PayoutAc
 data class VerificationSubmitResponseDto(
     val status: String,
     val missing: List<String>? = null,
+    // Stable machine codes for the same items as `missing` (enum names, e.g.
+    // "PROFILE_PHOTO"). Additive: `missing` keeps the human labels older clients
+    // display verbatim; clients that map requirements → UI (mobile setup
+    // checklist, per-slab chips) key on these instead of matching label text.
+    val missingCodes: List<String>? = null,
     val suspendedAt: String? = null,
     val suspensionReason: String? = null,
 )
 
+// The 8 required settings a photographer must fill before submitting for
+// verification. `name` (the enum code, e.g. PROFILE_PHOTO) is the stable key
+// clients map to their own UI; `label` is the user-facing string returned in
+// `missing[]`, kept verbatim for backward compatibility (the FE historically
+// joined these into its toast). Order matches the Settings page slab order.
+enum class MissingRequirement(val label: String) {
+    PROFILE_PHOTO("profile picture"),
+    COVER_PHOTO("cover banner"),
+    BRAND_NAME("brand name"),
+    WATERMARK("watermark"),
+    PUBLIC_HANDLE("public handle"),
+    REGION("region"),
+    SOCIAL_LINK("social link"),
+    PAYOUT_ACCOUNT("payout account"),
+}
+
 // Used by the submit endpoint when the profile is incomplete — lifted out so
 // the controller / service can build it without re-parsing entity state.
 data class IncompleteFields(
-    val missing: List<String>,
+    val missing: List<MissingRequirement>,
 ) {
     val isComplete: Boolean get() = missing.isEmpty()
+    val labels: List<String> get() = missing.map { it.label }
+    val codes: List<String> get() = missing.map { it.name }
 }

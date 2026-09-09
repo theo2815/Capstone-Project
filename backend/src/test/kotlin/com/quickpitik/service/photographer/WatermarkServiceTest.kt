@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test
 import java.awt.Color
 import java.awt.GradientPaint
 import java.awt.RenderingHints
+import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -253,6 +254,115 @@ class WatermarkServiceTest {
         val xmp = ImageMetadataReader.readMetadata(ByteArrayInputStream(marked.jpeg))
             .getFirstDirectoryOfType(XmpDirectory::class.java)
         assertEquals("Ana Reyes Studio", xmp?.xmpProperties?.get("dc:creator[1]"))
+    }
+
+    // ─── Photographer placement (V51): position / opacity / size ──────────
+    // The default (bottom-right) is already pinned by "…touches only the
+    // corner" above. These cover the configurable knobs.
+
+    @Test
+    fun `a custom landscape position moves the logo out of the default corner`() {
+        val placement = WatermarkPlacement.DEFAULT.copy(landscapeX = 0.0, landscapeY = 0.0)
+        val marked = ImageIO.read(
+            ByteArrayInputStream(
+                service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = false, placement = placement).jpeg,
+            ),
+        )
+        val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
+
+        fun changedRatio(x0: Int, x1: Int, y0: Int, y1: Int): Double {
+            var changed = 0
+            for (y in y0 until y1) for (x in x0 until x1) {
+                if (channelDelta(marked.getRGB(x, y), plain.getRGB(x, y)) >= 40) changed++
+            }
+            return changed.toDouble() / ((x1 - x0) * (y1 - y0))
+        }
+        val topLeft = changedRatio(0, marked.width / 5, 0, marked.height / 5)
+        val bottomRight = changedRatio(marked.width * 4 / 5, marked.width, marked.height * 4 / 5, marked.height)
+        assertTrue(topLeft > 0.05, "logo should now sit in the top-left: ${"%.3f".format(topLeft)}")
+        assertTrue(bottomRight < 0.01, "the default bottom-right corner should be clear now: ${"%.3f".format(bottomRight)}")
+    }
+
+    @Test
+    fun `portrait photos use their own position independent of landscape`() {
+        // Landscape left at the default bottom-right; only portrait is moved to
+        // top-left. A tall photo must follow the portrait setting, not landscape.
+        val placement = WatermarkPlacement.DEFAULT.copy(portraitX = 0.0, portraitY = 0.0)
+        val marked = ImageIO.read(
+            ByteArrayInputStream(
+                service.processThumbnail(photoJpeg(1500, 2000), logoPng(), credit, platformMark = false, placement = placement).jpeg,
+            ),
+        )
+        val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(1500, 2000))), 1280)
+
+        fun changedRatio(x0: Int, x1: Int, y0: Int, y1: Int): Double {
+            var changed = 0
+            for (y in y0 until y1) for (x in x0 until x1) {
+                if (channelDelta(marked.getRGB(x, y), plain.getRGB(x, y)) >= 40) changed++
+            }
+            return changed.toDouble() / ((x1 - x0) * (y1 - y0))
+        }
+        val topLeft = changedRatio(0, marked.width / 4, 0, marked.height / 6)
+        val bottomRight = changedRatio(marked.width * 3 / 4, marked.width, marked.height * 5 / 6, marked.height)
+        assertTrue(topLeft > 0.05, "portrait logo should sit top-left: ${"%.3f".format(topLeft)}")
+        assertTrue(bottomRight < 0.01, "portrait bottom-right should be clear: ${"%.3f".format(bottomRight)}")
+    }
+
+    @Test
+    fun `a larger scale stamps a bigger logo`() {
+        fun markedPixels(scale: Double): Int {
+            val marked = ImageIO.read(
+                ByteArrayInputStream(
+                    service.processThumbnail(
+                        photoJpeg(2000, 1500), logoPng(), credit, platformMark = false,
+                        placement = WatermarkPlacement.DEFAULT.copy(scale = scale),
+                    ).jpeg,
+                ),
+            )
+            val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
+            var changed = 0
+            for (y in 0 until marked.height) for (x in 0 until marked.width) {
+                if (channelDelta(marked.getRGB(x, y), plain.getRGB(x, y)) >= 40) changed++
+            }
+            return changed
+        }
+        // 0.30 width is 2× the linear size ⇒ ~4× the area; comfortably > 2×.
+        assertTrue(markedPixels(0.30) > markedPixels(0.15) * 2, "a 0.30 scale should mark far more than 0.15")
+    }
+
+    @Test
+    fun `render-pixel geometry matches the client fixtures including minimums and fitting`() {
+        // Same numeric cases in website watermark-placement.test and mobile
+        // WatermarkPlacementMathTest; each client scales these AFTER rounding.
+        assertEquals(Rectangle(328, 268, 60, 20), service.watermarkBox(400, 300, 3.0, 0.15, 1.0, 1.0))
+        assertEquals(Rectangle(20, 20, 48, 16), service.watermarkBox(800, 1200, 3.0, 0.05, 0.0, 0.0))
+        assertEquals(Rectangle(97, 144, 52, 17), service.watermarkBox(333, 222, 3.0, 0.157, 0.33, 0.73))
+        assertEquals(Rectangle(854, 32, 394, 789), service.watermarkBox(1280, 853, 0.5, 0.4, 1.0, 1.0))
+        assertEquals(Rectangle(30, 9, 1, 2), service.watermarkBox(40, 20, 0.5, 0.4, 1.0, 1.0))
+    }
+
+    @Test
+    fun `a tall logo keeps its bottom stripe at maximum size under both logo policies`() {
+        val logo = BufferedImage(500, 1000, BufferedImage.TYPE_INT_RGB)
+        val g = logo.createGraphics()
+        g.color = Color.RED
+        g.fillRect(0, 0, 500, 1000)
+        g.color = Color.GREEN
+        g.fillRect(0, 900, 500, 100)
+        g.dispose()
+        val bytes = ByteArrayOutputStream().also { ImageIO.write(logo, "png", it) }.toByteArray()
+
+        for (platformMark in listOf(false, true)) {
+            val marked = service.processThumbnail(
+                photoJpeg(1280, 853), bytes, credit, platformMark,
+                WatermarkPlacement.DEFAULT.copy(scale = 0.4, opacity = 1f),
+            )
+            val image = ImageIO.read(ByteArrayInputStream(marked.jpeg))
+            // Before fitting, this stripe was entirely below the image edge.
+            val footer = Color(image.getRGB(1050, 790))
+            assertTrue(footer.green > 200 && footer.red < 60 && footer.blue < 60,
+                "logo footer missing with platformMark=$platformMark: $footer")
+        }
     }
 
     // ─── fixtures ─────────────────────────────────────────────────────────

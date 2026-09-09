@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { EventState, ListEvent } from "@/app/events/events-browser";
 import { SaveButton } from "@/components/events/save-button";
 import { ROUTES } from "@/lib/constants";
-import { canUploadToEvent } from "@/lib/event-catalog";
+import { canOwnerUploadToEvent, canUploadToEvent } from "@/lib/event-catalog";
 
 // Reused by /events (browse), /dashboard/upload (upload), and
 // /dashboard/events (manage). Discriminated union mirrors <PhotoPreviewCard>.
@@ -33,9 +33,10 @@ type EventTileUploadProps = {
   event: ListEvent;
   index?: number;
   canUpload: boolean;
-  /** Photographer-owned event (V46): the owner uploads on any date, so the
-   *  ±4-day grace copy doesn't apply. */
-  bypassWindow?: boolean;
+  /** Photographer-owned event (V46): the owner uploads from before the event
+   *  through one month after — the 4-day race-day grace doesn't apply; the
+   *  1-month owner window does. */
+  owned?: boolean;
 };
 
 type EventTileManageProps = {
@@ -127,7 +128,7 @@ export function EventTile(props: EventTileProps) {
           <UploadFooter
             event={event}
             canUpload={(props as EventTileUploadProps).canUpload}
-            bypassWindow={props.mode === "upload" ? props.bypassWindow : undefined}
+            owned={props.mode === "upload" ? props.owned : undefined}
           />
         )}
         {props.mode === "manage" && <ManageFooter note={props.note} />}
@@ -201,28 +202,33 @@ function BrowseFooter({ isUpcoming }: { isUpcoming: boolean }) {
 function UploadFooter({
   event,
   canUpload,
-  bypassWindow = false,
+  owned = false,
 }: {
   event: ListEvent;
   canUpload: boolean;
-  bypassWindow?: boolean;
+  owned?: boolean;
 }) {
   // Verification-incomplete is the most actionable issue, so it wins over
   // the date-based hints. Once verified, the date drives copy:
+  //   owned         → upload → until one month after the event, then closed
   //   upcoming      → opens on race day
   //   live (grace)  → upload →
   //   open / past   → window closed (4-day grace expired)
-  // An owned event (V46) skips the date gate entirely.
-  const inGrace = canUploadToEvent(event.date);
+  const canUploadNow = owned
+    ? canOwnerUploadToEvent(event.date)
+    : canUploadToEvent(event.date);
   let cta: string;
   let muted = false;
   if (!canUpload) {
     cta = "Finish settings →";
-  } else if (bypassWindow) {
-    cta = "Upload →";
+  } else if (owned) {
+    // The owner uploads from before the event through one month after; the
+    // "upcoming" gate never applies to them.
+    cta = canUploadNow ? "Upload →" : "Upload window closed";
+    muted = !canUploadNow;
   } else if (event.state === "upcoming") {
     cta = "Opens on race day →";
-  } else if (inGrace) {
+  } else if (canUploadNow) {
     cta = "Upload →";
   } else {
     cta = "Upload window closed";

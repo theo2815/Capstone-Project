@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.quickpitik.mobile.data.remote.OrderResponse
 import com.quickpitik.mobile.ui.auth.validateEmail
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -88,15 +90,23 @@ internal fun isSafeCheckoutUrl(url: String): Boolean = url.toHttpUrlOrNull()?.is
 fun CheckoutSheet(
     cartViewModel: CartViewModel,
     onDismiss: () -> Unit,
-    onCheckoutSuccess: () -> Unit,
+    onCheckoutSuccess: (OrderResponse?) -> Unit,
 ) {
     val cartItems by cartViewModel.cartItems.collectAsState()
     val total by cartViewModel.cartTotal.collectAsState()
+    val couponPreview by cartViewModel.couponPreview.collectAsState()
+    val couponError by cartViewModel.couponError.collectAsState()
+    val couponLoading by cartViewModel.couponLoading.collectAsState()
+    val discount = couponPreview?.discountTotal ?: 0.0
+    val net = (total - discount).coerceAtLeast(0.0)
+    val ownedPhotoIds by cartViewModel.ownedPhotoIds.collectAsState()
+    val ownedItems = cartItems.filter { ownedPhotoIds.contains(it.photoId) }
     val checkoutState by cartViewModel.checkoutState.collectAsState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     var emailInput by remember { mutableStateOf(cartViewModel.getLoggedInUserEmail()) }
     var selectedPaymentMethod by remember { mutableStateOf("GCASH") }
+    var couponInput by remember { mutableStateOf("") }
     // Same gate as the website's checkout identify step (EMAIL_REGEX): the
     // receipt + download links go to this address, so a typo is a lost order.
     val emailError = validateEmail(emailInput)
@@ -109,11 +119,22 @@ fun CheckoutSheet(
     val redirectingSuccess =
         (checkoutState as? CheckoutState.Success)?.order?.redirectUrl != null
 
-    // Empty-cart settlement (no PayMongo handoff) — fire success immediately.
+    // Load the auto-applied photographer coupons for the current cart so the
+    // total shown is what the runner is actually charged, not the list price.
+    LaunchedEffect(Unit) { cartViewModel.previewCoupon(null) }
+
+    // Refresh owned-photo data on open so already-purchased flags are current.
+    LaunchedEffect(Unit) { cartViewModel.fetchOrders() }
+
+    // Settled with no PayMongo handoff — a ₱0/100%-coupon giveaway or an
+    // already-paid replay returns FULFILLED/PAID with no redirect. Route to the
+    // receipt (like the PayMongo deep-link return) so the cart clears and the
+    // downloads show. Keyed on status, NOT redirectUrl (a legacy hosted-checkout
+    // field): a PENDING order must never be misread as settled.
     LaunchedEffect(checkoutState) {
-        val state = checkoutState
-        if (state is CheckoutState.Success && state.order.redirectUrl == null) {
-            onCheckoutSuccess()
+        val order = (checkoutState as? CheckoutState.Success)?.order ?: return@LaunchedEffect
+        if (order.status.uppercase() in setOf("PAID", "FULFILLED")) {
+            onCheckoutSuccess(order)
             cartViewModel.resetCheckoutState()
         }
     }
@@ -174,7 +195,7 @@ fun CheckoutSheet(
                 // fired (manual return), which the OrderReturnScreen poll path
                 // would otherwise have been the only thing to clear.
                 cartViewModel.fetchCart()
-                onCheckoutSuccess()
+                onCheckoutSuccess(null)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -317,6 +338,96 @@ fun CheckoutSheet(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
+                // Coupon code (V47/V50). Auto photographer coupons are already
+                // priced into the total below; this field is the optional typed
+                // override. Deliberately not a Fresh element — the pay CTA is the
+                // one accent per the Mobile Design skill.
+                Kicker("Coupon code")
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextField(
+                        value = couponInput,
+                        onValueChange = { couponInput = it.uppercase() },
+                        placeholder = { Text("Optional", color = SlateSoft) },
+                        singleLine = true,
+                        enabled = !isLoading,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = BoneDeep,
+                            unfocusedContainerColor = BoneDeep,
+                            focusedIndicatorColor = Fresh,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            focusedTextColor = Ink,
+                            unfocusedTextColor = InkSoft,
+                        ),
+                        shape = FieldShape,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(
+                        onClick = { cartViewModel.previewCoupon(couponInput) },
+                        enabled = !couponLoading && couponInput.isNotBlank() && !isLoading,
+                    ) {
+                        Text(
+                            text = if (couponLoading) "…" else "Apply",
+                            style = Typography.labelLarge,
+                            color = Ink,
+                        )
+                    }
+                }
+                couponError?.let { err ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = err,
+                        style = Typography.bodySmall,
+                        color = ErrorRed,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                if (ownedItems.isNotEmpty()) {
+                    Surface(
+                        color = BoneDeep,
+                        border = BorderStroke(1.dp, Line),
+                        shape = FieldShape,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "You already own ${ownedItems.size} of these ${
+                                    if (ownedItems.size == 1) "photo" else "photos"
+                                }.",
+                                style = Typography.titleSmall,
+                                color = Ink,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Re-download them free from Orders. Remove them here to check out the rest.",
+                                style = Typography.bodySmall,
+                                color = SlateSoft,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TextButton(
+                                onClick = {
+                                    ownedItems.forEach { cartViewModel.removeFromCart(it.photoId) }
+                                },
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                            ) {
+                                Text(
+                                    text = "✕ Remove already-purchased" +
+                                        if (ownedItems.size > 1) " (${ownedItems.size})" else "",
+                                    style = Typography.labelMedium,
+                                    color = Ink,
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
                 QpCard {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -329,6 +440,24 @@ fun CheckoutSheet(
                             color = Ink,
                         )
                     }
+                    if (discount > 0.0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = couponPreview?.code?.let { "Coupon $it" } ?: "Coupon discount",
+                                style = Typography.bodyMedium,
+                                color = Slate,
+                            )
+                            Text(
+                                text = "−₱${"%,.2f".format(discount)}",
+                                style = NumeralStyle.copy(fontSize = 14.sp),
+                                color = Slate,
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -337,7 +466,7 @@ fun CheckoutSheet(
                     ) {
                         Kicker("Total")
                         Text(
-                            text = "₱${"%,.2f".format(total)}",
+                            text = "₱${"%,.2f".format(net)}",
                             style = NumeralStyle.copy(fontSize = 28.sp),
                             color = Ink,
                         )
@@ -348,7 +477,7 @@ fun CheckoutSheet(
                         onClick = { cartViewModel.checkout(emailInput, selectedPaymentMethod) },
                         modifier = Modifier.fillMaxWidth(),
                         loading = isLoading,
-                        enabled = emailError == null,
+                        enabled = emailError == null && ownedItems.isEmpty(),
                     )
                 }
             }

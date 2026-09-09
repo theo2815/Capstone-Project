@@ -86,6 +86,7 @@ import com.quickpitik.mobile.ui.photographer.EventsState
 import com.quickpitik.mobile.ui.photographer.PhotographerCaptureScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
 import com.quickpitik.mobile.ui.photographer.PhotographerEarningsScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerEventFormScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerEventShareScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerEventsScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerFloatingBottomNav
@@ -110,6 +111,8 @@ import com.quickpitik.mobile.ui.runner.RunnerGalleryScreen
 import com.quickpitik.mobile.ui.runner.RunnerGalleryViewModel
 import com.quickpitik.mobile.ui.runner.RunnerInboxViewModel
 import com.quickpitik.mobile.ui.runner.SavedEventsViewModel
+import com.quickpitik.mobile.ui.runner.VerifyScreen
+import com.quickpitik.mobile.ui.runner.VerifyViewModel
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.Ink
@@ -123,9 +126,17 @@ import com.quickpitik.mobile.ui.theme.Slate
 // "photographer/{handle}" and the auth routes belong to NEITHER role set —
 // they are shared surfaces.
 private val RUNNER_ROUTES = setOf(
-    "events", "gallery", "profile", "settings",
-    "orders?orderId={orderId}", "orders/return/{orderId}",
+    "events", "gallery", "profile", "settings", "verify",
+    // The receipt route carries the optional guest ?token=; the registered
+    // pattern (and thus currentRoute) includes it, so match it exactly (F5) —
+    // the bare "orders/return/{orderId}" had dropped out of the guard.
+    "orders?orderId={orderId}", "orders/return/{orderId}?token={token}",
 )
+
+// Deep-link ids must be path/query-safe before being spliced into a route
+// string — the scheme-only filter is exported, so a hostile quickpitik:// could
+// otherwise inject a "/" or space that breaks NavController route parsing (F6).
+private val DEEP_LINK_ID = Regex("^[A-Za-z0-9._-]{1,64}$")
 
 // Where the runner bottom nav shows: the tab surfaces + the orders list, but
 // NOT the modal PayMongo receipt ("orders/return/{orderId}").
@@ -681,6 +692,12 @@ class MainActivity : ComponentActivity() {
                                                 vm.selectEvent(ev)
                                                 studioNavigate("studio/capture")
                                             },
+                                            onCreateEvent = {
+                                                navController.navigate("studio/event-form")
+                                            },
+                                            onEditEvent = { ev ->
+                                                navController.navigate("studio/event-form?eventId=${ev.id}")
+                                            },
                                         )
                                     }
                                 }
@@ -732,6 +749,25 @@ class MainActivity : ComponentActivity() {
                                                 onBack = { navController.popBackStack() },
                                             )
                                         }
+                                    }
+                                }
+                                composable(
+                                    route = "studio/event-form?eventId={eventId}",
+                                    arguments = listOf(navArgument("eventId") {
+                                        type = NavType.StringType
+                                        nullable = true
+                                        defaultValue = null
+                                    }),
+                                ) { entry ->
+                                    val vm = studioViewModel(navController, entry)
+                                    val eventId = entry.arguments?.getString("eventId")
+                                    StudioTheme {
+                                        PhotographerEventFormScreen(
+                                            viewModel = vm,
+                                            eventId = eventId,
+                                            onBack = { navController.popBackStack() },
+                                            onSaved = { navController.popBackStack() },
+                                        )
                                     }
                                 }
                                 composable("studio/profile-preview") { entry ->
@@ -865,8 +901,19 @@ class MainActivity : ComponentActivity() {
                                 AccountSettingsScreen(
                                     viewModel = profileViewModel,
                                     onLogout = runnerLogout,
+                                    onOpenVerify = { navController.navigate("verify") },
                                 )
                             }
+                                composable("verify") { entry ->
+                                    val verifyViewModel: VerifyViewModel = viewModel(entry)
+                                    VerifyScreen(
+                                        viewModel = verifyViewModel,
+                                        onBack = { navController.popBackStack() },
+                                        onOpenPhotographer = { handle ->
+                                            navController.navigate("photographer/$handle")
+                                        },
+                                    )
+                                }
                             composable(
                                 route = "orders?orderId={orderId}",
                                 arguments = listOf(
@@ -934,8 +981,18 @@ class MainActivity : ComponentActivity() {
                         FloatingCart(
                             navController = navController,
                             cartViewModel = cartViewModel,
-                            onAfterCheckoutSuccess = {
-                                navController.navigate("orders") {
+                            onAfterCheckoutSuccess = { order ->
+                                // A settled order (₱0/100%-coupon giveaway or a paid replay)
+                                // has no PayMongo handoff — land on the receipt so the cart
+                                // clears and the downloads show, mirroring the deep-link
+                                // return. A null order is the PayMongo bail-back → orders list.
+                                val route = order?.let {
+                                    val id = Uri.encode(it.id)
+                                    it.returnToken?.takeIf { t -> t.isNotBlank() }
+                                        ?.let { t -> "orders/return/$id?token=${Uri.encode(t)}" }
+                                        ?: "orders/return/$id"
+                                } ?: "orders"
+                                navController.navigate(route) {
                                     popUpTo("events") { saveState = true }
                                     launchSingleTop = true
                                 }
@@ -1018,9 +1075,10 @@ class MainActivity : ComponentActivity() {
                 cartViewModel.closeCartSheet()
                 cartViewModel.closeCheckoutSheet()
                 cartViewModel.resetCheckoutState()
-                if (orderId.isNullOrBlank()) {
-                    // Deep link malformed — fall back to the orders list so the
-                    // user can find their purchase manually instead of dead-ending.
+                // F6: validate the id and ENCODE both params before building the
+                // route — a malformed/hostile id falls back to the orders list
+                // instead of dead-ending or crashing route parsing.
+                if (orderId.isNullOrBlank() || !DEEP_LINK_ID.matches(orderId)) {
                     cartViewModel.fetchCart()
                     navController.navigate("orders") {
                         popUpTo("events") { saveState = true }
@@ -1028,7 +1086,9 @@ class MainActivity : ComponentActivity() {
                     }
                 } else {
                     val token = uri.getQueryParameter("token")
-                    val route = if (token.isNullOrBlank()) "orders/return/$orderId" else "orders/return/$orderId?token=$token"
+                    val encodedId = Uri.encode(orderId)
+                    val route = if (token.isNullOrBlank()) "orders/return/$encodedId"
+                        else "orders/return/$encodedId?token=${Uri.encode(token)}"
                     navController.navigate(route) {
                         popUpTo("events") { saveState = true }
                         launchSingleTop = true

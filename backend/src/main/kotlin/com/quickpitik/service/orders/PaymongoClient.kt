@@ -142,6 +142,12 @@ class PaymongoClient(
         throw ex
     }
 
+    // https://docs.paymongo.com/reference/cancel-a-payment
+    fun cancelPaymentIntent(id: String): PaymongoPaymentIntentResponse =
+        restClient.post().uri("/payment_intents/{id}/cancel", id)
+            .retrieve().body(PaymongoPaymentIntentResponse::class.java)
+            ?: throw IllegalStateException("PayMongo returned empty response while cancelling $id")
+
     fun createPaymentMethod(request: PaymongoPaymentMethodRequest): PaymongoPaymentMethodResponse = try {
         restClient.post()
             .uri("/payment_methods")

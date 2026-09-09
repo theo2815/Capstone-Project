@@ -346,6 +346,18 @@ fun OrdersScreen(
                                             style = Typography.bodySmall,
                                             color = SlateSoft
                                         )
+                                        // Photographer coupon (V47): what the coupon saved off list price.
+                                        // `total` above is already the net charged amount.
+                                        if (order.discountTotal > 0.0) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            val saved = "₱%,.2f".format(order.discountTotal)
+                                            Text(
+                                                text = order.couponCode?.let { "Coupon $it · saved $saved" }
+                                                    ?: "Coupon saved $saved",
+                                                style = Typography.bodySmall,
+                                                color = SlateSoft,
+                                            )
+                                        }
                                         Spacer(modifier = Modifier.height(8.dp))
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),

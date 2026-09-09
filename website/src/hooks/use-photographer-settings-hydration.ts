@@ -9,6 +9,7 @@ import {
 import { useAuthStore } from "@/store/auth-store";
 import {
   BRAND_COLOR_HEX,
+  DEFAULT_WATERMARK_PLACEMENT,
   usePhotographerSettingsStore,
   type BrandColor,
 } from "@/store/photographer-settings-store";
@@ -99,6 +100,20 @@ async function hydrateAll(): Promise<boolean> {
         watermark: brand.watermarkUrl
           ? { dataUrl: brand.watermarkUrl, uploadedAt: now }
           : null,
+        watermarkPlacement: brand.watermarkSettings
+          ? {
+              opacity: brand.watermarkSettings.opacity,
+              scale: brand.watermarkSettings.scale,
+              landscape: {
+                x: brand.watermarkSettings.landscapeX,
+                y: brand.watermarkSettings.landscapeY,
+              },
+              portrait: {
+                x: brand.watermarkSettings.portraitX,
+                y: brand.watermarkSettings.portraitY,
+              },
+            }
+          : DEFAULT_WATERMARK_PLACEMENT,
       });
 
       // Avatar lives in useUserMediaStore (shared with the runner account

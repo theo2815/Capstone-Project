@@ -51,7 +51,7 @@ export async function changePassword(
 
 export interface RequestEmailChangeArgs {
   newEmail: string;
-  currentPassword: string;
+  currentPassword?: string;
 }
 
 /**

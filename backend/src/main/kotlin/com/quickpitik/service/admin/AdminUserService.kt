@@ -216,7 +216,7 @@ class AdminUserService(
             throw ApiException(
                 status = HttpStatus.UNPROCESSABLE_ENTITY,
                 code = ErrorCodes.INCOMPLETE_PROFILE,
-                message = "Cannot approve — profile is missing: ${incomplete.missing.joinToString(", ")}",
+                message = "Cannot approve — profile is missing: ${incomplete.labels.joinToString(", ")}",
             )
         }
         s.verificationStatus = VerificationStatus.APPROVED
@@ -498,7 +498,7 @@ class AdminUserService(
 
     private fun buildSnapshot(userId: UUID, settings: PhotographerSettings?): PhotographerSettingsSnapshotDto {
         val socialCount = socialLinkRepository.countByUserId(userId).toInt()
-        val payoutCount = payoutAccountRepository.countByUserId(userId).toInt()
+        val payoutCount = payoutAccountRepository.countByUserIdAndQrS3KeyIsNotNull(userId).toInt()
         return PhotographerSettingsSnapshotDto(
             hasCover = !settings?.coverS3Key.isNullOrBlank(),
             hasBrandName = !settings?.brandName.isNullOrBlank(),

@@ -15,6 +15,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.security.JwtTokenProvider
+import com.quickpitik.service.admin.AdminMfaService
 import com.quickpitik.service.profile.UserDtoMapper
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
@@ -33,6 +34,7 @@ class AuthService(
     private val userDtoMapper: UserDtoMapper,
     private val loginAttemptService: LoginAttemptService,
     private val eventPublisher: ApplicationEventPublisher,
+    private val adminMfaService: AdminMfaService,
 ) {
     // A BCrypt(12) hash of a throwaway constant, computed once on first use.
     // Matching against it costs the same as matching a real user's hash — see
@@ -111,6 +113,40 @@ class AuthService(
             throw UnauthorizedException("Account suspended", "ACCOUNT_SUSPENDED")
         }
         loginAttemptService.recordSuccess(user.id)
+        return completeLogin(user)
+    }
+
+    // Both first-factor paths use this gate. Refresh and successful MFA
+    // verification mint tokens directly, without starting another challenge.
+    internal fun completeLogin(user: User): AuthResponse {
+        // Opt-in admin MFA: a first-factor-passed admin who has enrolled gets a
+        // challenge, not tokens. Everyone else (incl. admins without MFA) takes
+        // the unchanged path below.
+        if (user.role == Role.ADMIN && adminMfaService.isEnabled(user.id)) {
+            return AuthResponse(
+                accessToken = "",
+                refreshToken = "",
+                user = userDtoMapper.toDto(user),
+                mfaRequired = true,
+                mfaToken = tokenProvider.createMfaPendingToken(user.id),
+            )
+        }
+        return buildAuthResponse(user)
+    }
+
+    // Second step of an admin MFA login. The mfaPending token proves the first
+    // factor (password or Google identity) already passed; the code is the second factor.
+    fun verifyMfa(mfaToken: String, code: String): AuthResponse {
+        val userId = tokenProvider.parseMfaPending(mfaToken)
+            ?: throw UnauthorizedException("Invalid or expired MFA session", ErrorCodes.INVALID_TOKEN)
+        val user = userRepository.findById(userId)
+            .orElseThrow { UnauthorizedException("User not found", "USER_NOT_FOUND") }
+        if (user.suspendedAt != null) {
+            throw UnauthorizedException("Account suspended", ErrorCodes.ACCOUNT_SUSPENDED)
+        }
+        if (!adminMfaService.verifyCode(userId, code)) {
+            throw ApiException(HttpStatus.UNAUTHORIZED, ErrorCodes.INVALID_MFA_CODE, "That code is not valid.")
+        }
         return buildAuthResponse(user)
     }
 

@@ -112,6 +112,11 @@ data class PhotoPreviewData(
     // verification) — the byline renders as plain text, never a tap target.
     val photographerHandle: String? = null,
     val photographerName: String? = null,
+    // Photographer coupon (V47) — Browse mode. couponPrice is the server-computed
+    // discounted price; couponPercentOff/couponCode drive the offer line.
+    val couponCode: String? = null,
+    val couponPercentOff: Int? = null,
+    val couponPrice: Double? = null,
     // LocalReview mode only — one line under the frame (filename · sync state).
     val caption: String? = null,
 )
@@ -135,6 +140,9 @@ fun PhotoDto.toPreviewData(eventName: String?): PhotoPreviewData = PhotoPreviewD
     eventName = eventName,
     photographerHandle = photographerHandle,
     photographerName = photographerName,
+    couponCode = couponCode,
+    couponPercentOff = couponPercentOff,
+    couponPrice = couponPrice,
 )
 
 fun CartItemDto.toPreviewData(): PhotoPreviewData = PhotoPreviewData(
@@ -428,7 +436,7 @@ fun PhotoPreview(
                         Spacer(modifier = Modifier.width(16.dp))
                         when (mode) {
                             PhotoPreviewMode.Browse -> Text(
-                                text = "₱${"%,.2f".format(activePhoto.price)}",
+                                text = "₱${"%,.2f".format(activePhoto.couponPrice ?: activePhoto.price)}",
                                 style = NumeralStyle.copy(fontSize = 22.sp),
                                 color = Ink,
                             )
@@ -449,6 +457,19 @@ fun PhotoPreview(
                             name = activePhoto.photographerName,
                             handle = activePhoto.photographerHandle,
                             onOpen = onOpenPhotographer,
+                        )
+                    }
+                    // Coupon offer line (V47) — Browse only. Slate, not Fresh:
+                    // the Buy CTA below keeps the one accent per viewport.
+                    if (mode == PhotoPreviewMode.Browse &&
+                        activePhoto.couponCode != null &&
+                        activePhoto.couponPercentOff != null
+                    ) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Coupon ${activePhoto.couponCode} · −${activePhoto.couponPercentOff}% · was ₱${"%,.2f".format(activePhoto.price)}",
+                            style = Typography.bodySmall,
+                            color = Slate,
                         )
                     }
 

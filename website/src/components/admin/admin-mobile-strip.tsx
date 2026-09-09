@@ -44,6 +44,7 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
   },
   { href: ROUTES.ADMIN_OVERVIEW, label: "Overview" },
   { href: ROUTES.ADMIN_SALES, label: "Sales" },
+  { href: ROUTES.ADMIN_SECURITY, label: "Security", nestedPrefix: ROUTES.ADMIN_SECURITY },
 ];
 
 const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED

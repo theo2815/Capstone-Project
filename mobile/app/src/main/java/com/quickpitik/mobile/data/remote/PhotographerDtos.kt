@@ -18,7 +18,76 @@ data class PhotographerEventSummaryDto(
     val photoCount: Int,
     val salesCount: Int,
     val revenueKept: Double,
-    val bannerUrl: String? = null
+    val bannerUrl: String? = null,
+    // The caller's own public handle, from the backend — pair with slug to build
+    // the shareable gallery URL (quickpitik.com/{handle}/events/{slug}). null
+    // until the photographer sets a handle; the share screen gates on it instead
+    // of copying a "your-handle" placeholder.
+    val handle: String? = null,
+    // Photographer-owned events (V46). ownedByMe = the caller created it (and may
+    // upload on any date); the rest are lowercase wire enums, defaults keeping the
+    // pre-V46 admin-event shape safe. pendingChange is the parked pricing trio on
+    // a live event — an untyped JSON blob (Map), matching the backend. reviewStatus:
+    // pending | approved | rejected | change_pending.
+    val ownedByMe: Boolean = false,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val reviewStatus: String = "approved",
+    val reviewNote: String? = null,
+    val pendingChange: Map<String, Any?>? = null,
+)
+
+// POST/PATCH /me/photographer/events response (create/edit owned event, V46).
+// Superset of the summary + editorial fields + pricePerPhoto. Backend
+// PhotographerEventDetailDto.
+data class PhotographerEventDetailDto(
+    val id: String,
+    val slug: String,
+    val name: String,
+    val date: String,
+    val location: String,
+    val bannerUrl: String? = null,
+    val state: String,
+    val photoCount: Int,
+    val salesCount: Int,
+    val revenueKept: Double,
+    val firstUploadAt: String? = null,
+    val lastUploadAt: String? = null,
+    // See PhotographerEventSummaryDto.handle.
+    val handle: String? = null,
+    val ownedByMe: Boolean = false,
+    val visibility: String = "public",
+    val pricingMode: String = "paid",
+    val watermarkPolicy: String = "platform",
+    val reviewStatus: String = "approved",
+    val reviewNote: String? = null,
+    val pendingChange: Map<String, Any?>? = null,
+    val description: String = "",
+    val organizerName: String = "",
+    val pricePerPhoto: Double = 0.0,
+)
+
+// Event coupon (V47) — lives on the event, not Settings.
+// GET/PUT/DELETE /me/photographer/events/{eventId}/coupon. GET data is null when
+// none. Backend CouponDtos.
+data class CouponDto(
+    val eventId: String,
+    val code: String,
+    val percentOff: Int,
+    val active: Boolean,
+    val expiresAt: String? = null,
+    val usageLimit: Int? = null,
+    val usageCount: Long = 0,
+    val updatedAt: String,
+)
+
+data class UpsertCouponRequest(
+    val code: String,
+    val percentOff: Int,
+    val active: Boolean = true,
+    val expiresAt: String? = null,
+    val usageLimit: Int? = null,
 )
 
 data class WeeklyRevenuePointDto(
@@ -55,6 +124,14 @@ data class PhotographerPayoutDto(
 
 data class PayoutBalanceDto(
     val unpaidBalance: Double,
+    // Earned but still inside the clearing window — not yet withdrawable.
+    // Defaulted for GSON back-compat with older backends that omit it.
+    val clearing: Double = 0.0,
+    // Tied up in an open request (pending/approved/processing/held).
+    val reserved: Double = 0.0,
+    // ISO timestamp; non-null while a recent payout-account change still bars
+    // requests. The wallet shows a paused banner + disables Request until it passes.
+    val accountCooldownUntil: String? = null,
     val minimum: Double,
     val hasOpenRequest: Boolean,
     val openRequest: PhotographerPayoutDto?,
@@ -68,7 +145,8 @@ data class PayoutBalanceDto(
 data class PayoutBalanceAccountDto(
     val method: String,
     val accountNumber: String,
-    val accountName: String
+    val accountName: String,
+    val hasQr: Boolean = false,
 )
 
 data class PhotographerTransactionDto(
@@ -92,7 +170,8 @@ data class TransactionsLedgerResponse(
 
 data class VerificationSubmitResponseDto(
     val status: String, // "incomplete", "pending", "approved", "rejected"
-    val missing: List<String>?,
+    val missing: List<String>?, // human labels, e.g. "profile picture"
+    val missingCodes: List<String>? = null, // stable keys, e.g. "PROFILE_PHOTO"
     val suspendedAt: String?,
     val suspensionReason: String?
 )
@@ -101,6 +180,21 @@ data class BrandPatchRequest(
     val brandName: String?,
     val brandColor: String?,
     val bio: String?
+)
+
+// Placement of the photographer's own logo (V51) — position split per
+// orientation, plus shared opacity + size. Doubles as the nested block on the
+// brand response AND the PUT body for updateWatermarkSettings (same field set as
+// the backend WatermarkSettingsRequest). Defaults reproduce the historical fixed
+// bottom-right / 15% width / 70% opacity mark, so an unconfigured photographer
+// is unchanged. Position values are normalized free-space fractions in [0,1].
+data class WatermarkSettingsDto(
+    val opacity: Double = 0.70,
+    val scale: Double = 0.15,
+    val landscapeX: Double = 1.0,
+    val landscapeY: Double = 1.0,
+    val portraitX: Double = 1.0,
+    val portraitY: Double = 1.0,
 )
 
 data class BrandSettingsResponseDto(
@@ -112,7 +206,8 @@ data class BrandSettingsResponseDto(
     val provinceCode: String?,
     val coverUrl: String?,
     val watermarkUrl: String?,
-    val avatarUrl: String?
+    val avatarUrl: String?,
+    val watermarkSettings: WatermarkSettingsDto? = null,
 )
 
 data class MediaUploadResponseDto(
@@ -255,7 +350,11 @@ data class PhotographerLibraryPhotoDto(
     val uploadedAt: String,
     val tone: Int,
     val span: String,
-    val thumbnailUrl: String? = null
+    val thumbnailUrl: String? = null,
+    // Soft-delete timestamp (V52); non-null = in the photographer's trash. Null
+    // on the active list, set on the ?deleted=true (Deleted tab) list.
+    val deletedAt: String? = null,
+    val deletionStartedAt: String? = null,
 )
 
 // Presigned URL for the photographer's own un-watermarked original — the
@@ -265,6 +364,34 @@ data class PhotographerLibraryPhotoDto(
 data class PhotographerDownloadDto(
     val url: String,
     val expiresAt: String? = null
+)
+
+// Photo library management (V52). Trash/restore/permanent-delete are bulk; the
+// per-photo UI sends a one-element list.
+data class PhotoIdsRequest(
+    val photoIds: List<String>
+)
+
+// trash / restore → how many photos actually moved (ids already in that state
+// are no-ops and don't count).
+data class PhotoActionResponseDto(
+    val affected: Int
+)
+
+// permanent-delete → the ids actually purged, and the ones refused because
+// they've been sold (kept so buyers can still download them).
+data class PermanentDeleteResponseDto(
+    val deleted: List<String> = emptyList(),
+    val blockedSold: List<String> = emptyList(),
+    val blockedPending: List<String> = emptyList(),
+    val failed: List<String> = emptyList(),
+)
+
+// "Download all" step 1 → a short-lived tokened URL the client streams the ZIP
+// (or, for a single-photo event, the raw JPEG) from.
+data class PhotographerBundleDto(
+    val url: String,
+    val expiresAt: String? = null,
 )
 
 // --- Public photographer profile (GET /public/photographers/{handle}) ---
@@ -322,4 +449,5 @@ data class DirectUploadCommitRequest(
     val key: String,
     val contentHash: String,
     val contentType: String,
+    val sizeBytes: Long? = null,
 )

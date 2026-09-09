@@ -101,6 +101,13 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
     number: "09",
     group: "reports",
   },
+  {
+    href: ROUTES.ADMIN_SECURITY,
+    label: "Security",
+    number: "10",
+    group: "reports",
+    nestedPrefix: ROUTES.ADMIN_SECURITY,
+  },
 ];
 
 // Filter out the Flags row when the v1 feature gate is off. Numbers stay

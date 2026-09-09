@@ -45,9 +45,9 @@ export function GoogleButton({ disabled }: GoogleButtonProps) {
     async (response: GsiCredentialResponse) => {
       setError(null);
       try {
-        const user = await googleLogin(response.credential);
-        if (user) {
-          router.replace(roleHome(user.role));
+        const outcome = await googleLogin(response.credential);
+        if (outcome) {
+          router.replace(outcome.kind === "mfa" ? ROUTES.LOGIN : roleHome(outcome.user.role));
         } else {
           // null = backend answered ROLE_REQUIRED: a brand-new Google account
           // that picks RUNNER/PHOTOGRAPHER on /onboarding first.

@@ -32,6 +32,11 @@ data class PhotographerEventSummaryDto(
     val photoCount: Int,
     val salesCount: Int,
     val revenueKept: BigDecimal,
+    // The caller's own public handle, so the client can build the shareable
+    // gallery URL (quickpitik.com/{handle}/events/{slug}) from backend truth
+    // instead of a client-side settings store that can be an empty placeholder.
+    // null until the photographer sets a handle — clients gate on it.
+    val handle: String? = null,
     // Photographer-owned events (V46). ownedByMe = the caller created it;
     // the rest are wire-lowercase enums. Defaults keep older clients safe.
     val ownedByMe: Boolean = false,
@@ -58,6 +63,8 @@ data class PhotographerEventDetailDto(
     val revenueKept: BigDecimal,
     val firstUploadAt: OffsetDateTime?,
     val lastUploadAt: OffsetDateTime?,
+    // See PhotographerEventSummaryDto.handle.
+    val handle: String? = null,
     val ownedByMe: Boolean = false,
     val visibility: String = "public",
     val pricingMode: String = "paid",
@@ -126,10 +133,43 @@ data class PhotographerLibraryPhotoDto(
     val tone: Int,
     val span: String,
     val thumbnailUrl: String?,
+    // Soft-delete timestamp (V52); non-null = in the photographer's trash.
+    // Null on the active tab, set on the Deleted Photos tab.
+    val deletedAt: OffsetDateTime? = null,
+    val deletionStartedAt: OffsetDateTime? = null,
 )
 
 // Mirrors website/src/lib/api-photographer.ts PhotographerDownloadResponse.
 data class PhotographerDownloadDto(
+    val url: String,
+    val expiresAt: OffsetDateTime,
+)
+
+// Bulk photo operations (trash / restore / permanent-delete). photoIds is
+// capped at the batch upload limit; the permanent-delete route caps lower
+// (it deletes R2 objects one call each).
+data class PhotoIdsRequest(
+    @field:NotEmpty
+    @field:Size(max = 500)
+    val photoIds: List<UUID>,
+)
+
+// trash / restore: how many photos actually moved (ids already in that state
+// are no-ops and don't count).
+data class PhotoActionResponse(val affected: Int)
+
+// permanent-delete: the ids actually purged, and the ones refused because
+// they've been sold (a buyer may still be entitled to download them).
+data class PermanentDeleteResponse(
+    val deleted: List<UUID>,
+    val blockedSold: List<UUID>,
+    val blockedPending: List<UUID> = emptyList(),
+    val failed: List<UUID> = emptyList(),
+)
+
+// POST /events/{id}/download-bundle → a short-lived tokened URL the client
+// navigates to for the ZIP of every active photo.
+data class PhotographerBundleDto(
     val url: String,
     val expiresAt: OffsetDateTime,
 )
@@ -209,6 +249,7 @@ fun summaryDto(
     ep: EventPhotographer,
     bannerUrl: String?,
     viewerId: UUID? = null,
+    handle: String? = null,
 ): PhotographerEventSummaryDto =
     PhotographerEventSummaryDto(
         id = event.id,
@@ -221,6 +262,7 @@ fun summaryDto(
         photoCount = ep.photoCount,
         salesCount = ep.salesCount,
         revenueKept = ep.revenueKeptPhp,
+        handle = handle,
         ownedByMe = event.createdBy != null && event.createdBy == viewerId,
         visibility = event.visibility.wire,
         pricingMode = event.pricingMode.wire,
@@ -235,6 +277,7 @@ fun detailDto(
     ep: EventPhotographer,
     bannerUrl: String?,
     viewerId: UUID? = null,
+    handle: String? = null,
 ): PhotographerEventDetailDto =
     PhotographerEventDetailDto(
         id = event.id,
@@ -249,6 +292,7 @@ fun detailDto(
         revenueKept = ep.revenueKeptPhp,
         firstUploadAt = ep.firstUploadAt,
         lastUploadAt = ep.lastUploadAt,
+        handle = handle,
         ownedByMe = event.createdBy != null && event.createdBy == viewerId,
         visibility = event.visibility.wire,
         pricingMode = event.pricingMode.wire,
@@ -281,6 +325,8 @@ fun Photo.toLibraryDto(
         tone = tone,
         span = span.wire,
         thumbnailUrl = thumbnailUrlResolver(this),
+        deletedAt = deletedAt,
+        deletionStartedAt = deletionStartedAt,
     )
 
 // ── Direct-to-storage upload (2026-09-02) ─────────────────────────────────
@@ -316,4 +362,6 @@ data class DirectUploadCommitRequest(
     val contentHash: String,
     @field:NotBlank
     val contentType: String,
+    @field:Positive
+    val sizeBytes: Long? = null,
 )

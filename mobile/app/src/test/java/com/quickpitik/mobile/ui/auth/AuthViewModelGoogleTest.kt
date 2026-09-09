@@ -87,6 +87,19 @@ class AuthViewModelGoogleTest {
     }
 
     @Test
+    fun googleAdminMfaChallengeDoesNotCreateAnAndroidSession() {
+        startServer(MockResponse().setResponseCode(200).setBody(
+            """{"success":true,"data":{"accessToken":"","refreshToken":"","mfaRequired":true,"mfaToken":"challenge","user":{"id":"a1","email":"admin@test.local","name":"Admin","role":"ADMIN","createdAt":"2026-09-09T00:00:00Z"}}}"""
+        ))
+        val viewModel = AuthViewModel(application)
+        viewModel.googleLogin("google-admin-token")
+        val state = awaitState(viewModel) { it is AuthState.Error || it is AuthState.Success }
+        assertTrue(state is AuthState.Error)
+        org.junit.Assert.assertNull(session.getAccessToken())
+        assertTrue((state as AuthState.Error).message.contains("website"))
+    }
+
+    @Test
     fun roleRequiredParksTheTokenAndAsksForARole() {
         val server = startServer(roleRequired422())
         val viewModel = AuthViewModel(application)

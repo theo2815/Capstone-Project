@@ -27,6 +27,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.photographer.PhotographerAccessGuard
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -92,6 +93,7 @@ class CouponServiceTest {
             eventRepository,
             eventPhotographerRepository,
             orderRepository,
+            PhotographerAccessGuard(userRepository, settingsRepository),
         )
     }
 

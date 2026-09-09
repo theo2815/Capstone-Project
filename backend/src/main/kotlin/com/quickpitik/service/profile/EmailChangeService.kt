@@ -44,11 +44,21 @@ class EmailChangeService(
         val user = userRepository.findById(userId).orElseThrow {
             UnauthorizedException(code = ErrorCodes.UNAUTHORIZED, message = "User not found")
         }
-        if (!passwordEncoder.matches(request.currentPassword, user.passwordHash)) {
-            throw UnauthorizedException(
-                code = ErrorCodes.INVALID_CREDENTIALS,
-                message = "Current password is incorrect",
-            )
+        val isGoogleUser = user.googleSub != null
+        if (request.currentPassword.isNullOrBlank()) {
+            if (!isGoogleUser) {
+                throw UnauthorizedException(
+                    code = ErrorCodes.INVALID_CREDENTIALS,
+                    message = "Current password is required",
+                )
+            }
+        } else {
+            if (!passwordEncoder.matches(request.currentPassword, user.passwordHash)) {
+                throw UnauthorizedException(
+                    code = ErrorCodes.INVALID_CREDENTIALS,
+                    message = "Current password is incorrect",
+                )
+            }
         }
 
         // Same normalisation every other entry point uses (AuthService:41,

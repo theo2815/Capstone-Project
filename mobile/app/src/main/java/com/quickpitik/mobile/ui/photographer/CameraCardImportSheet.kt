@@ -482,13 +482,13 @@ private fun ImportingView(state: CardBrowseState.Importing, onCancel: () -> Unit
             }
         }
         Text(
-            text = "Stay on this screen until the import finishes. Uploads continue in the background once they're queued.",
+            text = "Uploads continue after each photo is saved. Pausing keeps the remaining selection for Retry or the next auto-upload session.",
             color = Slate,
             style = Typography.bodyMedium,
             lineHeight = 18.sp,
         )
         GhostCta(
-            text = "Cancel import",
+            text = "Pause import",
             onClick = onCancel,
             modifier = Modifier.fillMaxWidth(),
         )

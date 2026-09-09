@@ -2,6 +2,7 @@ package com.quickpitik.mobile.data.usb.ptp
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.BufferUnderflowException
 
 /**
  * Parsed PTP DeviceInfo dataset (the payload of the GetDeviceInfo data phase).
@@ -26,7 +27,7 @@ data class PtpDeviceInfo(
 ) {
     companion object {
         /** Parse the DeviceInfo dataset (bytes AFTER the 12-byte container header). */
-        fun parse(payload: ByteArray): PtpDeviceInfo {
+        fun parse(payload: ByteArray): PtpDeviceInfo = try {
             val buf = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
             val standardVersion = buf.u16()
             val vendorExtensionId = buf.u32()
@@ -42,7 +43,7 @@ data class PtpDeviceInfo(
             val model = buf.ptpString()
             val deviceVersion = buf.ptpString()
             val serialNumber = buf.ptpString()
-            return PtpDeviceInfo(
+            PtpDeviceInfo(
                 standardVersion = standardVersion,
                 vendorExtensionId = vendorExtensionId,
                 vendorExtensionVersion = vendorExtensionVersion,
@@ -57,6 +58,8 @@ data class PtpDeviceInfo(
                 deviceVersion = deviceVersion,
                 serialNumber = serialNumber,
             )
+        } catch (e: BufferUnderflowException) {
+            throw PtpException("Truncated camera device information.", e)
         }
 
         private fun ByteBuffer.u16(): Int = short.toInt() and 0xFFFF
@@ -65,7 +68,7 @@ data class PtpDeviceInfo(
         // PTP UINT16 array: UINT32 count, then count UINT16 elements.
         private fun ByteBuffer.u16Array(): List<Int> {
             val count = int
-            if (count <= 0) return emptyList()
+            if (count < 0 || count > 65536 || count > remaining() / 2) throw PtpException("Invalid PTP capability count.")
             return ArrayList<Int>(count).apply { repeat(count) { add(u16()) } }
         }
 
@@ -75,6 +78,7 @@ data class PtpDeviceInfo(
         private fun ByteBuffer.ptpString(): String {
             val len = get().toInt() and 0xFF
             if (len == 0) return ""
+            if (len > remaining() / 2) throw PtpException("Truncated PTP string.")
             val sb = StringBuilder(len)
             for (i in 0 until len) {
                 val code = short.toInt() and 0xFFFF

@@ -6,9 +6,9 @@
 
 ## 📋 Quick Status Overview
 
-- **Total Tasks:** 27
-- **✅ Already Solved:** 12 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
-- **⏳ Pending / To Be Worked On:** 15 (Items 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
+- **Total Tasks:** 31
+- **✅ Already Solved:** 22 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 25, 26, 27, 28, 29, 31, 32, 33)
+- **⏳ Pending / To Be Worked On:** 9 (Items 16, 17, 19, 21, 22, 23, 24, 30, 34)
 
 ---
 
@@ -56,12 +56,14 @@
     - `mobile/app/src/main/java/com/quickpitik/mobile/data/ftp/FtpReceiverServer.kt`
   - **Action Plan:** Stream incoming socket bytes directly to a temporary `File` via `OutputStream` (matching `UsbEventCaptureController.kt`) instead of buffering the entire image into RAM.
 
-- [ ] **18. Mobile — Orphaned MediaStore Rows & 0-Byte Placeholders on Camera Dismissal**
-  - **Issue:** A MediaStore entry is inserted into `MediaStore.Images.Media.EXTERNAL_CONTENT_URI` prior to launching the system camera contract `ActivityResultContracts.TakePicture()`. When the user opens the camera and cancels (or presses back without capturing a photo), `success == false`. Because no cleanup runs on cancellation, an empty 0-byte corrupt image placeholder is permanently orphaned in the user's public device gallery.
+- [x] **18. Mobile — Orphaned MediaStore Rows & 0-Byte Placeholders on Camera Dismissal**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - In `ProfileScreen.kt`, updated `cameraLauncher` result callback to invoke `contentResolver.delete(uri, null, null)` and clear `tempImageUri` whenever `success == false`.
+    - In `GalleryScreen.kt`, updated `selfieCameraLauncher` result callback to invoke `contentResolver.delete(uri, null, null)` and clear `pendingSelfieUri` whenever `success == false`.
   - **Affected Files:**
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileScreen.kt`
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/GalleryScreen.kt`
-  - **Action Plan:** In the `TakePicture()` result callback, delete the inserted URI via `contentResolver.delete(uri, null, null)` whenever `success == false`.
 
 - [ ] **19. Mobile — Cross-User Upload Queue Leakage on Device Logout**
   - **Issue:** User sign-out (`AuthViewModel.logout()`) clears credentials via `sessionManager.clearSession()`, but the local SQLite `upload_queue` table is left unpurged. If a photographer logs out while frames are queued/failed and another photographer logs in on the same phone, `PhotoUploadWorker` will attempt to drain and upload Photographer A's photos under Photographer B's authentication token.
@@ -70,11 +72,13 @@
     - `mobile/app/src/main/java/com/quickpitik/mobile/worker/PhotoUploadWorker.kt`
   - **Action Plan:** Clear or cancel pending upload queue items on logout, or enforce scoping by `photographerId` in `PhotoUploadWorker`.
 
-- [ ] **20. Mobile — Download Photo Filename Collisions on Multi-Photo Downloads**
-  - **Issue:** `PhotoDownloader.buildFilename(photoId, bib)` returns `quickpitik-bib-${bib.lowercase()}.jpg`. When a runner clicks "Download all" on an order containing multiple photos of the same bib number, every photo is assigned the identical filename `quickpitik-bib-101.jpg`. While MediaStore disambiguates with numerical suffixes, individual photo traceability is lost and filenames collide across events.
+- [x] **20. Mobile — Download Photo Filename Collisions on Multi-Photo Downloads**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated `PhotoDownloader.buildFilename()` to append `${photoId.take(8)}` to the bib slug (`quickpitik-bib-$bib-${photoId.take(8)}.jpg`).
+    - Disambiguated multi-photo downloads for identical bib numbers across `OrdersScreen.kt`, `OrderReturnScreen.kt`, `GalleryScreen.kt`, and `PhotographerEventShareScreen.kt` while preserving human-readable bib labels.
   - **Affected Files:**
     - `mobile/app/src/main/java/com/quickpitik/mobile/data/download/PhotoDownloader.kt`
-  - **Action Plan:** Include the photo ID snippet in the filename: `quickpitik-bib-$bib-${photoId.take(8)}.jpg`.
 
 - [ ] **21. Mobile — Deprecated Framework `android.media.ExifInterface` in Sync Worker**
   - **Issue:** `PhotoUploadWorker.kt` imports the legacy platform `android.media.ExifInterface` rather than AndroidX `androidx.exifinterface.media.ExifInterface`. The framework implementation has known orientation extraction bugs on older Android versions and can fail on vendor-specific camera EXIF metadata.
@@ -97,6 +101,36 @@
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/*`
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/photographer/*`
   - **Action Plan:** Update deprecated Material3 and Compose calls to current recommendations.
+
+- [x] **31. Mobile & Web — Rebrand "Race Log" / "Race Logs" Terminology to "Saved Events"**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated navigation JumpSection and Slab heading in `website/src/app/profile/page.tsx` (visible copy "Saved events"); both `#saved-events` and legacy `#race-log` anchors resolve.
+    - Updated toast redirect link in `website/src/components/events/save-button.tsx` to `#saved-events`.
+    - Updated logout modal message in `website/src/app/account/page.tsx` to `"profile, saved events, and orders"`.
+    - Updated runner profile kicker in `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileScreen.kt` to `Kicker("02 · Saved events")`.
+    - Updated signout dialog in `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/AccountSettingsScreen.kt` to reference `"saved events"`.
+
+- [x] **32. Mobile — Simplify Event Date Filter to 3 Options (Finished, Live, Upcoming)**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Consolidated `DateFilter` enum in `EventsDiscoveryScreen.kt` to 3 lifecycle options: `LIVE` ("Live"), `UPCOMING` ("Upcoming"), and `FINISHED` ("Finished", matching both `OPEN` and `PAST` event states), alongside `ANY` ("All events").
+    - Updated matching predicate logic to filter accurately across single and grouped lifecycle states.
+
+- [x] **33. Mobile — Hide "Live Now" Badge Once Actual Event Date Has Passed**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Added `deriveEventDisplayState()` for race-day-only discovery labels and filters.
+    - Kept `deriveEventState()` and `canUploadToEvent()` aligned on days 0..3 so gallery sockets and photographer Sync controls survive the grace window; later-day upload cards say "Uploading".
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventCatalog.kt`
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventsDiscoveryScreen.kt`
+  - **Action Plan:** Restrict `EventState.LIVE` (or the "Live now" UI indicator) strictly to the actual day of the event (`days == 0L`), while preserving photographer upload capability window separately if needed.
+
+- [ ] **34. Mobile — Replace City Filtration with Philippine Regions Filtration**
+  - **Status:** **DEFERRED — structured event region data required**
+  - **Current behavior:** City filtering uses the existing `extractCity()` helper. The duplicate keyword region table was removed because it misclassified Carcar, Cagayan de Oro, and Caraga.
+  - **Next:** Add trustworthy region codes to event data before wiring discovery to the canonical backend `GET /regions` catalog.
 
 ---
 
@@ -126,37 +160,65 @@
     - `backend/src/main/kotlin/com/quickpitik/controller/AdminFlagsController.kt`
   - **Action Plan:** Add a "Report / Flag Photo" button and modal to `PhotoPreviewCard.tsx` allowing runners to submit reason categories (inappropriate content, privacy, incorrect bib tag), and connect to a backend flag submission endpoint.
 
-- [ ] **25. Website — Google OAuth Users Locked Out of Password Setting & Email Changes**
-  - **Issue:** Users who register via Google OAuth are assigned a random 64-character unguessable password hash (`GoogleAuthService.kt`). On `/account` (`account/page.tsx`), both the "Sign-in email" slab (`requestEmailChange`) and the "Password" slab (`changePassword`) mandate entering the "Current password". Because OAuth users do not possess a password, any entry fails with `INVALID_CREDENTIALS`, permanently locking them out of updating their email or creating an initial password.
+- [x] **25. Website — Google OAuth Users Password Setting & Email Changes on `/account`**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated `UserDto.kt` and `UserDtoMapper.kt` in backend to expose `hasGoogleAuth = (user.googleSub != null)`.
+    - `PUT /me/password` requires current-password proof for all accounts. Google users without a password use the existing email OTP reset flow.
+    - Google email changes retain the current-password exemption by user choice; its accepted session-takeover risk and the password setup contract are documented in `ai-api/docs/integration-contracts.md` (Shared client account and event rules).
+    - Updated `account/page.tsx` on website to show a Google account badge in the current email card, bypass current password requirement for Google OAuth users in `EmailSlab`, and link to verified password setup/reset from `PasswordSlab`. Google sign-in remains passwordless.
+    - Added unit test suites in `backend/.../ProfileServiceTest.kt` and `EmailChangeServiceTest.kt` verifying password and email change flows for both Google OAuth and standard accounts. `GoogleAccountIntegrationTest` exercises OTP setup and rejects duplicate registration of the Google email.
   - **Affected Files:**
-    - `website/src/app/account/page.tsx`
-    - `backend/src/main/kotlin/com/quickpitik/service/GoogleAuthService.kt`
+    - `backend/src/main/kotlin/com/quickpitik/dto/auth/UserDto.kt`
+    - `backend/src/main/kotlin/com/quickpitik/service/profile/UserDtoMapper.kt`
+    - `backend/src/main/kotlin/com/quickpitik/dto/profile/PasswordChangeRequest.kt`
+    - `backend/src/main/kotlin/com/quickpitik/dto/profile/EmailChangeRequest.kt`
     - `backend/src/main/kotlin/com/quickpitik/service/profile/ProfileService.kt`
-  - **Action Plan:** Detect OAuth accounts (via user profile response), display a Google badge on credentials, and provide a dedicated "Set password" flow for OAuth users that does not require a prior password.
+    - `backend/src/main/kotlin/com/quickpitik/service/profile/EmailChangeService.kt`
+    - `backend/src/test/kotlin/com/quickpitik/service/profile/ProfileServiceTest.kt`
+    - `backend/src/test/kotlin/com/quickpitik/service/profile/EmailChangeServiceTest.kt`
+    - `website/src/types/user.ts`
+    - `website/src/lib/api-account.ts`
+    - `website/src/app/account/page.tsx`
 
-- [ ] **26. Website — Incomplete Base64URL Sanitization in `isTokenExpired()`**
-  - **Issue:** `src/lib/auth.ts:26` parses the JWT payload via `JSON.parse(atob(token.split(".")[1]))`. JWTs use Base64URL encoding (`-` and `_`), which causes standard browser `atob()` to throw a `DOMException`. The catch block catches this and returns `true`, erroneously treating active tokens with URL-safe characters as prematurely expired (in contrast to `use-auth.ts`, which correctly replaced `-` with `+` and `_` with `/`).
+- [x] **26. Website — Base64URL Decoding for Google Onboarding**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Added `decodeBase64Url()` in `website/src/lib/auth.ts` to replace Base64URL characters (`-` $\rightarrow$ `+`, `_` $\rightarrow$ `/`) and apply standard padding (`==`, `=`).
+    - Removed the unused `isTokenExpired()` helper. The active Google onboarding parser in `use-auth.ts` now uses `decodeBase64Url()` with UTF-8 decoding.
+    - Regression fixtures in `website/src/lib/auth.test.ts` contain both actual URL-safe symbols and Unicode; malformed input is rejected.
   - **Affected Files:**
     - `website/src/lib/auth.ts`
-  - **Action Plan:** Sanitize the payload substring with `.replace(/-/g, "+").replace(/_/g, "/")` and add proper padding before calling `atob()`.
+    - `website/src/lib/auth.test.ts`
 
-- [ ] **27. Website — Missing App Routes in Photographer `RESERVED_HANDLES` Collision Guard**
-  - **Issue:** Photographer handles use a flat root URL namespace (`quickpitik.com/{handle}`). The `RESERVED_HANDLES` set protects system routes from being registered by photographers. However, existing active routes such as `"verify"`, `"verify-email"`, and `"confirm-email-change"` are omitted from `RESERVED_HANDLES`. If a photographer claims `verify`, accessing `/verify` causes route conflicts.
+- [x] **27. Website — Missing App Routes in Photographer `RESERVED_HANDLES` Collision Guard**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated `RESERVED_HANDLES` set in `website/src/lib/reserved-handles.ts` to include missing core auth/verification routes: `"verify"`, `"verify-email"`, `"confirm-email-change"`, `"reset-password"`, `"logout"`, `"signin"`, and `"signup"`.
+    - V62 seeds the missing backend reservations. `FlywayMigrationIntegrationTest` verifies database rows and server-side rejection; collision preflight is in the integration contract.
+    - Created comprehensive unit test suite in `website/src/lib/reserved-handles.test.ts` verifying case-insensitive reserved handle rejection, valid handle rules, and required route collision protections.
   - **Affected Files:**
     - `website/src/lib/reserved-handles.ts`
-  - **Action Plan:** Add `"verify"`, `"verify-email"`, and `"confirm-email-change"` to the `RESERVED_HANDLES` set.
+    - `website/src/lib/reserved-handles.test.ts`
 
-- [ ] **28. Website — Floating-Point Precision Accumulation in Cart Pricing Summation**
-  - **Issue:** `cart-store.ts` calculates the cart total as `items.reduce((sum, item) => sum + item.price, 0)`. Floating-point arithmetic on decimals (e.g., `150.50 + 99.99 = 250.49000000000004`) causes micro-penny precision inaccuracies, risking mismatches with backend cent-based order calculations during checkout.
+- [x] **28. Website — Floating-Point Precision Accumulation in Cart Pricing Summation**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated `total()` in `website/src/store/cart-store.ts` to accumulate item prices in integer cents (`Math.round(Number(item.price || 0) * 100)`) and return `cents / 100`.
+    - Hardened `payable` calculation in `website/src/components/cart/checkout-modal.tsx` to round to integer cents before decimal conversion.
+    - Added unit test suite in `website/src/store/cart-store.test.ts` verifying micro-decimal addition without floating-point drift.
   - **Affected Files:**
     - `website/src/store/cart-store.ts`
-  - **Action Plan:** Calculate the total in integer cents (`Math.round(item.price * 100)`) and divide by 100, or format using fixed two-decimal precision.
+    - `website/src/components/cart/checkout-modal.tsx`
+    - `website/src/store/cart-store.test.ts`
 
-- [ ] **29. Website — Overly Restrictive `Permissions-Policy` Blocking Camera in Production**
-  - **Issue:** In `next.config.ts:50`, the production security header sets `Permissions-Policy: camera=(), microphone=(), geolocation=()`. In `SelfieSearchPanel.tsx`, runners can match photos via `<input type="file" capture="user">`. Certain mobile browser webviews and future direct camera previews (`getUserMedia`) are blocked by `camera=()`.
+- [x] **29. Website — Overly Restrictive `Permissions-Policy` Blocking Camera in Production**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated `Permissions-Policy` header in `website/next.config.ts` from `camera=()` to `camera=(self), microphone=(), geolocation=()`.
+    - Enabled first-party selfie photo capture / runner selfie matching (`capture="user"` and web camera devices) while continuing to deny untrusted third-party iframe access.
   - **Affected Files:**
     - `website/next.config.ts`
-  - **Action Plan:** Adjust the policy header to `camera=(self)` to permit first-party camera capture while continuing to deny untrusted third-party iframe access.
 
 - [ ] **30. Website — Sub-12px Quiet Studio Comfort Floor ESLint Warnings (121 instances)**
   - **Issue:** ESLint flags 121 warnings for text sizes below the 12px design token floor (`text-[9px]`, `text-[10px]`, `text-[11px]`) across components like `user-menu.tsx`, `onboarding-form.tsx`, `refund-timeline.tsx`, and `selfie-library.tsx`.

@@ -18,8 +18,7 @@ data class EmailChangeRequest(
     @field:Size(max = 255, message = "newEmail must be at most 255 characters")
     val newEmail: String,
 
-    @field:NotBlank(message = "currentPassword is required")
-    val currentPassword: String,
+    val currentPassword: String? = null,
 )
 
 /**

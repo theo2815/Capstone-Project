@@ -47,14 +47,14 @@ class PhotoIndexingService(
         // snapshot: both element collections are EAGER, so the prior person ids
         // needed for cleanup are already loaded.
         val photo = photoRepository.findById(photoId).orElse(null) ?: return
+        if (photo.deletedAt != null) return
         if (photo.indexingStatus == IndexingStatus.INDEXED ||
             photo.indexingStatus == IndexingStatus.SKIPPED
         ) {
             return
         }
         if (!aiApiProperties.enabled) {
-            photo.indexingStatus = IndexingStatus.SKIPPED
-            photoRepository.save(photo)
+            transactionTemplate.execute { photoRepository.skipIndexing(photoId) }
             return
         }
 
@@ -180,6 +180,7 @@ class PhotoIndexingService(
 
     private fun writeOutcome(photoId: UUID, outcome: InferenceOutcome) {
         val photo = photoRepository.findById(photoId).orElse(null) ?: return
+        if (photo.deletionStartedAt != null) return
         if (photo.indexingStatus == IndexingStatus.INDEXED ||
             photo.indexingStatus == IndexingStatus.SKIPPED
         ) {
@@ -252,7 +253,7 @@ class PhotoIndexingService(
 
         // Notify the live gallery even on PARTIAL so the bib (if any) surfaces.
         // Published inside the phase-C transaction so AFTER_COMMIT fires.
-        if (outcome.facesOk || outcome.bibsOk) {
+        if (photo.deletedAt == null && (outcome.facesOk || outcome.bibsOk)) {
             eventPublisher.publishEvent(
                 PhotoIndexedEvent(
                     eventId = photo.eventId,

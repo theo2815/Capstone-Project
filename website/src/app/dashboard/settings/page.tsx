@@ -17,6 +17,7 @@ import { createPortal } from "react-dom";
 import { Check } from "lucide-react";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
+import { WatermarkPlacementEditor } from "@/components/dashboard/watermark-placement-editor";
 import { CharCounter } from "@/components/ui/char-counter";
 import { Dropdown, DropdownItem } from "@/components/ui/dropdown";
 import { FieldError } from "@/components/ui/field-error";
@@ -41,14 +42,17 @@ import {
   putBrand,
   putHandle,
   putRegion,
+  putWatermarkSettings,
   submitVerification,
   withdrawVerification,
 } from "@/lib/api-photographer-settings";
+import { syncVerificationNow } from "@/lib/photographer-verification-sync";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAuthStore } from "@/store/auth-store";
 import { useUserMediaStore } from "@/store/user-media-store";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
+import type { User } from "@/types/user";
 import {
   ACCEPTED_IMAGE_MIME,
   ImageProcessingError,
@@ -148,6 +152,7 @@ interface EditModeSnapshot {
   brandColor: BrandColor;
   bio: string;
   watermark: ReturnType<typeof usePhotographerSettingsStore.getState>["watermark"];
+  watermarkPlacement: ReturnType<typeof usePhotographerSettingsStore.getState>["watermarkPlacement"];
   handle: string;
   region: ReturnType<typeof usePhotographerSettingsStore.getState>["region"];
   socials: SocialLink[];
@@ -195,6 +200,13 @@ function takeSnapshot(): EditModeSnapshot {
     brandColor: s.brandColor,
     bio: s.bio,
     watermark: s.watermark,
+    // Deep-clone the nested position objects so a Cancel restores the exact
+    // pre-edit placement.
+    watermarkPlacement: {
+      ...s.watermarkPlacement,
+      landscape: { ...s.watermarkPlacement.landscape },
+      portrait: { ...s.watermarkPlacement.portrait },
+    },
     handle: s.handle,
     region: s.region,
     // Deep-clone arrays so future mutations to the store don't leak into the
@@ -213,6 +225,7 @@ function restoreSnapshot(snap: EditModeSnapshot): void {
     brandColor: snap.brandColor,
     bio: snap.bio,
     watermark: snap.watermark,
+    watermarkPlacement: snap.watermarkPlacement,
     handle: snap.handle,
     region: snap.region,
     socials: snap.socials,
@@ -268,6 +281,11 @@ function EditModeProvider({ children }: { children: ReactNode }) {
 
     const settings = usePhotographerSettingsStore.getState();
     const pending = pendingFilesRef.current;
+    if (settings.payouts.some((p) => !p.qr)) {
+      showToast({ kind: "error", message: "Upload a QR code for each payout account before saving." });
+      setSaving(false);
+      return;
+    }
 
     // Build the BE call list by diffing snapshot ↔ current store. Only fire
     // the endpoints whose source data actually changed — keeps the network
@@ -326,10 +344,43 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         run: () => postWatermark(pending.watermark!),
       });
     }
+
+    // Watermark placement (position/opacity/size) — separate endpoint from the
+    // image upload; fires only when the photographer moved/resized/faded it.
+    const placementDirty =
+      JSON.stringify(snap.watermarkPlacement) !==
+      JSON.stringify(settings.watermarkPlacement);
+    if (placementDirty) {
+      const p = settings.watermarkPlacement;
+      tasks.push({
+        label: "Watermark position",
+        run: () =>
+          putWatermarkSettings({
+            opacity: p.opacity,
+            scale: p.scale,
+            landscapeX: p.landscape.x,
+            landscapeY: p.landscape.y,
+            portraitX: p.portrait.x,
+            portraitY: p.portrait.y,
+          }),
+        onSuccess: () => {
+          // A sibling request can fail: Cancel/retry must start from the
+          // placement that the server accepted, not the pre-edit value.
+          snap.watermarkPlacement = {
+            ...p,
+            landscape: { ...p.landscape },
+            portrait: { ...p.portrait },
+          };
+        },
+      });
+    }
     if (pending.avatar) {
       tasks.push({
         label: "Profile picture",
         run: () => uploadAvatar(pending.avatar!),
+        // Write the fresh User (avatarUrl populated) back to auth-store so the
+        // header + AvatarDisc show the new photo in-session, not the stale one.
+        onSuccess: (result) => useAuthStore.getState().setUser(result as User),
       });
     }
 
@@ -402,13 +453,8 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     }
 
     // ── Payouts diff ────────────────────────────────────────────────────
-    // Added rows POST first to obtain a server id; QR (if any) uploads via
-    // a follow-on `POST /payouts/{id}/qr` call. Existing rows PATCH on
-    // account-number / account-name changes, POST QR on QR add/replace,
-    // PATCH primary when the primary toggle flips. Note: there is no
-    // "remove QR" endpoint server-side; removing a QR locally has no BE
-    // effect until the photographer uploads a replacement (acceptable v1
-    // limitation per notes/photographer-settings-backend.md §3).
+    // Save account details before their required QR; retain successful steps
+    // in the snapshot so an upload retry never creates a duplicate account.
     const snapPayoutsById = new Map(snap.payouts.map((p) => [p.id, p]));
     const currentPayoutsById = new Map(
       settings.payouts.map((p) => [p.id, p]),
@@ -468,36 +514,24 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         const accountChanged =
           prev.accountNumber !== p.accountNumber ||
           prev.accountName !== p.accountName;
-        if (accountChanged) {
+        const qrChanged = (prev.qr?.dataUrl ?? null) !== (p.qr?.dataUrl ?? null);
+        if (accountChanged || qrChanged) {
           tasks.push({
             label: "Payout account",
-            run: () =>
-              patchPayoutAccount(p.id, {
-                accountNumber: p.accountNumber,
-                accountName: p.accountName,
-              }),
-            onSuccess: () => {
-              const row = snap.payouts.find((x) => x.id === p.id);
-              if (row) {
-                row.accountNumber = p.accountNumber;
-                row.accountName = p.accountName;
+            run: async () => {
+              // PATCH invalidates the old QR when the number changes. Await it
+              // before uploading so it cannot erase the replacement QR.
+              if (accountChanged) {
+                const updated = await patchPayoutAccount(p.id, {
+                  accountNumber: p.accountNumber,
+                  accountName: p.accountName,
+                });
+                Object.assign(prev, updated);
               }
-            },
-          });
-        }
-        // QR added or replaced — only POST if the data URL changed.
-        const qrChanged =
-          (prev.qr?.dataUrl ?? null) !== (p.qr?.dataUrl ?? null) && !!p.qr;
-        if (qrChanged && p.qr) {
-          tasks.push({
-            label: "Payout QR",
-            run: () => {
-              const file = dataUrlToFile(p.qr!.dataUrl, `qr-${p.id}.png`);
-              return postPayoutQr(p.id, file);
-            },
-            onSuccess: () => {
-              const row = snap.payouts.find((x) => x.id === p.id);
-              if (row) row.qr = p.qr ? { ...p.qr } : null;
+              if (qrChanged && p.qr) {
+                await postPayoutQr(p.id, dataUrlToFile(p.qr.dataUrl, `qr-${p.id}.png`));
+                prev.qr = { ...p.qr };
+              }
             },
           });
         }
@@ -569,6 +603,9 @@ function EditModeProvider({ children }: { children: ReactNode }) {
           watermark: null,
         };
         setEditing(false);
+        // Refresh completeness from the BE now the save landed, so the Submit
+        // button + banners reflect it without waiting for the next focus/poll.
+        void syncVerificationNow();
         // Name what was saved when the whole batch is one kind of change —
         // "Cover saved." tells the photographer their edit landed, where the
         // generic line left them checking. Dedupe mirrors the failure branch
@@ -1162,29 +1199,15 @@ function ReadyToSubmitPill({ onClick }: { onClick: () => void }) {
   );
 }
 
-// Subscribes to every required field so consumers re-render whenever any
-// changes. The store's `isComplete()` getter alone won't trigger updates —
-// Zustand only fires re-renders when the subscribed slice (the function
-// reference) changes, not when the underlying fields change. Profile
-// picture lives in useUserMediaStore (shared with the runner account flow).
+// Completeness is the backend's verdict — GET /me/photographer/verification's
+// missing[], mirrored into the store by photographer-verification-sync. The
+// client no longer recomputes it from individual field stores; that drift
+// (especially reading the avatar from the deprecated useUserMediaStore) was the
+// "everything filled but still says incomplete" bug. Subscribing to
+// verificationMissing re-renders consumers the moment the server answer lands.
 function useAllRequiredFilled(): boolean {
-  const avatar = useUserMediaStore((s) => s.avatar);
-  const cover = usePhotographerSettingsStore((s) => s.cover);
-  const brandName = usePhotographerSettingsStore((s) => s.brandName);
-  const watermark = usePhotographerSettingsStore((s) => s.watermark);
-  const handle = usePhotographerSettingsStore((s) => s.handle);
-  const region = usePhotographerSettingsStore((s) => s.region);
-  const socials = usePhotographerSettingsStore((s) => s.socials);
-  const payouts = usePhotographerSettingsStore((s) => s.payouts);
-  return (
-    avatar !== null &&
-    cover !== null &&
-    brandName.trim().length > 0 &&
-    watermark !== null &&
-    handle.trim().length > 0 &&
-    region !== null &&
-    socials.some((sl) => sl.url.trim().length > 0) &&
-    payouts.some((p) => p.isPrimary)
+  return usePhotographerSettingsStore(
+    (s) => s.verificationMissing !== null && s.verificationMissing.length === 0,
   );
 }
 
@@ -1357,11 +1380,17 @@ function PublicProfileSlab() {
 
   // Readiness pulls each required piece directly from its store so the chip
   // re-renders the moment any of them changes (no save needed).
-  const avatar = useUserMediaStore((s) => s.avatar);
+  // Live per-field feedback while editing: the staged preview (useUserMediaStore)
+  // OR the saved canonical avatar (auth-store.user.avatarUrl) counts — reading
+  // only the staged store was why a saved avatar still showed "Required".
+  const avatarUrl = useAuthStore((s) => s.user?.avatarUrl ?? null);
+  const storeAvatar = useUserMediaStore((s) => s.avatar);
   const cover = usePhotographerSettingsStore((s) => s.cover);
   const brandName = usePhotographerSettingsStore((s) => s.brandName);
   const ready =
-    avatar !== null && cover !== null && brandName.trim().length > 0;
+    (avatarUrl !== null || storeAvatar !== null) &&
+    cover !== null &&
+    brandName.trim().length > 0;
 
   return (
     <Slab
@@ -1949,6 +1978,10 @@ function WatermarkSlab() {
   const { editing, setPendingFile } = useEditMode();
   const watermark = usePhotographerSettingsStore((s) => s.watermark);
   const setWatermark = usePhotographerSettingsStore((s) => s.setWatermark);
+  const placement = usePhotographerSettingsStore((s) => s.watermarkPlacement);
+  const setWatermarkPlacement = usePhotographerSettingsStore(
+    (s) => s.setWatermarkPlacement,
+  );
   const { showToast } = useToast();
   const { confirm } = useConfirmation();
   const [busy, setBusy] = useState(false);
@@ -2037,25 +2070,23 @@ function WatermarkSlab() {
           with a solid background works too.
         </p>
 
-        <div className="rounded-2xl overflow-hidden bg-bone-deep border border-line aspect-[3/2] relative">
-          <SamplePhoto />
-          {watermark && (
-            // eslint-disable-next-line @next/next/no-img-element -- data-URL mock; backend will composite watermark onto each photo at upload time.
-            <img
-              src={watermark.dataUrl}
-              alt=""
-              className="absolute bottom-4 right-4 max-w-[40%] max-h-[35%] opacity-70 mix-blend-screen pointer-events-none"
-              draggable={false}
-            />
-          )}
-          {!watermark && (
+        {watermark ? (
+          <WatermarkPlacementEditor
+            dataUrl={watermark.dataUrl}
+            editing={editing}
+            placement={placement}
+            onChange={setWatermarkPlacement}
+          />
+        ) : (
+          <div className="rounded-2xl overflow-hidden bg-bone-deep border border-line aspect-[3/2] relative">
+            <SamplePhoto />
             <div className="absolute bottom-4 right-4 px-4 py-2 rounded-full border border-dashed border-line bg-bone/40 backdrop-blur-sm">
               <Kicker as="p">
                 Watermark goes here
               </Kicker>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <label
@@ -2837,7 +2868,7 @@ function PayoutSlab() {
 
   // Ready when there's at least one account marked primary. Matches the
   // server's MISSING_PAYOUT gate.
-  const ready = payouts.some((p) => p.isPrimary);
+  const ready = payouts.some((p) => p.isPrimary && p.qr);
 
   return (
     <Slab
@@ -3003,7 +3034,7 @@ function PayoutForm({
     nameTouched && accountName.trim().length === 0
       ? "Account name is required."
       : null;
-  const canSave = validNumber && validName;
+  const canSave = validNumber && validName && !!qr && !busy;
 
   const numberLabel = method === "gotyme" ? "Account number" : "Mobile number";
   const numberPlaceholder =
@@ -3139,7 +3170,10 @@ function PayoutForm({
           <input
             id={`payout-number-${method}`}
             value={formatPayoutNumber(method, accountNumber)}
-            onChange={(e) => setAccountNumber(e.target.value)}
+            onChange={(e) => {
+              if (e.target.value.replace(/\D/g, "") !== accountNumber.replace(/\D/g, "")) setQr(null);
+              setAccountNumber(e.target.value);
+            }}
             placeholder={numberPlaceholder}
             inputMode="numeric"
             required
@@ -3170,7 +3204,7 @@ function PayoutForm({
       </div>
 
       <div className="flex flex-col gap-3">
-        <span className="font-sans text-sm text-slate">QR code (optional)</span>
+        <span className="font-sans text-sm text-slate">QR code (required)</span>
         <div className="flex flex-col sm:flex-row sm:items-start gap-4 sm:gap-5">
           <div className="size-32 md:size-36 shrink-0 rounded-2xl border border-line bg-bone overflow-hidden flex items-center justify-center">
             {qr ? (
@@ -3202,7 +3236,8 @@ function PayoutForm({
                 accept={ACCEPTED_IMAGE_MIME.join(",")}
                 onChange={handleQrPick}
                 disabled={busy}
-                aria-describedby={qrError ? `payout-qr-error-${method}` : undefined}
+                aria-describedby={qrError ? `payout-qr-error-${method}` : `payout-qr-help-${method}`}
+                aria-required="true"
                 aria-invalid={qrError ? true : undefined}
                 className="sr-only"
               />
@@ -3216,10 +3251,10 @@ function PayoutForm({
                 Remove QR
               </button>
             )}
-            <p className="font-sans text-sm text-slate-soft max-w-xs">
-              From the {PAYOUT_METHOD_LABEL[method]} app: open your QR, save the
-              image to your gallery, then upload it here. Backed up so finance
-              can scan if a transfer needs to retry.
+            <p id={`payout-qr-help-${method}`} className="font-sans text-sm text-slate-soft max-w-xs">
+              Required to receive payouts. From the {PAYOUT_METHOD_LABEL[method]} app: open your QR, save the
+              image to your gallery, then upload it here. It must match the account
+              number above; changing the number requires a new QR.
             </p>
           </div>
         </div>
@@ -3305,11 +3340,9 @@ function PayoutCard({
           <p className="font-mono tnum text-base text-ink mt-2 break-all">
             {formatted || "—"}
           </p>
-          {account.qr && (
-            <Kicker as="p" tone="soft" className="mt-3">
-              QR uploaded
-            </Kicker>
-          )}
+          <p className="font-sans text-sm text-slate mt-3">
+            {account.qr ? "QR attached" : "QR required. Edit this account to finish setup."}
+          </p>
         </div>
       </div>
 

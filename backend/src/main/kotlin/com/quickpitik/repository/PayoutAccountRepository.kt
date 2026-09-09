@@ -12,5 +12,6 @@ interface PayoutAccountRepository : JpaRepository<PayoutAccount, UUID> {
     fun findAllByUserIdInOrderByCreatedAtAsc(userIds: Collection<UUID>): List<PayoutAccount>
     fun findByIdAndUserId(id: UUID, userId: UUID): PayoutAccount?
     fun countByUserId(userId: UUID): Long
+    fun countByUserIdAndQrS3KeyIsNotNull(userId: UUID): Long
     fun findByUserIdAndIsPrimaryTrue(userId: UUID): PayoutAccount?
 }

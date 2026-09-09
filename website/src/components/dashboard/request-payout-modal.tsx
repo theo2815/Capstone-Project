@@ -39,7 +39,7 @@ export function RequestPayoutModal({
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit() {
-    if (submitting) return;
+    if (submitting || !primary?.hasQr) return;
     setSubmitting(true);
     try {
       await requestPhotographerPayout();
@@ -88,7 +88,7 @@ export function RequestPayoutModal({
           </p>
         </div>
 
-        {primary ? (
+        {primary?.hasQr ? (
           <div className="rounded-xl border border-line bg-bone-deep p-4">
             <Kicker as="p" tone="soft">
               Sent to
@@ -106,16 +106,14 @@ export function RequestPayoutModal({
           </div>
         ) : (
           <p className="font-sans text-sm text-error">
-            No primary payout account configured. Set one up in Settings before
-            requesting.
+            Set up a primary payout account and upload its QR in Settings before requesting.
           </p>
         )}
 
         <p className="font-sans text-sm text-slate">
           Once submitted, admin reviews and transfers the funds manually. You
-          can&apos;t submit another request until this one is paid or held. If
-          held, you can withdraw and re-submit after fixing what admin
-          flagged.
+          can&apos;t submit another request while this one is open. If it&apos;s
+          held, you can cancel and re-submit after fixing what admin flagged.
         </p>
 
         <div className="flex flex-wrap items-center justify-end gap-3 pt-2 border-t border-line">
@@ -130,7 +128,7 @@ export function RequestPayoutModal({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || !primary}
+            disabled={submitting || !primary?.hasQr}
             className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
           >
             {submitting ? "Submitting…" : "Submit request"}

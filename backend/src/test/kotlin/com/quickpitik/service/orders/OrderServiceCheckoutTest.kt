@@ -49,6 +49,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.photographer.PhotographerAccessGuard
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.support.testTransactionTemplate
 import org.junit.jupiter.api.BeforeEach
@@ -180,6 +181,10 @@ class OrderServiceCheckoutTest {
                 eventRepository,
                 Mockito.mock(EventPhotographerRepository::class.java),
                 orderRepository,
+                PhotographerAccessGuard(
+                    Mockito.mock(UserRepository::class.java),
+                    Mockito.mock(PhotographerSettingsRepository::class.java),
+                ),
             ),
             webhookService,
             checkoutReconciler,
@@ -491,6 +496,33 @@ class OrderServiceCheckoutTest {
 
         assertFailsWith<ConflictException> { service.create(null, request(), key) }
 
+        Mockito.verifyNoInteractions(paymongoClient)
+    }
+
+    // Already-purchased net (2026-09-07): a photo the buyer already owns (a
+    // PAID/FULFILLED order for the same guest email) is rejected with the
+    // distinct ALREADY_PURCHASED code, so clients steer to a free re-download
+    // instead of the QR-failure copy. Clients also detect this in the cart;
+    // this asserts the server-side net and its distinct code.
+    @Test
+    fun `checkout rejects a photo the buyer already owns with the already-purchased code`() {
+        Mockito.`when`(orderRepository.findOverlappingForGuest(eqArg(email), anyArg(), anyArg()))
+            .thenReturn(
+                listOf(
+                    Order(
+                        eventId = eventId,
+                        recipientEmail = email,
+                        paymentMethodWire = "qrph",
+                        status = OrderStatus.FULFILLED,
+                        totalPhp = photo.pricePhp,
+                    ),
+                ),
+            )
+
+        val ex = assertFailsWith<ConflictException> { service.create(null, request(), key) }
+
+        assertEquals(ErrorCodes.ALREADY_PURCHASED, ex.code)
+        assertEquals(0, savedOrders.size)
         Mockito.verifyNoInteractions(paymongoClient)
     }
 

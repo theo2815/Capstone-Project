@@ -3,6 +3,9 @@ package com.quickpitik.mobile.data.usb.ptp
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.quickpitik.mobile.BuildConfig
+import com.quickpitik.mobile.data.local.LowCameraStorage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import java.io.OutputStream
@@ -18,7 +21,7 @@ import java.io.OutputStream
  * mirrors the 2026-05-26 Zno-pivot ADR for the same reason.
  *
  * The bytes don't land in this class — the caller's [onPulled] callback writes
- * them to whatever store the VM owns (today: app cacheDir + Room upload queue).
+ * them to whatever store the VM owns (today: persistent spool + Room upload queue).
  * That keeps the controller free of Android persistence APIs and trivially
  * testable.
  */
@@ -73,6 +76,7 @@ class UsbCardImportController(
         photos: List<CardPhoto>,
         emit: suspend (Progress) -> Unit,
         onPulled: suspend (photo: CardPhoto, writeTo: (OutputStream) -> Unit) -> Boolean,
+        onFailed: suspend (photo: CardPhoto, message: String) -> Unit,
     ) {
         if (photos.isEmpty()) {
             emit(Progress.Done(succeededHandles = emptySet(), failedHandles = emptySet()))
@@ -84,23 +88,13 @@ class UsbCardImportController(
             return
         }
 
-        val session = try {
-            PtpSession(manager, device).also { s ->
-                val rc = s.openSession()
-                if (rc != Ptp.RC_OK && rc != Ptp.RC_SESSION_ALREADY_OPEN) {
-                    runCatching { s.close() }
-                    emit(Progress.Failed(MSG_SESSION_REJECTED))
-                    return
-                }
-            }
-        } catch (e: Exception) {
-            emit(Progress.Failed(MSG_OPEN_FAILED))
-            return
-        }
-
-        emit(Progress.Started(total = photos.size))
+        val camera = try { CameraDrivers.open(manager, device) }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { emit(Progress.Failed(e.message ?: MSG_OPEN_FAILED)); return }
+        val session = camera.session
 
         try {
+            emit(Progress.Started(total = photos.size))
             val succeeded = LinkedHashSet<Long>()
             val failed = LinkedHashSet<Long>()
 
@@ -111,13 +105,23 @@ class UsbCardImportController(
                 // read alone, not the caller's disk write on top of it.
                 var pulledBytes = 0L
                 var ptpMs = 0L
-                val didPersist = runCatching {
+                val didPersist = try {
+                    val fresh = camera.objectInfo(photo.handle)
+                    if (photo.cameraKey != camera.cameraKey || photo.sourceKey != fresh.sourceKey(camera.cameraKey, photo.handle))
+                        throw PtpException("The camera card changed. Browse it again before importing.")
                     onPulled(photo) { sink ->
                         val ptpStart = System.currentTimeMillis()
-                        pulledBytes = session.getObjectTo(photo.handle, sink)
+                        pulledBytes = camera.readObject(photo.handle, sink, photo.objectInfo?.expectedSize)
                         ptpMs = System.currentTimeMillis() - ptpStart
                     }
-                }.getOrDefault(false)
+                } catch (e: CancellationException) { throw e }
+                catch (e: LowCameraStorage) {
+                    emit(Progress.Failed(e.message.orEmpty()))
+                    return // Remaining selections stay pending; storage pressure spends no retry budget.
+                } catch (e: Exception) {
+                    onFailed(photo, e.message ?: MSG_READ_FAILED)
+                    false
+                }
 
                 // QP/UPLOAD-PERF — `adb logcat -s QP/UPLOAD-PERF` shows
                 // per-phase ms for each photo (ptp / persist / upload).
@@ -129,6 +133,10 @@ class UsbCardImportController(
                 }
 
                 if (didPersist) succeeded.add(photo.handle) else failed.add(photo.handle)
+                if (!session.isUsable) {
+                    failed.addAll(photos.drop(idx + 1).map { it.handle })
+                    break
+                }
 
                 emit(
                     Progress.Each(
@@ -145,12 +153,13 @@ class UsbCardImportController(
                     failedHandles = failed.toSet(),
                 )
             )
+        } catch (e: CancellationException) { throw e
         } catch (e: Exception) {
             // Fatal — surface as session-level failure (the UI shows Error,
             // not a partial Done) so the user knows to retry, not just close.
             emit(Progress.Failed(MSG_READ_FAILED))
         } finally {
-            runCatching { session.close() }
+            runCatching { camera.close() }
         }
     }
 

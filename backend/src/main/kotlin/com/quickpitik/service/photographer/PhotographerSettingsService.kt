@@ -6,8 +6,10 @@ import com.quickpitik.dto.photographer.BrandPatchRequest
 import com.quickpitik.dto.photographer.HandlePatchRequest
 import com.quickpitik.dto.photographer.IncompleteFields
 import com.quickpitik.dto.photographer.MediaUploadResponseDto
+import com.quickpitik.dto.photographer.MissingRequirement
 import com.quickpitik.dto.photographer.RegionPatchRequest
 import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
+import com.quickpitik.dto.photographer.WatermarkSettingsRequest
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.VerificationStatus
@@ -103,7 +105,17 @@ class PhotographerSettingsService(
             "provinceCode" to settings.provinceCode.orEmpty(),
             "coverUrl" to coverUrl.orEmpty(),
             "watermarkUrl" to watermarkUrl.orEmpty(),
-            "avatarUrl" to avatarUrl.orEmpty()
+            "avatarUrl" to avatarUrl.orEmpty(),
+            // Placement of the photographer's own logo (V51). Both clients
+            // hydrate the drag-preview + sliders from this block.
+            "watermarkSettings" to mapOf(
+                "opacity" to settings.watermarkOpacity,
+                "scale" to settings.watermarkScale,
+                "landscapeX" to settings.watermarkPosLandscapeX,
+                "landscapeY" to settings.watermarkPosLandscapeY,
+                "portraitX" to settings.watermarkPosPortraitX,
+                "portraitY" to settings.watermarkPosPortraitY,
+            ),
         )
     }
 
@@ -232,6 +244,39 @@ class PhotographerSettingsService(
             .firstOrNull { it.code == regionCode }
             ?.provinces?.firstOrNull { it.code == provinceCode }
         settings.city = province?.name
+        return photographerSettingsRepository.save(settings)
+    }
+
+    // ─── Watermark placement (V51) ────────────────────────────────────────
+    // Position (per orientation), opacity and size for the photographer's own
+    // logo. Independent of the watermark image upload — geometry changes
+    // without re-uploading. Finite values are clamped into range:
+    // a slider/drag can only send in-range values, and a hand-crafted request
+    // is normalized. Applies to NEW uploads only — already-baked previews keep
+    // their stamp (see PhotoWatermarkService).
+    fun putWatermarkSettings(userId: UUID, req: WatermarkSettingsRequest): PhotographerSettings {
+        // Jackson accepts quoted NaN/Infinity as Doubles; coerceIn does not
+        // reject NaN. Validate every field before even lazy-creating the row.
+        mapOf(
+            "opacity" to req.opacity, "scale" to req.scale,
+            "landscapeX" to req.landscapeX, "landscapeY" to req.landscapeY,
+            "portraitX" to req.portraitX, "portraitY" to req.portraitY,
+        ).forEach { (field, value) ->
+            if (!value.isFinite()) {
+                throw ValidationException(
+                    code = ErrorCodes.VALIDATION_ERROR,
+                    message = "$field must be a finite number",
+                    field = field,
+                )
+            }
+        }
+        val settings = getOrCreate(userId)
+        settings.watermarkOpacity = req.opacity.coerceIn(MIN_WATERMARK_OPACITY, MAX_WATERMARK_OPACITY)
+        settings.watermarkScale = req.scale.coerceIn(MIN_WATERMARK_SCALE, MAX_WATERMARK_SCALE)
+        settings.watermarkPosLandscapeX = req.landscapeX.coerceIn(0.0, 1.0)
+        settings.watermarkPosLandscapeY = req.landscapeY.coerceIn(0.0, 1.0)
+        settings.watermarkPosPortraitX = req.portraitX.coerceIn(0.0, 1.0)
+        settings.watermarkPosPortraitY = req.portraitY.coerceIn(0.0, 1.0)
         return photographerSettingsRepository.save(settings)
     }
 
@@ -396,12 +441,13 @@ class PhotographerSettingsService(
     private fun buildVerificationResponse(
         userId: UUID,
         status: VerificationStatus,
-        missing: List<String>? = null,
+        missing: List<MissingRequirement>? = null,
     ): VerificationSubmitResponseDto {
         val user = userRepository.findById(userId).orElse(null)
         return VerificationSubmitResponseDto(
             status = status.toWire(),
-            missing = missing,
+            missing = missing?.map { it.label },
+            missingCodes = missing?.map { it.name },
             suspendedAt = user?.suspendedAt?.toString(),
             suspensionReason = user?.suspensionReason,
         )
@@ -420,39 +466,37 @@ class PhotographerSettingsService(
     fun collectMissing(userId: UUID, settings: PhotographerSettings? = null): IncompleteFields {
         val s = settings ?: photographerSettingsRepository.findById(userId).orElse(null)
         val user = userRepository.findById(userId).orElse(null)
-        val missing = mutableListOf<String>()
+        val missing = mutableListOf<MissingRequirement>()
 
         // Avatar — User.avatar_s3_key OR avatar_url. Stored on the user row,
-        // not photographer_settings; the FE pulls it from useUserMediaStore
-        // which mirrors the same backing data.
+        // not photographer_settings.
         if (user?.avatarS3Key.isNullOrBlank() && user?.avatarUrl.isNullOrBlank()) {
-            missing.add("profile picture")
+            missing.add(MissingRequirement.PROFILE_PHOTO)
         }
         // Cover banner — require an uploaded image, not just a gradient
-        // fallback (FE useAllRequiredFilled checks for CoverMedia, which
-        // only exists when an actual file was uploaded).
+        // fallback (a cover gradient without an uploaded file does not count).
         if (s?.coverS3Key.isNullOrBlank()) {
-            missing.add("cover banner")
+            missing.add(MissingRequirement.COVER_PHOTO)
         }
         if (s?.brandName.isNullOrBlank()) {
-            missing.add("brand name")
+            missing.add(MissingRequirement.BRAND_NAME)
         }
         // Watermark — same as cover: require an uploaded image, not just a
         // label placeholder.
         if (s?.watermarkS3Key.isNullOrBlank()) {
-            missing.add("watermark")
+            missing.add(MissingRequirement.WATERMARK)
         }
         if (s?.handle.isNullOrBlank()) {
-            missing.add("public handle")
+            missing.add(MissingRequirement.PUBLIC_HANDLE)
         }
         if (s == null || s.regionCode.isNullOrBlank() || s.provinceCode.isNullOrBlank()) {
-            missing.add("region")
+            missing.add(MissingRequirement.REGION)
         }
         if (socialLinkRepository.countByUserId(userId) == 0L) {
-            missing.add("social link")
+            missing.add(MissingRequirement.SOCIAL_LINK)
         }
-        if (payoutAccountRepository.countByUserId(userId) == 0L) {
-            missing.add("payout account")
+        if (payoutAccountRepository.countByUserIdAndQrS3KeyIsNotNull(userId) == 0L) {
+            missing.add(MissingRequirement.PAYOUT_ACCOUNT)
         }
         return IncompleteFields(missing = missing)
     }
@@ -544,6 +588,12 @@ class PhotographerSettingsService(
         val HANDLE_REGEX = Regex("^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])?$")
         const val MAX_COVER_LONG_EDGE = 1920
         const val MAX_WATERMARK_LONG_EDGE = 1024
+        // Watermark placement bounds (V51). Keep in sync with the client slider
+        // ranges; opacity floor keeps the mark from being made invisible.
+        const val MIN_WATERMARK_OPACITY = 0.05
+        const val MAX_WATERMARK_OPACITY = 1.0
+        const val MIN_WATERMARK_SCALE = 0.05
+        const val MAX_WATERMARK_SCALE = 0.40
         const val MAX_COVER_BYTES = 10 * 1024 * 1024
         const val MAX_WATERMARK_BYTES = 10 * 1024 * 1024
         // Postgres auto-names the UNIQUE on photographer_settings.handle

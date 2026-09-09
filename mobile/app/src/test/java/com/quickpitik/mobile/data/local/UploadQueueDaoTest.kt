@@ -54,6 +54,23 @@ class UploadQueueDaoTest {
     @After
     fun tearDown() = db.close()
 
+    @Test fun `cursor drains more than a thousand photos without retrying earlier rows`() = runTest {
+        repeat(1005) { dao.insertRecord(record()) }
+        dao.insertRecord(record().copy(photographerId = "other@example.com"))
+        var cursor = 0L
+        val visited = mutableListOf<Long>()
+        while (true) {
+            val batch = dao.getOwnedRecords("shooter@example.com", "QUEUED", cursor)
+            if (batch.isEmpty()) break
+            assertTrue(batch.size <= 24)
+            visited.addAll(batch.map { it.id })
+            cursor = batch.last().id
+        }
+        assertEquals(1005, visited.size)
+        assertEquals(1005, visited.toSet().size)
+        assertEquals(24, dao.getOwnedRecords("shooter@example.com", "QUEUED", 0).size)
+    }
+
     @Test
     fun `insert autogenerates an id and round-trips every column`() = runTest {
         val id = dao.insertRecord(record(filePath = "/cache/DSC_0001.jpg"))
@@ -163,14 +180,13 @@ class UploadQueueDaoTest {
     }
 
     @Test
-    fun `pruning removes only COMPLETED rows older than the cutoff`() = runTest {
+    fun `pruning removes only completed rows with verified local deletion older than cutoff`() = runTest {
         val old = 1_600_000_000_000L
         val cutoff = 1_650_000_000_000L
-        dao.insertRecord(record(status = "COMPLETED", filePath = "/spool/old-done.jpg").copy(captureTimestamp = old))
+        dao.insertRecord(record(status = "COMPLETED", filePath = "/spool/old-done.jpg").copy(captureTimestamp = old, localDeletedAt = old))
         val oldQueued = dao.insertRecord(record(status = "QUEUED", filePath = "/spool/old-queued.jpg").copy(captureTimestamp = old))
         val newDone = dao.insertRecord(record(status = "COMPLETED", filePath = "/spool/new-done.jpg"))
 
-        assertEquals(listOf("/spool/old-done.jpg"), dao.getCompletedPathsBefore(cutoff))
         assertEquals(1, dao.deleteCompletedBefore(cutoff))
         assertEquals(setOf(oldQueued, newDone), dao.getAllRecords().first().map { it.id }.toSet())
         assertEquals(mapOf("QUEUED" to 1, "COMPLETED" to 1), dao.getStatusCounts().first().associate { it.status to it.count })

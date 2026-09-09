@@ -20,6 +20,8 @@ export interface User {
   name: string;
   role: Role;
   avatarUrl?: string;
+  emailVerified?: boolean;
+  hasGoogleAuth?: boolean;
   createdAt: string;
 }
 
@@ -27,7 +29,16 @@ export interface AuthResponse {
   accessToken: string;
   refreshToken: string;
   user: User;
+  // Opt-in admin MFA: when true, accessToken/refreshToken are empty and the
+  // client must POST /auth/mfa/verify with mfaToken + a code to get real tokens.
+  mfaRequired?: boolean;
+  mfaToken?: string | null;
 }
+
+// login() resolves to either a live session or an MFA challenge to complete.
+export type LoginOutcome =
+  | { kind: "authed"; user: User }
+  | { kind: "mfa"; mfaToken: string };
 
 export interface LoginRequest {
   email: string;

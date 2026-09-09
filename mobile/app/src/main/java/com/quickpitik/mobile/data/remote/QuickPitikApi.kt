@@ -109,12 +109,63 @@ interface QuickPitikApi {
         @Query("limit") limit: Int = 200
     ): ApiResponseEnvelope<PaginatedResponse<PhotographerEventSummaryDto>>
 
+    // Create an owned event (V46). Multipart: the caller builds the text parts
+    // (title/date/location/organizerName/description/visibility/pricingMode/
+    // pricePerPhoto/watermarkPolicy) + optional cover, because every text field is
+    // a @RequestParam server-side. Lands DRAFT/pending. Backend MePhotographerController.
+    @Multipart
+    @POST("api/v1/me/photographer/events")
+    suspend fun createPhotographerEvent(
+        @Header("Authorization") token: String,
+        @Part parts: List<MultipartBody.Part>
+    ): ApiResponseEnvelope<PhotographerEventDetailDto>
+
+    // Edit an owned event (V46). Same multipart parts (all optional) plus optional
+    // withdrawPendingChange. A live-event pricing edit becomes an admin change-request.
+    @Multipart
+    @PATCH("api/v1/me/photographer/events/{eventId}")
+    suspend fun updatePhotographerEvent(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Part parts: List<MultipartBody.Part>
+    ): ApiResponseEnvelope<PhotographerEventDetailDto>
+
+    // Edit prefill (V46): full owned-event detail (description/organizerName/
+    // pricePerPhoto) the list summary omits. Backend PhotographerEventDetailDto.
+    @GET("api/v1/me/photographer/events/{eventId}")
+    suspend fun getPhotographerEventDetail(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String
+    ): ApiResponseEnvelope<PhotographerEventDetailDto>
+
+    // Event coupon (V47) — GET data is null when none; DELETE returns {removed:true}.
+    @GET("api/v1/me/photographer/events/{eventId}/coupon")
+    suspend fun getEventCoupon(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String
+    ): ApiResponseEnvelope<CouponDto>
+
+    @PUT("api/v1/me/photographer/events/{eventId}/coupon")
+    suspend fun upsertEventCoupon(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: UpsertCouponRequest
+    ): ApiResponseEnvelope<CouponDto>
+
+    @DELETE("api/v1/me/photographer/events/{eventId}/coupon")
+    suspend fun deleteEventCoupon(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String
+    ): ApiResponseEnvelope<RemovedResponse>
+
     @GET("api/v1/me/photographer/events/{eventId}/photos")
     suspend fun getPhotographerEventPhotos(
         @Header("Authorization") token: String,
         @Path("eventId") eventId: String,
         @Query("offset") offset: Int = 0,
-        @Query("limit") limit: Int = 100
+        @Query("limit") limit: Int = 100,
+        // V52: true → the Deleted Photos (trash) list; false → active gallery.
+        @Query("deleted") deleted: Boolean = false
     ): ApiResponseEnvelope<PaginatedResponse<PhotographerLibraryPhotoDto>>
 
     // Clean original for a photo the caller uploaded. The library listing only
@@ -125,6 +176,37 @@ interface QuickPitikApi {
         @Header("Authorization") token: String,
         @Path("photoId") photoId: String
     ): ApiResponseEnvelope<PhotographerDownloadDto>
+
+    // Photo library management (V52). Trash/restore/permanent-delete are bulk
+    // (the per-photo UI sends a one-element list); download-bundle mints a
+    // tokened ZIP URL. Ownership is enforced server-side (foreign ids ignored).
+    @POST("api/v1/me/photographer/events/{eventId}/photos/trash")
+    suspend fun trashPhotographerPhotos(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: PhotoIdsRequest
+    ): ApiResponseEnvelope<PhotoActionResponseDto>
+
+    @POST("api/v1/me/photographer/events/{eventId}/photos/restore")
+    suspend fun restorePhotographerPhotos(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: PhotoIdsRequest
+    ): ApiResponseEnvelope<PhotoActionResponseDto>
+
+    @POST("api/v1/me/photographer/events/{eventId}/photos/permanent-delete")
+    suspend fun permanentDeletePhotographerPhotos(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: PhotoIdsRequest
+    ): ApiResponseEnvelope<PermanentDeleteResponseDto>
+
+    // No @Body: the backend reads only the path + principal (mirrors requestPayout).
+    @POST("api/v1/me/photographer/events/{eventId}/download-bundle")
+    suspend fun preparePhotographerBundle(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String
+    ): ApiResponseEnvelope<PhotographerBundleDto>
 
     @GET("api/v1/me/photographer/verification")
     suspend fun getVerificationStatus(
@@ -223,6 +305,14 @@ interface QuickPitikApi {
         @Part file: MultipartBody.Part
     ): ApiResponseEnvelope<MediaUploadResponseDto>
 
+    // Position / opacity / size for the photographer's own logo (V51). Separate
+    // from the image upload above — geometry changes without re-uploading.
+    @PUT("api/v1/me/photographer/watermark/settings")
+    suspend fun updateWatermarkSettings(
+        @Header("Authorization") token: String,
+        @Body request: WatermarkSettingsDto
+    ): ApiResponseEnvelope<Map<String, Any?>>
+
     // Clears the avatar and returns the updated user (avatarUrl null).
     @DELETE("api/v1/me/avatar")
     suspend fun deleteAvatar(
@@ -302,6 +392,14 @@ interface QuickPitikApi {
         @Query("offset") offset: Int = 0,
         @Query("limit") limit: Int = 100
     ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
+
+    // "Whose photo is this?" reverse attribution (V42) — public, multipart, no
+    // bearer. Backend PublicPhotographerController / PhotoVerifyResultDto.
+    @Multipart
+    @POST("api/v1/public/photos/verify")
+    suspend fun verifyPhoto(
+        @Part file: MultipartBody.Part
+    ): ApiResponseEnvelope<PhotoVerifyResultDto>
 
     @GET("api/v1/events")
     suspend fun getPublicEvents(
@@ -424,6 +522,31 @@ interface QuickPitikApi {
         @Path("id") orderId: String,
         @Query("token") shareToken: String
     ): ApiResponseEnvelope<OrderDetailDto>
+
+    // Coupon preview (V47) — public, guest checkout allowed. The server prices the
+    // eligible items so mobile shows the discounted total without any money math.
+    @POST("api/v1/coupons/preview")
+    suspend fun previewCoupon(
+        @Header("Authorization") token: String? = null,
+        @Body request: CouponPreviewRequest
+    ): ApiResponseEnvelope<CouponPreviewDto>
+
+    // Status-only poll (V39). verify=true asks PayMongo about a pending intent and
+    // settles/expires it. Authenticated runner return.
+    @GET("api/v1/me/orders/{id}/status")
+    suspend fun getOrderStatus(
+        @Header("Authorization") token: String,
+        @Path("id") orderId: String,
+        @Query("verify") verify: Boolean? = null
+    ): ApiResponseEnvelope<OrderStatusDto>
+
+    // Guest status-only poll — purpose-bound RETURN token, no bearer.
+    @GET("api/v1/orders/{id}/status")
+    suspend fun getGuestOrderStatus(
+        @Path("id") orderId: String,
+        @Query("token") shareToken: String,
+        @Query("verify") verify: Boolean? = null
+    ): ApiResponseEnvelope<OrderStatusDto>
 
 
 

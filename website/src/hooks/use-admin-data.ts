@@ -36,6 +36,7 @@ import type {
 import type { AdminEventListArgs, AdminEventRow } from "@/lib/api-admin";
 import type { PaginatedResponse } from "@/types/api";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
+import { useAdminPayoutStore } from "@/store/admin-payout-store";
 
 // React Query hooks for admin reads.
 // Keys: ["admin", <domain>, ...]
@@ -135,6 +136,34 @@ export function useFlagActions() {
 }
 
 // ───────────────────────────────────────────── Payouts
+
+// Like flag actions, payout decisions refresh canonical state, including partial
+// bulk results. A first approval may still be pending a different admin.
+export function usePayoutActions() {
+  const qc = useQueryClient();
+  return useMemo(() => {
+    const actions = useAdminPayoutStore.getState();
+    const settle = async (operation: Promise<boolean>) => {
+      const ok = await operation;
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["admin", "payouts"] }),
+        qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
+      ]);
+      return ok;
+    };
+    return {
+      approve: (id: string) => settle(actions.approve(id)),
+      hold: (id: string, reason: string) => settle(actions.hold(id, reason)),
+      markPaid: (id: string, reference: string) => settle(actions.markPaid(id, reference)),
+      reject: (id: string, reason: string) => settle(actions.reject(id, reason)),
+      markProcessing: (id: string) => settle(actions.markProcessing(id)),
+      markFailed: (id: string, reason: string) => settle(actions.markFailed(id, reason)),
+      markReturned: (id: string, reason: string) => settle(actions.markReturned(id, reason)),
+      bulkApprove: (ids: string[]) => settle(actions.bulkApprove(ids)),
+      bulkHold: (ids: string[], reason: string) => settle(actions.bulkHold(ids, reason)),
+    };
+  }, [qc]);
+}
 
 export function useAdminPayouts(args: {
   status?: AdminPayoutStatus;

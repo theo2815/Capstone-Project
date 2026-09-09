@@ -20,6 +20,9 @@ class ApiClient {
     // can never help: if a freshly-minted token still 401s, a newer one will
     // too — and unbounded recursion here re-submits the request forever.
     retried = false,
+    // Set on the one retry after a step-up re-auth, so a still-403 response
+    // doesn't re-prompt for the password in a loop.
+    steppedUp = false,
   ): Promise<{ data: T; res: Response }> {
     const token = getAccessToken();
     const isFormData = options?.body instanceof FormData;
@@ -87,6 +90,31 @@ class ApiClient {
       }
       this.redirectToLogin();
       throw new Error("Unauthorized");
+    }
+
+    // Step-up re-auth: a 403 asking for a fresh password (payout-account change,
+    // admin mark-paid when PAYOUT_STEP_UP_ENABLED is on). Prompt once via the
+    // registered handler, then retry with the X-Step-Up token. Fully dormant
+    // unless the backend flag is on — no endpoint returns STEP_UP_REQUIRED
+    // otherwise, so this branch is never taken and behavior is unchanged.
+    if (
+      res.status === 403 &&
+      !steppedUp &&
+      stepUpHandler !== null &&
+      hasStepUpRequired(data)
+    ) {
+      const stepUpToken = await stepUpHandler();
+      if (stepUpToken) {
+        return this.fetchRaw<T>(
+          path,
+          {
+            ...options,
+            headers: { ...options?.headers, "X-Step-Up": stepUpToken },
+          },
+          retried,
+          true,
+        );
+      }
     }
 
     if (!data) {
@@ -157,6 +185,20 @@ class ApiClient {
   }
 }
 
+// Interactive step-up re-auth handler, registered once by <StepUpProvider>.
+// Resolves to a fresh step-up token (the user re-entered their password) or null
+// if they cancelled. Kept out of the class so fetchRaw can call it without the
+// UI layer reaching into the client.
+type StepUpHandler = () => Promise<string | null>;
+let stepUpHandler: StepUpHandler | null = null;
+export function setStepUpHandler(handler: StepUpHandler | null): void {
+  stepUpHandler = handler;
+}
+
+function hasStepUpRequired<T>(data: ApiResponse<T> | null): boolean {
+  return data?.errors?.some((e) => e.code === "STEP_UP_REQUIRED") ?? false;
+}
+
 let inFlightRefresh: Promise<string | null> | null = null;
 
 // Single-flight refresh, shared by every caller in this JS context.
@@ -221,6 +263,7 @@ async function postRefresh(refreshToken: string): Promise<string | null> {
 
 const PUBLIC_AUTH_ENDPOINTS = new Set([
   "/auth/login",
+  "/auth/mfa/verify",
   "/auth/register",
   // The Google ID-token exchange — its 401s mean "bad Google token", never
   // "expired QuickPitik session", so a refresh-and-retry is meaningless.
@@ -257,7 +300,7 @@ function isPublicAuthEndpoint(path: string): boolean {
 // Letting it fall through as an ApiError is also what makes the forms' own
 // INVALID_CREDENTIALS branches reachable — they never were.
 function isCredentialRejection<T>(data: ApiResponse<T> | null): boolean {
-  return data?.errors?.some((e) => e.code === "INVALID_CREDENTIALS") ?? false;
+  return data?.errors?.some((e) => e.code === "INVALID_CREDENTIALS" || e.code === "INVALID_MFA_CODE") ?? false;
 }
 
 // Every backend 429 — rate-limit bucket and account lockout alike — carries

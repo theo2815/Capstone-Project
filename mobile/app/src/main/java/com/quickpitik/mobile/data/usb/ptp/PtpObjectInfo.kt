@@ -2,64 +2,48 @@ package com.quickpitik.mobile.data.usb.ptp
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.security.MessageDigest
 
-/**
- * The standard PTP ObjectInfo dataset (ISO 15740 §5.5.2), as returned by
- * GetObjectInfo. The card-poll path reads this for each new object handle on the
- * card to decide what to pull: only the JPEG, skipping folders (associations)
- * and RAW.
- *
- * Only the three fields we use are parsed:
- *  - ObjectFormat        — UINT16 at offset 4
- *  - ObjectCompressedSize— UINT32 at offset 8
- *  - Filename            — a PTP string at the fixed offset 52 (after the 13
- *                          fixed fields: StorageID/Format/Protection/Size/
- *                          Thumb×4/Image×3/BitDepth/Parent/Assoc×2/Sequence).
- */
 data class PtpObjectInfo(
     val format: Int,
     val compressedSize: Long,
     val filename: String,
+    val storageId: Long = 0,
+    val parent: Long = 0,
+    val capturedAt: String = "",
 ) {
-    /** A JPEG the camera wrote — what we upload (RAW is left on the card). */
-    val isJpeg: Boolean
-        get() = format == Ptp.OBJECT_FORMAT_EXIF_JPEG ||
-            filename.substringAfterLast('.', "").lowercase() in JPEG_EXT
+    val isJpeg: Boolean get() = format == Ptp.OBJECT_FORMAT_EXIF_JPEG ||
+        filename.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg")
+    val isAssociation: Boolean get() = format == Ptp.OBJECT_FORMAT_ASSOCIATION
+    val expectedSize: Long? get() = compressedSize.takeIf { it in 1 until 0xffffffffL }
 
-    /** A folder/association, never a file to upload. */
-    val isAssociation: Boolean
-        get() = format == Ptp.OBJECT_FORMAT_ASSOCIATION
+    // Metadata is a source locator, never proof of equal file contents.
+    fun sourceKey(cameraKey: String, handle: Long): String = fingerprint(
+        cameraKey, storageId, handle, parent, filename, compressedSize, format, capturedAt,
+    )
 
     companion object {
-        private const val FILENAME_OFFSET = 52
-        private val JPEG_EXT = setOf("jpg", "jpeg")
-
         fun parse(data: ByteArray): PtpObjectInfo {
+            if (data.size < 53) throw PtpException("Truncated camera object metadata.")
             val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-            val format = if (data.size >= 6) bb.getShort(4).toInt() and 0xFFFF else 0
-            val size = if (data.size >= 12) bb.getInt(8).toLong() and 0xFFFFFFFFL else 0L
-            return PtpObjectInfo(format, size, parsePtpString(data, FILENAME_OFFSET))
+            val storage = bb.getInt(0).toLong() and 0xffffffffL
+            val format = bb.getShort(4).toInt() and 0xffff
+            val size = bb.getInt(8).toLong() and 0xffffffffL
+            val parent = bb.getInt(38).toLong() and 0xffffffffL
+            bb.position(52)
+            val filename = readString(bb)
+            val capturedAt = if (bb.hasRemaining()) readString(bb) else ""
+            return PtpObjectInfo(format, size, filename, storage, parent, capturedAt)
         }
 
-        /**
-         * A PTP string: a UINT8 length (number of UTF-16 code units INCLUDING the
-         * trailing null), then that many little-endian UTF-16 chars. Length 0 is
-         * an empty string.
-         */
-        private fun parsePtpString(data: ByteArray, offset: Int): String {
-            if (offset >= data.size) return ""
-            val count = data[offset].toInt() and 0xFF
-            if (count == 0) return ""
-            val sb = StringBuilder(count)
-            var p = offset + 1
-            // count includes the null terminator — stop one short of it.
-            repeat(count - 1) {
-                if (p + 1 >= data.size) return@repeat
-                val ch = (data[p].toInt() and 0xFF) or ((data[p + 1].toInt() and 0xFF) shl 8)
-                if (ch != 0) sb.append(ch.toChar())
-                p += 2
-            }
-            return sb.toString()
+        private fun readString(bb: ByteBuffer): String {
+            val count = bb.get().toInt() and 0xff
+            if (count > bb.remaining() / 2) throw PtpException("Truncated camera object string.")
+            return buildString { repeat(count) { val ch = bb.short.toInt() and 0xffff; if (ch != 0) append(ch.toChar()) } }
         }
     }
 }
+
+internal fun fingerprint(vararg values: Any): String = MessageDigest.getInstance("SHA-256")
+    .digest(values.joinToString("") { val text = it.toString(); "${text.length}:$text" }.toByteArray(Charsets.UTF_8))
+    .joinToString("") { "%02x".format(it) }

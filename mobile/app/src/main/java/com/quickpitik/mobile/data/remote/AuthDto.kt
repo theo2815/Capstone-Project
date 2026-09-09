@@ -24,7 +24,8 @@ data class RegisterRequest(
 data class AuthResponse(
     val accessToken: String,
     val refreshToken: String,
-    val user: UserDto
+    val user: UserDto,
+    val mfaRequired: Boolean = false,
 )
 
 // Body for POST /auth/google. Mirrors backend dto/auth/GoogleLoginRequest.

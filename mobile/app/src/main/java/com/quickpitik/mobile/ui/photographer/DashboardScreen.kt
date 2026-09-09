@@ -1,8 +1,14 @@
 package com.quickpitik.mobile.ui.photographer
 
+import com.quickpitik.mobile.data.usb.ShutterWatchState
+import com.quickpitik.mobile.ui.theme.WarningOrange
+
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
+import android.text.format.Formatter
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -72,20 +78,26 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.app.NotificationManagerCompat
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.local.UploadRecord
+import com.quickpitik.mobile.data.local.UploadSpool
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.usb.CameraConnectionState
 import com.quickpitik.mobile.ui.runner.EventState
 import com.quickpitik.mobile.ui.runner.canUploadToEvent
 import com.quickpitik.mobile.ui.runner.deriveEventState
+import com.quickpitik.mobile.ui.runner.deriveEventDisplayState
 import com.quickpitik.mobile.ui.runner.eventDateLabel
 import com.quickpitik.mobile.ui.runner.extractCity
 import com.quickpitik.mobile.ui.theme.Bone
@@ -145,8 +157,11 @@ private fun TetherConsoleView(
 ) {
     val activeEvent by viewModel.activeEvent.collectAsState()
     val queueStats by viewModel.queueStats.collectAsState()
+    val cameraRecovery by viewModel.cameraRecovery.collectAsState()
     val cameraState by viewModel.cameraConnectionState.collectAsState()
     val watchState by viewModel.shutterWatchState.collectAsState()
+    val phoneSpace by viewModel.phoneSpace.collectAsState()
+    val cleanupState by viewModel.cleanupState.collectAsState()
     val scrollState = rememberScrollState()
 
     // Per-photo strip data: this event's rows only, newest first, capped so a
@@ -154,14 +169,14 @@ private fun TetherConsoleView(
     // (any event) still keeps the sync card visible below.
     val recentForEvent = remember(queueStats.recentRecords, activeEvent?.id) {
         queueStats.recentRecords.asSequence()
-            .filter { it.eventId == activeEvent?.id }
+            .filter { it.eventId == activeEvent?.id && it.localDeletedAt == null }
             .take(RECENT_STRIP_MAX_TILES)
             .toList()
     }
     val pendingWork = queueStats.queuedCount + queueStats.uploadingCount + queueStats.failedCount
 
     // Tapping a strip tile opens the shared lightbox on the local file: the
-    // full original while it waits to upload, the 1024px thumbnail afterwards.
+    // full original until verified cleanup removes the phone copy.
     var previewIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     previewIndex?.let { index ->
         if (index !in recentForEvent.indices) {
@@ -175,7 +190,7 @@ private fun TetherConsoleView(
                         imageUrl = File(record.filePath).toURI().toString(),
                         eventName = activeEvent?.name,
                         // dslr_import_<ts>_<original> → <original>; other spool names as-is.
-                        caption = "${File(record.filePath).name.split('_', limit = 4).getOrNull(3) ?: File(record.filePath).name} · " +
+                        caption = "${record.originalFilename ?: File(record.filePath).name} · " +
                             when (record.uploadStatus) {
                                 "COMPLETED" -> "synced"
                                 "UPLOADING" -> "uploading"
@@ -199,7 +214,19 @@ private fun TetherConsoleView(
     // photographer who declined shouldn't be re-prompted on every start
     // mid-race.
     val context = LocalContext.current
-    var notificationsDenied by remember { mutableStateOf(false) }
+    cleanupState.review?.let { review ->
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelPhoneCleanup() },
+            containerColor = Bone,
+            title = { Text("Check and free phone space?") },
+            text = { Text("Check ${review.records.size} uploaded tether copies from your events, then remove only copies whose cloud originals match. " +
+                "This downloads up to ${Formatter.formatShortFileSize(context, review.bytes)} for verification. " +
+                "Camera card and gallery files stay unchanged. Removed phone copies will need downloading to view offline.") },
+            confirmButton = { GhostCta("Verify and free", onClick = { viewModel.confirmPhoneCleanup() }) },
+            dismissButton = { GhostCta("Cancel", onClick = { viewModel.cancelPhoneCleanup() }) },
+        )
+    }
+    var notificationsDenied by remember { mutableStateOf(!NotificationManagerCompat.from(context).areNotificationsEnabled()) }
     var notificationAsked by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -270,6 +297,19 @@ private fun TetherConsoleView(
             }
         }
 
+        PhoneStorageCard(
+            space = phoneSpace,
+            busy = cleanupState.busy,
+            message = cleanupState.message,
+            onCleanup = { viewModel.reviewPhoneCleanup() },
+            onCancel = { viewModel.cancelPhoneCleanup() },
+            onSettings = {
+                val intent = Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)
+                if (intent.resolveActivity(context.packageManager) != null) context.startActivity(intent)
+                else context.startActivity(Intent(Settings.ACTION_SETTINGS))
+            },
+        )
+
         // 2. Camera connection. Branches on the real USB-host state from
         // CameraConnectionManager. Mobile is tether-only — gallery upload lives
         // on the website (`/dashboard/upload`), not here.
@@ -284,7 +324,7 @@ private fun TetherConsoleView(
                 productId = cam.productId,
                 watchState = watchState,
                 latestCaptureFile = recentForEvent.firstOrNull()?.let { File(it.filePath) },
-                canStartWatch = activeEvent?.let { canUploadToEvent(it.date) } == true,
+                canStartWatch = activeEvent?.let { canUploadToEvent(it) } == true,
                 onStartWatch = {
                     ensureNotificationPermission()
                     viewModel.startShutterWatch()
@@ -296,6 +336,16 @@ private fun TetherConsoleView(
                     viewModel.browseCameraCard()
                 }
             )
+            is CameraConnectionState.PermissionRequired -> CameraConnectPrompt(
+                isSearching = false,
+                onRescan = { viewModel.refreshCameraConnection() },
+                message = if (cam.denied) "USB access was denied. Tap Allow USB access to try again."
+                    else "Allow QuickPitik to access ${cam.deviceName} in the Android USB permission prompt.",
+                action = "Allow USB access",
+            )
+            is CameraConnectionState.Unavailable -> CameraConnectPrompt(
+                isSearching = false, onRescan = { viewModel.refreshCameraConnection() }, message = cam.message,
+            )
             CameraConnectionState.Searching,
             CameraConnectionState.Disconnected -> CameraConnectPrompt(
                 isSearching = cam is CameraConnectionState.Searching,
@@ -303,6 +353,16 @@ private fun TetherConsoleView(
             )
         }
 
+        if (cameraRecovery.pending > 0) {
+            QpCard(modifier = Modifier.fillMaxWidth()) {
+                Text("${cameraRecovery.pending} camera photos waiting for recovery", color = Ink, style = Typography.titleSmall)
+                Text(cameraRecovery.error ?: "Pending files remain on the camera until they are saved on this phone.",
+                    color = Slate, style = Typography.bodyMedium)
+                GhostCta(text = "Retry camera transfers", onClick = { viewModel.retryCameraTransfers() },
+                    enabled = cameraState is CameraConnectionState.Connected && watchState !is ShutterWatchState.Stopping,
+                    modifier = Modifier.fillMaxWidth())
+            }
+        }
         if (notificationsDenied) NotificationsOffNote()
 
         // 2b. Manual card-import sheet — mounted whenever a browse is live.
@@ -414,21 +474,12 @@ private fun TetherConsoleView(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = queueStats.uploadingCount == 0
             )
-            // Retry + Clear only appear when there's actually something failed
-            // — keeps the card quiet on the happy path. Both disabled mid-
-            // upload so the actions can't race with a running worker.
+            // Failed originals stay recoverable. Only verified cleanup can remove a phone copy.
             if (queueStats.failedCount > 0) {
                 Spacer(modifier = Modifier.height(10.dp))
                 GhostCta(
                     text = "Retry ${queueStats.failedCount} failed",
                     onClick = { viewModel.retryFailedUploads() },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = queueStats.uploadingCount == 0
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                GhostCta(
-                    text = "Clear ${queueStats.failedCount} failed",
-                    onClick = { viewModel.clearFailedUploads() },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = queueStats.uploadingCount == 0
                 )
@@ -439,9 +490,52 @@ private fun TetherConsoleView(
 }
 
 @Composable
+private fun PhoneStorageCard(
+    space: UploadSpool.Space,
+    busy: Boolean = false,
+    message: String? = null,
+    onCleanup: () -> Unit = {},
+    onCancel: () -> Unit = {},
+    onSettings: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    val (label, tone) = when (space.level) {
+        UploadSpool.Level.UNKNOWN -> "Storage unavailable" to StatusTone.Warning
+        UploadSpool.Level.BLOCKED -> "Space needed for camera transfers" to StatusTone.Danger
+        UploadSpool.Level.LOW -> "Phone storage low" to StatusTone.Warning
+        UploadSpool.Level.READY -> "Phone storage" to StatusTone.Neutral
+    }
+    QpCard(modifier = Modifier.fillMaxWidth()) {
+        StatusChip(text = label, tone = tone, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        Text(space.availableBytes?.let { "${Formatter.formatShortFileSize(context, it)} available" }
+            ?: "Couldn't check available space. Camera transfers will wait.", color = Ink, style = NumeralStyle)
+        Text(when (space.level) {
+            UploadSpool.Level.BLOCKED -> "Camera transfers wait when the next photo won't fit safely. Uploads can continue. Free space to resume."
+            UploadSpool.Level.LOW -> "Free space soon to keep camera transfers running."
+            else -> "Uploaded originals stay on this phone until you verify and remove them."
+        }, color = Slate, style = Typography.bodyMedium)
+        message?.let { Text(it, color = Slate, style = Typography.bodyMedium) }
+        GhostCta(if (busy) "Checking phone copies…" else "Free phone space", onClick = onCleanup,
+            enabled = !busy, modifier = Modifier.fillMaxWidth())
+        if (busy) GhostCta("Stop cleanup", onClick = onCancel, modifier = Modifier.fillMaxWidth())
+        else GhostCta("Phone storage settings", onClick = onSettings, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PhoneStorageReadyPreview() { PhoneStorageCard(UploadSpool.Space(4 * UploadSpool.LOW_FREE_BYTES)) }
+
+@Preview(showBackground = true)
+@Composable
+private fun PhoneStorageBlockedPreview() { PhoneStorageCard(UploadSpool.Space(0)) }
+
+@Composable
 private fun CameraConnectPrompt(
     isSearching: Boolean,
     onRescan: () -> Unit,
+    message: String = "Connect your camera using a data-capable USB cable and select PTP / Photo Import or its supported PC tether mode.",
+    action: String = "Re-scan USB",
 ) {
     QpCard(modifier = Modifier.fillMaxWidth()) {
         StatusChip(
@@ -458,7 +552,7 @@ private fun CameraConnectPrompt(
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = "Mobile uploads run through a tethered camera. Phone-gallery uploads live on the website.",
+            text = message,
             color = Slate,
             style = Typography.bodyMedium,
             lineHeight = 20.sp
@@ -480,22 +574,19 @@ private fun CameraConnectPrompt(
         Divider(color = Line)
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Wi-Fi row — coming soon.
-        ConnectMethodRow(
-            method = "Wi-Fi",
-            body = "Wireless FTP tethering — point your camera's built-in FTP at the phone. In development.",
-            trailing = {
-                StatusChip(text = "Coming soon", tone = StatusTone.Neutral)
-            }
-        )
-
-        Spacer(modifier = Modifier.height(20.dp))
         GhostCta(
-            text = "Re-scan USB",
+            text = action,
             onClick = onRescan,
             modifier = Modifier.fillMaxWidth()
         )
     }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun CameraPermissionRequiredPreview() {
+    CameraConnectPrompt(isSearching = false, onRescan = {},
+        message = "USB access was denied. Allow access to connect this camera.", action = "Allow USB access")
 }
 
 @Composable
@@ -537,13 +628,13 @@ private fun CameraConnectedCard(
     latestCaptureFile: File? = null,
 ) {
     val watchBusy = watchState is ShutterWatchState.Starting ||
-        watchState is ShutterWatchState.Watching
+        watchState is ShutterWatchState.Watching || watchState is ShutterWatchState.Stopping
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         QpCard(modifier = Modifier.fillMaxWidth()) {
-            StatusChip(text = "Camera · ready", tone = StatusTone.Approved)
+            StatusChip(text = "Camera · USB connected", tone = StatusTone.Approved)
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = deviceName,
@@ -612,19 +703,14 @@ private fun CameraConnectedCard(
                         text = "Start auto-upload",
                         onClick = onStartWatch,
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = canStartWatch && state !is ShutterWatchState.Starting,
-                        loading = state is ShutterWatchState.Starting,
+                        enabled = canStartWatch && state !is ShutterWatchState.Starting && state !is ShutterWatchState.Stopping,
+                        loading = state is ShutterWatchState.Starting || state is ShutterWatchState.Stopping,
                     )
                     Text(
                         text = if (!canStartWatch) {
                             "This event's upload window has closed."
                         } else {
-                            // Canon behaviour, device-verified 2026-09-02: a body plugged
-                            // into a USB host with no active session shows the PC-connection
-                            // screen and locks the shutter. Only our watch session keeps
-                            // it live, so "connected but not watching" means "can't shoot".
-                            "While the cable is in and auto-upload is off, the camera stays in " +
-                                "PC-connection mode and won't shoot. Start auto-upload, or unplug to shoot offline."
+                            com.quickpitik.mobile.data.usb.ptp.CameraDrivers.usbGuidance(vendorId)
                         },
                         color = Slate,
                         style = Typography.bodyMedium
@@ -664,10 +750,12 @@ private fun ShutterWatchLiveCard(
         // A dropped cable is a pause, not a failure — the count keeps standing
         // and the controller is already reopening the session, so this reads as
         // a state change on the same card rather than an error.
-        if (state.reconnecting) {
+        if (state.pauseReason != null) {
+            Text(state.pauseReason, color = WarningOrange, style = Typography.bodyMedium)
+        } else if (state.reconnecting) {
             StatusChip(text = "Auto-upload · reconnecting", tone = StatusTone.Warning)
         } else {
-            StatusChip(text = "Auto-upload · live", tone = StatusTone.Approved)
+            StatusChip(text = "Auto-upload · watching", tone = StatusTone.Approved)
         }
         Spacer(modifier = Modifier.height(14.dp))
         Text(
@@ -676,12 +764,11 @@ private fun ShutterWatchLiveCard(
             color = Ink
         )
         Spacer(modifier = Modifier.height(2.dp))
-        Kicker(text = "Captured this session", color = SlateSoft)
+        Kicker(text = "Saved on phone this session", color = SlateSoft)
         if (state.reconnecting) {
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "Camera link dropped. Re-plug the USB cable — shots taken " +
-                    "meanwhile upload once it reconnects.",
+                text = "Camera link dropped. Re-plug the USB cable. Photos saved on the card can be recovered; interrupted temporary transfers need card import.",
                 color = Slate,
                 style = Typography.bodyMedium,
             )
@@ -924,8 +1011,8 @@ private fun CameraConnectedCardReconnectingPreview() {
 @Composable
 private fun NotificationsOffNote(modifier: Modifier = Modifier) {
     Text(
-        text = "Notifications are off, so the shoot won't appear in your notification " +
-            "shade. Photos still upload — start and stop from this screen.",
+        text = "Notifications are off. Storage warnings and shoot status will only appear in the app. " +
+            "Photos still upload — keep this screen visible to watch for low space.",
         color = Slate,
         style = Typography.bodyMedium,
         modifier = modifier.fillMaxWidth(),
@@ -1021,12 +1108,12 @@ private fun PublicEventPickerList(
                 }
             }
             is EventsState.Success -> {
-                val today = remember { LocalDate.now() }
+                val today = LocalDate.now(java.time.ZoneId.of("Asia/Manila"))
                 val allPickerEvents = remember(state.events, assignedEvents, today) {
                     (state.events + assignedEvents)
                         .distinctBy { it.id }
                         .sortedWith(
-                            compareByDescending<PhotographerEventSummaryDto> { canUploadToEvent(it.date, today) }
+                            compareByDescending<PhotographerEventSummaryDto> { canUploadToEvent(it, today) }
                                 .thenByDescending { it.date }
                         )
                 }
@@ -1096,7 +1183,7 @@ private fun PublicEventPickerList(
                         contentPadding = PaddingValues(bottom = 24.dp)
                     ) {
                         items(allPickerEvents, key = { it.id }) { event ->
-                            val canUpload = canUploadToEvent(event.date)
+                            val canUpload = canUploadToEvent(event)
                             EventPickerCard(
                                 event = event,
                                 onClick = {
@@ -1139,14 +1226,17 @@ private fun EventPickerCard(
 ) {
     val resolvedUrl = RetrofitClient.resolveImageUrl(event.bannerUrl)
     val lifecycle = deriveEventState(event.date)
-    val isUpcoming = lifecycle == EventState.UPCOMING
-    val isClosed = !canUploadToEvent(event.date) && !isUpcoming
-    val isLive = canUploadToEvent(event.date)
+    val isUpcoming = lifecycle == EventState.UPCOMING && !event.ownedByMe
+    val isClosed = !canUploadToEvent(event) && !isUpcoming
+    val isLive = canUploadToEvent(event)
 
     val stateLabel = when {
+        event.ownedByMe && event.reviewStatus == "pending" -> "AWAITING APPROVAL"
+        event.ownedByMe && event.reviewStatus == "rejected" -> "CHANGES REQUESTED"
         isUpcoming -> "OPENS ON ${eventDateLabel(event.date)}"
         isClosed -> "CLOSED"
-        else -> "LIVE"
+        deriveEventDisplayState(event.date) == EventState.LIVE -> "LIVE"
+        else -> "OPEN FOR UPLOADS"
     }
     val tone = when {
         isUpcoming -> StatusTone.Neutral

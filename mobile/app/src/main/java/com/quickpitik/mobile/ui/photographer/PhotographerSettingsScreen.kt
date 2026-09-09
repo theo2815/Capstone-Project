@@ -1,9 +1,11 @@
 package com.quickpitik.mobile.ui.photographer
 
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import com.quickpitik.mobile.ui.common.AvatarCropDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -84,6 +86,27 @@ import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.StatusChip
 import com.quickpitik.mobile.ui.theme.StatusTone
 import com.quickpitik.mobile.ui.theme.Typography
+// Watermark placement editor (V51)
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import coil.compose.rememberAsyncImagePainter
+import com.quickpitik.mobile.data.remote.WatermarkSettingsDto
+import kotlin.math.roundToInt
 
 // ─── Reference data ──────────────────────────────────────────────────────────
 // PH regions/provinces come from the backend (`GET /api/v1/regions`), not from
@@ -234,13 +257,17 @@ fun PhotographerSettingsScreen(
     var provinceCode by remember { mutableStateOf("") }
 
     var avatarUri by remember { mutableStateOf<String?>(null) }
+    var pendingAvatarCropUri by remember { mutableStateOf<Uri?>(null) }
     var coverUri by remember { mutableStateOf<String?>(null) }
     var watermarkUri by remember { mutableStateOf<String?>(null) }
+    // Placement of the photographer's own logo (V51). Hydrated once from the
+    // brand read; edited live by the drag preview + sliders; PUT on Save.
+    var watermarkPlacement by remember { mutableStateOf(WatermarkSettingsDto()) }
 
     val avatarPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        uri?.let { avatarUri = it.toString() }
+        uri?.let { pendingAvatarCropUri = it }
     }
     val coverPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
@@ -281,6 +308,7 @@ fun PhotographerSettingsScreen(
         handle = s.handle.orEmpty()
         regionCode = s.regionCode.orEmpty()
         provinceCode = s.provinceCode.orEmpty()
+        s.watermarkSettings?.let { watermarkPlacement = it }
     }
 
     var socialSheetMode by remember { mutableStateOf<SocialSheetMode?>(null) }
@@ -457,6 +485,8 @@ fun PhotographerSettingsScreen(
             WatermarkSlab(
                 remoteUrl = resolveImageUrl(brandSettings?.watermarkUrl),
                 stagedUri = watermarkUri,
+                placement = watermarkPlacement,
+                onPlacementChange = { watermarkPlacement = it },
                 onPick = {
                     watermarkPickerLauncher.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -526,6 +556,7 @@ fun PhotographerSettingsScreen(
                         coverUri = coverUri,
                         watermarkUri = watermarkUri,
                         brandColor = brandColor,
+                        watermarkPlacement = watermarkPlacement,
                     )
                 },
                 onSignOut = onLogout,
@@ -608,6 +639,17 @@ fun PhotographerSettingsScreen(
             },
         )
     }
+
+    pendingAvatarCropUri?.let { uri ->
+        AvatarCropDialog(
+            imageUri = uri,
+            onDismiss = { pendingAvatarCropUri = null },
+            onCropSuccess = { croppedUri ->
+                pendingAvatarCropUri = null
+                avatarUri = croppedUri.toString()
+            }
+        )
+    }
 }
 
 // ─── Hairline divider ────────────────────────────────────────────────────────
@@ -668,20 +710,15 @@ private fun VerificationSlab(
                 }
                 Text(text = body, color = Slate, style = Typography.bodyMedium)
 
-                // Requirement set aligned with the website's
-                // useAllRequiredFilled (and the backend's missing[]): COVER is
-                // required, BIO is optional. Mobile had these inverted, so the
-                // two clients disagreed about what blocks submission.
-                val localMissing = buildList {
-                    if (brandSettings?.avatarUrl.isNullOrBlank() && avatarUri == null) add("Avatar")
-                    if (brandSettings?.coverUrl.isNullOrBlank() && coverUri == null) add("Cover photo")
-                    if (brandName.isBlank()) add("Brand name")
-                    if (handle.isBlank()) add("Public handle")
-                    if (regionCode.isBlank()) add("Region")
-                    if (socials.isEmpty()) add("Social link")
-                    if (payoutAccounts.isEmpty()) add("Payout method")
-                }
-                val allMissing = (data.missing.orEmpty() + localMissing).distinct()
+                // The backend's missing[] (GET /me/photographer/verification) is
+                // the single source of truth for completeness — the same predicate
+                // the website consumes. Mobile used to UNION it with a local
+                // recomputation over socials/payoutAccounts, but those lists aren't
+                // loaded at cold start (fetchSettings isn't in the VM init, and its
+                // failures are swallowed), so a fully-set-up photographer was
+                // falsely told "Social link"/"Payout method" were missing and
+                // blocked from submitting. Trust the server's answer.
+                val allMissing = data.missing.orEmpty()
                 val isComplete = allMissing.isEmpty()
 
                 var showIncompleteDialog by remember { mutableStateOf(false) }
@@ -942,6 +979,8 @@ private val BRAND_COLOR_SWATCHES: List<Pair<String, Color>> = listOf(
 private fun WatermarkSlab(
     remoteUrl: String?,
     stagedUri: String?,
+    placement: WatermarkSettingsDto,
+    onPlacementChange: (WatermarkSettingsDto) -> Unit,
     onPick: () -> Unit,
     showValidation: Boolean = false,
 ) {
@@ -997,6 +1036,184 @@ private fun WatermarkSlab(
                 }
             }
         }
+        // Position / opacity / size — shown once a logo is set (staged or saved).
+        // The preview runs the same free-space formula the backend bakes with, so
+        // what the photographer drags is what ships.
+        val model = stagedUri ?: remoteUrl
+        if (model != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            WatermarkPlacementEditor(
+                model = model,
+                placement = placement,
+                onPlacementChange = onPlacementChange,
+            )
+        }
+    }
+}
+
+// Drag-to-position + size/opacity editor for the photographer's own logo. Two
+// previews (landscape / portrait) each keep their own position; size + opacity
+// are shared. Sliders stay Ink so the screen's single Fresh accent is the Save
+// CTA. The preview background is a token gradient standing in for a race photo.
+@Composable
+internal fun WatermarkPlacementEditor(
+    model: Any,
+    placement: WatermarkSettingsDto,
+    onPlacementChange: (WatermarkSettingsDto) -> Unit,
+) {
+    var landscape by remember { mutableStateOf(true) }
+    var boxSize by remember { mutableStateOf(IntSize.Zero) }
+    val density = LocalDensity.current
+    val painter = rememberAsyncImagePainter(model = model)
+    val intrinsic = painter.intrinsicSize
+    val logoAspect = if (intrinsic != Size.Unspecified && intrinsic.height > 0f) {
+        intrinsic.width.toDouble() / intrinsic.height
+    } else {
+        3.0
+    }
+    val placementState = rememberUpdatedState(placement)
+    val onPlacementChangeState = rememberUpdatedState(onPlacementChange)
+    val photoW = if (landscape) WATERMARK_PREVIEW_LONG_EDGE else WATERMARK_PREVIEW_SHORT_EDGE
+    val photoH = if (landscape) WATERMARK_PREVIEW_SHORT_EDGE else WATERMARK_PREVIEW_LONG_EDGE
+    val previewScale = boxSize.width.toFloat() / photoW
+
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OrientationPill(label = "Landscape", selected = landscape) { landscape = true }
+            OrientationPill(label = "Portrait", selected = !landscape) { landscape = false }
+        }
+
+        val (nxD, nyD) = placement.pos(landscape)
+        val scaleF = placement.scale.toFloat()
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(if (landscape) 1f else 0.62f)
+                    .aspectRatio(photoW.toFloat() / photoH)
+                    .clip(QpCardShape)
+                    .background(Brush.linearGradient(listOf(Ink, Slate, BoneDeep)))
+                    .onSizeChanged { boxSize = it },
+            ) {
+                if (boxSize.width > 0) {
+                    val box = watermarkBox(
+                        photoW, photoH, logoAspect, placement.scale, nxD, nyD,
+                    )
+                    Image(
+                        painter = painter,
+                        contentDescription = "Watermark position preview",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .offset { IntOffset((box.left * previewScale).roundToInt(), (box.top * previewScale).roundToInt()) }
+                            .size(with(density) { (box.width * previewScale).toDp() }, with(density) { (box.height * previewScale).toDp() })
+                            .alpha(placement.opacity.toFloat().coerceIn(WATERMARK_OPACITY_MIN, WATERMARK_OPACITY_MAX))
+                            .pointerInput(landscape, boxSize, logoAspect) {
+                                detectDragGestures { change, dragAmount ->
+                                    change.consume()
+                                    val p = placementState.value
+                                    val (cx, cy) = p.pos(landscape)
+                                    val cur = watermarkBox(
+                                        photoW, photoH, logoAspect, p.scale, cx, cy,
+                                    )
+                                    val (px, py) = positionFromBox(
+                                        photoW, photoH, logoAspect, p.scale,
+                                        cur.left + dragAmount.x.toDouble() / previewScale,
+                                        cur.top + dragAmount.y.toDouble() / previewScale,
+                                        cx, cy,
+                                    )
+                                    onPlacementChangeState.value(p.withPos(landscape, px, py))
+                                }
+                            },
+                    )
+                }
+            }
+        }
+
+        Text(text = "Sample photo. Tall logos shrink to fit inside the frame.", color = Slate, style = Typography.bodySmall)
+        WatermarkSliderRow(
+            label = "Horizontal position",
+            valueLabel = "${(nxD * 100).roundToInt()}%",
+            valueDescription = "${if (landscape) "Landscape" else "Portrait"}, ${(nxD * 100).roundToInt()}% from left",
+            value = nxD.toFloat(), min = 0f, max = 1f,
+        ) { onPlacementChange(placement.withPos(landscape, it.toDouble(), nyD)) }
+
+        WatermarkSliderRow(
+            label = "Vertical position",
+            valueLabel = "${(nyD * 100).roundToInt()}%",
+            valueDescription = "${if (landscape) "Landscape" else "Portrait"}, ${(nyD * 100).roundToInt()}% from top",
+            value = nyD.toFloat(), min = 0f, max = 1f,
+        ) { onPlacementChange(placement.withPos(landscape, nxD, it.toDouble())) }
+
+        WatermarkSliderRow(
+            label = "Size",
+            valueLabel = "${(placement.scale * 100).roundToInt()}% of width",
+            value = scaleF,
+            min = WATERMARK_SCALE_MIN,
+            max = WATERMARK_SCALE_MAX,
+        ) { onPlacementChange(placement.copy(scale = it.toDouble())) }
+
+        WatermarkSliderRow(
+            label = "Opacity",
+            valueLabel = "${(placement.opacity * 100).roundToInt()}%",
+            value = placement.opacity.toFloat(),
+            min = WATERMARK_OPACITY_MIN,
+            max = WATERMARK_OPACITY_MAX,
+        ) { onPlacementChange(placement.copy(opacity = it.toDouble())) }
+    }
+}
+
+@Composable
+private fun OrientationPill(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(PillShape)
+            .border(1.dp, if (selected) Ink else Line, PillShape)
+            .background(if (selected) BoneDeep else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Ink else Slate,
+            style = Typography.bodyMedium,
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+        )
+    }
+}
+
+@Composable
+private fun WatermarkSliderRow(
+    label: String,
+    valueLabel: String,
+    value: Float,
+    min: Float,
+    max: Float,
+    valueDescription: String = valueLabel,
+    onChange: (Float) -> Unit,
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Kicker(text = label, color = SlateSoft)
+            Text(text = valueLabel, color = Ink, style = Typography.labelMedium)
+        }
+        Slider(
+            modifier = Modifier.semantics {
+                contentDescription = label
+                stateDescription = valueDescription
+            },
+            value = value.coerceIn(min, max),
+            onValueChange = onChange,
+            valueRange = min..max,
+            colors = SliderDefaults.colors(
+                thumbColor = Ink,
+                activeTrackColor = Ink,
+                inactiveTrackColor = Line,
+            ),
+        )
     }
 }
 
@@ -1631,7 +1848,10 @@ private fun PayoutEditorSheet(
         "gotyme" -> numberDigits.length in 10..16
         else -> numberDigits.length == 11 && numberDigits.startsWith("09")
     }
-    val canSubmit = accountName.trim().isNotBlank() && numberMinSatisfied && numberError == null
+    val storedQr = (mode as? PayoutSheetMode.Edit)?.account
+        ?.takeIf { it.accountNumber == numberDigits }?.qr
+    val hasQr = qrUri != null || storedQr != null
+    val canSubmit = accountName.trim().isNotBlank() && numberMinSatisfied && numberError == null && hasQr
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1662,6 +1882,7 @@ private fun PayoutEditorSheet(
                     DropdownMenuItem(
                         text = { Text(PAYOUT_METHOD_LABEL[m] ?: m, color = Ink, style = Typography.bodyMedium) },
                         onClick = {
+                            if (method != m) qrUri = null
                             method = m
                             accountNumberInput = formatPayoutNumber(m, accountNumberInput.filter { it.isDigit() })
                             methodMenuExpanded = false
@@ -1684,7 +1905,10 @@ private fun PayoutEditorSheet(
             QpFormField(
                 label = if (method == "gotyme") "Account number (16 digits)" else "Mobile number (09…)",
                 value = accountNumberInput,
-                onChange = { raw -> accountNumberInput = formatPayoutNumber(method, raw) },
+                onChange = { raw ->
+                    if (raw.filter { it.isDigit() } != numberDigits) qrUri = null
+                    accountNumberInput = formatPayoutNumber(method, raw)
+                },
                 placeholder = if (method == "gotyme") "1234 5678 9012 3456" else "09XX XXX XXXX",
                 keyboardType = KeyboardType.Number,
                 error = if (numberDigits.isNotBlank()) numberError else null,
@@ -1692,7 +1916,7 @@ private fun PayoutEditorSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Kicker(text = "QR code · optional", color = Slate)
+            Kicker(text = "QR code · required", color = Slate)
             Spacer(modifier = Modifier.height(6.dp))
             QpCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1711,11 +1935,11 @@ private fun PayoutEditorSheet(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
                             )
-                        } else if (mode is PayoutSheetMode.Edit && mode.account.qr != null) {
+                        } else if (storedQr != null) {
                             // Stored QR — a presigned URL, so Coil renders it
                             // like any other remote image. See the card above.
                             AsyncImage(
-                                model = mode.account.qr.dataUrl,
+                                model = storedQr.dataUrl,
                                 contentDescription = "Payout QR on file",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
@@ -1733,7 +1957,7 @@ private fun PayoutEditorSheet(
                             fontWeight = FontWeight.Medium,
                         )
                         Text(
-                            text = "Shown to runners on the checkout receipt.",
+                            text = "Required for payouts. Match the account number above. Only finance staff can view it.",
                             color = SlateSoft,
                             style = Typography.bodySmall,
                         )

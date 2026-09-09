@@ -448,6 +448,51 @@ export async function markPayoutPaid(
   );
 }
 
+// Lifecycle transitions added with the payout hardening (Phase 4). Allowed
+// from-states are enforced BE-side (AdminPayoutService.ensureFrom); the queue
+// only shows each button on a row that can take it:
+//   reject         ← pending_review | held | approved  (releases the reservation)
+//   mark-processing ← approved
+//   mark-failed    ← processing     (money never left; terminal)
+//   mark-returned  ← paid           (money bounced back; terminal)
+export async function rejectPayout(
+  payoutId: string,
+  reason: string,
+): Promise<AdminPayoutCycle> {
+  return api.post<AdminPayoutCycle>(
+    `/admin/payouts/${encodeURIComponent(payoutId)}/reject`,
+    { reason },
+  );
+}
+
+export async function markPayoutProcessing(
+  payoutId: string,
+): Promise<AdminPayoutCycle> {
+  return api.post<AdminPayoutCycle>(
+    `/admin/payouts/${encodeURIComponent(payoutId)}/mark-processing`,
+  );
+}
+
+export async function markPayoutFailed(
+  payoutId: string,
+  reason: string,
+): Promise<AdminPayoutCycle> {
+  return api.post<AdminPayoutCycle>(
+    `/admin/payouts/${encodeURIComponent(payoutId)}/mark-failed`,
+    { reason },
+  );
+}
+
+export async function markPayoutReturned(
+  payoutId: string,
+  reason: string,
+): Promise<AdminPayoutCycle> {
+  return api.post<AdminPayoutCycle>(
+    `/admin/payouts/${encodeURIComponent(payoutId)}/mark-returned`,
+    { reason },
+  );
+}
+
 export interface BulkPayoutResult {
   groupId: string;
   results: Array<{ id: string; ok: boolean; error?: string }>;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/auth/protected-route";
@@ -19,6 +20,8 @@ import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useToast } from "@/hooks/use-toast";
 import { FieldError } from "@/components/ui/field-error";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { Eye, EyeOff } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { resetUserScopedStores } from "@/lib/auth-reset";
 import {
@@ -103,7 +106,10 @@ function AccountBody() {
               user={user}
               number={isPhotographer ? "02" : "03"}
             />
-            <PasswordSlab number={isPhotographer ? "03" : "04"} />
+            <PasswordSlab
+              user={user}
+              number={isPhotographer ? "03" : "04"}
+            />
             <DangerSlab number={isPhotographer ? "04" : "05"} />
             {process.env.NODE_ENV === "development" && (
               <DevRoleSlab
@@ -242,7 +248,11 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
         (nextEmail.trim().toLowerCase() === user.email.toLowerCase()
           ? "That's already your sign-in email."
           : null),
-      password: password ? null : "Current password is required.",
+      password: user.hasGoogleAuth
+        ? null
+        : password
+          ? null
+          : "Current password is required.",
     };
     setErrors(nextErrors);
     setSubmitError(null);
@@ -252,7 +262,7 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
     try {
       const message = await requestEmailChange({
         newEmail: nextEmail.trim(),
-        currentPassword: password,
+        currentPassword: user.hasGoogleAuth ? undefined : password,
       });
       setNextEmail("");
       setPassword("");
@@ -301,9 +311,16 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
           <Kicker as="p" tone="soft">
             Current
           </Kicker>
-          <p className="font-mono text-xl md:text-2xl text-ink mt-3 break-all">
-            {user.email}
-          </p>
+          <div className="flex flex-wrap items-center gap-3 mt-3">
+            <p className="font-mono text-xl md:text-2xl text-ink break-all">
+              {user.email}
+            </p>
+            {user.hasGoogleAuth && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono bg-blue-50 text-blue-700 border border-blue-200">
+                Google account
+              </span>
+            )}
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} noValidate className="space-y-6">
@@ -330,17 +347,19 @@ function EmailSlab({ user, number }: { user: User; number: string }) {
             />
           </FieldShell>
 
-          <PasswordField
-            id="email-current-password"
-            label="Current password"
-            autoComplete="current-password"
-            value={password}
-            error={errors.password}
-            onChange={(v) => {
-              setPassword(v);
-              clearFieldError("password");
-            }}
-          />
+          {!user.hasGoogleAuth && (
+            <PasswordField
+              id="email-current-password"
+              label="Current password"
+              autoComplete="current-password"
+              value={password}
+              error={errors.password}
+              onChange={(v) => {
+                setPassword(v);
+                clearFieldError("password");
+              }}
+            />
+          )}
 
           <FieldError message={submitError} id="account-email-submit-error" />
 
@@ -370,7 +389,7 @@ interface PasswordErrors {
   confirm?: string | null;
 }
 
-function PasswordSlab({ number }: { number: string }) {
+function PasswordSlab({ user, number }: { user: User; number: string }) {
   const { showToast } = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -450,13 +469,22 @@ function PasswordSlab({ number }: { number: string }) {
     }
   }
 
+  if (user.hasGoogleAuth) {
+    return (
+      <Slab id="password" number={number} title="Password" caption="Optional for Google sign-in">
+        <p className="font-sans text-sm text-slate mb-6">
+          You can keep signing in with Google without a QuickPitik password.
+          To set or replace a password for email sign-in, verify the code sent to your sign-in email.
+        </p>
+        <Link href={ROUTES.FORGOT_PASSWORD} className={`${BTN_SECONDARY} ${BTN_SIZE.md}`}>
+          Set or reset password <span aria-hidden="true">→</span>
+        </Link>
+      </Slab>
+    );
+  }
+
   return (
-    <Slab
-      id="password"
-      number={number}
-      title="Password"
-      caption={`Min. ${PASSWORD_MIN} characters`}
-    >
+    <Slab id="password" number={number} title="Password" caption={`Min. ${PASSWORD_MIN} characters`}>
       <form onSubmit={handleSubmit} noValidate className="space-y-6">
         <PasswordField
           id="current-password"
@@ -601,7 +629,7 @@ function DangerSlab({ number }: { number: string }) {
           </p>
           <p className="font-sans text-sm text-slate mt-2 max-w-md">
             You&apos;ll need to sign in again on this browser to access your
-            profile, race log, and orders.
+            profile, saved events, and orders.
           </p>
           <button
             type="button"
@@ -662,20 +690,35 @@ function PasswordField({
   error?: string | null;
   onChange: (v: string) => void;
 }) {
+  const [showPassword, setShowPassword] = useState(false);
   const errorId = `${id}-error`;
   return (
     <FieldShell id={id} label={label}>
-      <input
-        id={id}
-        type="password"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="••••••••"
-        autoComplete={autoComplete}
-        aria-invalid={!!error}
-        aria-describedby={error ? errorId : undefined}
-        className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-4 text-lg text-ink placeholder:text-slate-soft transition-colors"
-      />
+      <div className="relative">
+        <input
+          id={id}
+          type={showPassword ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="••••••••"
+          autoComplete={autoComplete}
+          aria-invalid={!!error}
+          aria-describedby={error ? errorId : undefined}
+          className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-4 pr-10 text-lg text-ink placeholder:text-slate-soft transition-colors"
+        />
+        <button
+          type="button"
+          onClick={() => setShowPassword((prev) => !prev)}
+          aria-label={showPassword ? "Hide password" : "Show password"}
+          className="absolute right-0 top-1/2 -translate-y-1/2 p-2 text-slate hover:text-ink transition-colors focus:outline-none focus-visible:text-fresh"
+        >
+          {showPassword ? (
+            <EyeOff className="size-5" aria-hidden="true" />
+          ) : (
+            <Eye className="size-5" aria-hidden="true" />
+          )}
+        </button>
+      </div>
       <FieldError message={error} id={errorId} density="tight" />
     </FieldShell>
   );

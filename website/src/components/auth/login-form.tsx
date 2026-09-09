@@ -17,6 +17,7 @@ import {
   OAUTH_ENABLED,
 } from "@/components/auth/google-button";
 import { FieldError } from "@/components/ui/field-error";
+import { Eye, EyeOff } from "lucide-react";
 
 interface FieldErrors {
   email?: string | null;
@@ -37,12 +38,14 @@ export function LoginForm() {
     const raw = searchParams?.get("redirect");
     return isSafeRedirect(raw) ? raw : null;
   })();
-  const { login } = useAuth();
+  const { login, verifyMfa, pendingMfa: mfaToken, setPendingMfa: setMfaToken } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [code, setCode] = useState("");
   // Guards double-submit. Deliberately NOT `isLoading`: setIsLoading only
   // lands on the next render, so a held Enter — several submit events before a
   // paint — reads it as false every time. Measured on /forgot-password: five
@@ -71,8 +74,13 @@ export function LoginForm() {
     submitting.current = true;
     setIsLoading(true);
     try {
-      const user = await login({ email: email.trim(), password });
-      router.push(preservedRedirect ?? roleHome(user.role));
+      const outcome = await login({ email: email.trim(), password });
+      // Admin MFA: don't route yet — show the code step.
+      if (outcome.kind === "mfa") {
+        setMfaToken(outcome.mfaToken);
+        return;
+      }
+      router.push(preservedRedirect ?? roleHome(outcome.user.role));
     } catch (err) {
       // Per-field BE validation goes under its input; anything field-less
       // (INVALID_CREDENTIALS, ACCOUNT_SUSPENDED) stays in the submit slot.
@@ -84,6 +92,102 @@ export function LoginForm() {
       submitting.current = false;
       setIsLoading(false);
     }
+  }
+
+  async function handleVerify(e: FormEvent) {
+    e.preventDefault();
+    if (submitting.current || !mfaToken) return;
+    if (!code.trim()) {
+      setSubmitError("Enter the code from your authenticator app.");
+      return;
+    }
+    submitting.current = true;
+    setIsLoading(true);
+    setSubmitError(null);
+    try {
+      const user = await verifyMfa(mfaToken, code.trim());
+      router.push(preservedRedirect ?? roleHome(user.role));
+    } catch (err) {
+      const { message } = splitApiFieldErrors(err, {});
+      setSubmitError(message ?? "That code didn't work. Please try again.");
+    } finally {
+      submitting.current = false;
+      setIsLoading(false);
+    }
+  }
+
+  function backToLogin() {
+    setMfaToken(null);
+    setCode("");
+    setSubmitError(null);
+  }
+
+  if (mfaToken) {
+    return (
+      <form
+        onSubmit={handleVerify}
+        noValidate
+        className="stagger-children space-y-7"
+      >
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+          Two-step verification
+        </p>
+
+        <h1 className="font-hero text-5xl md:text-6xl">
+          One more
+          <br />
+          <span className="text-fresh">step.</span>
+        </h1>
+
+        <p className="font-sans text-base text-ink-soft">
+          Enter the 6-digit code from your authenticator app, or a recovery code.
+        </p>
+
+        <div className="space-y-6 pt-2">
+          <FieldBlock>
+            <label htmlFor="mfa-code" className="kicker">
+              Authentication code
+            </label>
+            <input
+              id="mfa-code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value);
+                if (submitError) setSubmitError(null);
+              }}
+              placeholder="123456"
+              className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors font-mono tnum"
+            />
+          </FieldBlock>
+        </div>
+
+        <FieldError message={submitError} id="mfa-submit-error" />
+
+        <div className="space-y-4 pt-2">
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full bg-fresh hover:bg-fresh-deep active:bg-fresh-deep text-surface py-4 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isLoading ? "Verifying…" : "Verify →"}
+          </button>
+
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={backToLogin}
+              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+            >
+              ← Back to login
+            </button>
+          </div>
+        </div>
+      </form>
+    );
   }
 
   return (
@@ -141,20 +245,34 @@ export function LoginForm() {
           >
             Password
           </label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
-              clearFieldError("password");
-            }}
-            placeholder="Your password"
-            autoComplete="current-password"
-            aria-invalid={!!errors.password}
-            aria-describedby={errors.password ? "password-error" : undefined}
-            className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors"
-          />
+          <div className="relative">
+            <input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                clearFieldError("password");
+              }}
+              placeholder="Your password"
+              autoComplete="current-password"
+              aria-invalid={!!errors.password}
+              aria-describedby={errors.password ? "password-error" : undefined}
+              className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 pr-10 text-base text-ink placeholder:text-slate-soft transition-colors"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((prev) => !prev)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              className="absolute right-0 top-1/2 -translate-y-1/2 p-2 text-slate hover:text-ink transition-colors focus:outline-none focus-visible:text-fresh"
+            >
+              {showPassword ? (
+                <EyeOff className="size-4" aria-hidden="true" />
+              ) : (
+                <Eye className="size-4" aria-hidden="true" />
+              )}
+            </button>
+          </div>
           <FieldError
             message={errors.password}
             id="password-error"

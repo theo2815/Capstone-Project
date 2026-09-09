@@ -45,12 +45,17 @@ interface EventRepository : JpaRepository<Event, UUID> {
     @Query("SELECT e FROM Event e WHERE e.id = :id")
     fun findByIdForReview(@Param("id") id: UUID): Event?
 
+    // Public /events list: admin-created events only. Photographer-owned events
+    // (createdBy != null) surface on the owner's profile / a direct link, never
+    // the general list — so a foreign photographer never sees them in the upload
+    // picker either (the picker's public catalog is this same query).
     // Sentinel values keep every named parameter typed (Postgres rejects nullable
     // unknown-typed parameters with "function lower(bytea) does not exist").
     @Query(
         """
         SELECT e FROM Event e
         WHERE e.deletedAt IS NULL
+          AND e.createdBy IS NULL
           AND e.status IN :statuses
           AND e.visibility = com.quickpitik.entity.EventVisibility.PUBLIC
           AND (:search = '' OR
@@ -111,4 +116,8 @@ interface EventRepository : JpaRepository<Event, UUID> {
     @Modifying
     @Query("UPDATE Event e SET e.photoCount = e.photoCount + 1 WHERE e.id = :id")
     fun incrementPhotoCount(@Param("id") id: UUID): Int
+
+    @Modifying
+    @Query("UPDATE Event e SET e.photoCount = GREATEST(0, e.photoCount + :delta) WHERE e.id = :id")
+    fun adjustPhotoCount(@Param("id") id: UUID, @Param("delta") delta: Int): Int
 }

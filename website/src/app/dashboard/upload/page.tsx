@@ -29,42 +29,15 @@ const EMPTY_SEED: ReadonlyArray<ListEvent> = [];
 // photographer's own coverage) so they can pick where to lift photos to. The
 // per-photographer view of "events I covered" lives at /dashboard/events.
 
-const SECTIONS: Array<{
-  id: string;
-  number: string;
-  title: string;
-  caption: string;
-  matchState: EventState;
-}> = [
-  {
-    id: "live",
-    number: "01",
-    title: "Live now",
-    caption: "Race day · upload as you shoot",
-    matchState: "live",
-  },
-  {
-    id: "upcoming",
-    number: "02",
-    title: "Upcoming",
-    caption: "Pre-stage and test your kit",
-    matchState: "upcoming",
-  },
-  {
-    id: "recent",
-    number: "03",
-    title: "Recent",
-    caption: "Last 30 days · late frames welcome",
-    matchState: "open",
-  },
-  {
-    id: "archive",
-    number: "04",
-    title: "Archive",
-    caption: "Older races · keep adding if you have them",
-    matchState: "past",
-  },
-];
+// Admin events surface uploadable-now first: live race day, then upcoming, then
+// recently-open galleries, then the archive — date order preserved within each
+// (the catalog arrives date-desc and the sort is stable).
+const STATE_ORDER: Record<EventState, number> = {
+  live: 0,
+  upcoming: 1,
+  open: 2,
+  past: 3,
+};
 
 export default function UploadPickerPage() {
   // VerificationBanner + verification sync live in DashboardShell so the
@@ -86,22 +59,23 @@ export default function UploadPickerPage() {
   const [date, setDate] = useState<EventDateKey>("any");
   const [query, setQuery] = useState("");
 
-  const filteredCatalog = useMemo(() => {
+  // Admin events only — photographer-owned events are excluded from the public
+  // catalog server-side (EventRepository.search), so everything here is an
+  // admin race a verified photographer may cover. "My events" comes from the
+  // owner endpoint above.
+  const adminEvents = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
-    return catalog.filter((event) => {
-      if (!matchEventDate(event.state, date)) return false;
-      if (trimmed) {
-        const hay = `${event.name} ${event.location} ${event.city}`.toLowerCase();
-        if (!hay.includes(trimmed)) return false;
-      }
-      return true;
-    });
+    return catalog
+      .filter((event) => {
+        if (!matchEventDate(event.state, date)) return false;
+        if (trimmed) {
+          const hay = `${event.name} ${event.location} ${event.city}`.toLowerCase();
+          if (!hay.includes(trimmed)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state]);
   }, [catalog, date, query]);
-
-  const visibleSections = SECTIONS.map((section) => ({
-    ...section,
-    items: filteredCatalog.filter((e) => e.state === section.matchState),
-  })).filter((section) => section.items.length > 0);
 
   const isFiltered = date !== "any" || query.trim().length > 0;
 
@@ -110,8 +84,8 @@ export default function UploadPickerPage() {
     setQuery("");
   };
 
-  // Catalog itself is empty — no events to upload to at all. Skip the filter
-  // bar (filtering nothing yields nothing) and show the wider PickerEmpty.
+  // No events at all — skip the filter bar (filtering nothing yields nothing)
+  // and show the wider PickerEmpty.
   if (catalog.length === 0 && owned.length === 0) {
     return <PickerEmpty />;
   }
@@ -122,11 +96,11 @@ export default function UploadPickerPage() {
         <UploadSection
           id="mine"
           number="01"
-          title="Your events"
-          caption="Approved · upload any time, no race-day window"
+          title="My events"
+          caption="Events you created · upload up to a month after race day"
           items={owned}
           canUpload={canUpload}
-          bypassWindow
+          owned
         />
       )}
 
@@ -136,31 +110,26 @@ export default function UploadPickerPage() {
           onDateChange={setDate}
           query={query}
           onQueryChange={setQuery}
-          dateAriaLabel="Filter upload picker by date"
-          searchAriaLabel="Search events to upload to"
+          dateAriaLabel="Filter admin events by date"
+          searchAriaLabel="Search admin events to upload to"
         />
       )}
 
-      {visibleSections.length === 0 ? (
-        isFiltered ? (
-          <EventFilterEmpty onClear={clearFilters} />
-        ) : owned.length > 0 ? null : (
-          <PickerEmpty />
-        )
-      ) : (
-        visibleSections.map((section, i) => (
+      {catalog.length > 0 &&
+        (adminEvents.length === 0 ? (
+          isFiltered ? (
+            <EventFilterEmpty onClear={clearFilters} />
+          ) : null
+        ) : (
           <UploadSection
-            key={section.id}
-            id={section.id}
-            // Slab numbers stay contiguous when "Your events" leads.
-            number={String(i + (owned.length > 0 ? 2 : 1)).padStart(2, "0")}
-            title={section.title}
-            caption={section.caption}
-            items={section.items}
+            id="admin"
+            number={owned.length > 0 ? "02" : "01"}
+            title="Admin events"
+            caption="Races QuickPitik scheduled · race-day upload window"
+            items={adminEvents}
             canUpload={canUpload}
           />
-        ))
-      )}
+        ))}
     </>
   );
 }
@@ -172,7 +141,7 @@ function UploadSection({
   caption,
   items,
   canUpload,
-  bypassWindow = false,
+  owned = false,
 }: {
   id: string;
   number: string;
@@ -180,7 +149,7 @@ function UploadSection({
   caption: string;
   items: ReadonlyArray<ListEvent>;
   canUpload: boolean;
-  bypassWindow?: boolean;
+  owned?: boolean;
 }) {
   const noun = items.length === 1 ? "race" : "races";
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EVENT_GRID_INITIAL);
@@ -202,7 +171,7 @@ function UploadSection({
             event={event}
             index={i}
             canUpload={canUpload}
-            bypassWindow={bypassWindow}
+            owned={owned}
           />
         ))}
       </div>

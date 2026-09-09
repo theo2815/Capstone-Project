@@ -18,6 +18,7 @@ import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.service.storage.StorageService
 import org.springframework.data.domain.Sort
@@ -36,7 +37,13 @@ class PhotographerEventService(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val eventDtoMapper: EventDtoMapper,
+    private val photographerSettingsRepository: PhotographerSettingsRepository,
 ) {
+    // The caller's public handle is the same for every event they cover, so
+    // resolve it once per request. null until they set one — the client then
+    // knows the shareable gallery URL isn't ready.
+    private fun resolveHandle(photographerId: UUID): String? =
+        photographerSettingsRepository.findById(photographerId).orElse(null)?.handle
     fun listEvents(
         photographerId: UUID,
         withUploads: Boolean,
@@ -50,10 +57,11 @@ class PhotographerEventService(
         if (page.isEmpty) return PaginatedResponse.empty(pagination)
         val eventIds = page.content.map { it.id.eventId }
         val eventsById = eventRepository.findAllById(eventIds).associateBy { it.id }
+        val handle = resolveHandle(photographerId)
         val items = page.content.mapNotNull { ep ->
             val event = eventsById[ep.id.eventId] ?: return@mapNotNull null
             if (event.deletedAt != null) return@mapNotNull null
-            summaryDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId)
+            summaryDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId, handle = handle)
         }
         return PaginatedResponse(
             items = items,
@@ -76,13 +84,20 @@ class PhotographerEventService(
                 message = "No coverage for this event",
             )
         }
-        return detailDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId)
+        return detailDto(
+            event,
+            ep,
+            eventDtoMapper.resolveBannerUrl(event),
+            viewerId = photographerId,
+            handle = resolveHandle(photographerId),
+        )
     }
 
     fun listPhotos(
         photographerId: UUID,
         eventId: UUID,
         order: String?,
+        deleted: Boolean = false,
         pagination: PaginationParams,
     ): PaginatedResponse<PhotographerLibraryPhotoDto> {
         eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
@@ -92,11 +107,22 @@ class PhotographerEventService(
         } else {
             Sort.by(Sort.Direction.DESC, "uploadedAt").and(Sort.by(Sort.Direction.ASC, "id"))
         }
-        val page = photoRepository.findPhotographerLibrary(
-            eventId = eventId,
-            photographerId = photographerId,
-            pageable = OffsetLimitPageable(pagination, sort),
-        )
+        val pageable = OffsetLimitPageable(pagination, sort)
+        // deleted=true → the Deleted Photos tab (trashed rows); otherwise the
+        // active gallery. Both scope by photographer, so ownership is intrinsic.
+        val page = if (deleted) {
+            photoRepository.findPhotographerTrash(
+                eventId = eventId,
+                photographerId = photographerId,
+                pageable = pageable,
+            )
+        } else {
+            photoRepository.findPhotographerLibrary(
+                eventId = eventId,
+                photographerId = photographerId,
+                pageable = pageable,
+            )
+        }
         if (page.isEmpty) return PaginatedResponse.empty(pagination)
         val photoIds = page.content.map { it.id }
         val salesByPhoto: Map<UUID, Long> = if (photoIds.isEmpty()) {
@@ -120,6 +146,7 @@ class PhotographerEventService(
     // pull the same S3 object. Falls back to the original (uncomposited) key
     // only if both thumbnail + watermark keys are unset (legacy rows).
     private fun resolveThumbnailUrl(photo: com.quickpitik.entity.Photo): String? {
+        if (photo.deletionStartedAt != null) return null
         val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
@@ -129,6 +156,7 @@ class PhotographerEventService(
         // a foreign photographer's photoId returns null → 404 (Q-015 anti-IDOR
         // — never leak existence by 403 vs 404).
         val photo = photoRepository.findFirstByIdAndPhotographerId(photoId, photographerId)
+            ?.takeIf { it.deletionStartedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
         val ttl = storageProperties.presignedTtl.photographerDownload
         val url = storageService.presignedGetUrl(photo.s3Key, ttl)

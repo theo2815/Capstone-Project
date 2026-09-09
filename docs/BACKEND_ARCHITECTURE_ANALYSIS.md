@@ -285,11 +285,14 @@ Implemented in [PhotoUploadService.kt](file:///c:/Users/USER/Documents/School/4t
 
 ```mermaid
 flowchart LR
-    A["Multipart Upload (JPEG/PNG ≤ 25MB)"] --> B["ImagePixelGuard (Dimension Check)"]
+    A["Multipart Upload (JPEG/PNG/WebP ≤ 25 MiB)"] --> B["ImagePixelGuard (Dimension Check)"]
     B --> C["SHA-256 Original Content Hash"]
     C --> D["Duplicate Check (Per-Photographer)"]
     D --> E["Store Raw Image to S3/Disk"]
     E --> F["Insert Photo Record (Status: PROCESSING)"]
+    O["Direct begin: gates + hash dedup"] --> P["Phone PUT original to presigned S3/R2 slot"]
+    P --> Q["Commit: idempotency + object HEAD validation"]
+    Q --> F
 
     subgraph AsyncWorker["Asynchronous Processing (Off Request Thread)"]
         F -.-> G["PhotoWatermarkTrigger"]
@@ -311,7 +314,93 @@ flowchart LR
 - **Watermark Resistance:** Applies diagonal wordmark patterns, custom photographer logos, and seed-based geometry derived from `HMAC(seed, photoId)`.
 - **Copyright Verification:** Computes 64-bit DCT perceptual hashes. `POST /public/photos/verify` allows runners or admins to upload screenshots or crops and find the original photographer using Hamming distance comparison (≤ 12 bits).
 
+**Direct upload contract — mobile/backend:**
+
+`POST /api/v1/me/photographer/events/{eventId}/photos/direct` returns `direct`,
+`existing`, or `multipart`. Direct mode issues an expiring PUT URL; the marketplace
+uses that original object, with an asynchronously generated preview. There is no
+second original upload to a separate marketplace store.
+
+`POST /api/v1/me/photographer/events/{eventId}/photos/direct/commit` accepts
+`photoId`, `key`, `contentHash`, `contentType`, and optional positive `sizeBytes`.
+Existing clients may omit size. A new commit checks object HEAD metadata against
+the supported type/size bounds and supplied size/type. The hash remains
+client-asserted; HEAD is not independent byte-checksum verification. Decode/pixel
+validation runs in the watermark worker before public visibility.
+
+A repeated committed ID must match owner, event, key and hash. It returns the
+existing photo even after its event upload window closes and never deletes its
+original. New rows use INSERT, with photo-ID and photographer/hash constraints
+resolved after transaction rollback. Concurrent same-event duplicates return the
+winning photo without incrementing counters again; only a separate losing object
+is eligible for cleanup. Cross-event dedup remains a conflict.
+
+Android persists the slot before PUT and retries commit first after interruption;
+only `UPLOAD_OBJECT_MISSING` starts another transfer. Transient storage failures do
+not fall back to multipart. Network/401/408/429/5xx failures retain originals and
+use WorkManager backoff; `Retry-After` also defers the account queue. Actionable
+validation failures wait for user correction. A successful response persists a
+phone-side receipt; it no longer permits automatic replacement or deletion of the
+local original. Confirmed Android cleanup reads the owner-only original through
+`GET /api/v1/me/photographer/photos/{photoId}/download` and verifies byte count and
+SHA-256 before local removal. No backend deletion endpoint is involved. See
+[mobile storage safety and acceptance](../mobile/docs/usb-tethering-plan.md#phone-storage-management--2026-09-09).
+
+**Photographer watermark settings — website/mobile integration:**
+`PUT /api/v1/me/photographer/watermark/settings` takes `opacity`, `scale`,
+`landscapeX`, `landscapeY`, `portraitX`, and `portraitY`; `/brand` returns them
+under `watermarkSettings`. Every field must be finite (otherwise HTTP 400 with
+`VALIDATION_ERROR` and the offending field). Finite values retain the clamps in
+`PhotographerSettingsService`. Position is independent per orientation; size and
+opacity are shared. The settings affect future uploads under every policy that
+draws the photographer's logo; existing previews are not re-rendered.
+
+Geometry is defined by `WatermarkService.watermarkBox`: apply minimum size,
+padding and integer rounding in rendered-photo pixels, shrink both logo axes
+together to fit the padded frame, then position within the remaining space.
+The caption reserves the fitted logo width, and the logo is drawn last. The
+website `src/lib/watermark-placement.ts` and Android `WatermarkPlacementMath.kt`
+mirror this calculation. Their sample photo dimensions live with those helpers;
+editors scale the computed rectangle to screen coordinates and undo that scale
+for dragging. Matching numeric fixtures in all three modules pin minimums,
+rounding, tall logos and tiny photos. Both editors also expose labeled position
+sliders. Website partial saves advance the placement snapshot after its PUT
+succeeds, so retry and Cancel retain the saved placement.
+
 ---
+
+**Photographer photo management — website/mobile integration:**
+`GET /api/v1/me/photographer/events/{id}/photos?deleted=true` lists trash using
+the same `items`, `offset`, `limit`, and `total` pagination envelope as the active
+library. Both clients must request additional server pages. Covered events stay
+reachable with `withUploads=false`, including when their active count is zero.
+
+The `photos/trash` and `photos/restore` actions return the actual `affected`
+count. Clients split selections according to `PhotoIdsRequest`'s size constraint
+and `MePhotographerController.PERMANENT_DELETE_BATCH_MAX`. Trash changes neither the
+photo lifecycle status nor existing purchased download grants. Public galleries,
+search, free downloads, carts, coupons and new checkout exclude trash.
+
+`photos/permanent-delete` returns `deleted`, `blockedSold`, `blockedPending`,
+and `failed` ID arrays. Paid orders and download grants prevent deletion.
+Unpaid pending or uncertain payments remain protected; expired unpaid order
+items can be released only after provider closure is verified and payment/order
+state is rechecked under locks. This also closes any intent behind an expired
+checkout page before storage cleanup begins.
+
+The library's additive `deletionStartedAt` field marks irreversible cleanup.
+Once set, restore and original-download requests are refused, including after
+a storage failure. Clients show the failure and retry permanent deletion.
+Ordinary entity saves cannot overwrite either deletion timestamp. Conditional
+trash/restore updates adjust both active counters atomically; migration V60
+repairs previous drift. Mobile refreshes retain cached events so an open gallery
+is not dismissed while counts reload, even after a partially completed action.
+
+Photographer ZIPs stream originals one at a time. A read failure propagates and
+does not finalize a misleading partial archive. The streaming timeout is
+configured by `HTTP_STREAM_TIMEOUT` in `backend/src/main/resources/application.yml`;
+hosting proxies must permit the desired download duration too. Watermarked
+bundles remain outside this contract.
 
 ### 7.4. AI Face Indexing & Bib OCR Pipeline
 Implemented via [FaceBibProvider.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/service/ai/FaceBibProvider.kt):
@@ -359,7 +448,23 @@ sequenceDiagram
 ### 7.6. Financial Ledger, Earnings & Payouts
 - **Split Calculation:** By default, each photo is priced at PHP 125. The platform takes a 25% commission (PHP 31.25), and the photographer receives 75% (PHP 93.75).
 - **Coupons:** Photographers can create discount coupons (up to 50% of their cut). Coupons reduce only the photographer's portion; the platform fee is non-discountable.
-- **Disbursements:** Administrators create payout cycles ([AdminPayoutService.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/service/admin/AdminPayoutService.kt)) to aggregate balances, attach disbursement proof receipts, and record transfers to photographer GCash/Maya/Bank accounts.
+- **Payout requests:** Photographers request cleared earnings minus paid and reserved amounts through `PayoutRequestService`. Requests and account edits lock the photographer row; admin decisions and provider callbacks lock the payout row. The database also enforces one open payout per photographer. Amounts remain reserved through approval and processing.
+
+**Payout and MFA client contract (website + Android):**
+
+| Operation | Contract |
+|---|---|
+| Payout setup | `POST /api/v1/me/photographer/payouts` creates an incomplete account; upload its required QR to `POST /{id}/qr` before showing setup as complete. On upload failure, retain the server ID and retry the QR. Changing the account number clears its previous QR; clients must await the account PATCH before uploading its replacement. |
+| Request eligibility | `/me/photographer/payouts/balance` includes `primaryAccount.hasQr`. A request without the primary account QR fails with `PAYOUT_QR_REQUIRED`. Observe the server's account-change cooldown as an absolute timestamp, including its offset. |
+| Recipient integrity | New requests freeze method, number, name, and QR storage key. Replacing/deleting the live account retains QR images referenced by payouts. Legacy payouts do not display today's QR as historical evidence. Migration `V61` preserves legacy approvals as explicit `approved` rows. |
+| Admin decisions | Use returned/refetched server state. A first approval may remain `pending_review` until another admin approves; do not predict `approved`. The admin DTO's `provider` identifies who owns transfer outcomes. Provider-managed transfers cannot be manually held, cancelled, or settled. |
+| Step-up | When enabled, account changes, `mark-processing`, and `mark-paid` require `X-Step-Up`. Website callers share one reauthentication prompt. Defaults and environment mappings live in `backend/src/main/resources/application.yml`; Android step-up UI remains a prerequisite before enabling the flag for all clients. |
+| Admin MFA | Password and Google first factors can return `mfaRequired` + `mfaToken` with empty session tokens. Website exchanges a TOTP/recovery code at `POST /api/v1/auth/mfa/verify`; Android directs administrators to the website. TOTP steps and recovery codes are single-use. Confirm/disable share a per-admin rate limit; `401 INVALID_MFA_CODE` is an inline code error, not a session refresh trigger. |
+| Android persistence | Tokens use encrypted preferences. If the keystore is unavailable, tokens remain in memory and restarting requires sign-in; plaintext migration residue is cleared. |
+
+The default disbursement provider remains manual. The optional PayMongo adapter uses the documented `transfers` array, source/destination accounts, callback URL and `transfers[0].id`. Configure its wallet and receiving-institution BICs through `PaymongoProperties` / `application.yml`; placeholder institution codes are not used. Account-backed testing of wallet funding and signed callbacks is still required before enabling it. See [Money Movement API](https://docs.paymongo.com/docs/money-movement-send-money) and [idempotency guidance](https://docs.paymongo.com/docs/money-movement-best-practices).
+
+Transfer callbacks are recorded as processed only after an outcome is applied or already known. An early callback for an unlinked transfer returns 503 for redelivery. A return can arrive before success and supersedes later success; conflicting terminal outcomes return 503 and require reconciliation. Reconcile ambiguous initiation timeouts before retrying beyond PayMongo's documented idempotency retention window.
 
 ---
 
