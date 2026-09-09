@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 31
-- **✅ Already Solved:** 20 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 26, 28, 31, 32, 33, 34)
-- **⏳ Pending / To Be Worked On:** 11 (Items 16, 17, 19, 21, 22, 23, 24, 25, 27, 29, 30)
+- **✅ Already Solved:** 21 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 26, 27, 28, 31, 32, 33, 34)
+- **⏳ Pending / To Be Worked On:** 10 (Items 16, 17, 19, 21, 22, 23, 24, 25, 29, 30)
 
 ---
 
@@ -182,11 +182,14 @@
     - `website/src/lib/auth.ts`
     - `website/src/lib/auth.test.ts`
 
-- [ ] **27. Website — Missing App Routes in Photographer `RESERVED_HANDLES` Collision Guard**
-  - **Issue:** Photographer handles use a flat root URL namespace (`quickpitik.com/{handle}`). The `RESERVED_HANDLES` set protects system routes from being registered by photographers. However, existing active routes such as `"verify"`, `"verify-email"`, and `"confirm-email-change"` are omitted from `RESERVED_HANDLES`. If a photographer claims `verify`, accessing `/verify` causes route conflicts.
+- [x] **27. Website — Missing App Routes in Photographer `RESERVED_HANDLES` Collision Guard**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated `RESERVED_HANDLES` set in `website/src/lib/reserved-handles.ts` to include missing core auth/verification routes: `"verify"`, `"verify-email"`, `"confirm-email-change"`, `"reset-password"`, `"logout"`, `"signin"`, and `"signup"`.
+    - Created comprehensive unit test suite in `website/src/lib/reserved-handles.test.ts` verifying case-insensitive reserved handle rejection, valid handle rules, and required route collision protections.
   - **Affected Files:**
     - `website/src/lib/reserved-handles.ts`
-  - **Action Plan:** Add `"verify"`, `"verify-email"`, and `"confirm-email-change"` to the `RESERVED_HANDLES` set.
+    - `website/src/lib/reserved-handles.test.ts`
 
 - [x] **28. Website — Floating-Point Precision Accumulation in Cart Pricing Summation**
   - **Status:** **ALREADY SOLVED**

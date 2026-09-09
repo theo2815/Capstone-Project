@@ -6,8 +6,7 @@ function makeItem(photoId: string, price: number): CartItem {
   return {
     photoId,
     eventId: "event-01",
-    photographerId: "photo-01",
-    watermarkUrl: "https://example.com/wm.jpg",
+    thumbnailUrl: "https://example.com/thumb.jpg",
     price,
   };
 }
