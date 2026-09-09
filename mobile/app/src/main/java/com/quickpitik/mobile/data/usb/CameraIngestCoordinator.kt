@@ -73,11 +73,21 @@ class CameraIngestCoordinator private constructor(private val context: Context) 
         runningGeneration = request
         watchJob = scope.launch(Dispatchers.IO) {
             try {
-                UsbEventCaptureController(cameraManager.manager, cameraManager::connectedCameraDevice, store).run(
+                UsbEventCaptureController(cameraManager.manager, cameraManager::connectedCameraDevice, store,
+                    awaitDevice = { timeout -> withTimeoutOrNull(timeout) {
+                        cameraManager.state.first { it is CameraConnectionState.Connected && cameraManager.connectedCameraDevice() != null }
+                    }; Unit },
+                ).run(
                     owner, event, isOwnerActive = { session.getUserEmail() == owner && session.getAccessToken() != null },
                     onLog = { if (generation == request) log(it) },
                     onStarted = { if (generation == request) watch.value = ShutterWatchState.Watching(0, null, logs) },
-                    onReconnecting = { reconnecting -> if (generation == request) watch.update { if (it is ShutterWatchState.Watching) it.copy(reconnecting = reconnecting) else it } },
+                    onReconnecting = { reconnecting -> if (generation == request) watch.update {
+                        when (it) {
+                            is ShutterWatchState.Watching -> it.copy(reconnecting = reconnecting)
+                            ShutterWatchState.Starting -> if (reconnecting) ShutterWatchState.Watching(0, null, logs, true) else it
+                            else -> it
+                        }
+                    } },
                     onPaused = { reason -> if (generation == request) watch.update { if (it is ShutterWatchState.Watching) it.copy(pauseReason = reason) else it } },
                     onCapture = { name ->
                         if (generation == request) watch.update { if (it is ShutterWatchState.Watching) it.copy(captureCount = it.captureCount + 1, lastCaptureName = name) else it }

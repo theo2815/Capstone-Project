@@ -449,4 +449,5 @@ data class DirectUploadCommitRequest(
     val key: String,
     val contentHash: String,
     val contentType: String,
+    val sizeBytes: Long? = null,
 )

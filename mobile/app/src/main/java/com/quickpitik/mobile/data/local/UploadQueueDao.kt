@@ -12,6 +12,17 @@ data class StatusCount(val status: String, val count: Int)
 
 @Dao
 interface UploadQueueDao {
+    @Query("UPDATE upload_queue SET contentHash = :hash WHERE id = :id")
+    suspend fun setContentHash(id: Long, hash: String)
+
+    @Query("UPDATE upload_queue SET directPhotoId = :photoId, directKey = :key, directBackend = :backend WHERE id = :id")
+    suspend fun checkpointDirectUpload(id: Long, photoId: String?, key: String?, backend: String?)
+
+    @Query("UPDATE upload_queue SET retryAfter = :after WHERE id = :id")
+    suspend fun defer(id: Long, after: Long)
+
+    @Query("SELECT COALESCE(MAX(retryAfter), 0) FROM upload_queue WHERE photographerId = :owner AND uploadStatus = 'QUEUED'")
+    suspend fun retryNotBefore(owner: String): Long
     @Query("SELECT * FROM upload_queue WHERE photographerId = :owner AND eventId = :event AND contentHash = :hash AND uploadStatus != 'FAILED' LIMIT 1")
     suspend fun findContent(owner: String, event: String, hash: String): UploadRecord?
 
@@ -35,9 +46,7 @@ interface UploadQueueDao {
     @Query("SELECT errorMessage FROM upload_queue WHERE uploadStatus = 'FAILED' AND (:owner IS NULL OR photographerId = :owner) ORDER BY id DESC LIMIT 1")
     fun getLatestFailedMessage(owner: String? = null): Flow<String?>
 
-    // Pruning the COMPLETED ledger: rows older than an event's upload window
-    // can never dedupe a re-import (the backend would refuse the upload
-    // anyway), so their thumbnails and rows are dead weight.
+    // Prune completed local previews only; backend content dedup survives this retention window.
     @Query("SELECT filePath FROM upload_queue WHERE uploadStatus = 'COMPLETED' AND captureTimestamp < :before AND (:owner IS NULL OR photographerId = :owner)")
     suspend fun getCompletedPathsBefore(before: Long, owner: String? = null): List<String>
 
@@ -73,7 +82,7 @@ interface UploadQueueDao {
     /** Sends every FAILED row back through the queue with a fresh retry budget. */
     @Query(
         "UPDATE upload_queue SET uploadStatus = 'QUEUED', retryCount = 0, " +
-            "errorMessage = NULL WHERE uploadStatus = 'FAILED' AND (:owner IS NULL OR photographerId = :owner)"
+            "errorMessage = NULL, retryAfter = 0 WHERE uploadStatus = 'FAILED' AND (:owner IS NULL OR photographerId = :owner)"
     )
     suspend fun requeueFailed(owner: String? = null): Int
 

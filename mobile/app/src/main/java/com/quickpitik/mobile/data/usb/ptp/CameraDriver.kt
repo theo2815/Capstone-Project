@@ -144,9 +144,9 @@ object CameraDrivers {
         else -> "Choose PTP/MTP for card import. Live shooting depends on the camera's USB mode; confirm a test photo saves to the card."
     }
 
-    suspend fun open(manager: UsbManager, device: UsbDevice, live: Boolean = false, genericOnly: Boolean = false): GenericPtpCamera {
+    suspend fun open(manager: UsbManager, device: UsbDevice, live: Boolean = false, warmUp: Boolean = true): GenericPtpCamera {
         val context = currentCoroutineContext()
-        if (live && needsWarmUp(device.vendorId, device.productId)) {
+        if (live && warmUp && needsWarmUp(device.vendorId, device.productId)) {
             PtpSession(manager, device).use { warm ->
                 warm.checkCancellation { context.ensureActive() }
                 checkOpen(warm)
@@ -165,7 +165,6 @@ object CameraDrivers {
             val key = fingerprint(device.vendorId, device.productId, info.manufacturer, info.model,
                 serial.ifBlank { "attachment:${device.deviceName}:${device.deviceId}" })
             driver = when {
-                genericOnly -> GenericPtpCamera(session, info, key)
                 isCanon(device.vendorId, info) -> CanonEosCamera(session, info, key)
                 live && isSony(device.vendorId, info) -> SonyPtpCamera(session, info, key)
                 device.vendorId == 0x04b0 || info.manufacturer.startsWith("Nikon", true) -> NikonPtpCamera(session, info, key)
@@ -177,9 +176,9 @@ object CameraDrivers {
                     if (driver is SonyPtpCamera && e.code == Ptp.RC_OPERATION_NOT_SUPPORTED)
                         throw CameraSetupException("This Sony USB mode rejects PC Remote setup. Select PC Remote or use MTP card import.")
                     if (driver !is CanonEosCamera || e.code != Ptp.RC_OPERATION_NOT_SUPPORTED) throw e
-                    driver.close()
-                    // A clean rejection permits a fresh generic import/poll session.
-                    return open(manager, device, live = false, genericOnly = true)
+                    // Generic import mode can lock the shutter. Never silently switch a live
+                    // shoot to it; the catch below releases the failed session completely.
+                    throw CameraSetupException("Canon rejected live USB setup. Check the camera's USB mode, or stop and use card import after shooting.")
                 }
             }
             if (!driver.capabilities.cardImport && !(live && driver.capabilities.transientObjects))

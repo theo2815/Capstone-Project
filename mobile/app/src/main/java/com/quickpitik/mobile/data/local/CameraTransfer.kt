@@ -29,7 +29,7 @@ data class CameraTransfer(
 interface CameraTransferDao {
     @Query("SELECT COUNT(*) AS pending, COALESCE(SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END), 0) AS failed, (SELECT error FROM camera_transfer WHERE owner = :owner AND eventId = :event AND status = 'FAILED' ORDER BY retryAfter DESC LIMIT 1) AS error FROM camera_transfer WHERE owner = :owner AND eventId = :event AND status IN ('PENDING', 'FAILED', 'TRANSFERRING')")
     fun observeRecovery(owner: String, event: String): kotlinx.coroutines.flow.Flow<CameraRecoverySummary>
-    @Query("UPDATE camera_transfer SET retryAfter = 0, status = 'PENDING', error = NULL WHERE owner = :owner AND eventId = :event AND status = 'FAILED' AND sourceKey NOT LIKE 'transient:%'")
+    @Query("UPDATE camera_transfer SET retryAfter = 0, attempts = 0, status = 'PENDING', error = NULL WHERE owner = :owner AND eventId = :event AND status = 'FAILED' AND sourceKey NOT LIKE 'transient:%'")
     suspend fun retry(owner: String, event: String)
     @Query("SELECT COUNT(*) FROM camera_baseline WHERE scope = :scope")
     suspend fun baselineExists(scope: String): Int
@@ -43,6 +43,8 @@ interface CameraTransferDao {
     suspend fun get(key: String): CameraTransfer?
     @Query("SELECT * FROM camera_transfer WHERE scope = :scope")
     suspend fun forScope(scope: String): List<CameraTransfer>
+    @Query("SELECT * FROM camera_transfer WHERE scope = :scope AND status IN ('PENDING', 'FAILED', 'TRANSFERRING') ORDER BY rowid")
+    suspend fun pendingForScope(scope: String): List<CameraTransfer>
     @Query("SELECT * FROM camera_transfer WHERE owner = :owner AND status = 'TRANSFERRING'")
     suspend fun interrupted(owner: String): List<CameraTransfer>
 }

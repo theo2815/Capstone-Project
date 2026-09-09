@@ -9,6 +9,7 @@ import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.*
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -93,7 +94,10 @@ class PhotoUploadWorkerTest {
      * A backend + storage pair for the direct path: begin hands out a PUT URL
      * on this same server, the PUT is accepted, commit returns the photo.
      */
-    private fun startDirectServer(): MockWebServer =
+    private fun startDirectServer(
+        putResponse: () -> MockResponse = { MockResponse().setResponseCode(200) },
+        commitResponse: () -> MockResponse = { ok() },
+    ): MockWebServer =
         MockWebServer().apply {
             dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
                 override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = when {
@@ -106,8 +110,8 @@ class PhotoUploadWorkerTest {
                                "uploadUrl":"${url("/r2/events/$EVENT/photos/p-1/original.jpg")}"}}""",
                         )
                     request.method == "PUT" && request.path?.startsWith("/r2/") == true ->
-                        MockResponse().setResponseCode(200)
-                    request.path?.endsWith("/photos/direct/commit") == true -> ok()
+                        putResponse()
+                    request.path?.endsWith("/photos/direct/commit") == true -> commitResponse()
                     else -> MockResponse().setResponseCode(500)
                 }
             }
@@ -296,6 +300,109 @@ class PhotoUploadWorkerTest {
     }
 
     @Test
+    fun `a commit outage survives process restart without repeating the file upload`() = runTest {
+        signIn()
+        var commits = 0
+        val http = startDirectServer(commitResponse = { if (commits++ == 0) serverError() else ok() })
+        val original = realJpeg()
+        val bytes = original.readBytes()
+        val id = enqueue(filePath = original.absolutePath, retryCount = 4)
+        assertTrue(runWorker() is ListenableWorker.Result.Retry)
+        assertEquals("p-1", db.uploadQueueDao().getRecordById(id)?.directPhotoId)
+        assertTrue(bytes.contentEquals(original.readBytes()))
+        db.close()
+        clearDatabaseSingleton()
+        db = AppDatabase.getDatabase(context)
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+        assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
+        val requests = (1..http.requestCount).map { http.takeRequest() }
+        assertEquals(1, requests.count { it.method == "PUT" })
+        assertEquals(1, requests.count { it.path?.endsWith("/photos/direct") == true })
+        assertEquals(2, requests.count { it.path?.endsWith("/direct/commit") == true })
+        assertTrue(bytes.contentEquals(requests.single { it.method == "PUT" }.body.readByteArray()))
+    }
+
+    @Test
+    fun `storage failure never falls back to a second multipart transfer`() = runTest {
+        signIn()
+        val http = startDirectServer(putResponse = { MockResponse().setResponseCode(503) })
+        val id = enqueue(filePath = realJpeg().absolutePath, retryCount = 4)
+        assertTrue(runWorker() is ListenableWorker.Result.Retry)
+        assertEquals(2, http.requestCount)
+        assertEquals("QUEUED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
+        assertEquals(4, db.uploadQueueDao().getRecordById(id)?.retryCount)
+    }
+
+    @Test
+    fun `lost PUT acknowledgment is recovered by commit with no second PUT`() = runTest {
+        signIn()
+        val http = startDirectServer(putResponse = {
+            MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST)
+        })
+        val id = enqueue(filePath = realJpeg().absolutePath)
+        assertTrue(runWorker() is ListenableWorker.Result.Retry)
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+        assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
+        val requests = (1..http.requestCount).map { http.takeRequest() }
+        assertEquals(1, requests.count { it.method == "PUT" })
+        assertEquals(3, requests.size)
+    }
+
+    @Test
+    fun `cancelling a stalled PUT retains the original and resumes from its checkpoint`() = runBlocking {
+        signIn()
+        val http = startDirectServer(putResponse = {
+            MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE)
+        })
+        val original = realJpeg()
+        val bytes = original.readBytes()
+        val id = enqueue(filePath = original.absolutePath)
+        val job = launch(Dispatchers.Default) { runWorker() }
+        try {
+            assertEquals("POST", http.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.method)
+            assertEquals("PUT", http.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.method)
+            withTimeout(3000) { job.cancelAndJoin() }
+            assertTrue(bytes.contentEquals(original.readBytes()))
+            assertEquals("UPLOADING", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
+            assertEquals("p-1", db.uploadQueueDao().getRecordById(id)?.directPhotoId)
+            assertTrue(runWorker() is ListenableWorker.Result.Success)
+            assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
+            assertEquals(3, http.requestCount)
+        } finally { job.cancelAndJoin() }
+    }
+
+    @Test
+    fun `a confirmed missing checkpoint gets a new upload attempt`() = runTest {
+        signIn()
+        var puts = 0
+        val http = startDirectServer(
+            putResponse = { if (puts++ == 0) MockResponse().setResponseCode(503) else MockResponse().setResponseCode(200) },
+            commitResponse = { if (puts < 2) MockResponse().setResponseCode(422)
+                .setBody("""{"success":false,"errors":[{"code":"UPLOAD_OBJECT_MISSING","message":"Missing"}]}""") else ok() },
+        )
+        val id = enqueue(filePath = realJpeg().absolutePath)
+        assertTrue(runWorker() is ListenableWorker.Result.Retry)
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+        assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
+        assertEquals(6, http.requestCount)
+    }
+
+    @Test
+    fun `Retry-After defers the account queue including newly captured photos`() = runTest {
+        signIn()
+        val http = startServer(MockResponse().setResponseCode(429).setHeader("Retry-After", "120"))
+        val id = enqueue(filePath = realJpeg().absolutePath)
+        assertTrue(runWorker() is ListenableWorker.Result.Retry)
+        val delayed = requireNotNull(db.uploadQueueDao().getRecordById(id))
+        assertEquals(0, delayed.retryCount)
+        assertTrue(delayed.retryAfter > System.currentTimeMillis() + 100_000)
+        enqueue(filePath = realJpeg().absolutePath)
+        val before = http.requestCount
+        assertTrue(runWorker() is ListenableWorker.Result.Retry)
+        assertEquals(before, http.requestCount)
+    }
+
+    @Test
     fun `a 409 same-event duplicate is terminal and does not drive a retry`() = runTest {
         signIn()
         val http = startServer(duplicate("PHOTO_DUPLICATE_SAME_EVENT"))
@@ -430,7 +537,7 @@ class PhotoUploadWorkerTest {
         // Back to QUEUED, not FAILED: the drain only picks up QUEUED, so a row
         // left FAILED would never actually be retried.
         assertEquals("QUEUED", stored.uploadStatus)
-        assertEquals(1, stored.retryCount)
+        assertEquals(0, stored.retryCount)
         assertTrue(result is ListenableWorker.Result.Retry)
         // Exactly one attempt: the `attempted` filter must stop the requeued row
         // from being picked straight back up inside the same run.
@@ -445,7 +552,7 @@ class PhotoUploadWorkerTest {
     @Test
     fun `the retry ladder ends at MAX_RETRIES and stops asking for more runs`() = runTest {
         signIn()
-        startServer(serverError())
+        startServer(MockResponse().setResponseCode(409).setBody("""{"success":false,"errors":[{"code":"CONFLICT","message":"Conflict"}]}"""))
         val id = enqueue(filePath = realJpeg().absolutePath, retryCount = MAX_RETRIES - 1)
 
         val result = runWorker()

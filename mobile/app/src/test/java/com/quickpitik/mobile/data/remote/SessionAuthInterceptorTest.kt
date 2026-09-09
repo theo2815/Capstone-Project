@@ -15,6 +15,28 @@ import java.io.IOException
 
 @RunWith(RobolectricTestRunner::class)
 class SessionAuthInterceptorTest {
+    @Test fun `transient refresh rejection preserves the photographer login`() {
+        val session = SessionManager.getInstance(ApplicationProvider.getApplicationContext())
+        session.saveSession("token-a", "PHOTOGRAPHER", "A", "a@example.com", refreshToken = "refresh-a")
+        MockWebServer().use { server ->
+            server.start()
+            RetrofitClient.setBaseUrl(server.url("/").toString())
+            try {
+                for (code in listOf(429, 500, 503)) {
+                    server.enqueue(MockResponse().setResponseCode(code))
+                    val request = Request.Builder().url(server.url("/api/v1/upload"))
+                        .header("Authorization", "Bearer token-a")
+                        .tag(SessionManager.AuthSession::class.java, session.authSnapshot("token-a")).build()
+                    val response = okhttp3.Response.Builder().request(request).protocol(okhttp3.Protocol.HTTP_1_1)
+                        .code(401).message("Expired").build()
+                    assertNull(TokenAuthenticator(session).authenticate(null, response))
+                    assertEquals("token-a", session.getAccessToken())
+                    assertEquals("refresh-a", session.getRefreshToken())
+                }
+            } finally { RetrofitClient.resetBaseUrl() }
+        }
+    }
+
     @Test fun `old request cannot be replayed under the new login`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val session = SessionManager.getInstance(context)

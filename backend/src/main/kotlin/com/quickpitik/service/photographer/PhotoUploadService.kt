@@ -22,10 +22,10 @@ import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
+import jakarta.persistence.EntityManager
 import org.hibernate.exception.ConstraintViolationException
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
-import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -51,6 +51,7 @@ class PhotoUploadService(
     private val eventPublisher: ApplicationEventPublisher,
     private val transactionTemplate: TransactionTemplate,
     private val meterRegistry: MeterRegistry,
+    private val entityManager: EntityManager,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -97,7 +98,7 @@ class PhotoUploadService(
         // stop-on-mobile / continue-on-web case) returns the existing photo
         // idempotently; a different-event re-upload is rejected. The partial
         // unique index (photographer_id, content_hash) from V24 is the
-        // race-safe backstop (see the saveAndFlush below).
+        // race-safe backstop (see persistNew below).
         val contentHash = sha256Hex(bytes)
         duplicateOf(photographerId, eventId, contentHash)?.let { return existingPhotoDto(it) }
 
@@ -150,7 +151,7 @@ class PhotoUploadService(
     ): DirectUploadBeginResponse {
         val (event, settings) = gate(photographerId, eventId)
         val type = contentType.lowercase()
-        if (type !in ALLOWED_CONTENT_TYPES || sizeBytes > MAX_DIRECT_UPLOAD_BYTES) {
+        if (type !in ALLOWED_CONTENT_TYPES || sizeBytes !in 1..MAX_DIRECT_UPLOAD_BYTES) {
             throw ApiException(
                 status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
                 code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
@@ -179,9 +180,10 @@ class PhotoUploadService(
         photoId: UUID,
         key: String,
         contentHash: String,
+        sizeBytes: Long? = null,
+        contentType: String? = null,
     ): UploadedPhotoDto {
         val timerSample = Timer.start(meterRegistry)
-        val (event, settings) = gate(photographerId, eventId)
         // The key is derived, never trusted: a client can only commit the
         // object slot that begin() issued for this event.
         if (key != originalKeyFor(eventId, photoId)) {
@@ -191,17 +193,27 @@ class PhotoUploadService(
                 message = "That upload key doesn't match the photo it was issued for.",
             )
         }
-        if (!storageService.exists(key)) {
+        val hash = contentHash.lowercase()
+        // A lost success response is a read, even if the event's window has since closed.
+        committedPhoto(photoId, photographerId, eventId, key, hash)?.let { return existingPhotoDto(it) }
+        val (event, settings) = gate(photographerId, eventId)
+        val stored = storageService.metadata(key)
+        if (stored == null) {
             throw ApiException(
                 status = HttpStatus.UNPROCESSABLE_ENTITY,
                 code = ErrorCodes.UPLOAD_OBJECT_MISSING,
                 message = "The uploaded file wasn't found in storage. Upload it again.",
             )
         }
-        val hash = contentHash.lowercase()
+        if (stored.sizeBytes !in 1..MAX_DIRECT_UPLOAD_BYTES || stored.contentType.lowercase() !in ALLOWED_CONTENT_TYPES ||
+            (sizeBytes != null && stored.sizeBytes != sizeBytes) ||
+            (contentType != null && !stored.contentType.equals(contentType, ignoreCase = true))) {
+            throw ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                "The stored image size or type does not match the upload. Retry with a supported original image.")
+        }
         duplicateOf(photographerId, eventId, hash)?.let { existing ->
             // Lost a race with an identical upload — drop the orphan object.
-            runCatching { storageService.delete(key) }
+            if (key != existing.s3Key) runCatching { storageService.delete(key) }
             return existingPhotoDto(existing)
         }
         requireWatermark(settings, event)
@@ -209,6 +221,14 @@ class PhotoUploadService(
         timerSample.stop(meterRegistry.timer("qp.upload.duration"))
         return dto
     }
+
+    private fun committedPhoto(id: UUID, owner: UUID, event: UUID, key: String, hash: String): Photo? =
+        photoRepository.findById(id).orElse(null)?.also {
+            if (it.photographerId != owner || it.eventId != event || it.s3Key != key || it.contentHash != hash) {
+                throw ApiException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCodes.UPLOAD_KEY_MISMATCH,
+                    "That upload slot belongs to a different photo.")
+            }
+        }
 
     private data class Gate(val event: com.quickpitik.entity.Event, val settings: com.quickpitik.entity.PhotographerSettings)
 
@@ -337,7 +357,7 @@ class PhotoUploadService(
 
         // Faces + bibs are indexed asynchronously off this request by
         // PhotoIndexingService (face enroll + bib OCR via ai-api). The photo is
-        // saved + LIVE immediately; indexing fills in tags within seconds and
+        // saved as PROCESSING; watermarking publishes it independently. Indexing fills tags and
         // fires a photo.indexed event, with a @Scheduled reconciliation sweep
         // re-driving anything that fails. This replaces the old per-photo
         // blocking ai-api calls that held the request thread + DB transaction
@@ -361,69 +381,48 @@ class PhotoUploadService(
         // persist-phase failure strands the original object already PUT to
         // storage; that orphan window predates this split (PUTs always ran
         // before the flush) and stays accepted.
-        transactionTemplate.execute {
-            // saveAndFlush (not save) so a concurrent identical-bytes upload that
-            // slipped past the pre-check above trips the (photographer_id,
-            // content_hash) unique index HERE rather than at commit — the
-            // authoritative, race-safe dedup backstop. A duplicate is the only
-            // unique constraint a valid photo insert can violate (the id is a fresh
-            // random UUID), so translate it to a terminal duplicate conflict.
-            try {
-                photoRepository.saveAndFlush(photo)
-            } catch (ex: DataIntegrityViolationException) {
-                // Defense-in-depth: a fresh-UUID id and fully-populated columns mean
-                // the dedup index is the only unique constraint a valid insert can
-                // violate today, but a FUTURE constraint must not be silently
-                // mislabeled a duplicate. Walk the cause chain to the Hibernate
-                // ConstraintViolationException (Spring may wrap it a layer deep); if
-                // it positively names a DIFFERENT constraint, rethrow it as the
-                // genuine integrity fault it is. A null/unknown name keeps the old
-                // behavior (treat as the dedup race).
-                val violated = generateSequence(ex.cause) { it.cause }
-                    .filterIsInstance<ConstraintViolationException>()
-                    .firstOrNull()
-                    ?.constraintName
-                if (violated != null && !violated.equals(CONTENT_HASH_CONSTRAINT, ignoreCase = true)) {
-                    throw ex
+        try {
+            transactionTemplate.execute {
+                // Always INSERT. JpaRepository.save merges assigned IDs, which can overwrite an
+                // existing original and increment counters twice when a commit response is lost.
+                entityManager.persist(photo)
+                entityManager.flush()
+
+                // Atomic counter writes — concurrent uploads during a live marathon are
+                // the normal case, not an edge case. The prior read-modify-write pattern
+                // lost increments and could PK-collide on first-upload races (H-3 / M-6).
+                val now = OffsetDateTime.now()
+                eventPhotographerRepository.upsertOnUpload(eventId, photographerId, now)
+                eventRepository.incrementPhotoCount(eventId)
+
+                // The photo.published WebSocket frame no longer fires here — it
+                // moved to PhotoWatermarkService's flip transaction, so runners are
+                // notified only when the watermark URL the frame carries actually
+                // resolves (same no-ghost-photos guarantee as before, Q-002, just
+                // anchored to the LIVE flip instead of the insert).
+                //
+                // Generate the watermark + flip PROCESSING → LIVE asynchronously
+                // once this transaction commits (AFTER_COMMIT via
+                // PhotoWatermarkTrigger). NOT gated on ai-api — always runs.
+                eventPublisher.publishEvent(PhotoUploadedForWatermark(photoId = photoId, eventId = eventId))
+
+                // Index faces + bibs asynchronously once this transaction commits
+                // (AFTER_COMMIT via PhotoIndexingTrigger), so the request returns
+                // without waiting on ai-api inference.
+                if (aiApiProperties.enabled) {
+                    eventPublisher.publishEvent(PhotoUploadedForIndexing(photoId = photoId, eventId = eventId))
                 }
-                // Same- vs different-event can't be re-resolved here: the unique
-                // violation has aborted this transaction (Postgres 25P02), so any
-                // follow-up read would fail. Emit the same-event conflict; if it was
-                // actually a different-event race the photographer's retry hits the
-                // pre-check above — which now sees the committed row — and gets the
-                // precise "already in event X" message. The different-event race
-                // (same bytes, two events, same instant) is pathological and
-                // self-heals on that retry.
-                throw ConflictException(
-                    code = ErrorCodes.PHOTO_DUPLICATE_SAME_EVENT,
-                    message = "This photo was just uploaded. Refresh to see it.",
-                )
             }
-
-            // Atomic counter writes — concurrent uploads during a live marathon are
-            // the normal case, not an edge case. The prior read-modify-write pattern
-            // lost increments and could PK-collide on first-upload races (H-3 / M-6).
-            val now = OffsetDateTime.now()
-            eventPhotographerRepository.upsertOnUpload(eventId, photographerId, now)
-            eventRepository.incrementPhotoCount(eventId)
-
-            // The photo.published WebSocket frame no longer fires here — it
-            // moved to PhotoWatermarkService's flip transaction, so runners are
-            // notified only when the watermark URL the frame carries actually
-            // resolves (same no-ghost-photos guarantee as before, Q-002, just
-            // anchored to the LIVE flip instead of the insert).
-            //
-            // Generate the watermark + flip PROCESSING → LIVE asynchronously
-            // once this transaction commits (AFTER_COMMIT via
-            // PhotoWatermarkTrigger). NOT gated on ai-api — always runs.
-            eventPublisher.publishEvent(PhotoUploadedForWatermark(photoId = photoId, eventId = eventId))
-
-            // Index faces + bibs asynchronously once this transaction commits
-            // (AFTER_COMMIT via PhotoIndexingTrigger), so the request returns
-            // without waiting on ai-api inference.
-            if (aiApiProperties.enabled) {
-                eventPublisher.publishEvent(PhotoUploadedForIndexing(photoId = photoId, eventId = eventId))
-            }
+        } catch (ex: RuntimeException) {
+            val violated = generateSequence<Throwable>(ex) { it.cause }
+                .filterIsInstance<ConstraintViolationException>().firstOrNull()?.constraintName
+            if (violated !in setOf(CONTENT_HASH_CONSTRAINT, "photos_pkey")) throw ex
+            // Resolve only AFTER rollback: PostgreSQL rejects reads in an aborted transaction.
+            val existing = committedPhoto(photoId, photographerId, eventId, originalKey, contentHash)
+                ?: duplicateOf(photographerId, eventId, contentHash)
+                ?: throw ex
+            if (originalKey != existing.s3Key) runCatching { storageService.delete(originalKey) }
+            return existingPhotoDto(existing)
         }
 
         // Indexing now runs async, so detection isn't known at upload time. The

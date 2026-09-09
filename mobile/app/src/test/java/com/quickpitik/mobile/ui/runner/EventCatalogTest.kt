@@ -1,10 +1,24 @@
 package com.quickpitik.mobile.ui.runner
 
+import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.time.LocalDate
 
 class EventCatalogTest {
+    @Test fun ownerWindowIncludesPreEventAndClampsToTheCalendarMonth() {
+        val event = PhotographerEventSummaryDto("id", "slug", "Event", "2026-01-31", "Cebu", "open", 0, 0, 0.0,
+            ownedByMe = true)
+        for ((date, allowed) in listOf("2026-01-01" to true, "2026-02-28" to true, "2026-03-01" to false)) {
+            assertEquals(date, allowed, canUploadToEvent(event, LocalDate.parse(date)))
+        }
+        for (review in listOf("pending", "rejected")) {
+            assertEquals(false, canUploadToEvent(event.copy(reviewStatus = review), LocalDate.parse("2026-01-31")))
+        }
+        assertEquals(true, canUploadToEvent(event.copy(reviewStatus = "change_pending"), LocalDate.parse("2026-02-28")))
+        assertEquals(false, canUploadToEvent(event.copy(ownedByMe = false), LocalDate.parse("2026-02-28")))
+    }
+
     @Test
     fun raceDayDisplayDoesNotCloseTheUploadAndRealtimeWindow() {
         val race = LocalDate.of(2026, 9, 9)

@@ -14,7 +14,7 @@ import software.amazon.awssdk.services.s3.S3Configuration
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest
 import software.amazon.awssdk.services.s3.model.GetObjectRequest
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest
-import software.amazon.awssdk.services.s3.model.NoSuchKeyException
+import software.amazon.awssdk.services.s3.model.S3Exception
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
 import software.amazon.awssdk.services.s3.presigner.S3Presigner
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest
@@ -67,11 +67,13 @@ class S3StorageService(
         client.deleteObject(DeleteObjectRequest.builder().bucket(props.bucket).key(key).build())
     }
 
-    override fun exists(key: String): Boolean = try {
-        client.headObject(HeadObjectRequest.builder().bucket(props.bucket).key(key).build())
-        true
-    } catch (_: NoSuchKeyException) {
-        false
+    override fun exists(key: String): Boolean = metadata(key) != null
+
+    override fun metadata(key: String): StoredObject? = try {
+        val head = client.headObject(HeadObjectRequest.builder().bucket(props.bucket).key(key).build())
+        StoredObject(key, head.contentLength(), head.contentType().orEmpty())
+    } catch (e: S3Exception) {
+        if (e.statusCode() == 404) null else throw e
     }
 
     override fun presignedGetUrl(key: String, ttl: Duration): String {

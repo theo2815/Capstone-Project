@@ -73,6 +73,8 @@ class TokenAuthenticator(
             // refresh must land on login with the reason shown, not read like an
             // ordinary expiry.
             if (!refreshed.isSuccessful || auth == null) {
+                // An outage or rate limit does not revoke the photographer's login.
+                if (refreshed.code() !in setOf(401, 403)) return null
                 val err = runCatching {
                     com.google.gson.Gson().fromJson(
                         refreshed.errorBody()?.string(),

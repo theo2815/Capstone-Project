@@ -27,6 +27,7 @@ interface StorageService {
     fun delete(key: String)
 
     fun exists(key: String): Boolean
+    fun metadata(key: String): StoredObject?
 
     fun presignedGetUrl(key: String, ttl: Duration): String
 

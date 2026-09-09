@@ -16,6 +16,11 @@ class UsbEventCaptureController(
     private val manager: UsbManager,
     private val deviceProvider: () -> UsbDevice?,
     private val store: CameraTransferStore,
+    private val awaitDevice: suspend (Long) -> Unit = { delay(it) },
+    private val openCamera: suspend (UsbDevice, Boolean) -> GenericPtpCamera = { device, warm ->
+        CameraDrivers.open(manager, device, live = true, warmUp = warm)
+    },
+    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     suspend fun run(
         owner: String,
@@ -30,19 +35,30 @@ class UsbEventCaptureController(
         store.recover(owner)
         var boundCamera: String? = null
         var started = false
-        var lostAt = System.nanoTime()
+        var lostAt: Long? = nowMs()
+        var reconnectDelay = 2000L
+        var warmedAttachment: String? = null
         val disabledEvents = HashSet<String>()
         while (currentCoroutineContext().isActive) {
             if (!isOwnerActive()) throw PtpException("Sign in to the account that started this shoot.")
             val device = deviceProvider()
             if (device == null) {
                 onReconnecting(true)
-                if (elapsedMs(lostAt) > RECONNECT_MS) throw PtpException("Camera is still disconnected or needs USB permission. Reconnect and start again.")
-                delay(2000)
+                val since = lostAt ?: nowMs().also { lostAt = it }
+                val remaining = RECONNECT_MS - (nowMs() - since)
+                if (remaining <= 0) throw PtpException("Camera is still disconnected or needs USB permission. Reconnect and start again.")
+                awaitDevice(minOf(remaining, 30_000))
                 continue
             }
             try {
-                CameraDrivers.open(manager, device, live = true).use { camera ->
+                val attachment = "${device.deviceName}:${device.deviceId}"
+                openCamera(device, attachment != warmedAttachment).use { camera ->
+                    warmedAttachment = attachment
+                    val sessionStarted = nowMs()
+                    fun healthy() {
+                        // Flapping sessions must not restart the five-minute recovery budget.
+                        if (nowMs() - sessionStarted >= 10_000) { lostAt = null; reconnectDelay = 2000 }
+                    }
                     if (boundCamera != null && camera.cameraKey != boundCamera)
                         throw DifferentCamera()
                     boundCamera = camera.cameraKey
@@ -51,7 +67,7 @@ class UsbEventCaptureController(
                     onLog(CameraDrivers.usbGuidance(device.vendorId))
                     if (camera.capabilities.transientObjects) {
                         watchTransient(camera, owner, eventId, isOwnerActive, onLog,
-                            onReady = { if (!started) { started = true; onStarted() }; onReconnecting(false); lostAt = System.nanoTime() },
+                            onReady = { if (!started) { started = true; onStarted() }; onReconnecting(false); healthy() },
                             onPaused, onCapture)
                         return@use
                     }
@@ -59,7 +75,9 @@ class UsbEventCaptureController(
                     val cache = LinkedHashMap<Long, CameraTransfer>()
                     val eventHandles = LinkedHashSet<Long>()
                     var checkIndex = 0
-                    var lastKeepAlive = System.nanoTime()
+                    var lastKeepAlive = nowMs()
+                    var lastMetadataCheck = nowMs()
+                    var firstScan = true
                     var eventPolling = camera.capabilities.eventPolling && camera.cameraKey !in disabledEvents
                     var formatMessage: String? = null
                     while (currentCoroutineContext().isActive) {
@@ -84,9 +102,13 @@ class UsbEventCaptureController(
                         }
                         refresh.addAll(handles.filter { it !in cache })
                         // Revalidate a bounded slice too: handles can be reused without a USB detach.
-                        if (handles.isNotEmpty()) repeat(minOf(8, handles.size)) {
-                            refresh.add(handles[checkIndex % handles.size]); checkIndex = (checkIndex + 1) % handles.size
+                        if (handles.isNotEmpty() && nowMs() - lastMetadataCheck >= 30_000) {
+                            repeat(minOf(8, handles.size)) {
+                                refresh.add(handles[checkIndex % handles.size]); checkIndex = (checkIndex + 1) % handles.size
+                            }
+                            lastMetadataCheck = nowMs()
                         }
+                        val changed = ArrayList<CameraTransfer>()
                         val freshHandles = handles.filter { it !in cache }.toSet()
                         var newRaw = false
                         var newJpeg = false
@@ -105,11 +127,15 @@ class UsbEventCaptureController(
                                 eventHandles.add(handle)
                             }
                             if (handle in freshHandles && !info.isAssociation) { if (info.isJpeg) newJpeg = true else newRaw = true }
-                            cache[handle] = store.transfer(owner, eventId, camera.cameraKey, handle, info)
+                            val updated = store.transfer(owner, eventId, camera.cameraKey, handle, info)
+                            if (cache[handle]?.key != updated.key) changed.add(updated)
+                            cache[handle] = updated
                         }
                         cache.keys.retainAll(handles.toSet())
-                        val firstBaseline = store.dao.baselineExists(scope) == 0
-                        val rows = store.reconcile(scope, cache.values.toList())
+                        val firstBaseline = firstScan && store.dao.baselineExists(scope) == 0
+                        val rows = if (firstScan || changed.isNotEmpty()) store.reconcile(scope, changed, pendingOnly = true)
+                            else store.dao.pendingForScope(scope)
+                        firstScan = false
                         if (firstBaseline) onLog("Existing photos remain available in card import. New captures are monitored after this baseline.")
                         if (newJpeg) formatMessage = null
                         else if (newRaw && !firstBaseline) formatMessage = "RAW files stay on the camera. Select JPEG or RAW+JPEG for automatic uploads."
@@ -129,23 +155,35 @@ class UsbEventCaptureController(
                                 continue
                             }
                             if (record.retryAfter > System.currentTimeMillis()) continue
+                            if (record.attempts >= CameraTransferStore.MAX_TRANSFER_ATTEMPTS) continue
                             try {
+                                // Never replay a delayed retry against a reused handle with different metadata.
+                                val source = store.transfer(owner, eventId, camera.cameraKey, record.handle, camera.objectInfo(record.handle))
+                                if (source.key != record.key) {
+                                    store.fail(record, "Photo changed at its camera location. Use card import to review.")
+                                    cache.remove(record.handle)
+                                    continue
+                                }
                                 store.save(record) { sink -> camera.readObject(record.handle, sink, record.expectedBytes) }
+                                healthy()
                                 onCapture(record.filename)
                                 onLog("${record.filename} saved on phone and queued.")
                             } catch (e: CancellationException) { throw e }
                             catch (e: LowCameraStorage) {
                                 pauseMessage = e.message; onLog(e.message.orEmpty()); break
                             } catch (e: Exception) {
+                                if (store.dao.get(record.key)?.attempts == record.attempts)
+                                    store.fail(record, e.message ?: "Camera transfer failed.")
                                 onLog("${record.filename}: ${e.message}; retained for retry.")
                                 if (!camera.session.isUsable) throw e
                             }
-                            if (elapsedMs(lastKeepAlive) >= 30_000) { camera.keepAlive(); lastKeepAlive = System.nanoTime() }
+                            if (nowMs() - lastKeepAlive >= 30_000) { camera.keepAlive(); lastKeepAlive = nowMs() }
                         }
-                        if (elapsedMs(lastKeepAlive) >= 30_000) { camera.keepAlive(); lastKeepAlive = System.nanoTime() }
-                        if (waiting.any { it.status == "FAILED" }) onLog("Some camera files need retry. Pending records are preserved.")
+                        if (nowMs() - lastKeepAlive >= 30_000) { camera.keepAlive(); lastKeepAlive = nowMs() }
+                        if (waiting.any { it.attempts >= CameraTransferStore.MAX_TRANSFER_ATTEMPTS })
+                            pauseMessage = "Some photos need attention. Check the camera, then tap Retry; originals remain on the card."
                         onPaused(pauseMessage)
-                        lostAt = System.nanoTime()
+                        healthy()
                         delay(3000)
                     }
                 }
@@ -155,8 +193,11 @@ class UsbEventCaptureController(
             catch (e: Exception) {
                 onReconnecting(true)
                 onLog("${e.message} Reopening the camera; pending files are preserved.")
-                if (elapsedMs(lostAt) >= RECONNECT_MS) throw PtpException("Camera recovery timed out. Check USB mode, cable and permission, then start again.", e)
-                delay(2000)
+                val since = lostAt ?: nowMs().also { lostAt = it }
+                val remaining = RECONNECT_MS - (nowMs() - since)
+                if (remaining <= 0) throw PtpException("Camera recovery timed out. Check USB mode, cable and permission, then start again.", e)
+                delay(minOf(reconnectDelay, remaining))
+                reconnectDelay = minOf(reconnectDelay * 2, 30_000)
             }
         }
     }
@@ -166,11 +207,13 @@ class UsbEventCaptureController(
         onLog: (String) -> Unit, onReady: () -> Unit, onPaused: (String?) -> Unit, onCapture: (String) -> Unit,
     ) {
         onLog("Reading camera + PC JPEG copies. Interrupted buffer transfers require card import.")
+        var idleDelay = 500L
         while (currentCoroutineContext().isActive) {
             if (!isOwnerActive()) throw CameraSetupException("Account changed. Start a new shoot after signing in.")
             val next = camera.nextCapture()
             onReady()
-            if (next == null) { onPaused(null); delay(500); continue }
+            if (next == null) { onPaused(null); delay(idleDelay); idleDelay = minOf(3000, idleDelay * 2); continue }
+            idleDelay = 500
             val (handle, info) = next
             val expectedBytes = info.expectedSize
             if (expectedBytes == null || expectedBytes > CameraTransferStore.MAX_PUBLISH_BYTES)
@@ -192,6 +235,5 @@ class UsbEventCaptureController(
     }
 
     private class DifferentCamera : PtpException("Camera identity changed. Start again to select this camera; previous pending files are preserved.")
-    private fun elapsedMs(since: Long) = (System.nanoTime() - since) / 1_000_000
     private companion object { const val RECONNECT_MS = 5 * 60_000L }
 }

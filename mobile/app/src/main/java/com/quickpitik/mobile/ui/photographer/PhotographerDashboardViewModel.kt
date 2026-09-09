@@ -1429,7 +1429,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         if (cameraConnectionState.value !is CameraConnectionState.Connected) return
         val event = _activeEvent.value ?: return
         val owner = sessionManager.getUserEmail() ?: return
-        if (!canUploadToEvent(event.date)) {
+        if (!canUploadToEvent(event)) {
             _shutterWatchState.value = ShutterWatchState.Error("This event's upload window has closed.")
             return
         }

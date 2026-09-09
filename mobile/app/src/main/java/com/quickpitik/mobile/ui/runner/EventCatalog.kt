@@ -1,7 +1,9 @@
 package com.quickpitik.mobile.ui.runner
 
 import com.quickpitik.mobile.data.remote.EventDto
+import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 
@@ -51,8 +53,15 @@ fun EventDto.displayState(today: LocalDate = LocalDate.now()): EventState = deri
 
 // Photographer upload window: race-day + 3-day grace window (days 0..3).
 // Backend enforces the same window server-side as EVENT_NOT_UPLOADABLE.
-fun canUploadToEvent(date: String, today: LocalDate = LocalDate.now()): Boolean {
+fun canUploadToEvent(date: String, today: LocalDate = LocalDate.now(ZoneId.of("Asia/Manila"))): Boolean {
     val eventDate = runCatching { LocalDate.parse(date) }.getOrNull() ?: return false
     val days = ChronoUnit.DAYS.between(eventDate, today)
     return days in 0L..3L
 }
+
+fun canOwnerUploadToEvent(date: String, today: LocalDate = LocalDate.now(ZoneId.of("Asia/Manila"))): Boolean =
+    runCatching { !today.isAfter(LocalDate.parse(date).plusMonths(1)) }.getOrDefault(false)
+
+fun canUploadToEvent(event: PhotographerEventSummaryDto, today: LocalDate = LocalDate.now(ZoneId.of("Asia/Manila"))): Boolean =
+    if (event.ownedByMe) event.reviewStatus in setOf("approved", "change_pending") && canOwnerUploadToEvent(event.date, today)
+    else canUploadToEvent(event.date, today)

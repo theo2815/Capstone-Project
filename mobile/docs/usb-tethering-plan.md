@@ -2,6 +2,116 @@
 
 Scope: Android USB ingestion into the existing Room/WorkManager/backend pipeline. Preserve physical-shutter Canon capture and on-card originals. Wi-Fi, remote shutter/live view, multi-camera operation, and RAW cloud processing are outside this increment. This repository has no iOS app; this work adds no iPhone USB implementation.
 
+## Continuous auto-upload reliability — 2026-09-09
+
+This increment preserves the September 7 drivers and durable spool. The Second
+Brain's R6 physical-shutter/card-poll evidence and R10-only warm-up supersede older
+notes that called R-series USB shooting impossible. USB is the intended transport:
+leaving USB entirely would disconnect it. The fix is to retain supported live
+camera control and stop with guidance if Canon rejects that setup; generic import
+mode is no longer a silent fallback during a live shoot.
+
+Connection recovery backs off from 2 to 30 seconds, with a five-minute recovery
+budget that only a session healthy for ten seconds resets. Detached cameras wait
+on USB connection state, with bounded timeout checks. A successful R10 attachment
+is warmed once rather than before every reopen. Existing permission generation,
+single-session ownership, camera identity and owner/event snapshots remain in force.
+
+Card scans remain every three seconds because historical R6 EOS events missed
+shots. New/event-signaled handles get metadata immediately; idle metadata checks
+refresh at most eight existing handles every thirty seconds. Only changed sources
+are reconciled into Room, and downloads reread identity before transferring a
+delayed handle. Failed card transfers back off and stop after five attempts until
+Retry; skipped failures cannot hide subsequent photos. Unplugged-camera and failed
+source intent remains durable. Partial byte-range resume is not supported: an
+interrupted camera file is safely retrieved again from its card.
+
+Silent handle reuse without a detach or object event can take a full metadata
+rotation to discover; this interval trades idle camera traffic for detection time.
+Reconnecting or opening card import forces a fresh enumeration. Card-swap behavior
+and sustained shooting throughput are hardware acceptance gates.
+
+Sony's idle buffer checks back off from 0.5 to 3 seconds and drain available frames
+sequentially. Its temporary fixed handle remains deliberately non-replayable after
+an ambiguous transfer; recovery uses the required PC+Camera card backup. These
+limits prevent attributing a later RAM frame to an earlier photo.
+
+Room migration 2 → 3 adds the direct-upload checkpoint and retry deadline without
+discarding queued originals. WorkManager coalesces bursts into one pending drain,
+plus one successor when a drain is running, preserving the final-enqueue race.
+The worker drains FIFO groups with bounded adaptive concurrency, stops a run after
+an outage, and leaves long queues for subsequent runs. Completion order may differ
+within a group; source identity and content hashes provide deduplication. The
+[backend direct-upload contract](../../docs/BACKEND_ARCHITECTURE_ANALYSIS.md#73-photo-ingestion--watermarking-pipeline)
+owns commit idempotency, object validation, retry classification and marketplace
+publication details.
+
+Signed PUT calls are cancellable, share the existing connection pool, and carry no
+API authentication interceptor or signed-URL logging. Hashes computed during
+camera transfer are reused. Transport failures retain originals without consuming
+the five-attempt semantic failure budget; retries are paced by WorkManager rather
+than an immediate loop. Refresh-service outages preserve login. The existing
+Capture Retry action resets exhausted work after the cause is corrected.
+
+Power changes remove upload-concurrency polling, repeated baseline database writes,
+per-frame WorkManager chains, and unchanged notification updates. The foreground
+service releases its wake lock while detached/inactive. Active Canon watching still
+uses its established keep-alive; Stop releases live mode and the USB session. Do
+not infer measured battery savings or guaranteed camera sleep while actively
+watching. Android may defer networking/jobs under [Doze and App Standby](https://developer.android.com/training/monitoring-device-state/doze-standby),
+and OEM process limits still require device testing. Durable capture/upload state
+recovers on the next permitted run; force-stop is not a promise of continuous capture.
+
+Approved owner-event selection now follows the backend's Manila calendar-month
+window, including pre-event uploads. Pending/rejected events stay unavailable;
+admin events keep their existing race-day/grace gate. No new cloud service,
+dependency, camera reset, RAW upload path or AI call was added.
+
+### Validation — reliability increment (2026-09-09)
+
+From `mobile/`, `.\gradlew.bat --offline testDebugUnitTest assembleDebug lintDebug
+compileReleaseKotlin --console=plain` passed: **134 tests, zero failures/errors/skips**,
+debug APK assembly and release Kotlin compilation. Lint: **zero errors, 96 warnings,
+7 informational findings**; dependency/deprecation and incompatible Compose custom
+lint registry findings remain. Reports: `app/build/reports/tests/testDebugUnitTest/`
+and `app/build/reports/lint-results-debug.html`. APK:
+`app/build/outputs/apk/debug/app-debug.apk`.
+
+From `backend/`, `.\gradlew.bat --offline test integrationTest --console=plain`
+passed: **597 unit tests and 67 PostgreSQL integration tests**, zero
+failures/errors/skips. Integration tests use local storage and PostgreSQL 16 in
+Testcontainers, with AI disabled. Reports: `backend/build/reports/tests/`.
+
+New regression evidence includes:
+
+- A simulated 100-shot burst transfers all 100 post-baseline originals; reconnect
+  catches up missed sources without retransferring completed ones. Reused handles
+  are reidentified before transfer. Repeated failed sessions exhaust recovery;
+  exhausted sources require Retry. One minute with 100 idle objects reads 108
+  metadata records, rather than revisiting a slice every three-second scan.
+- One hundred scheduling requests create one pending WorkManager drain. With a
+  running drain they create exactly one successor. Cancellation closes a stalled
+  PUT promptly, retains the original/checkpoint and later commits without another
+  PUT. Lost PUT/commit acknowledgements, Room reopen, storage 503, HTTP 429 and
+  refresh outages recover without redundant multipart delivery or lost retry intent.
+- Four concurrent commits to one slot, and four same-content separate slots,
+  return one photo, increment counters once and retain its original. The real
+  asynchronous watermark worker publishes it LIVE. A later acknowledgement retry
+  after the upload window closes still returns that photo. Wrong-owner IDs and
+  mismatched/empty/oversized objects are rejected by focused service tests.
+
+The initial backend regressions reproduced deletion of a referenced original and
+an existing-ID overwrite before the fix. The full mobile run caught an uncaught
+background scheduling exception after the async enqueue change; handling that
+failure without losing queued intent made the complete suite pass. Existing
+packet, migration, large-queue, format/size, ownership and lifecycle tests also pass.
+
+ADB reports no attached devices. No live R2 bucket upload, physical shutter test,
+real camera sleep/wake or power-saving run, independent card checksum comparison,
+throughput measurement or battery A/B test was performed. Software coverage is
+not production camera certification; complete the physical acceptance matrix below
+on the target camera/phone before an unattended shoot.
+
 ## Compatibility expansion — 2026-09-07 investigation and implementation plan
 
 This section supersedes the foundation's vendor-expansion deferral below. It was written before the expansion's code changes. Hardware observations in the vault are historical evidence, not certification of this revision.
@@ -79,11 +189,11 @@ Source paths below are relative to `app/src/main/java/com/quickpitik/mobile/`.
 |---|---|
 | Attachment and permission | `data/usb/CameraConnectionManager.kt`: selects an attachment, checks actual permission, rejects stale callbacks; explicit denial/retry UI. |
 | Ownership and lifetime | `data/usb/CameraIngestCoordinator.kt`, `service/TetherIngestService.kt`: service-owned jobs, matching start-command handshake, cancellation completion before reuse, one USB owner. Live capture survives dashboard navigation; account-bound event snapshot restores offline. |
-| Protocol and model behavior | `data/usb/ptp/CameraDriver.kt`, `SonyPtpCamera.kt`, `PtpEvent.kt`: generic storage operations, Canon EOS setup/cleanup, Nikon event polling and negotiated Sony PC Remote. R10 warm-up only for `04a9:32f8`; clean unsupported Canon setup opens a fresh generic session. |
+| Protocol and model behavior | `data/usb/ptp/CameraDriver.kt`, `SonyPtpCamera.kt`, `PtpEvent.kt`: generic storage operations, Canon EOS setup/cleanup, Nikon event polling and negotiated Sony PC Remote. R10 warm-up only for `04a9:32f8`; rejected Canon live setup closes with actionable guidance. |
 | Completeness and recovery | `data/usb/ptp/UsbEventCaptureController.kt`, `data/local/CameraTransferStore.kt`: durable baseline plus pending objects; reconcile all handles, periodically refresh existing metadata, retain gaps/failures. Manual selection is saved before transfer. Retry summary survives stopped watches. |
 | Transfer and account boundary | `data/local/CameraTransferStore.kt`, `worker/PhotoUploadWorker.kt`, `data/remote/SessionAuthInterceptor.kt`: generated paths, bounded streaming, fsync/rename, local SHA-256, transactional enqueue, missing-file-safe dedupe, owner-specific draining and authentication refresh. |
 
-Room migration 1 -> 2 preserves existing uploads and adds the camera ledger; exported schema is under `app/schemas/`. Existing UI, backend contracts and upload processing remain the integration path.
+Room migration 1 -> 2 adds the camera ledger; migration 2 -> 3 adds upload checkpoints/retry deadlines. Both preserve existing uploads; exported schemas are under `app/schemas/`. Existing UI and upload processing remain the integration path.
 
 ## Current compatibility boundary
 

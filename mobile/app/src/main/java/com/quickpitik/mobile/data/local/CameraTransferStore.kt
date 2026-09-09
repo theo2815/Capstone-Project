@@ -29,17 +29,17 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
             info.filename, info.expectedSize, if (info.isJpeg && !info.isAssociation) "PENDING" else "EXCLUDED")
     }
 
-    suspend fun reconcile(scope: String, objects: List<CameraTransfer>): List<CameraTransfer> = db.withTransaction {
+    suspend fun reconcile(scope: String, objects: List<CameraTransfer>, pendingOnly: Boolean = false): List<CameraTransfer> = db.withTransaction {
         val first = dao.baselineExists(scope) == 0
         dao.insert(if (first) objects.map { it.copy(status = "BASELINE") } else objects)
         if (first) dao.insertBaseline(CameraBaseline(scope))
-        dao.forScope(scope)
+        if (pendingOnly) dao.pendingForScope(scope) else dao.forScope(scope)
     }
 
     suspend fun fail(record: CameraTransfer, error: String) {
         val current = dao.get(record.key) ?: record
         dao.update(current.copy(status = "FAILED", attempts = current.attempts + 1,
-            retryAfter = System.currentTimeMillis() + minOf(60_000L, 3000L * (current.attempts + 1)), error = error))
+            retryAfter = System.currentTimeMillis() + minOf(60_000L, 3000L shl current.attempts.coerceAtMost(5)), error = error))
     }
 
     /** Persist the entire selection before USB I/O so an interrupted batch can be retried. */
@@ -49,7 +49,7 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
             for (record in records) {
                 val current = dao.get(record.key) ?: continue
                 if (current.status != "QUEUED")
-                    dao.update(current.copy(status = "PENDING", retryAfter = 0, error = null))
+                    dao.update(current.copy(status = "PENDING", attempts = 0, retryAfter = 0, error = null))
             }
         }
     }
@@ -166,6 +166,7 @@ class CameraTransferStore(private val context: Context, private val db: AppDatab
         private val persistence = Mutex()
         // Existing direct-upload contract; RAW publishing needs a backend contract change.
         const val MAX_PUBLISH_BYTES = 25L * 1024 * 1024
+        const val MAX_TRANSFER_ATTEMPTS = 5
         internal fun validate(file: File, expected: Long?) {
             val size = file.length()
             if (size < 4 || size > MAX_PUBLISH_BYTES || (expected != null && size != expected))

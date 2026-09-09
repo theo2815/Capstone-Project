@@ -67,6 +67,9 @@ class LocalFsStorageService(
     }
 
     override fun exists(key: String): Boolean = Files.exists(resolve(key))
+    override fun metadata(key: String): StoredObject? = resolve(key).takeIf { Files.isRegularFile(it) }?.let {
+        StoredObject(key, Files.size(it), Files.probeContentType(it).orEmpty())
+    }
 
     override fun presignedGetUrl(key: String, ttl: Duration): String =
         buildLocalUrl(key, ttl, "GET")

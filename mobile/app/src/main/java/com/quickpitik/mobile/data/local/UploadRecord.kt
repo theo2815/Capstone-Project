@@ -17,4 +17,8 @@ data class UploadRecord(
     @ColumnInfo(defaultValue = "NULL") val contentHash: String? = null,
     @ColumnInfo(defaultValue = "NULL") val sourceKey: String? = null,
     @ColumnInfo(defaultValue = "NULL") val originalFilename: String? = null,
+    @ColumnInfo(defaultValue = "NULL") val directPhotoId: String? = null,
+    @ColumnInfo(defaultValue = "NULL") val directKey: String? = null,
+    @ColumnInfo(defaultValue = "NULL") val directBackend: String? = null,
+    @ColumnInfo(defaultValue = "0") val retryAfter: Long = 0,
 )

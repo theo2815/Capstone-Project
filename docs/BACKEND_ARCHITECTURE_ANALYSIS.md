@@ -285,11 +285,14 @@ Implemented in [PhotoUploadService.kt](file:///c:/Users/USER/Documents/School/4t
 
 ```mermaid
 flowchart LR
-    A["Multipart Upload (JPEG/PNG ≤ 25MB)"] --> B["ImagePixelGuard (Dimension Check)"]
+    A["Multipart Upload (JPEG/PNG/WebP ≤ 25 MiB)"] --> B["ImagePixelGuard (Dimension Check)"]
     B --> C["SHA-256 Original Content Hash"]
     C --> D["Duplicate Check (Per-Photographer)"]
     D --> E["Store Raw Image to S3/Disk"]
     E --> F["Insert Photo Record (Status: PROCESSING)"]
+    O["Direct begin: gates + hash dedup"] --> P["Phone PUT original to presigned S3/R2 slot"]
+    P --> Q["Commit: idempotency + object HEAD validation"]
+    Q --> F
 
     subgraph AsyncWorker["Asynchronous Processing (Off Request Thread)"]
         F -.-> G["PhotoWatermarkTrigger"]
@@ -310,6 +313,35 @@ flowchart LR
 - **EXIF Auto-Orientation:** Uses `metadata-extractor` to check EXIF rotation tags (preventing mobile portrait photos from displaying rotated sideways).
 - **Watermark Resistance:** Applies diagonal wordmark patterns, custom photographer logos, and seed-based geometry derived from `HMAC(seed, photoId)`.
 - **Copyright Verification:** Computes 64-bit DCT perceptual hashes. `POST /public/photos/verify` allows runners or admins to upload screenshots or crops and find the original photographer using Hamming distance comparison (≤ 12 bits).
+
+**Direct upload contract — mobile/backend:**
+
+`POST /api/v1/me/photographer/events/{eventId}/photos/direct` returns `direct`,
+`existing`, or `multipart`. Direct mode issues an expiring PUT URL; the marketplace
+uses that original object, with an asynchronously generated preview. There is no
+second original upload to a separate marketplace store.
+
+`POST /api/v1/me/photographer/events/{eventId}/photos/direct/commit` accepts
+`photoId`, `key`, `contentHash`, `contentType`, and optional positive `sizeBytes`.
+Existing clients may omit size. A new commit checks object HEAD metadata against
+the supported type/size bounds and supplied size/type. The hash remains
+client-asserted; HEAD is not independent byte-checksum verification. Decode/pixel
+validation runs in the watermark worker before public visibility.
+
+A repeated committed ID must match owner, event, key and hash. It returns the
+existing photo even after its event upload window closes and never deletes its
+original. New rows use INSERT, with photo-ID and photographer/hash constraints
+resolved after transaction rollback. Concurrent same-event duplicates return the
+winning photo without incrementing counters again; only a separate losing object
+is eligible for cleanup. Cross-event dedup remains a conflict.
+
+Android persists the slot before PUT and retries commit first after interruption;
+only `UPLOAD_OBJECT_MISSING` starts another transfer. Transient storage failures do
+not fall back to multipart. Network/401/408/429/5xx failures retain originals and
+use WorkManager backoff; `Retry-After` also defers the account queue. Actionable
+validation failures wait for user correction. Full local originals may be replaced
+with previews only after a successful backend response. See
+[mobile capture/recovery and hardware acceptance](../mobile/docs/usb-tethering-plan.md).
 
 **Photographer watermark settings — website/mobile integration:**
 `PUT /api/v1/me/photographer/watermark/settings` takes `opacity`, `scale`,

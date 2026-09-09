@@ -289,7 +289,7 @@ private fun TetherConsoleView(
                 productId = cam.productId,
                 watchState = watchState,
                 latestCaptureFile = recentForEvent.firstOrNull()?.let { File(it.filePath) },
-                canStartWatch = activeEvent?.let { canUploadToEvent(it.date) } == true,
+                canStartWatch = activeEvent?.let { canUploadToEvent(it) } == true,
                 onStartWatch = {
                     ensureNotificationPermission()
                     viewModel.startShutterWatch()
@@ -1041,12 +1041,12 @@ private fun PublicEventPickerList(
                 }
             }
             is EventsState.Success -> {
-                val today = remember { LocalDate.now() }
+                val today = LocalDate.now(java.time.ZoneId.of("Asia/Manila"))
                 val allPickerEvents = remember(state.events, assignedEvents, today) {
                     (state.events + assignedEvents)
                         .distinctBy { it.id }
                         .sortedWith(
-                            compareByDescending<PhotographerEventSummaryDto> { canUploadToEvent(it.date, today) }
+                            compareByDescending<PhotographerEventSummaryDto> { canUploadToEvent(it, today) }
                                 .thenByDescending { it.date }
                         )
                 }
@@ -1116,7 +1116,7 @@ private fun PublicEventPickerList(
                         contentPadding = PaddingValues(bottom = 24.dp)
                     ) {
                         items(allPickerEvents, key = { it.id }) { event ->
-                            val canUpload = canUploadToEvent(event.date)
+                            val canUpload = canUploadToEvent(event)
                             EventPickerCard(
                                 event = event,
                                 onClick = {
@@ -1159,11 +1159,13 @@ private fun EventPickerCard(
 ) {
     val resolvedUrl = RetrofitClient.resolveImageUrl(event.bannerUrl)
     val lifecycle = deriveEventState(event.date)
-    val isUpcoming = lifecycle == EventState.UPCOMING
-    val isClosed = !canUploadToEvent(event.date) && !isUpcoming
-    val isLive = canUploadToEvent(event.date)
+    val isUpcoming = lifecycle == EventState.UPCOMING && !event.ownedByMe
+    val isClosed = !canUploadToEvent(event) && !isUpcoming
+    val isLive = canUploadToEvent(event)
 
     val stateLabel = when {
+        event.ownedByMe && event.reviewStatus == "pending" -> "AWAITING APPROVAL"
+        event.ownedByMe && event.reviewStatus == "rejected" -> "CHANGES REQUESTED"
         isUpcoming -> "OPENS ON ${eventDateLabel(event.date)}"
         isClosed -> "CLOSED"
         deriveEventDisplayState(event.date) == EventState.LIVE -> "LIVE"

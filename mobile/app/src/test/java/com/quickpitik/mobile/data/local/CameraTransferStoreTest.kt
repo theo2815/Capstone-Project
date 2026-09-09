@@ -128,7 +128,7 @@ class CameraTransferStoreTest {
             old.version = 1
         }
         val migrated = Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(AppDatabase.MIGRATION_1_2).allowMainThreadQueries().build()
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3).allowMainThreadQueries().build()
         try {
             val record = requireNotNull(migrated.uploadQueueDao().getRecordById(1))
             assertEquals("/original.jpg", record.filePath)

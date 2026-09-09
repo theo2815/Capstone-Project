@@ -362,4 +362,6 @@ data class DirectUploadCommitRequest(
     val contentHash: String,
     @field:NotBlank
     val contentType: String,
+    @field:Positive
+    val sizeBytes: Long? = null,
 )

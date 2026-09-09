@@ -162,11 +162,14 @@ object RetrofitClient {
             .build()
     }
 
-    // The shared client for requests that aren't to our API — today only the
-    // presigned PUT straight to object storage. Same pool, same timeouts; the
-    // authenticator is inert there (storage answers 403, never 401).
-    val rawClient: OkHttpClient
-        get() = okHttpClient
+    // Reuse the pool, but never send API auth or log a signed storage URL.
+    val rawClient: OkHttpClient by lazy {
+        okHttpClient.newBuilder().apply { interceptors().clear() }
+            .authenticator(okhttp3.Authenticator.NONE)
+            .retryOnConnectionFailure(false)
+            .callTimeout(3, TimeUnit.MINUTES)
+            .build()
+    }
 
     // Separate client for POST /auth/refresh, deliberately WITHOUT the
     // authenticator: the refresh call must never be able to trigger the refresh
@@ -226,13 +229,11 @@ object RetrofitClient {
     // needs the machine-readable error CODE (not just the message parseError
     // returns) must pull it off the thrown HttpException here. Returns null for
     // non-HTTP failures (timeouts, dropped connections) and unparseable bodies.
-    // Reads the buffered errorBody ONCE — a caller must not also invoke
-    // parseError on the same exception, or the second errorBody().string() hits
-    // an already-drained buffer.
+    // Inspect without consuming: upload recovery may pass the same rejection to its caller.
     fun parseHttpError(e: Throwable): ApiError? {
         if (e !is HttpException) return null
         return try {
-            val errorBody = e.response()?.errorBody()?.string()
+            val errorBody = e.response()?.errorBody()?.source()?.peek()?.readUtf8()
             Gson().fromJson(errorBody, ApiErrorEnvelope::class.java)?.errors?.firstOrNull()
         } catch (ex: Exception) {
             null

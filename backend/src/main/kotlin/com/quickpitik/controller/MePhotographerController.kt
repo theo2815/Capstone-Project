@@ -255,6 +255,8 @@ class MePhotographerController(
             photoId = body.photoId,
             key = body.key,
             contentHash = body.contentHash,
+            sizeBytes = body.sizeBytes,
+            contentType = body.contentType,
         )
     }
 

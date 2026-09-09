@@ -15,6 +15,7 @@ import androidx.core.app.ServiceCompat
 import com.quickpitik.mobile.MainActivity
 import com.quickpitik.mobile.data.local.TetherEvents
 import com.quickpitik.mobile.data.usb.CameraIngestCoordinator
+import com.quickpitik.mobile.data.usb.CameraConnectionState
 import com.quickpitik.mobile.data.usb.ShutterWatchState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
@@ -27,13 +28,18 @@ class TetherIngestService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val coordinator by lazy { CameraIngestCoordinator.get(this) }
     private var foreground = false
+    private var lastNotice: String? = null
 
     override fun onCreate() {
         super.onCreate()
         coordinator.attach()
         scope.launch {
-            combine(coordinator.watch, coordinator.cardBusy) { state, busy -> state to busy }.collect { (state, busy) ->
+            combine(coordinator.watch, coordinator.cardBusy, coordinator.cameraManager.state) { state, busy, connection ->
+                Triple(state, busy, connection)
+            }.collect { (state, busy, connection) ->
                 if (foreground) {
+                    if (connection is CameraConnectionState.Connected && (coordinator.isWatching || busy)) acquireWakeLock()
+                    else releaseWakeLock()
                     val notice = when (state) {
                         is ShutterWatchState.Watching -> state.pauseReason ?: if (state.reconnecting)
                             "Reconnecting to camera..." else "${state.captureCount} photos saved on phone"
@@ -61,7 +67,7 @@ class TetherIngestService : Service() {
                 val notice = intent.getStringExtra(EXTRA_NOTICE) ?: DEFAULT_NOTICE
                 try {
                     showNotice(notice)
-                    acquireWakeLock()
+                    if (coordinator.cameraManager.state.value is CameraConnectionState.Connected) acquireWakeLock()
                     if (intent.action == ACTION_START)
                         coordinator.beginCard(scope, intent.getLongExtra("card_generation", -1))
                     if (intent.action == ACTION_WATCH) {
@@ -80,6 +86,7 @@ class TetherIngestService : Service() {
     }
 
     private fun showNotice(notice: String) {
+        if (foreground && lastNotice == notice) return
         ensureChannel()
         if (!foreground) {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(notice),
@@ -89,6 +96,7 @@ class TetherIngestService : Service() {
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .notify(NOTIFICATION_ID, buildNotification(notice))
         }
+        lastNotice = notice
     }
 
     override fun onDestroy() {
