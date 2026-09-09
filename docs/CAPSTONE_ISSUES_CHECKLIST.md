@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 31
-- **✅ Already Solved:** 21 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 26, 27, 28, 31, 32, 33, 34)
-- **⏳ Pending / To Be Worked On:** 10 (Items 16, 17, 19, 21, 22, 23, 24, 25, 29, 30)
+- **✅ Already Solved:** 22 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 26, 27, 28, 29, 31, 32, 33, 34)
+- **⏳ Pending / To Be Worked On:** 9 (Items 16, 17, 19, 21, 22, 23, 24, 25, 30)
 
 ---
 
@@ -202,11 +202,13 @@
     - `website/src/components/cart/checkout-modal.tsx`
     - `website/src/store/cart-store.test.ts`
 
-- [ ] **29. Website — Overly Restrictive `Permissions-Policy` Blocking Camera in Production**
-  - **Issue:** In `next.config.ts:50`, the production security header sets `Permissions-Policy: camera=(), microphone=(), geolocation=()`. In `SelfieSearchPanel.tsx`, runners can match photos via `<input type="file" capture="user">`. Certain mobile browser webviews and future direct camera previews (`getUserMedia`) are blocked by `camera=()`.
+- [x] **29. Website — Overly Restrictive `Permissions-Policy` Blocking Camera in Production**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated `Permissions-Policy` header in `website/next.config.ts` from `camera=()` to `camera=(self), microphone=(), geolocation=()`.
+    - Enabled first-party selfie photo capture / runner selfie matching (`capture="user"` and web camera devices) while continuing to deny untrusted third-party iframe access.
   - **Affected Files:**
     - `website/next.config.ts`
-  - **Action Plan:** Adjust the policy header to `camera=(self)` to permit first-party camera capture while continuing to deny untrusted third-party iframe access.
 
 - [ ] **30. Website — Sub-12px Quiet Studio Comfort Floor ESLint Warnings (121 instances)**
   - **Issue:** ESLint flags 121 warnings for text sizes below the 12px design token floor (`text-[9px]`, `text-[10px]`, `text-[11px]`) across components like `user-menu.tsx`, `onboarding-form.tsx`, `refund-timeline.tsx`, and `selfie-library.tsx`.
