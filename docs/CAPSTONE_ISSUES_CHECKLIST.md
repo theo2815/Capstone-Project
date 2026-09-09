@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 31
-- **✅ Already Solved:** 15 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 31, 32, 33)
-- **⏳ Pending / To Be Worked On:** 16 (Items 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 34)
+- **✅ Already Solved:** 16 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 31, 32, 33, 34)
+- **⏳ Pending / To Be Worked On:** 15 (Items 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
 
 ---
 
@@ -123,12 +123,14 @@
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventsDiscoveryScreen.kt`
   - **Action Plan:** Restrict `EventState.LIVE` (or the "Live now" UI indicator) strictly to the actual day of the event (`days == 0L`), while preserving photographer upload capability window separately if needed.
 
-- [ ] **34. Mobile — Replace City Filtration with Philippine Regions Filtration**
-  - **Issue:** `EventsDiscoveryScreen.kt` currently extracts raw city names from event location strings (`extractCity(location)`). The event location filter should be converted to filter by Philippine Regions (e.g., NCR, Central Visayas - Region VII, CALABARZON - Region IV-A, etc.), allowing events across cities to be grouped and filtered by administrative regions.
+- [x] **34. Mobile — Replace City Filtration with Philippine Regions Filtration**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Defined `PH_REGIONS` dataset and `resolveRegion(location: String)` in `EventCatalog.kt` covering all 17 administrative regions with keyword and province mappings matching the backend canonical regions.
+    - Updated `EventsDiscoveryScreen.kt` to replace raw city extraction with region-based filtering (`regionFilter`, "All regions" dropdown, and matching predicate).
   - **Affected Files:**
-    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventsDiscoveryScreen.kt`
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventCatalog.kt`
-  - **Action Plan:** Implement a region mapping utility for Philippine locations and update the filter dropdown in `EventsDiscoveryScreen.kt` from "All cities" to Philippine Regions.
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventsDiscoveryScreen.kt`
 
 ---
 
