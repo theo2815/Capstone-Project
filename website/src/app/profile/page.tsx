@@ -66,7 +66,7 @@ interface RaceLogEntry {
 
 const JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "selfies", label: "Selfie library" },
-  { id: "race-log", label: "Race log" },
+  { id: "saved-events", label: "Saved events" },
 ];
 
 export default function ProfilePage() {
@@ -202,7 +202,7 @@ function RaceLogSection() {
 
   const trailing = `${log.length} race${log.length === 1 ? "" : "s"}`;
   return (
-    <Slab id="race-log" number="02" title="Race log" trailing={trailing}>
+    <Slab id="saved-events" number="02" title="Saved events" trailing={trailing}>
       {log.length === 0 ? (
         <RaceLogEmpty />
       ) : (
@@ -325,7 +325,7 @@ function RaceLogEmpty() {
         No races yet.
       </p>
       <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
-        Save a race or buy a photo to start your log.
+        Save a race or buy a photo to see your saved events.
       </p>
       <Link
         href={ROUTES.EVENTS}

@@ -6,9 +6,9 @@
 
 ## 📋 Quick Status Overview
 
-- **Total Tasks:** 27
-- **✅ Already Solved:** 12 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
-- **⏳ Pending / To Be Worked On:** 15 (Items 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
+- **Total Tasks:** 31
+- **✅ Already Solved:** 13 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 31)
+- **⏳ Pending / To Be Worked On:** 18 (Items 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 32, 33, 34)
 
 ---
 
@@ -97,6 +97,35 @@
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/*`
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/photographer/*`
   - **Action Plan:** Update deprecated Material3 and Compose calls to current recommendations.
+
+- [x] **31. Mobile & Web — Rebrand "Race Log" / "Race Logs" Terminology to "Saved Events"**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Updated navigation JumpSection and Slab heading in `website/src/app/profile/page.tsx` (`id: "saved-events"`, `label: "Saved events"`, `title="Saved events"`).
+    - Updated toast redirect link in `website/src/components/events/save-button.tsx` to `#saved-events`.
+    - Updated logout modal message in `website/src/app/account/page.tsx` to `"profile, saved events, and orders"`.
+    - Updated runner profile kicker in `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileScreen.kt` to `Kicker("02 · Saved events")`.
+    - Updated signout dialog in `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/AccountSettingsScreen.kt` to reference `"saved events"`.
+
+- [ ] **32. Mobile — Simplify Event Date Filter to 3 Options (Finished, Live, Upcoming)**
+  - **Issue:** In `EventsDiscoveryScreen.kt`, the date filter dropdown exposes 5 options (`Any time`, `Upcoming`, `Live now`, `Recent`, `Archive`). The filter should be simplified to present 3 primary event lifecycle options: `Finished`, `Live`, and `Upcoming` (alongside `All` / default view).
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventsDiscoveryScreen.kt`
+  - **Action Plan:** Update `DateFilter` enum and filtering logic in `EventsDiscoveryScreen.kt` to consolidate `OPEN` (Recent) and `PAST` (Archive) into a single "Finished" status filter option.
+
+- [ ] **33. Mobile — Hide "Live Now" Badge Once Actual Event Date Has Passed**
+  - **Issue:** `deriveEventState()` in `EventCatalog.kt` keeps an event in `EventState.LIVE` for up to 3 days after the event date (`days <= 3L` grace period for photo uploads). This causes events that occurred yesterday or several days ago to still display the "Live now" / "UPLOADING" / "live today" badge on runner discovery tiles. Once the calendar date has passed (`today > eventDate`), the event should no longer display the "Live now" badge and should transition out of the live status.
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventCatalog.kt`
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventsDiscoveryScreen.kt`
+  - **Action Plan:** Restrict `EventState.LIVE` (or the "Live now" UI indicator) strictly to the actual day of the event (`days == 0L`), while preserving photographer upload capability window separately if needed.
+
+- [ ] **34. Mobile — Replace City Filtration with Philippine Regions Filtration**
+  - **Issue:** `EventsDiscoveryScreen.kt` currently extracts raw city names from event location strings (`extractCity(location)`). The event location filter should be converted to filter by Philippine Regions (e.g., NCR, Central Visayas - Region VII, CALABARZON - Region IV-A, etc.), allowing events across cities to be grouped and filtered by administrative regions.
+  - **Affected Files:**
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventsDiscoveryScreen.kt`
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventCatalog.kt`
+  - **Action Plan:** Implement a region mapping utility for Philippine locations and update the filter dropdown in `EventsDiscoveryScreen.kt` from "All cities" to Philippine Regions.
 
 ---
 

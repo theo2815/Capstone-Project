@@ -602,7 +602,7 @@ function DangerSlab({ number }: { number: string }) {
           </p>
           <p className="font-sans text-sm text-slate mt-2 max-w-md">
             You&apos;ll need to sign in again on this browser to access your
-            profile, race log, and orders.
+            profile, saved events, and orders.
           </p>
           <button
             type="button"

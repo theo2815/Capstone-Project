@@ -367,10 +367,10 @@ fun ProfileScreen(
                     }
                 }
 
-                // Race Log Section — saved ∪ purchased, deduped by event (web /profile)
+                // Saved Events Section — saved ∪ purchased, deduped by event (web /profile)
                 item {
                     Column {
-                        Kicker("02 · Race log")
+                        Kicker("02 · Saved events")
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Events you saved or bought photos from.",

@@ -827,7 +827,7 @@ fun AccountSettingsScreen(
             },
             text = {
                 Text(
-                    text = "You will need to sign in again to access your race log, selfies, and purchased photos.",
+                    text = "You will need to sign in again to access your saved events, selfies, and purchased photos.",
                     style = Typography.bodyMedium,
                     color = Slate
                 )
