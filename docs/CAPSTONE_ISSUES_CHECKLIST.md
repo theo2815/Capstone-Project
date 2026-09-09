@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 31
-- **✅ Already Solved:** 18 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 31, 32, 33, 34)
-- **⏳ Pending / To Be Worked On:** 13 (Items 16, 17, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
+- **✅ Already Solved:** 19 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 26, 31, 32, 33, 34)
+- **⏳ Pending / To Be Worked On:** 12 (Items 16, 17, 19, 21, 22, 23, 24, 25, 27, 28, 29, 30)
 
 ---
 
@@ -172,11 +172,15 @@
     - `backend/src/main/kotlin/com/quickpitik/service/profile/ProfileService.kt`
   - **Action Plan:** Detect OAuth accounts (via user profile response), display a Google badge on credentials, and provide a dedicated "Set password" flow for OAuth users that does not require a prior password.
 
-- [ ] **26. Website — Incomplete Base64URL Sanitization in `isTokenExpired()`**
-  - **Issue:** `src/lib/auth.ts:26` parses the JWT payload via `JSON.parse(atob(token.split(".")[1]))`. JWTs use Base64URL encoding (`-` and `_`), which causes standard browser `atob()` to throw a `DOMException`. The catch block catches this and returns `true`, erroneously treating active tokens with URL-safe characters as prematurely expired (in contrast to `use-auth.ts`, which correctly replaced `-` with `+` and `_` with `/`).
+- [x] **26. Website — Incomplete Base64URL Sanitization in `isTokenExpired()`**
+  - **Status:** **ALREADY SOLVED**
+  - **Verification:**
+    - Added `decodeBase64Url()` in `website/src/lib/auth.ts` to replace Base64URL characters (`-` $\rightarrow$ `+`, `_` $\rightarrow$ `/`) and apply standard padding (`==`, `=`).
+    - Updated `isTokenExpired()` to decode JWT payloads through `decodeBase64Url()` without triggering DOMExceptions on valid active tokens.
+    - Added unit test suite in `website/src/lib/auth.test.ts`.
   - **Affected Files:**
     - `website/src/lib/auth.ts`
-  - **Action Plan:** Sanitize the payload substring with `.replace(/-/g, "+").replace(/_/g, "/")` and add proper padding before calling `atob()`.
+    - `website/src/lib/auth.test.ts`
 
 - [ ] **27. Website — Missing App Routes in Photographer `RESERVED_HANDLES` Collision Guard**
   - **Issue:** Photographer handles use a flat root URL namespace (`quickpitik.com/{handle}`). The `RESERVED_HANDLES` set protects system routes from being registered by photographers. However, existing active routes such as `"verify"`, `"verify-email"`, and `"confirm-email-change"` are omitted from `RESERVED_HANDLES`. If a photographer claims `verify`, accessing `/verify` causes route conflicts.
