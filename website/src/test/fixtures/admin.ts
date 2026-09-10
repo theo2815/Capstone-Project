@@ -31,3 +31,11 @@ export const payoutCycle: AdminPayoutCycle = {
   approvedBy: null, secondApprovedBy: null,
   payoutAccount: { method: "gcash", accountNumber: "09000000000", accountName: "Test Photographer", qr: null },
 };
+
+export const adminEvent: import("@/lib/api-admin").AdminEventRow = {
+  id: "event-1", slug: "cebu-race", name: "Cebu Race", date: "2026-09-10",
+  city: "Cebu", location: "Cebu", state: "live", status: "ACTIVE",
+  photoCount: 10, participantCount: 20, pricePerPhoto: 80,
+  createdByHandle: null, createdByName: null, visibility: "public", pricingMode: "paid",
+  watermarkPolicy: "platform", reviewStatus: "approved", reviewNote: null, pendingChange: null,
+};

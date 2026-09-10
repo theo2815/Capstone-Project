@@ -15,7 +15,7 @@ import type { EffectivePhotographerSettings } from "@/lib/admin-photographer-vie
 import { ROUTES } from "@/lib/constants";
 import { safeHttpUrl } from "@/lib/utils";
 import { formatLongDate, formatMemberSince } from "@/lib/format";
-import { useEventCatalog } from "@/lib/event-catalog";
+import { useAdminEvents, EMPTY_ADMIN_EVENTS } from "@/hooks/use-admin-events";
 import {
   BRAND_COLOR_HEX,
   BRAND_COLOR_LABEL,
@@ -60,7 +60,7 @@ export default function AdminPhotographerDetailPage() {
   const raw = Array.isArray(params.handle) ? params.handle[0] : params.handle;
   const handle = (raw ?? "").trim().toLowerCase();
   const view = useAdminPhotographerView(handle);
-  const catalog = useEventCatalog();
+  const catalog = useAdminEvents().data ?? EMPTY_ADMIN_EVENTS;
 
   if (!view) {
     notFound();

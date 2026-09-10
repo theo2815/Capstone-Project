@@ -14,14 +14,13 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import { usePhotographerEvents } from "@/hooks/use-photographer-data";
 import { usePublicEvents } from "@/hooks/use-public-events";
-import { useEventCatalog } from "@/lib/event-catalog";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
   isOwnedEventLive,
   summaryToListEvent,
 } from "@/lib/photographer-events";
 
-// Stable empty-array reference so useEventCatalog's memo doesn't churn while
+// Stable empty catalog while
 // the public events list is loading.
 const EMPTY_SEED: ReadonlyArray<ListEvent> = [];
 
@@ -46,7 +45,7 @@ export default function UploadPickerPage() {
   const gate = useCanUpload();
   const canUpload = gate.kind === "ok";
   const liveEvents = usePublicEvents();
-  const catalog = useEventCatalog(liveEvents ?? EMPTY_SEED);
+  const catalog = liveEvents ?? EMPTY_SEED;
   // Photographer-owned events (V46) that are approved — the owner uploads
   // on any date, so they sit above the date-gated public sections. Unlisted
   // ones never reach the public catalog; this is their only way in.

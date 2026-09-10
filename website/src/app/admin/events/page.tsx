@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Slab } from "@/components/profile-shell";
 import {
   AdminEventCard,
@@ -9,11 +8,9 @@ import {
 } from "@/components/admin/admin-event-card";
 import { AdminEventFormModal } from "@/components/admin/admin-event-form-modal";
 import { Kicker } from "@/components/ui/kicker";
-import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { cn } from "@/lib/utils";
-import { useEventCatalog } from "@/lib/event-catalog";
-import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
-import { useAdminEvents } from "@/hooks/use-admin-data";
+import { useAdminEvents, useAdminEventActions, EMPTY_ADMIN_EVENTS } from "@/hooks/use-admin-events";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import type { EventState, ListEvent } from "@/types/event";
@@ -27,14 +24,6 @@ import type { EventState, ListEvent } from "@/types/event";
 //   day 0..3 (race + 4d)   → Live  (photographer upload window)
 //   day 4..89              → Recent (gallery for sale, no more uploads)
 //   day 90+                → Archive
-//
-// The same `useEventCatalog()` backs /events and /dashboard/upload, so a
-// create/edit/delete here flows into both runner + photographer surfaces.
-
-// Stable empty-array reference so `useEventCatalog`'s memo doesn't churn
-// while the live admin list is loading. Passing a fresh `[]` every render
-// would rebuild the catalog on every paint.
-const EMPTY_SEED: ReadonlyArray<ListEvent> = [];
 
 const SECTIONS: ReadonlyArray<{
   id: string;
@@ -79,15 +68,9 @@ const SECTIONS: ReadonlyArray<{
 ];
 
 export default function AdminEventsPage() {
-  // Live admin list — the source of truth across refreshes. The local
-  // override store layers optimistic submissions / edits / deletes on top
-  // until the next refetch picks them up from the backend.
-  const liveEvents = useAdminEvents();
-  const catalog = useEventCatalog(liveEvents ?? EMPTY_SEED);
-  const createEvent = useAdminEventOverridesStore((s) => s.createEvent);
-  const editEvent = useAdminEventOverridesStore((s) => s.editEvent);
-  const deleteEvent = useAdminEventOverridesStore((s) => s.deleteEvent);
-  const queryClient = useQueryClient();
+  const query = useAdminEvents();
+  const catalog = query.data ?? EMPTY_ADMIN_EVENTS;
+  const { createEvent, editEvent, deleteEvent } = useAdminEventActions();
   const { showToast } = useToast();
   const { confirm } = useConfirmation();
 
@@ -101,12 +84,10 @@ export default function AdminEventsPage() {
     }));
   }, [catalog]);
 
-  // Owner + review state for photographer-owned rows (V46). The catalog
-  // merge narrows rows to ListEvent, so read the extra fields off the raw
-  // admin list by id; admin-created events have no createdBy* and get none.
+  // Owner and review metadata come from the same canonical admin rows.
   const reviewById = useMemo(() => {
     const map = new Map<string, AdminEventReview>();
-    for (const row of liveEvents ?? []) {
+    for (const row of catalog) {
       if (row.createdByHandle === null && row.createdByName === null) continue;
       map.set(row.id, {
         owner: row.createdByHandle
@@ -116,7 +97,7 @@ export default function AdminEventsPage() {
       });
     }
     return map;
-  }, [liveEvents]);
+  }, [catalog]);
 
   const liveCount = byState(catalog, "live").length;
 
@@ -131,8 +112,8 @@ export default function AdminEventsPage() {
     removeCover: boolean;
   }) {
     try {
-      await createEvent({
-        name: payload.name,
+      const ok = await createEvent({
+        title: payload.name,
         location: payload.location,
         date: payload.date,
         pricePerPhoto: payload.pricePerPhoto,
@@ -140,19 +121,11 @@ export default function AdminEventsPage() {
         description: payload.description,
         cover: payload.cover,
       });
-      // Refetch the admin list so the optimistic submission gets replaced
-      // by the canonical backend row on the next paint — and so the row
-      // survives a manual refresh.
-      void queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
+      if (!ok) return;
       setCreateOpen(false);
       showToast({ kind: "success", message: `Created · ${payload.name}` });
-    } catch (err) {
-      // Keep the modal open so the admin can retry without losing the
-      // already-typed fields. ApiError carries the backend's user-facing
-      // message; everything else falls back to a generic copy.
-      const message =
-        err instanceof Error && err.message ? err.message : "Could not create event.";
-      showToast({ kind: "error", message });
+    } catch {
+      // The domain hook reports errors; retain the form for retry.
     }
   }
 
@@ -179,8 +152,8 @@ export default function AdminEventsPage() {
         (editTarget.organizerName ?? "") !== payload.organizerName;
       const descriptionChanged =
         (editTarget.description ?? "") !== payload.description;
-      await editEvent(editTarget.id, {
-        name: payload.name,
+      const ok = await editEvent(editTarget.id, {
+        title: payload.name,
         location: payload.location,
         date: payload.date,
         ...(priceChanged ? { pricePerPhoto: payload.pricePerPhoto } : {}),
@@ -189,15 +162,11 @@ export default function AdminEventsPage() {
         cover: payload.cover,
         removeCover: payload.removeCover,
       });
-      // Refetch so the new presigned cover URL (or the cleared cover) lands
-      // on the next paint — the local override only carries field changes.
-      void queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
+      if (!ok) return;
       setEditTarget(null);
       showToast({ kind: "success", message: `Updated · ${payload.name}` });
-    } catch (err) {
-      const message =
-        err instanceof Error && err.message ? err.message : "Could not update event.";
-      showToast({ kind: "error", message });
+    } catch {
+      // The domain hook reports errors; retain the form for retry.
     }
   }
 
@@ -214,8 +183,8 @@ export default function AdminEventsPage() {
       confirmLabel: "Delete event",
       danger: true,
       onConfirm: async () => {
-        await deleteEvent(event.id);
-        void queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
+        const ok = await deleteEvent(event.id);
+        if (!ok) return;
         showToast({ kind: "info", message: `Deleted · ${event.name}` });
       },
     });
@@ -228,7 +197,14 @@ export default function AdminEventsPage() {
         liveCount={liveCount}
         onCreate={() => setCreateOpen(true)}
       />
-      {grouped.map((section) => {
+      {query.isPending && <p role="status" className="font-sans text-sm text-slate">Loading events…</p>}
+      {query.isError && (
+        <div role="alert" className="space-y-3">
+          <p className="font-sans text-sm text-error">Couldn&apos;t load events. Please try again.</p>
+          <button type="button" onClick={() => void query.refetch()} disabled={query.isFetching} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button>
+        </div>
+      )}
+      {query.data && grouped.map((section) => {
         const noun = section.items.length === 1 ? "event" : "events";
         return (
           <Slab

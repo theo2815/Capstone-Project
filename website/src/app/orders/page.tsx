@@ -34,7 +34,6 @@ import {
   getOrderRefundStatus,
   type OrderRefundStatus,
 } from "@/lib/refund-helpers";
-import { getEventById } from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
@@ -96,14 +95,7 @@ function OrdersBody() {
   if (!user) return null;
 
   const memberSince = formatMemberSince(user.createdAt);
-  const refundEvent = refundOrder
-    ? getEventById(refundOrder.eventId)
-    : undefined;
-  // Live event name lives on the order itself (BE-hydrated). Catalog
-  // fallback only matters for locally-pushed CheckoutModal orders that
-  // haven't been refetched yet.
-  const refundEventName =
-    refundOrder?.eventName ?? refundEvent?.name ?? "—";
+  const refundEventName = refundOrder?.eventName ?? "—";
 
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
@@ -292,12 +284,8 @@ function ReceiptRow({
   onRefundRequest: (order: MockOrder) => void;
   pendingExpand: string | null;
 }) {
-  // Prefer the BE-hydrated event fields on the order itself. The local
-  // EVENT_CATALOG seed is empty, so getEventById() returns undefined for any
-  // real backend order and we'd render "Event archived" for live data.
-  const catalogEvent = getEventById(order.eventId);
-  const eventName = order.eventName ?? catalogEvent?.name ?? null;
-  const eventSlug = order.eventSlug ?? catalogEvent?.slug ?? null;
+  const eventName = order.eventName ?? null;
+  const eventSlug = order.eventSlug ?? null;
   const [expanded, setExpanded] = useState(pendingExpand === order.id);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);

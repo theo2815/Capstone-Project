@@ -4,7 +4,6 @@ import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useUserMediaStore } from "@/store/user-media-store";
-import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
 import { useAdminLegendStore } from "@/store/admin-legend-store";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { useAdminUserStore } from "@/store/admin-user-store";
@@ -68,7 +67,6 @@ export function resetUserScopedStores(): void {
   // command-palette recents. The legend + WS status stores reset via their
   // existing setters since they don't expose a `clear()` action.
   useAdminUserStore.getState().clear();
-  useAdminEventOverridesStore.getState().clear();
   useAdminUsersServerStore.getState().clear();
   useAdminPaletteStore.getState().setOpen(false);
   useAdminPaletteStore.getState().clearRecents();

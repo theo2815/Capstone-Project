@@ -9,7 +9,6 @@ import {
   hideAdminFlag,
   dismissAdminFlag,
   escalateAdminFlag,
-  fetchAdminEvents,
   fetchAdminSalesKpis,
   fetchAdminSalesByEvent,
   type AdminKpis,
@@ -20,7 +19,6 @@ import {
   type AdminSalesRange,
 } from "@/lib/api-admin";
 import type { Flag } from "@/lib/admin-flags";
-import type { AdminEventListArgs, AdminEventRow } from "@/lib/api-admin";
 import type { PaginatedResponse } from "@/types/api";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 
@@ -102,19 +100,6 @@ export function useFlagActions() {
         settle(escalateAdminFlag(flagId, note)),
     };
   }, [qc]);
-}
-
-// ───────────────────────────────────────────── Events catalog
-
-export function useAdminEvents(
-  args: AdminEventListArgs = {},
-): AdminEventRow[] | null {
-  const query = useQuery<AdminEventRow[]>({
-    queryKey: ["admin", "events", args],
-    queryFn: () => fetchAdminEvents(args),
-    staleTime: LIST_STALE_MS,
-  });
-  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Sales

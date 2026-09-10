@@ -18,8 +18,8 @@ import { formatPrice } from "@/lib/utils";
 // from existing mock seeds:
 //   01 KPIs            Backend KPIs, with cycle/dispute fallback
 //   02 Weekly trend    Payout cycles grouped by weekOf
-//   03 Top performers  same, plus EVENT_CATALOG (implied GMV for events)
-//   04 Sales by event  EVENT_CATALOG × per-photo price + dispute join
+//   03 Top performers  same, plus the event catalog (implied GMV for events)
+//   04 Sales by event  the event catalog × per-photo price + dispute join
 //   05 Refund pulse    disputes with refundAmount > 0
 //
 // Per-photo price + cut rate live in lib/platform-economics.ts so this page

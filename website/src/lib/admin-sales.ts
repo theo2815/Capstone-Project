@@ -6,7 +6,7 @@ import {
   PHOTO_PRICE_PHP,
   splitGmv,
 } from "@/lib/platform-economics";
-import { useEventCatalog } from "@/lib/event-catalog";
+import { useAdminEvents, EMPTY_ADMIN_EVENTS } from "@/hooks/use-admin-events";
 import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import {
   useAdminSalesKpisLive,
@@ -176,7 +176,7 @@ export interface SalesEventRow {
 }
 
 export function useSalesByEvent(): SalesEventRow[] {
-  const catalog = useEventCatalog();
+  const catalog = useAdminEvents().data ?? EMPTY_ADMIN_EVENTS;
   const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
 
   const derived = useMemo(() => {

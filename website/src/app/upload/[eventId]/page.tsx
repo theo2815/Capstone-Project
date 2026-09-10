@@ -35,7 +35,6 @@ import {
   canOwnerUploadToEvent,
   canUploadToEvent,
   ownerUploadCloseDate,
-  useEventCatalog,
   uploadDaysRemaining,
 } from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
@@ -65,7 +64,7 @@ const BATCH_LIMIT = 500;
 // hash step already uses below.
 const MAX_CONCURRENT_UPLOADS = 4;
 
-// Stable empty-array reference so useEventCatalog's memo doesn't churn while
+// Stable empty catalog while
 // the public events fetch is in-flight.
 const EMPTY_SEED: ReadonlyArray<ListEvent> = [];
 
@@ -107,7 +106,7 @@ export default function FocusedUploadPage() {
   // and merge admin overrides on top. While the fetch is in flight, render
   // a skeleton — 404 only fires once we know the event truly isn't there.
   const liveEvents = usePublicEvents();
-  const catalog = useEventCatalog(liveEvents ?? EMPTY_SEED);
+  const catalog = liveEvents ?? EMPTY_SEED;
   const catalogEvent = useMemo(
     () => (eventId ? catalog.find((e) => e.id === eventId) : undefined),
     [catalog, eventId],

@@ -667,7 +667,7 @@ export interface CreateAdminEventArgs {
 
 export async function createAdminEvent(
   args: CreateAdminEventArgs,
-): Promise<ListEvent> {
+): Promise<AdminEventRow> {
   const form = new FormData();
   form.append("title", args.title);
   form.append("date", args.date);
@@ -678,7 +678,7 @@ export async function createAdminEvent(
   if (args.description !== undefined)
     form.append("description", args.description);
   if (args.cover) form.append("cover", args.cover);
-  return api.post<ListEvent>("/admin/events", form);
+  return api.post<AdminEventRow>("/admin/events", form);
 }
 
 export interface UpdateAdminEventPatch {
@@ -706,7 +706,7 @@ export interface UpdateAdminEventPatch {
 export async function updateAdminEvent(
   eventId: string,
   patch: UpdateAdminEventPatch,
-): Promise<ListEvent> {
+): Promise<AdminEventRow> {
   const form = new FormData();
   if (patch.title !== undefined) form.append("title", patch.title);
   if (patch.date !== undefined) form.append("date", patch.date);
@@ -720,7 +720,7 @@ export async function updateAdminEvent(
     form.append("description", patch.description);
   if (patch.cover) form.append("cover", patch.cover);
   if (patch.removeCover) form.append("removeCover", "true");
-  return api.fetch<ListEvent>(
+  return api.fetch<AdminEventRow>(
     `/admin/events/${encodeURIComponent(eventId)}`,
     { method: "PATCH", body: form },
   );
