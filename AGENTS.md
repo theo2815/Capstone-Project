@@ -112,11 +112,12 @@ Govern **how** any agent writes code here, and must be satisfied **before the fi
 
 ## Design & Writing Guides (read before the work they cover)
 
-Project guides live in the vault under `Claude Skills/`. **Read the matching guide in full before producing work it covers — they encode the user's standards and override tool defaults (Tailwind/shadcn defaults, "draft from assumptions", etc.).**
+Project guides live in the vault under `Agent Skills/`. **Read the matching guide in full before producing work it covers — they encode the user's standards and override tool defaults (Tailwind/shadcn defaults, "draft from assumptions", etc.).**
 
-- **UI work on `website/` or `desktop/`** → `Claude Skills/Frontend Design.md`.
-- **UI work on `mobile/`** → `Claude Skills/Mobile Design.md`.
-- **Capstone paper (SRS this semester, SDD next)** — phrase-triggered ("the SRS", "draft §X.Y", "review my section", "my paper"): read `Claude Skills/Document Skill.md` in full, then run its pre-draft ritual (workspace `README.md` → `facts/*.md` → `open-questions.md` → `adviser-log.md` → draft). Final SRS is promoted to `Papers-For-Capstone\SRS-QuickPitik.md`.
+- **UI work on `website/` or `desktop/`** → `Agent Skills/Frontend Design.md`.
+- **UI work on `mobile/`** → `Agent Skills/Mobile Design.md`.
+- **Apple-style motion/feel on any surface (`website/`, `desktop/`, `mobile/`)** → `Agent Skills/Apple Design.md`. **Opt-in only** — read it when the user explicitly asks for it; it does not replace the two defaults above.
+- **Capstone paper (SRS this semester, SDD next)** — phrase-triggered ("the SRS", "draft §X.Y", "review my section", "my paper"): read `Agent Skills/Document Skill.md` in full, then run its pre-draft ritual (workspace `README.md` → `facts/*.md` → `open-questions.md` → `adviser-log.md` → draft). Final SRS is promoted to `Papers-For-Capstone\SRS-QuickPitik.md`.
 
 (For Claude these auto-load via `.claude/rules/*`; other agents open the file by path. Same guide, either way.)
 
