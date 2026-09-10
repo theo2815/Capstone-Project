@@ -147,8 +147,9 @@ class ApiClient {
   // `total` is null when the header is absent or unparseable.
   async getWithTotal<T>(
     path: string,
+    signal?: AbortSignal,
   ): Promise<{ data: T; total: number | null }> {
-    const { data, res } = await this.fetchRaw<T>(path, { method: "GET" });
+    const { data, res } = await this.fetchRaw<T>(path, { method: "GET", signal });
     const raw = res.headers.get("X-Total-Count");
     const parsed = raw == null ? NaN : Number(raw);
     return { data, total: Number.isFinite(parsed) ? parsed : null };

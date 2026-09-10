@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { getRunnerUnreadCount } from "@/lib/runner-messages";
-import { useMyRunnerMessages } from "@/lib/me-runner-messages-data";
-import { useRunnerNotificationsWs } from "@/hooks/use-runner-notifications-ws";
+import { useMyRunnerMessages } from "@/hooks/use-inbox-messages";
+import { useInboxNotificationsWs } from "@/hooks/use-inbox-notifications-ws";
 import { RunnerInboxModal } from "@/components/layout/runner-inbox-modal";
 
 // Bell + unread-count badge mounted in <SiteHeader> for authed runners.
@@ -22,15 +22,15 @@ export function RunnerNotificationBell() {
   // Mount BEFORE the early return so the WS stays alive even when the
   // bell hides itself (zero messages, modal closed). Without this a fresh
   // runner never receives the WS push for their first message.
-  useRunnerNotificationsWs(enabled);
-  const { messages } = useMyRunnerMessages(enabled);
+  const connected = useInboxNotificationsWs("RUNNER", enabled);
+  const { messages, error } = useMyRunnerMessages(enabled, connected ? 300_000 : 30_000);
   const [open, setOpen] = useState(false);
 
   const unread = getRunnerUnreadCount(messages);
   const total = messages.length;
 
   if (isLoading || !isAuthenticated || !isRunner) return null;
-  if (total === 0 && !open) return null;
+  if (total === 0 && !open && !error) return null;
 
   return (
     <>
@@ -46,7 +46,7 @@ export function RunnerNotificationBell() {
         {unread > 0 && (
           <span
             aria-hidden="true"
-            className="absolute -top-1 -right-1 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-error px-1 font-mono tnum text-[12px] leading-none text-bone"
+            className="absolute -top-1 -right-1 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-error px-1 font-mono tnum text-[12px] leading-none text-surface"
           >
             {unread > 9 ? "9+" : unread}
           </span>

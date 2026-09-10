@@ -7,8 +7,6 @@ import { useUserMediaStore } from "@/store/user-media-store";
 import { useAdminLegendStore } from "@/store/admin-legend-store";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
-import { useMyPhotographerMessagesStore } from "@/lib/me-photographer-messages-data";
-import { useMyRunnerMessagesStore } from "@/lib/me-runner-messages-data";
 import { resetPhotographerHydrationGuard } from "@/hooks/use-photographer-settings-hydration";
 import { useViewModeStore } from "@/store/view-mode-store";
 
@@ -46,15 +44,7 @@ export function resetUserScopedStores(): void {
   // The hydration guard lives at module level (it must survive DashboardShell
   // remounts) — re-arm it here so the next account hydrates fresh.
   resetPhotographerHydrationGuard();
-  // PF-9 (2026-05-27): the photographer-messages inbox cache survived logout
-  // — next photographer login saw stale messages + unread badge from the
-  // previous account until the first refetch. Same class as the 9 admin-store
-  // leaks closed 2026-05-27 (see admin-flow audit P0).
-  useMyPhotographerMessagesStore.getState().reset();
-  // Same leak, runner side (2026-08-28 audit): PF-9 closed the photographer
-  // inbox only — the runner inbox store kept the previous account's messages
-  // and unread badge until the first refetch.
-  useMyRunnerMessagesStore.getState().reset();
+  // Notification inboxes now live in Query; auth transitions clear that cache.
   useUserMediaStore.getState().clear();
   useOrdersStore.getState().clear();
   usePendingPaymentStore.getState().clear();

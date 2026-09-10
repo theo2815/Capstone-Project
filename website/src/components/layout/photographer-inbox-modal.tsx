@@ -9,9 +9,11 @@ import {
   type PhotographerMessage,
   type PhotographerMessageKind,
 } from "@/lib/photographer-messages";
-import { useMyPhotographerMessages } from "@/lib/me-photographer-messages-data";
+import { useMyPhotographerMessages } from "@/hooks/use-inbox-messages";
+import { useConfirmationStore } from "@/store/confirmation-store";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { formatLongDate } from "@/lib/format";
+import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { cn } from "@/lib/utils";
 
 interface PhotographerInboxModalProps {
@@ -45,9 +47,10 @@ export function PhotographerInboxModal({
   isOpen,
   onClose,
 }: PhotographerInboxModalProps) {
-  const { messages, total, hasMore, loadMore, markRead, markAllRead, remove } =
+  const { messages, total, hasMore, loadMore, markRead, markAllRead, remove, pending, loading, loadingMore, error, actionError, refetch } =
     useMyPhotographerMessages(isOpen);
   const { confirm } = useConfirmation();
+  const confirmationOpen = useConfirmationStore((s) => s.active !== null);
 
   const unreadCount = getUnreadCount(messages);
   const totalLabel = total ?? messages.length;
@@ -62,12 +65,12 @@ export function PhotographerInboxModal({
       danger: true,
     });
     if (!ok) return;
-    void remove(message.id);
+    await remove(message.id);
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Inbox">
-      <div className="flex items-baseline justify-between mb-5">
+    <Modal isOpen={isOpen} onClose={onClose} title="Inbox" escDisabled={confirmationOpen}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2 mb-5">
         <Kicker as="p" tone="soft" tnum>
           {unreadCount > 0
             ? `${unreadCount} unread · ${totalLabel} total`
@@ -76,25 +79,38 @@ export function PhotographerInboxModal({
         {unreadCount > 0 && (
           <button
             type="button"
+            disabled={pending}
             onClick={() => void markAllRead()}
-            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+            className={cn(BTN_GHOST, BTN_SIZE.sm)}
           >
             Mark all read
           </button>
         )}
       </div>
 
-      {messages.length === 0 ? (
+      {actionError && <p role="alert" className="mb-4 text-sm text-error">{actionError}</p>}
+      {error && (
+        <div role="alert" className="mb-4 text-sm text-error">
+          <p>{error}</p>
+          <button type="button" disabled={loading || pending} onClick={() => void refetch()} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
+            Retry
+          </button>
+        </div>
+      )}
+      {loading && messages.length === 0 ? (
+        <p role="status" className="py-8 text-center text-sm text-slate">Loading inbox…</p>
+      ) : messages.length === 0 ? (!error && (
         <p className="font-sans text-sm text-slate-soft py-8 text-center">
           No messages yet. Admin actions on your account will land here.
         </p>
-      ) : (
+      )) : (
         <div className="max-h-[60vh] overflow-y-auto -mx-2">
           <ul className="divide-y divide-line">
             {messages.map((m) => (
               <InboxRow
                 key={m.id}
                 message={m}
+                pending={pending}
                 onMarkRead={() => {
                   if (m.readAt === null) void markRead(m.id);
                 }}
@@ -106,10 +122,11 @@ export function PhotographerInboxModal({
             <div className="mt-3 flex justify-center">
               <button
                 type="button"
+                disabled={loading || pending}
                 onClick={() => void loadMore()}
-                className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+                className={cn(BTN_GHOST, BTN_SIZE.sm)}
               >
-                Load older
+                {loadingMore ? "Loading…" : "Load older"}
               </button>
             </div>
           )}
@@ -120,7 +137,7 @@ export function PhotographerInboxModal({
         <button
           type="button"
           onClick={onClose}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2"
+          className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
         >
           Close
         </button>
@@ -131,50 +148,57 @@ export function PhotographerInboxModal({
 
 interface InboxRowProps {
   message: PhotographerMessage;
+  pending: boolean;
   onMarkRead: () => void;
   onRemove: () => void;
 }
 
-function InboxRow({ message, onMarkRead, onRemove }: InboxRowProps) {
+function InboxRow({ message, pending, onMarkRead, onRemove }: InboxRowProps) {
   const isUnread = message.readAt === null;
   const title = resolveMessageTitle(message);
 
   return (
     <li
-      onClick={onMarkRead}
       className={cn(
-        "px-2 py-4 cursor-pointer transition-colors",
+        "px-2 py-4 transition-colors",
         isUnread ? "bg-bone-deep/40 hover:bg-bone-deep" : "hover:bg-bone-deep/40",
       )}
     >
-      <div className="flex items-baseline justify-between gap-3">
-        <Kicker
-          tone="soft"
-          className={cn("flex items-center gap-2", KIND_TONE[message.kind])}
-        >
-          {isUnread && (
-            <span
-              className="size-1.5 rounded-full bg-fresh shrink-0"
-              aria-label="Unread"
-            />
-          )}
-          {MESSAGE_KIND_LABEL[message.kind]}
-        </Kicker>
-        <Kicker as="time" tone="soft" tnum>
-          {formatLongDate(message.createdAt)}
-        </Kicker>
-      </div>
-      <p
-        className={cn(
-          "font-sans text-base mt-2",
-          isUnread ? "text-ink font-semibold" : "text-ink-soft",
-        )}
+      <button
+        type="button"
+        disabled={pending || !isUnread}
+        onClick={onMarkRead}
+        className={cn("block w-full text-left rounded focus-visible:outline-fresh", pending && "opacity-50 cursor-not-allowed")}
       >
-        {title}
-      </p>
-      <p className="font-sans text-sm text-slate mt-1.5 leading-relaxed">
-        {message.body}
-      </p>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <Kicker
+            tone="soft"
+            className={cn("flex items-center gap-2", KIND_TONE[message.kind])}
+          >
+            {isUnread && (
+              <span
+                className="size-1.5 rounded-full bg-fresh shrink-0"
+                aria-label="Unread"
+              />
+            )}
+            {MESSAGE_KIND_LABEL[message.kind]}
+          </Kicker>
+          <Kicker as="time" tone="soft" tnum>
+            {formatLongDate(message.createdAt)}
+          </Kicker>
+        </div>
+        <p
+          className={cn(
+            "font-sans text-base mt-2",
+            isUnread ? "text-ink font-semibold" : "text-ink-soft",
+          )}
+        >
+          {title}
+        </p>
+        <p className="font-sans text-sm text-slate mt-1.5 leading-relaxed">
+          {message.body}
+        </p>
+      </button>
       <div className="mt-3 flex items-center justify-end">
         <button
           type="button"
@@ -182,8 +206,9 @@ function InboxRow({ message, onMarkRead, onRemove }: InboxRowProps) {
             e.stopPropagation();
             onRemove();
           }}
+          disabled={pending}
           aria-label="Remove notification"
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft hover:text-error transition-colors"
+          className={cn(BTN_GHOST, BTN_SIZE.sm, "hover:text-error")}
         >
           Remove
         </button>
