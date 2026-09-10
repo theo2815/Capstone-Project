@@ -248,7 +248,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
 
   // BE-sourced hydration of the photographer-settings + user-media stores
-  // now lives on DashboardShell via `usePhotographerSettingsHydration` so
+  // now lives on the global AuthHydrator via `usePhotographerSettingsHydration` so
   // every /dashboard/* page sees populated state on mount (not just here).
   // See `hooks/use-photographer-settings-hydration.ts`.
 

@@ -1,11 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
 import { useToast } from "@/hooks/use-toast";
-import { withdrawPhotographerPayout } from "@/lib/api-photographer-earnings";
+import { usePhotographerPayoutActions } from "@/hooks/use-photographer-payout-actions";
 import type { PhotographerPayout } from "@/lib/photographer-mock";
 
 // Confirmation modal for cancelling a held payout request. BE only allows this
@@ -23,23 +22,16 @@ export function WithdrawPayoutModal({
   openRequest: PhotographerPayout | null;
   onClose: () => void;
 }) {
-  const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const { withdraw } = usePhotographerPayoutActions();
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit() {
     if (!openRequest || submitting) return;
     setSubmitting(true);
     try {
-      await withdrawPhotographerPayout(openRequest.id);
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: ["photographer", "payouts", "balance"],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["photographer", "payouts"],
-        }),
-      ]);
+      const ok = await withdraw(openRequest.id);
+      if (!ok) return;
       showToast({
         kind: "success",
         message: "Request cancelled. You can submit a new one when ready.",

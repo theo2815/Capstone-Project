@@ -9,6 +9,7 @@ import { clearTokens, getAccessToken, getRefreshToken } from "@/lib/auth";
 import { resetUserScopedStores } from "@/lib/auth-reset";
 import { captureAuthSession } from "@/lib/auth-session";
 import { refreshAccessToken } from "@/lib/api";
+import { usePhotographerSettingsHydration } from "@/hooks/use-photographer-settings-hydration";
 import { API_BASE_URL } from "@/lib/constants";
 import { mergeCart } from "@/lib/api-cart";
 import { mergeSavedEvents } from "@/lib/api-saved-events";
@@ -16,6 +17,7 @@ import type { ApiResponse } from "@/types/api";
 import type { User } from "@/types/user";
 
 export function AuthHydrator() {
+  usePhotographerSettingsHydration();
   const queryClient = useQueryClient();
   const setUser = useAuthStore((s) => s.setUser);
   const setLoading = useAuthStore((s) => s.setLoading);

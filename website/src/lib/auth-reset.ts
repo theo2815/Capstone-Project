@@ -10,10 +10,10 @@ import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 import { resetPhotographerHydrationGuard } from "@/hooks/use-photographer-settings-hydration";
 import { useViewModeStore } from "@/store/view-mode-store";
 
-// Reset every Zustand store that carries user-scoped data + clears the
-// underlying localStorage slot each one persists into. Call this on every
+// Reset every Zustand store that carries user-scoped data and clear any
+// legacy persistence slots. Call this on every
 // auth transition (login, register, logout) so a fresh authenticated
-// session never inherits the previous user's photographer settings,
+// session never inherits the previous user's photographer draft settings,
 // cart, saved events, orders, selfies, or admin decisions/queue caches.
 //
 // History: the 2026-05-18 audit found that User A's photographer-settings

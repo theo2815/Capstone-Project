@@ -1,16 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useToast } from "@/hooks/use-toast";
-import { ApiError } from "@/lib/api";
-import {
-  requestPhotographerPayout,
-  type PayoutBalanceResponse,
-} from "@/lib/api-photographer-earnings";
+import { usePhotographerPayoutActions } from "@/hooks/use-photographer-payout-actions";
+import { type PayoutBalanceResponse } from "@/lib/api-photographer-earnings";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { PAYOUT_METHOD_LABEL } from "@/store/photographer-settings-store";
 
@@ -30,8 +26,8 @@ export function RequestPayoutModal({
   balance: PayoutBalanceResponse | null;
   onClose: () => void;
 }) {
-  const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const { request } = usePhotographerPayoutActions();
   // Primary account comes from the BE balance response (authoritative), not
   // the client settings store — a stale store primary the DB lacks is what
   // produced the demo's PAYOUT_NO_ACCOUNT on submit.
@@ -42,32 +38,20 @@ export function RequestPayoutModal({
     if (submitting || !primary?.hasQr) return;
     setSubmitting(true);
     try {
-      await requestPhotographerPayout();
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: ["photographer", "payouts", "balance"],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["photographer", "payouts"],
-        }),
-      ]);
+      const ok = await request();
+      if (!ok) return;
       showToast({
         kind: "success",
         message: "Payout request submitted. Admin will review shortly.",
       });
       onClose();
     } catch (err) {
+      // Legacy defensive path: unexpected thrown values from hook callers are
+      // surfaced as a generic error rather than crashing the modal.
       console.error("[payouts] request failed", err);
-      // Surface the backend's specific reason (PAYOUT_NO_ACCOUNT /
-      // PAYOUT_BELOW_MINIMUM / PAYOUT_REQUEST_OPEN — already user-friendly)
-      // instead of a generic line that hides why the request failed.
       showToast({
         kind: "error",
-        message:
-          err instanceof ApiError
-            ? (err.errors[0]?.message ??
-              "Could not submit request. Please try again.")
-            : "Could not submit request. Please try again.",
+        message: "Could not submit request. Please try again.",
       });
     } finally {
       setSubmitting(false);
