@@ -35,6 +35,8 @@ open class GenericPtpCamera(
         physicalShutter = "Unverified; use card import if this USB mode locks the shutter.",
         imageFormats = info.imageFormats,
     )
+    /** Vendor PC-link setup every session needs (browse, import and live alike); nothing on generic PTP. */
+    open fun startSession() {}
     open fun startLive() {}
     open fun events(): List<Long> = session.interruptEvents().filter {
         it.code == Ptp.EV_OBJECT_ADDED ||
@@ -77,10 +79,15 @@ class CanonEosCamera(session: PtpSession, info: PtpDeviceInfo, cameraKey: String
             (!CameraDrivers.cardPollingOnly(info.model) && Ptp.OP_EOS_GET_EVENT in info.operationsSupported),
         physicalShutter = "EOS remote mode with card polling; verify this model and firmware before a shoot.",
     )
-    override fun startLive() {
+    // libgphoto2 (camlibs/ptp2/library.c camera_init) enters remote mode 1 for every EOS it
+    // opens, even for plain file listing: a bare session parks the body on its PC-connection
+    // screen with the shutter dead (R6, 2026-05-26); mode 1 keeps it live (R6/R10, 2026-09-02/04).
+    override fun startSession() {
         session.allowUnknownObjectLength()
         session.eosSetRemoteMode(1)
         remote = true
+    }
+    override fun startLive() {
         session.eosSetEventMode(1)
         eventMode = true
     }
@@ -95,7 +102,13 @@ class CanonEosCamera(session: PtpSession, info: PtpDeviceInfo, cameraKey: String
     override fun close() {
         session.checkCancellation {}
         if (eventMode && session.isUsable) runCatching { session.eosSetEventMode(0) }
-        if (remote && session.isUsable) runCatching { session.eosSetRemoteMode(0) }
+        if (remote && session.isUsable) runCatching {
+            // libgphoto2 config.c camera_unprepare_canon_eos_capture: mode 0 "resets the camera
+            // state", mode 1 "enables camera display". Ending on 0 leaves the body locked on its
+            // PC-connection screen until it is unplugged; ending on 1 hands it back to the photographer.
+            session.eosSetRemoteMode(0)
+            session.eosSetRemoteMode(1)
+        }
         session.close()
     }
 }
@@ -146,7 +159,8 @@ object CameraDrivers {
 
     suspend fun open(manager: UsbManager, device: UsbDevice, live: Boolean = false, warmUp: Boolean = true): GenericPtpCamera {
         val context = currentCoroutineContext()
-        if (live && warmUp && needsWarmUp(device.vendorId, device.productId)) {
+        // Every Canon session now sends a vendor op, and the R10 stalls on its first one after attach.
+        if (warmUp && needsWarmUp(device.vendorId, device.productId)) {
             PtpSession(manager, device).use { warm ->
                 warm.checkCancellation { context.ensureActive() }
                 checkOpen(warm)
@@ -170,16 +184,17 @@ object CameraDrivers {
                 device.vendorId == 0x04b0 || info.manufacturer.startsWith("Nikon", true) -> NikonPtpCamera(session, info, key)
                 else -> GenericPtpCamera(session, info, key)
             }
-            if (isCanon(device.vendorId, info)) session.allowUnknownObjectLength()
-            if (live) {
-                try { driver.startLive() } catch (e: PtpResponseException) {
-                    if (driver is SonyPtpCamera && e.code == Ptp.RC_OPERATION_NOT_SUPPORTED)
-                        throw CameraSetupException("This Sony USB mode rejects PC Remote setup. Select PC Remote or use MTP card import.")
-                    if (driver !is CanonEosCamera || e.code != Ptp.RC_OPERATION_NOT_SUPPORTED) throw e
-                    // Generic import mode can lock the shutter. Never silently switch a live
-                    // shoot to it; the catch below releases the failed session completely.
-                    throw CameraSetupException("Canon rejected live USB setup. Check the camera's USB mode, or stop and use card import after shooting.")
-                }
+            try {
+                driver.startSession()
+                if (live) driver.startLive()
+            } catch (e: PtpResponseException) {
+                if (driver is SonyPtpCamera && e.code == Ptp.RC_OPERATION_NOT_SUPPORTED)
+                    throw CameraSetupException("This Sony USB mode rejects PC Remote setup. Select PC Remote or use MTP card import.")
+                if (driver !is CanonEosCamera || e.code != Ptp.RC_OPERATION_NOT_SUPPORTED) throw e
+                // Generic import mode can lock the shutter. Never silently switch a live
+                // shoot to it; the catch below releases the failed session completely.
+                // Browse/import may carry on in that bare session, as they always did.
+                if (live) throw CameraSetupException("Canon rejected live USB setup. Check the camera's USB mode, or stop and use card import after shooting.")
             }
             if (!driver.capabilities.cardImport && !(live && driver.capabilities.transientObjects))
                 throw CameraSetupException("This USB mode does not expose readable photos. ${usbGuidance(device.vendorId)}")

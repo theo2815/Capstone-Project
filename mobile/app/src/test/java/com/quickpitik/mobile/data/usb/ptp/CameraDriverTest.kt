@@ -32,6 +32,31 @@ class CameraDriverTest {
         assertFalse(CameraDrivers.cardPollingOnly("Canon EOS R6 Mark II"))
     }
 
+    @Test fun `Canon browse session enters remote mode without event mode`() {
+        val transport = ScriptedPtp(ok(0))
+        canon(PtpSession(transport)).startSession()
+        assertEquals(listOf(Ptp.OP_EOS_SET_REMOTE_MODE to 1), transport.commands())
+    }
+
+    @Test fun `Canon close hands the body back in remote mode one`() {
+        val transport = ScriptedPtp(ok(0), ok(1), ok(2), ok(3), ok(4), ok(5), ok(6))
+        val session = PtpSession(transport)
+        val camera = canon(session)
+        session.openSession()
+        camera.startSession()
+        camera.startLive()
+        camera.close()
+        assertEquals(
+            listOf(
+                Ptp.OP_OPEN_SESSION to 1, Ptp.OP_EOS_SET_REMOTE_MODE to 1, Ptp.OP_EOS_SET_EVENT_MODE to 1,
+                Ptp.OP_EOS_SET_EVENT_MODE to 0, Ptp.OP_EOS_SET_REMOTE_MODE to 0, Ptp.OP_EOS_SET_REMOTE_MODE to 1,
+                Ptp.OP_CLOSE_SESSION to null,
+            ),
+            transport.commands(),
+        )
+        assertTrue(transport.closed)
+    }
+
     @Test fun `object identity separates cameras folders and reused handles`() {
         val photo = PtpObjectInfo(0x3801, 100, "IMG_0001.JPG", 1, 10, "20260907T120000")
         assertNotEquals(photo.sourceKey("camera-a", 1), photo.sourceKey("camera-b", 1))
@@ -125,6 +150,11 @@ class CameraDriverTest {
 
     private fun storageCamera(transport: ScriptedPtp) = GenericPtpCamera(PtpSession(transport),
         info("Nikon", listOf(Ptp.OP_GET_STORAGE_IDS, Ptp.OP_GET_OBJECT_HANDLES, Ptp.OP_GET_OBJECT_INFO, Ptp.OP_GET_OBJECT)), "camera")
+    private fun canon(session: PtpSession) =
+        CanonEosCamera(session, info("Canon", listOf(Ptp.OP_EOS_SET_REMOTE_MODE, Ptp.OP_EOS_SET_EVENT_MODE)), "camera")
+    /** (op, first param or null) per command written, in wire order. */
+    private fun ScriptedPtp.commands() = writes.map { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN) }
+        .map { (it.getShort(6).toInt() and 0xffff) to (if (it.limit() >= 16) it.getInt(12) else null) }
     private fun words(vararg values: Int) = ByteBuffer.allocate(values.size * 4).order(ByteOrder.LITTLE_ENDIAN)
         .apply { values.forEach { putInt(it) } }.array()
     private fun data(op: Int, tx: Int, bytes: ByteArray) = PtpWire.container(Ptp.TYPE_DATA, op, tx, bytes)

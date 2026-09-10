@@ -2,6 +2,52 @@
 
 Scope: Android USB ingestion into the existing Room/WorkManager/backend pipeline. Preserve physical-shutter Canon capture and on-card originals. Wi-Fi, remote shutter/live view, multi-camera operation, and RAW cloud processing are outside this increment. This repository has no iOS app; this work adds no iPhone USB implementation.
 
+## Canon remote mode is session-wide and left on at close — 2026-09-11
+
+**Symptom:** the body sits on its "PC connection" screen with the shutter dead during
+card browse/import, and again after Stop until it is unplugged. **Cause:** a bare PTP
+session, or remote mode 0, is that locked state on EOS bodies; only remote mode 1 keeps
+the display and shutter live (R6 2026-05-26 vs 2026-09-02, R10 2026-09-04). libgphoto2
+(`camlibs/ptp2/library.c` `camera_init`; `config.c` `camera_unprepare_canon_eos_capture`)
+sends `SetRemoteMode(1)` for every EOS it opens, even for file listing, and on exit
+sends mode 0 ("resets the camera state") then mode 1 ("enables camera display"). Our
+driver only entered mode 1 for live capture and ended every close on mode 0.
+
+**Change (`CameraDriver.kt`):** `startSession()` runs for every open and sends
+`SetRemoteMode(1)` on Canon; `startLive()` adds only `SetEventMode(1)`; close sends
+`SetEventMode(0)`, `SetRemoteMode(0)`, `SetRemoteMode(1)`, `CloseSession`. The R10
+warm-up now also runs before browse/import, because those sessions send a vendor op
+too. A clean `Operation_Not_Supported` on `SetRemoteMode` keeps browse/import in the
+bare session as before; live still stops with guidance. No other brand path changed:
+the app writes no mode/priority property on any body.
+
+**Brand matrix (USB, Android host, no root, no SDK).** The lock is decided by the USB
+mode chosen on the camera; the host can neither switch it nor talk to a transfer-only mode.
+
+| Brand | Mode that keeps the body shootable | Transfer-only modes (locked by firmware) | Host must not send |
+|---|---|---|---|
+| Canon EOS | PTP with remote mode 1 held; shots to card; host polls the card (`EOS_GetEvent` reports 0/111 body shots on R6) | Bare session / remote mode 0 | `CaptureDestination=host` (Busy until Live View), `RemoteRelease*`, `UILock`, `SetModeDialDisable` |
+| Nikon | MTP/PTP, plain session; gphoto2 tethered capture is documented on Nikon DSLRs; NX Tether/CCP2 expose "Enable Controls on Camera Body" | none known; Z bodies unverified here | `ChangeCameraMode(1)`, `ApplicationMode 0xD1F0=1` (hides the filesystem) |
+| Sony | PC Remote with Save Dest PC+Camera and `PriorityMode 0xD25A` = Camera; frames at handle `0xffffc001` | MTP and Mass Storage (different PID per mode) | `PriorityMode=1`, save-dest or exposure writes |
+| Fujifilm | USB TETHER SHOOTING AUTO (saves to card and pushes); shutter stays on the body | USB CARD READER; FIXED never writes the card | `PriorityMode 0xD207=2` and PC Mode `0xD38C=1` (gphoto2 #570 is exactly that lock) |
+| Panasonic | PC(Tether), body-shutter push unproven; no Android app supports it | PC(Storage) is mass storage (class 8, not probed) | `SetCaptureTarget`, `InitiateCapture` |
+
+Android notes: `MtpDevice` has `readEvent()` (API 24+) but no vendor-opcode API and
+cannot share the interface with a raw connection, so the raw bulk path stays. Canon's
+Content Transfer Professional does this same body-shoot → USB → Android delivery on
+R-series bodies with `Photo Import/Remote Control`, so the workflow has an official precedent.
+
+**Hardware gate (R6 and R10, before any "device-verified" claim or copy change):**
+browse the card and press the shutter mid-browse (must fire); Start → shoot → Stop →
+press the shutter without unplugging (must fire, normal screen); Start again without a
+replug (first frame must arrive); R10 first browse after attach (warm-up now covers it).
+If a restart after Stop fails only because of the final mode 1, revert that one line.
+EOS M / PowerShot bodies use remote mode `0x15` in libgphoto2 and are untested here.
+
+Validation (2026-09-11): from `mobile/`, `.\gradlew.bat --offline testDebugUnitTest compileDebugKotlin --console=plain` —
+BUILD SUCCESSFUL, **148 tests, 0 failures/errors/skips** (146 existing + 2 new scripted-PTP
+cases). ADB listed no device; nothing above is hardware-certified until the gate is run.
+
 ## Phone storage management — 2026-09-09
 
 **Recommendation implemented:** monitor the internal tether spool, keep originals
