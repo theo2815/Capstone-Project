@@ -24,15 +24,29 @@ internal interface PtpTransport : Closeable {
 
 /** Discovery and opening must agree on an interface that can actually carry PTP. */
 internal object UsbPtpInterfaces {
-    fun find(device: UsbDevice): UsbInterface? = find((0 until device.interfaceCount).map(device::getInterface))
-    fun find(interfaces: List<UsbInterface>): UsbInterface? = interfaces.filter { iface ->
-        iface.interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE &&
-            listOf(UsbConstants.USB_DIR_IN, UsbConstants.USB_DIR_OUT).all { direction ->
-                (0 until iface.endpointCount).any { i -> iface.getEndpoint(i).let {
-                    it.type == UsbConstants.USB_ENDPOINT_XFER_BULK && it.direction == direction
-                } }
-            }
-    }.minByOrNull { it.alternateSetting }
+    /** Camera makers whose bodies may expose PTP on a vendor-specific interface class. */
+    internal val cameraVendors = setOf(0x04a9, 0x04b0, 0x054c, 0x04cb, 0x04da, 0x07b4, 0x0a17, 0x25fb, 0x1a98, 0x1003, 0x2672)
+    private val ptpName = Regex("""(?i)\b(PTP|MTP|still image)\b""")
+
+    fun find(device: UsbDevice): UsbInterface? {
+        val interfaces = (0 until device.interfaceCount).map(device::getInterface)
+        return find(interfaces) ?: findVendorSpecific(interfaces, device.vendorId in cameraVendors || namesPtp(device))
+    }
+    fun find(interfaces: List<UsbInterface>): UsbInterface? = interfaces
+        .filter { it.interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE && hasBulkPair(it) }.minByOrNull { it.alternateSetting }
+    /** Assumption: a vendor-class interface with a bulk pair on a camera VID (or one named PTP/MTP) carries PTP. Nothing else is probed. */
+    fun findVendorSpecific(interfaces: List<UsbInterface>, trusted: Boolean): UsbInterface? = if (!trusted) null else interfaces
+        .filter { it.interfaceClass == UsbConstants.USB_CLASS_VENDOR_SPEC && hasBulkPair(it) }.minByOrNull { it.alternateSetting }
+
+    private fun hasBulkPair(iface: UsbInterface) = listOf(UsbConstants.USB_DIR_IN, UsbConstants.USB_DIR_OUT).all { direction ->
+        (0 until iface.endpointCount).any { i -> iface.getEndpoint(i).let {
+            it.type == UsbConstants.USB_ENDPOINT_XFER_BULK && it.direction == direction
+        } }
+    }
+    private fun namesPtp(device: UsbDevice) = runCatching {
+        (listOfNotNull(device.productName) + (0 until device.interfaceCount).mapNotNull { device.getInterface(it).name })
+            .any { ptpName.containsMatchIn(it) }
+    }.getOrDefault(false)
 }
 
 internal class AndroidPtpTransport(manager: UsbManager, device: UsbDevice) : PtpTransport {

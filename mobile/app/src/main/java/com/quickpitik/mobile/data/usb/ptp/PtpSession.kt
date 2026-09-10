@@ -76,6 +76,10 @@ class PtpSession internal constructor(private val transport: PtpTransport) : Clo
     fun eosGetObjectTo(handle: Long, sink: OutputStream, expectedSize: Long? = null): Long =
         wire.objectTo(Ptp.OP_EOS_GET_OBJECT, handle, sink, expectedSize)
     fun getThumb(handle: Long): ByteArray = wire.data(Ptp.OP_GET_THUMB, handle.toInt())
+    fun getDevicePropValueU16(code: Int): Int? = wire.data(Ptp.OP_GET_DEVICE_PROP_VALUE, code)
+        .takeIf { it.size >= 2 }?.let { (it[0].toInt() and 0xff) or ((it[1].toInt() and 0xff) shl 8) }
+    fun setDevicePropValueU16(code: Int, value: Int) = wire.sendData(
+        Ptp.OP_SET_DEVICE_PROP_VALUE, byteArrayOf((value and 0xff).toByte(), ((value shr 8) and 0xff).toByte()), code)
     private fun simple(op: Int, vararg params: Int) = PtpWire.requireOk(wire.response(op, *params))
 
     private fun parseUint32Array(data: ByteArray): List<Long> {

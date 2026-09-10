@@ -26,6 +26,14 @@ class UsbPtpInterfacesTest {
         assertNull(UsbPtpInterfaces.find(listOf(iface(0, 6, emptyList()))))
     }
 
+    @Test fun `vendor-class bulk interface is accepted only for a trusted camera device`() {
+        val vendor = iface(0, 255, listOf(endpoint(0x81), endpoint(0x02)))
+        assertSame(vendor, UsbPtpInterfaces.findVendorSpecific(listOf(vendor), trusted = true))
+        assertNull(UsbPtpInterfaces.findVendorSpecific(listOf(vendor), trusted = false))
+        assertNull(UsbPtpInterfaces.findVendorSpecific(listOf(iface(0, 255, listOf(endpoint(0x81)))), trusted = true))
+        assertNull(UsbPtpInterfaces.find(listOf(vendor)))
+    }
+
     private fun endpoint(address: Int): UsbEndpoint = ReflectionHelpers.callConstructor(UsbEndpoint::class.java,
         ClassParameter.from(Int::class.javaPrimitiveType!!, address),
         ClassParameter.from(Int::class.javaPrimitiveType!!, 2),

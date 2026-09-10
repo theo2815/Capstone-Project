@@ -5,7 +5,12 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /** Read-only SDIO ingest; never changes camera priority, save destination or exposure. */
-class SonyPtpCamera(session: PtpSession, info: PtpDeviceInfo, cameraKey: String) : GenericPtpCamera(session, info, cameraKey) {
+class SonyPtpCamera(
+    session: PtpSession, info: PtpDeviceInfo, cameraKey: String,
+    quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model),
+) : GenericPtpCamera(session, info, cameraKey, quirks) {
+    override val liveNeedsVendorSetup get() = true
+    override val vendorRejectedMessage get() = "This Sony USB mode rejects PC Remote setup. Select PC Remote or use MTP card import."
     private var operations = info.operationsSupported.toSet()
     private var properties = info.devicePropertiesSupported.toSet()
     private var version = 0
@@ -13,6 +18,7 @@ class SonyPtpCamera(session: PtpSession, info: PtpDeviceInfo, cameraKey: String)
     override val capabilities get() = super.capabilities.copy(
         transientObjects = ready,
         physicalShutter = "Sony PC Remote protocol ${version / 100}: camera + PC JPEG copies; verify card backup and physical shutter before a shoot.",
+        assumptions = listOf("PC Remote with Camera priority and PC+Camera saving keeps the body shutter usable (Sony help guide; unverified here). No priority or save-destination writes are sent."),
     )
 
     override fun startLive() {

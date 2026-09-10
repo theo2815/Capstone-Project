@@ -32,14 +32,31 @@ class CameraDriverTest {
         assertFalse(CameraDrivers.cardPollingOnly("Canon EOS R6 Mark II"))
     }
 
-    @Test fun `Canon browse session enters remote mode without event mode`() {
-        val transport = ScriptedPtp(ok(0))
-        canon(PtpSession(transport)).startSession()
-        assertEquals(listOf(Ptp.OP_EOS_SET_REMOTE_MODE to 1), transport.commands())
+    @Test fun `Canon browse session enters remote mode then re-reads capabilities without event mode`() {
+        val transport = ScriptedPtp(ok(0), data(Ptp.OP_GET_DEVICE_INFO, 1, deviceInfoBytes("Canon EOS R6")), ok(1))
+        val camera = canon(PtpSession(transport))
+        camera.startSession()
+        assertEquals(listOf(Ptp.OP_EOS_SET_REMOTE_MODE to 1, Ptp.OP_GET_DEVICE_INFO to null), transport.commands())
+        assertEquals("Canon EOS R6", camera.info.model)
+    }
+
+    @Test fun `quirk table mirrors libgphoto2 for Canon families and Nikon 1`() {
+        assertEquals(0x15, CameraQuirks.forCamera(0x04a9, 0x32c5, "Canon EOS M50").eosRemoteMode)
+        assertEquals(1, CameraQuirks.forCamera(0x04a9, 0, "Canon EOS M6 Mark II").eosRemoteMode)
+        assertEquals(0x11, CameraQuirks.forCamera(0x04a9, 0, "Canon PowerShot SX720 HS").eosRemoteMode)
+        assertEquals(CameraQuirks(), CameraQuirks.forCamera(0x054c, 0x0da7, "ILCE-7M4"))
+        assertFalse(CameraQuirks.forCamera(0, 0, "Canon EOS R6").vendorEvents)
+        assertTrue(CameraQuirks.forCamera(0, 0, "Canon EOS R6 Mark II").vendorEvents)
+        assertTrue(CameraQuirks.forCamera(0x04a9, 0x32f8, "").warmUp)
+        assertFalse(CameraQuirks.forCamera(0, 0, "NIKON 1 J4").vendorEvents)
+        val transport = ScriptedPtp(ok(0), data(Ptp.OP_GET_DEVICE_INFO, 1, deviceInfoBytes("Canon EOS M50")), ok(1))
+        canon(PtpSession(transport), CameraQuirks.forCamera(0x04a9, 0x32c5, "Canon EOS M50")).startSession()
+        assertEquals(Ptp.OP_EOS_SET_REMOTE_MODE to 0x15, transport.commands().first())
     }
 
     @Test fun `Canon close hands the body back in remote mode one`() {
-        val transport = ScriptedPtp(ok(0), ok(1), ok(2), ok(3), ok(4), ok(5), ok(6))
+        val transport = ScriptedPtp(ok(0), ok(1), data(Ptp.OP_GET_DEVICE_INFO, 2, deviceInfoBytes("Canon EOS R6")), ok(2),
+            ok(3), ok(4), ok(5), ok(6), ok(7))
         val session = PtpSession(transport)
         val camera = canon(session)
         session.openSession()
@@ -48,13 +65,37 @@ class CameraDriverTest {
         camera.close()
         assertEquals(
             listOf(
-                Ptp.OP_OPEN_SESSION to 1, Ptp.OP_EOS_SET_REMOTE_MODE to 1, Ptp.OP_EOS_SET_EVENT_MODE to 1,
+                Ptp.OP_OPEN_SESSION to 1, Ptp.OP_EOS_SET_REMOTE_MODE to 1, Ptp.OP_GET_DEVICE_INFO to null, Ptp.OP_EOS_SET_EVENT_MODE to 1,
                 Ptp.OP_EOS_SET_EVENT_MODE to 0, Ptp.OP_EOS_SET_REMOTE_MODE to 0, Ptp.OP_EOS_SET_REMOTE_MODE to 1,
                 Ptp.OP_CLOSE_SESSION to null,
             ),
             transport.commands(),
         )
         assertTrue(transport.closed)
+    }
+
+    @Test fun `Fujifilm priority is handed back to the camera only when it reads USB`() {
+        val fuji = info("FUJIFILM", listOf(Ptp.OP_GET_OBJECT_HANDLES, Ptp.OP_GET_OBJECT_INFO, Ptp.OP_GET_OBJECT))
+            .copy(devicePropertiesSupported = listOf(Ptp.FUJI_DPC_PRIORITY_MODE))
+        val usb = ScriptedPtp(data(Ptp.OP_GET_DEVICE_PROP_VALUE, 0, byteArrayOf(2, 0)), ok(0), ok(1))
+        FujiPtpCamera(PtpSession(usb), fuji, "camera").startSession()
+        assertEquals(listOf(Ptp.OP_GET_DEVICE_PROP_VALUE to Ptp.FUJI_DPC_PRIORITY_MODE,
+            Ptp.OP_SET_DEVICE_PROP_VALUE to Ptp.FUJI_DPC_PRIORITY_MODE), usb.commands())
+        assertArrayEquals(byteArrayOf(1, 0), usb.writes.last().copyOfRange(12, 14))
+        val camera = ScriptedPtp(data(Ptp.OP_GET_DEVICE_PROP_VALUE, 0, byteArrayOf(1, 0)), ok(0))
+        FujiPtpCamera(PtpSession(camera), fuji, "camera").startSession()
+        assertEquals(1, camera.commands().size)
+        val silent = ScriptedPtp()
+        FujiPtpCamera(PtpSession(silent), fuji.copy(devicePropertiesSupported = emptyList()), "camera").startSession()
+        assertTrue(silent.writes.isEmpty())
+    }
+
+    @Test fun `vendor object-added events are accepted only by their adapter`() {
+        fun transport(code: Int) = ScriptedPtp().apply { interrupts.add(PtpWire.container(Ptp.TYPE_EVENT, code, 0, words(42))) }
+        assertEquals(listOf(42L), PanasonicPtpCamera(PtpSession(transport(Ptp.EV_PANASONIC_OBJECT_ADDED_SDRAM)), info("Panasonic", emptyList()), "camera").events())
+        assertEquals(listOf(42L), FujiPtpCamera(PtpSession(transport(Ptp.EV_FUJI_OBJECT_ADDED)), info("FUJIFILM", emptyList()), "camera").events())
+        assertTrue(GenericPtpCamera(PtpSession(transport(Ptp.EV_PANASONIC_OBJECT_ADDED_SDRAM)), info("Other", emptyList()), "camera").events().isEmpty())
+        assertEquals(listOf(42L), GenericPtpCamera(PtpSession(transport(Ptp.EV_OBJECT_ADDED)), info("Other", emptyList()), "camera").events())
     }
 
     @Test fun `object identity separates cameras folders and reused handles`() {
@@ -150,10 +191,19 @@ class CameraDriverTest {
 
     private fun storageCamera(transport: ScriptedPtp) = GenericPtpCamera(PtpSession(transport),
         info("Nikon", listOf(Ptp.OP_GET_STORAGE_IDS, Ptp.OP_GET_OBJECT_HANDLES, Ptp.OP_GET_OBJECT_INFO, Ptp.OP_GET_OBJECT)), "camera")
-    private fun canon(session: PtpSession) =
-        CanonEosCamera(session, info("Canon", listOf(Ptp.OP_EOS_SET_REMOTE_MODE, Ptp.OP_EOS_SET_EVENT_MODE)), "camera")
-    /** (op, first param or null) per command written, in wire order. */
+    private fun canon(session: PtpSession, quirks: CameraQuirks = CameraQuirks()) =
+        CanonEosCamera(session, info("Canon", listOf(Ptp.OP_EOS_SET_REMOTE_MODE, Ptp.OP_EOS_SET_EVENT_MODE)), "camera", quirks)
+    private fun deviceInfoBytes(model: String) = ByteBuffer.allocate(256).order(ByteOrder.LITTLE_ENDIAN).apply {
+        putShort(100); putInt(6); putShort(100); put(0); putShort(0)
+        repeat(5) { putInt(0) }
+        for (value in listOf("Canon", model, "1.0", "serial")) {
+            put((value.length + 1).toByte())
+            value.forEach { putShort(it.code.toShort()) }; putShort(0)
+        }
+    }.let { it.array().copyOf(it.position()) }
+    /** (op, first param or null) per command container written, in wire order. */
     private fun ScriptedPtp.commands() = writes.map { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN) }
+        .filter { it.getShort(4).toInt() == Ptp.TYPE_COMMAND }
         .map { (it.getShort(6).toInt() and 0xffff) to (if (it.limit() >= 16) it.getInt(12) else null) }
     private fun words(vararg values: Int) = ByteBuffer.allocate(values.size * 4).order(ByteOrder.LITTLE_ENDIAN)
         .apply { values.forEach { putInt(it) } }.array()

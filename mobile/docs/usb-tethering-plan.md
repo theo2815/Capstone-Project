@@ -2,6 +2,60 @@
 
 Scope: Android USB ingestion into the existing Room/WorkManager/backend pipeline. Preserve physical-shutter Canon capture and on-card originals. Wi-Fi, remote shutter/live view, multi-camera operation, and RAW cloud processing are outside this increment. This repository has no iOS app; this work adds no iPhone USB implementation.
 
+## Model-agnostic compatibility layer — 2026-09-11 (phase 2)
+
+Goal: support bodies we cannot test by building on standards and documented vendor
+behaviour, and make a new model a table row rather than a core change. Every
+behaviour below that is not hardware-verified is logged at watch start as
+"Assumed, not verified on this body: …" so the capture log separates the two.
+
+**Detection.** Class 6 (still image) with a bulk pair stays first. New fallback: a
+vendor-specific (0xFF) interface with a bulk pair is accepted when the VID is a known
+camera maker (`UsbPtpInterfaces.cameraVendors`) or the product/interface name says
+PTP/MTP. Assumption: no confirmed body needs this today; it exists so such a body
+is not rejected at the descriptor. Mass storage (8) and UVC (14) are still refused
+with guidance.
+
+**Session ladder (`CameraDrivers.open()`), the same for every body.** Identify →
+adapter chosen from advertised operations, never the VID alone → `startSession()`
+(vendor PC-link setup) → `startLive()` if watching → capabilities re-read after setup
+(the op set can change, libgphoto2: EOS M2). A clean vendor rejection degrades to
+standard PTP with a logged warning, except where the adapter declares that shooting
+depends on the setup (Canon remote mode, Sony PC Remote): those stop with guidance
+rather than silently locking the shutter. Unknown-length data phases are accepted for
+every vendor, bounded by ObjectInfo size and the transfer limit.
+
+**Quirk table (`CameraQuirks.kt`).** Demonstrated exceptions only, matched by VID:PID
+or model regex, first match wins: EOS R6/R10 (vendor events off), R10 (warm-up),
+EOS M / PowerShot SX remote mode 0x15 and SX720/SX600 0x11 (libgphoto2 values,
+untested here), M6 Mark II regular, Nikon 1 (vendor events off). Unlisted bodies get
+defaults plus the adaptive checks.
+
+**Adapters.** Canon (remote mode from the table, left on at close), Nikon (GetEventEx →
+GetEvent, no control-mode writes), Sony (read-only SDIO, refuses without PC+Camera
+and Camera priority), **Fujifilm** (new: accepts the Fuji ObjectAdded code; reads
+Priority Mode and, only if it says USB, sets it back to Camera — the libgphoto2 fix
+for gphoto2 #570's locked X-T3 shutter; nothing is written otherwise), **Panasonic**
+(new: accepts the LUMIX card and SDRAM ObjectAdded codes), generic for everything else
+(Olympus/OM, Pentax/Ricoh, Leica, Sigma, GoPro, phones) with per-VID guidance.
+
+**Adaptive event sources (live loop).** The 3-second card scan remains the ground truth.
+A vendor/interrupt event source is disabled for the attachment when it errors (as
+before) and now also when it proves unproductive: ten card-detected new JPEGs with
+zero announced by events. This replaces per-model allowlisting for bodies we have not
+seen; the R6/R10 rows stay because their evidence is measured.
+
+**Deliberately not done.** USB mass-storage import (Panasonic PC(Storage), old Nikon
+Mass Storage): needs a Storage Access Framework picker, a UI increment. Sony priority
+or save-destination writes: they would take controls away from the body. Canon capture
+destination, Nikon ApplicationMode, Fuji PC Mode 0xD38C: all host-control switches.
+EOS M values are table rows, not tested code paths.
+
+Validation (2026-09-11, phase 2): from `mobile/`, `.\gradlew.bat --offline testDebugUnitTest compileDebugKotlin --console=plain` —
+BUILD SUCCESSFUL, **153 tests, 0 failures/errors/skips** (148 + 5 new: quirk table and EOS M value, Fuji priority guard,
+vendor event acceptance, vendor-class interface fallback, adaptive event disablement). No device attached; every
+non-Canon adapter and the fallback are software-verified only.
+
 ## Canon remote mode is session-wide and left on at close — 2026-09-11
 
 **Symptom:** the body sits on its "PC connection" screen with the shutter dead during

@@ -52,6 +52,28 @@ class UsbEventCaptureControllerTest {
         "owner", "event", { true }, {}, {}, {}, {}, capture,
     )
 
+    @Test fun `camera events that never announce new photos are disabled after ten card-detected shots`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        try {
+            val store = CameraTransferStore(context, db)
+            var scans = 0
+            var eventCalls = 0
+            val camera = object : Camera({ scans++; if (scans == 1) listOf(1) else (1L..scans.toLong()).toList() }) {
+                override val capabilities get() = super.capabilities.copy(eventPolling = true)
+                override fun events(): List<Long> { eventCalls++; return emptyList() }
+            }
+            val device = Shadow.newInstanceOf(UsbDevice::class.java)
+            val controller = UsbEventCaptureController(context.getSystemService(Context.USB_SERVICE) as UsbManager,
+                { device }, store, openCamera = { _, _ -> camera }, nowMs = { testScheduler.currentTime })
+            var captured = 0
+            try { watch(controller) { if (++captured == 14) throw CancellationException("Shoot finished") } }
+            catch (_: CancellationException) { }
+            assertTrue("scans=$scans", scans >= 14)
+            assertEquals(11, eventCalls)
+        } finally { db.close() }
+    }
+
     @Test fun `live watch pauses before reading a full phone and resumes the same photo after cleanup`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
