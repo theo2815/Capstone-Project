@@ -396,7 +396,21 @@ trash/restore updates adjust both active counters atomically; migration V60
 repairs previous drift. Mobile refreshes retain cached events so an open gallery
 is not dismissed while counts reload, even after a partially completed action.
 
-Photographer ZIPs stream originals one at a time. A read failure propagates and
+`GET /api/v1/me/photographer/photos/{photoId}/download` returns a storage URL
+signed with `Content-Disposition: attachment`; clients must not append unsigned
+response-header overrides. The website reuses `savePhoto` for native browser saves.
+
+`POST /api/v1/me/photographer/events/{eventId}/download-bundle` mints the existing
+short-lived, photographer/event-scoped capability. `GET` of its returned URL
+downloads all active originals, independently of gallery pagination. To download
+a selection, submit `POST` to the same URL as `application/x-www-form-urlencoded`
+with one comma-separated `photoIds` field. This keeps large selections out of the
+URL and streams to the browser download manager without buffering a ZIP in JS.
+Every selected ID must be active and belong to this photographer/event; an empty
+or unavailable selection fails before streaming. One entry returns an image;
+multiple entries return a ZIP. Existing GET callers remain compatible.
+
+Photographer ZIPs stream originals one at a time without recompressing images. A read failure propagates and
 does not finalize a misleading partial archive. The streaming timeout is
 configured by `HTTP_STREAM_TIMEOUT` in `backend/src/main/resources/application.yml`;
 hosting proxies must permit the desired download duration too. Watermarked

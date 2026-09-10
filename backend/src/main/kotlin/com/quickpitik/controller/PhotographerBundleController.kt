@@ -12,6 +12,7 @@ import jakarta.servlet.http.HttpServletRequest
 import org.springframework.http.HttpHeaders
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
@@ -41,12 +42,13 @@ class PhotographerBundleController(
         @PathVariable eventId: UUID,
         @RequestParam(required = false) token: String?,
         request: HttpServletRequest,
+        @RequestParam(required = false) photoIds: Set<UUID>? = null,
     ): ResponseEntity<StreamingResponseBody> {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_BUNDLE_DOWNLOAD, clientIp(request))
         // Anti-IDOR: any bad/expired/wrong-event token is a uniform NOT_FOUND.
         val photographerId = tokenService.verify(token, eventId)
             ?: throw NotFoundException(ErrorCodes.PHOTO_NOT_FOUND, "Not found")
-        val spec = bundleService.prepare(photographerId, eventId)
+        val spec = bundleService.prepare(photographerId, eventId, photoIds)
         val encoded = URLEncoder.encode(spec.filename, StandardCharsets.UTF_8).replace("+", "%20")
         val body = StreamingResponseBody { out -> bundleService.writeTo(spec, out) }
         return ResponseEntity.ok()
@@ -58,4 +60,14 @@ class PhotographerBundleController(
             .header(HttpHeaders.CACHE_CONTROL, "no-store")
             .body(body)
     }
+
+    // Native form download: thousands of selected IDs fit in the body, and
+    // the browser streams the attachment to disk without a fetch()/Blob ZIP.
+    @PostMapping("/{eventId}", consumes = ["application/x-www-form-urlencoded"])
+    fun downloadSelected(
+        @PathVariable eventId: UUID,
+        @RequestParam(required = false) token: String?,
+        @RequestParam photoIds: Set<UUID>,
+        request: HttpServletRequest,
+    ): ResponseEntity<StreamingResponseBody> = download(eventId, token, request, photoIds)
 }

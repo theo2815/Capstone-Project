@@ -55,11 +55,17 @@ class PhotographerBundleService(
     // Stream side (token already verified by the controller). Split from the
     // byte streaming so the JPA transaction closes before the download starts.
     @Transactional(readOnly = true)
-    fun prepare(photographerId: UUID, eventId: UUID): BundleSpec {
+    fun prepare(photographerId: UUID, eventId: UUID, photoIds: Set<UUID>? = null): BundleSpec {
         val event = eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
             ?: throw NotFoundException(ErrorCodes.PHOTO_NOT_FOUND, "Not found")
         val rows = photoRepository.findActiveBundleRows(eventId, photographerId)
+            .filter { photoIds == null || it.id in photoIds }
         if (rows.isEmpty()) throw NotFoundException(ErrorCodes.PHOTO_NOT_FOUND, "No photos to download")
+        // Never silently return a partial selection after a concurrent deletion,
+        // or include a foreign photographer/event's photo.
+        if (photoIds != null && rows.size != photoIds.size) {
+            throw NotFoundException(ErrorCodes.PHOTO_NOT_FOUND, "Some selected photos are unavailable; refresh and retry")
+        }
 
         val used = mutableSetOf<String>()
         val entries = rows.map { row ->
@@ -95,6 +101,9 @@ class PhotographerBundleService(
         val zip = object : ZipOutputStream(out) {
             override fun close() { def.end() }
         }
+        // Originals are already compressed images; skip recompression while
+        // retaining streaming ZIP data descriptors (no pre-read for size/CRC).
+        zip.setLevel(java.util.zip.Deflater.NO_COMPRESSION)
         zip.use {
             spec.entries.forEach { entry ->
                 storageService.open(entry.s3Key).use { original ->

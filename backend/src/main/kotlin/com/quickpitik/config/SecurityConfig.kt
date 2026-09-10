@@ -140,6 +140,7 @@ class SecurityConfig(
                 // order bundle above (a top-level <a> nav carries no JWT). The
                 // signed token is verified in the service layer.
                 auth.requestMatchers(photographerBundleGet()).permitAll()
+                auth.requestMatchers(photographerBundlePost()).permitAll()
                 // Guest order detail (token-gated, anti-IDOR via service layer).
                 // The UUID regex keeps future named sibling routes private.
                 auth.requestMatchers(guestOrderGet("")).permitAll()
@@ -185,5 +186,8 @@ class SecurityConfig(
         // the service layer, same query-string-tolerant shape as guestOrderGet.
         internal fun photographerBundleGet(): RegexRequestMatcher =
             RegexRequestMatcher.regexMatcher(HttpMethod.GET, "$PHOTOGRAPHER_BUNDLE_PATH(?:\\?.*)?\$")
+
+        internal fun photographerBundlePost(): RegexRequestMatcher =
+            RegexRequestMatcher.regexMatcher(HttpMethod.POST, "$PHOTOGRAPHER_BUNDLE_PATH(?:\\?.*)?\$")
     }
 }

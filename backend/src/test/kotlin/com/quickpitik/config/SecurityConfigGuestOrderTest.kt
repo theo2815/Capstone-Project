@@ -20,6 +20,16 @@ import kotlin.test.assertTrue
 // assertions set queryString the way a real request carries it.
 class SecurityConfigGuestOrderTest {
 
+    @Test
+    fun `selected photographer bundle permits tokened POST only on the UUID route`() {
+        val matcher = SecurityConfig.photographerBundlePost()
+        val request = get("/api/v1/photographer-bundles/${UUID.randomUUID()}", "token=signed").apply { method = "POST" }
+        assertTrue(matcher.matches(request))
+        assertFalse(SecurityConfig.photographerBundleGet().matches(request))
+        request.servletPath += "/other"
+        assertFalse(matcher.matches(request))
+    }
+
     private val orderId = UUID.randomUUID().toString()
     private val token = "v1.return.$orderId.1788168931.s9yVyngt3dmorqS-13hFOgkVOJy3Cl3gkbOIfq0i_48"
 

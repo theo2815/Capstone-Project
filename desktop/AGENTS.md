@@ -5,9 +5,10 @@
 ## Actual location
 
 ```
-C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos 
 Github Repo: https://github.com/theo2815/Batch-My-Photos.git
 ```
+
+The local clone path differs per team member — resolve it from `../docs/team-workspaces.md` (match `git config user.email`, then confirm the directory exists).
 
 **Access rule:** only when the user explicitly asks. Do NOT pre-emptively read or edit files in that path. Treat it as a separate environment. This `AGENTS.md` exists only to document the integration contract from this monorepo's point of view.
 
