@@ -1,5 +1,7 @@
 "use client";
 
+import { captureAuthSession } from "@/lib/auth-session";
+
 import Link from "next/link";
 import {
   createContext,
@@ -233,6 +235,7 @@ function restoreSnapshot(snap: EditModeSnapshot): void {
 function EditModeProvider({ children }: { children: ReactNode }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const editSessionRef = useRef<(() => boolean) | null>(null);
   const snapshotRef = useRef<EditModeSnapshot | null>(null);
   const pendingFilesRef = useRef<Record<PendingFileSlot, File | null>>({
     avatar: null,
@@ -247,12 +250,14 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   // See `hooks/use-photographer-settings-hydration.ts`.
 
   const beginEdit = useCallback(() => {
+    editSessionRef.current = captureAuthSession();
     snapshotRef.current = takeSnapshot();
     pendingFilesRef.current = { avatar: null, cover: null, watermark: null };
     setEditing(true);
   }, []);
 
   const cancelEdit = useCallback(() => {
+    if (!editSessionRef.current?.()) return;
     if (snapshotRef.current) {
       restoreSnapshot(snapshotRef.current);
     }
@@ -271,6 +276,8 @@ function EditModeProvider({ children }: { children: ReactNode }) {
 
   const saveEdit = useCallback(async () => {
     if (saving) return;
+    const isCurrent = editSessionRef.current;
+    if (!isCurrent?.()) return;
     const snap = snapshotRef.current;
     if (!snap) return;
     setSaving(true);
@@ -481,6 +488,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
               accountNumber: p.accountNumber,
               accountName: p.accountName,
             });
+            if (!isCurrent()) return;
             usePhotographerSettingsStore.setState((prev) => ({
               payouts: prev.payouts.map((row) =>
                 row.id === localId
@@ -500,6 +508,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
             if (p.qr) {
               const file = dataUrlToFile(p.qr.dataUrl, `qr-${serverRow.id}.png`);
               await postPayoutQr(serverRow.id, file);
+              if (!isCurrent()) return;
               const row = snap.payouts.find((x) => x.id === serverRow.id);
               if (row) row.qr = { ...p.qr };
             }
@@ -522,10 +531,12 @@ function EditModeProvider({ children }: { children: ReactNode }) {
                   accountNumber: p.accountNumber,
                   accountName: p.accountName,
                 });
+                if (!isCurrent()) return;
                 Object.assign(prev, updated);
               }
               if (qrChanged && p.qr) {
                 await postPayoutQr(p.id, dataUrlToFile(p.qr.dataUrl, `qr-${p.id}.png`));
+                if (!isCurrent()) return;
                 prev.qr = { ...p.qr };
               }
             },
@@ -570,6 +581,8 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       const results = await Promise.allSettled(
         tasks.map(({ run }) => run()),
       );
+
+      if (!isCurrent()) return;
 
       // Run onSuccess callbacks for fulfilled tasks. These mutate the store
       // + snapshot so partial-success retries stay idempotent (e.g. a
@@ -643,7 +656,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         });
       }
     } finally {
-      setSaving(false);
+      if (isCurrent()) setSaving(false);
     }
   }, [saving, showToast]);
 
@@ -778,8 +791,10 @@ async function submitForReview(opts: {
   setStatus: (s: VerificationStatus) => void;
   showToast: (t: { kind: "info" | "success" | "error"; message: string }) => void;
 }): Promise<{ submitted: boolean }> {
+  const isCurrent = captureAuthSession();
   try {
     const response = await submitVerification();
+    if (!isCurrent()) return { submitted: false };
     if (response.status === "pending") {
       opts.setStatus("pending");
       opts.showToast({
@@ -804,6 +819,7 @@ async function submitForReview(opts: {
     opts.setStatus(response.status);
     return { submitted: false };
   } catch (err) {
+    if (!isCurrent()) return { submitted: false };
     console.error("[photographer/settings] submitVerification failed", err);
     opts.showToast({
       kind: "error",
@@ -877,12 +893,13 @@ function validateSocialUrl(
 }
 
 export default function SettingsPage() {
+  const sessionVersion = useAuthStore((s) => s.sessionVersion);
   // Verification sync lives in DashboardShell — single mount across every
   // /dashboard/* page so the suspended banner + approve/reject decisions
   // surface here without a manual refresh.
 
   return (
-    <EditModeProvider>
+    <EditModeProvider key={sessionVersion}>
       <PendingEditWatcher />
       <VerificationStatusPanel />
       <PublicProfileSlab />
@@ -1117,6 +1134,7 @@ function VerificationStatusPanel() {
   }
 
   async function handleWithdraw() {
+    const isCurrent = captureAuthSession();
     const ok = await confirm({
       title: "Withdraw application?",
       message:
@@ -1125,9 +1143,10 @@ function VerificationStatusPanel() {
       cancelLabel: "Keep waiting",
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     try {
       const response = await withdrawVerification();
+      if (!isCurrent()) return;
       // BE returns the new status — use it directly. Should always be
       // "incomplete" after a successful withdraw; defensive narrow anyway.
       const next =
@@ -1142,6 +1161,7 @@ function VerificationStatusPanel() {
         message: "Application withdrawn.",
       });
     } catch (err) {
+      if (!isCurrent()) return;
       console.error("[photographer/settings] withdrawVerification failed", err);
       showToast({
         kind: "error",
@@ -1457,6 +1477,7 @@ function PictureSubsection() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
+    const isCurrent = captureAuthSession();
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -1473,6 +1494,7 @@ function PictureSubsection() {
       // Local center-crop stages an instant preview; the actual upload runs
       // on Save (the File handle is stashed on the EditMode context).
       const dataUrl = await squareCropToDataUrl(file, AVATAR_SIZE_PX);
+      if (!isCurrent()) return;
       setAvatar({ dataUrl, uploadedAt: new Date().toISOString() });
       setPendingFile("avatar", file);
       showToast({
@@ -1480,20 +1502,22 @@ function PictureSubsection() {
         message: "Profile picture ready — click Save to upload.",
       });
     } catch (err) {
+      if (!isCurrent()) return;
       setError(imageErrorCopy(err));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 
   async function handleRemove() {
+    const isCurrent = captureAuthSession();
     const ok = await confirm({
       title: "Remove profile picture?",
       message:
         "Your initials will show next to your name until you upload a new one.",
       confirmLabel: "Remove",
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     setAvatar(null);
     setPendingFile("avatar", null);
     setError(null);
@@ -1586,6 +1610,7 @@ function CoverSubsection() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
+    const isCurrent = captureAuthSession();
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -1603,8 +1628,10 @@ function CoverSubsection() {
     let aspectRatio: number;
     try {
       const dims = await inspectImageDimensions(file);
+      if (!isCurrent()) return;
       aspectRatio = dims.aspectRatio;
     } catch (err) {
+      if (!isCurrent()) return;
       setError(imageErrorCopy(err));
       return;
     }
@@ -1616,6 +1643,7 @@ function CoverSubsection() {
           "Your image is taller than wide. Only the middle horizontal strip will show. Use it anyway?",
         confirmLabel: "Use it",
       });
+      if (!isCurrent()) return;
       if (!ok) {
         setError(null);
         return;
@@ -1628,6 +1656,7 @@ function CoverSubsection() {
       // Local downscale keeps the optimistic preview snappy; the upload
       // fires on Save via the EditMode context stash.
       const dataUrl = await fitToDataUrl(file, COVER_MAX_PX, 0.82);
+      if (!isCurrent()) return;
       setCover({ dataUrl, uploadedAt: new Date().toISOString() });
       setPendingFile("cover", file);
       showToast({
@@ -1635,20 +1664,22 @@ function CoverSubsection() {
         message: "Cover ready — click Save to upload.",
       });
     } catch (err) {
+      if (!isCurrent()) return;
       setError(imageErrorCopy(err));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 
   async function handleRemove() {
+    const isCurrent = captureAuthSession();
     const ok = await confirm({
       title: "Remove cover?",
       message:
         "Your portfolio will fall back to the default banner until you upload a new one.",
       confirmLabel: "Remove",
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     setCover(null);
     setPendingFile("cover", null);
     setError(null);
@@ -1863,6 +1894,7 @@ function WatermarkSlab() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
+    const isCurrent = captureAuthSession();
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -1884,6 +1916,7 @@ function WatermarkSlab() {
           "New uploads will use the new watermark. Photos already stamped won't change.",
         confirmLabel: "Replace",
       });
+      if (!isCurrent()) return;
       if (!ok) {
         setError(null);
         return;
@@ -1900,6 +1933,7 @@ function WatermarkSlab() {
         file.type === "image/png"
           ? await fitToPngDataUrl(file, WATERMARK_MAX_PX)
           : await fitToDataUrl(file, WATERMARK_MAX_PX);
+      if (!isCurrent()) return;
       setWatermark({ dataUrl, uploadedAt: new Date().toISOString() });
       setPendingFile("watermark", file);
       showToast({
@@ -1907,20 +1941,22 @@ function WatermarkSlab() {
         message: "Watermark ready — click Save to upload.",
       });
     } catch (err) {
+      if (!isCurrent()) return;
       setError(imageErrorCopy(err));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 
   async function handleRemove() {
+    const isCurrent = captureAuthSession();
     const ok = await confirm({
       title: "Remove watermark?",
       message:
         "New uploads will go out unwatermarked until you replace it. Existing photos already stamped won't change.",
       confirmLabel: "Remove",
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     setWatermark(null);
     setPendingFile("watermark", null);
     setError(null);
@@ -2417,6 +2453,7 @@ function SocialSlab() {
   }
 
   async function handleRemove(id: string, platform: SocialPlatform) {
+    const isCurrent = captureAuthSession();
     const label = SOCIAL_PLATFORM_LABEL[platform];
     const ok = await confirm({
       title: `Remove ${label} link?`,
@@ -2424,7 +2461,7 @@ function SocialSlab() {
         "Runners use these to verify you're real. You can add it back anytime.",
       confirmLabel: "Remove",
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     removeSocial(id);
     showToast({
       kind: "success",
@@ -2718,6 +2755,7 @@ function PayoutSlab() {
   }
 
   async function handleRemove(id: string, method: PayoutMethod) {
+    const isCurrent = captureAuthSession();
     const label = PAYOUT_METHOD_LABEL[method];
     const isOnlyPayout = payouts.length === 1;
     const account = payouts.find((p) => p.id === id);
@@ -2732,7 +2770,7 @@ function PayoutSlab() {
       confirmLabel: "Remove",
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     removePayout(id);
     showToast({
       kind: "success",
@@ -2919,6 +2957,7 @@ function PayoutForm({
       : "11-digit mobile number registered to this wallet.";
 
   async function handleQrPick(e: ChangeEvent<HTMLInputElement>) {
+    const isCurrent = captureAuthSession();
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -2935,11 +2974,13 @@ function PayoutForm({
       // TODO(backend): swap for `api.post("/me/photographer/payouts/{id}/qr", formData)`
       // — server stores the image privately; only finance staff can read it.
       const dataUrl = await fitToPngDataUrl(file, QR_MAX_PX);
+      if (!isCurrent()) return;
       setQr({ dataUrl, uploadedAt: new Date().toISOString() });
     } catch (err) {
+      if (!isCurrent()) return;
       setQrError(imageErrorCopy(err));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 

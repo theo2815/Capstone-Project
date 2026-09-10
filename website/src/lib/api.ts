@@ -1,3 +1,4 @@
+import { captureAuthSession } from "./auth-session";
 import { getAccessToken, getRefreshToken, setTokens, clearTokens } from "./auth";
 import { API_BASE_URL } from "./constants";
 import { buildLoginRedirect, currentUrlForRedirect } from "./redirect";
@@ -24,6 +25,7 @@ class ApiClient {
     // doesn't re-prompt for the password in a loop.
     steppedUp = false,
   ): Promise<{ data: T; res: Response }> {
+    const isCurrent = captureAuthSession();
     const token = getAccessToken();
     const isFormData = options?.body instanceof FormData;
     const headers: HeadersInit = {
@@ -76,7 +78,9 @@ class ApiClient {
       !isPublicAuthEndpoint(path) &&
       !isCredentialRejection(data)
     ) {
+      if (!isCurrent()) throw new Error("Session changed");
       const refreshed = retried ? false : await refreshAccessToken();
+      if (!isCurrent()) throw new Error("Session changed");
       if (refreshed) return this.fetchRaw<T>(path, options, true);
       // Dead session (token attached but unrefreshable). The backend 401s a
       // stale Authorization header even on permitAll routes, so before
@@ -103,7 +107,9 @@ class ApiClient {
       stepUpHandler !== null &&
       hasStepUpRequired(data)
     ) {
+      if (!isCurrent()) throw new Error("Session changed");
       const stepUpToken = await stepUpHandler();
+      if (!isCurrent()) throw new Error("Session changed");
       if (stepUpToken) {
         return this.fetchRaw<T>(
           path,
@@ -200,7 +206,10 @@ function hasStepUpRequired<T>(data: ApiResponse<T> | null): boolean {
   return data?.errors?.some((e) => e.code === "STEP_UP_REQUIRED") ?? false;
 }
 
-let inFlightRefresh: Promise<string | null> | null = null;
+let inFlightRefresh: {
+  isCurrent: () => boolean;
+  promise: Promise<string | null>;
+} | null = null;
 
 // Single-flight refresh, shared by every caller in this JS context.
 //
@@ -215,30 +224,36 @@ let inFlightRefresh: Promise<string | null> | null = null;
 // each 401 and refresh alongside it. Funnelling every caller through one
 // promise means exactly one POST /auth/refresh per expiry.
 export function refreshAccessToken(): Promise<string | null> {
-  if (inFlightRefresh) return inFlightRefresh;
-  inFlightRefresh = doRefresh().finally(() => {
-    inFlightRefresh = null;
-  });
-  return inFlightRefresh;
+  if (inFlightRefresh?.isCurrent()) return inFlightRefresh.promise;
+  const isCurrent = captureAuthSession();
+  const request = {
+    isCurrent,
+    promise: doRefresh(isCurrent).finally(() => {
+      if (inFlightRefresh === request) inFlightRefresh = null;
+    }),
+  };
+  inFlightRefresh = request;
+  return request.promise;
 }
 
-async function doRefresh(): Promise<string | null> {
+async function doRefresh(isCurrent: () => boolean): Promise<string | null> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
 
-  const accessToken = await postRefresh(refreshToken);
+  const accessToken = await postRefresh(refreshToken, isCurrent);
+  if (!isCurrent()) return null;
   if (accessToken) return accessToken;
 
-  // Cross-tab fallback. The single-flight promise above is per-JS-context, so
-  // another tab can still rotate out from under us. If storage now holds a
-  // different token than the one we just sent, that tab already succeeded —
-  // retry once with the fresh value rather than bouncing a live session.
+  // Another tab may have rotated this session's token during our request.
   const current = getRefreshToken();
-  if (current && current !== refreshToken) return postRefresh(current);
+  if (current && current !== refreshToken) return postRefresh(current, isCurrent);
   return null;
 }
 
-async function postRefresh(refreshToken: string): Promise<string | null> {
+async function postRefresh(
+  refreshToken: string,
+  isCurrent: () => boolean,
+): Promise<string | null> {
   try {
     const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
       method: "POST",
@@ -246,15 +261,12 @@ async function postRefresh(refreshToken: string): Promise<string | null> {
       body: JSON.stringify({ refreshToken }),
       signal: AbortSignal.timeout(30_000),
     });
-
     if (!res.ok) return null;
-
     const data: ApiResponse<{
       accessToken: string;
       refreshToken: string;
     }> = await res.json();
-
-    if (!data.success) return null;
+    if (!data.success || !isCurrent() || getRefreshToken() !== refreshToken) return null;
     setTokens(data.data.accessToken, data.data.refreshToken);
     return data.data.accessToken;
   } catch {

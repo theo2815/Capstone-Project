@@ -7,6 +7,7 @@ import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { clearTokens, getAccessToken, getRefreshToken } from "@/lib/auth";
 import { resetUserScopedStores } from "@/lib/auth-reset";
+import { captureAuthSession } from "@/lib/auth-session";
 import { refreshAccessToken } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/constants";
 import { mergeCart } from "@/lib/api-cart";
@@ -22,12 +23,15 @@ export function AuthHydrator() {
   const userId = useAuthStore((s) => s.user?.id);
   const role = useAuthStore((s) => s.user?.role);
 
+  const sessionVersion = useAuthStore((s) => s.sessionVersion);
+
   // One-shot guard so React strict-mode double-mount can't fire merge twice.
   // Reset on logout (user transition to null) so re-login re-fires.
-  const mergedForUserRef = useRef<string | null>(null);
+  const mergedForUserRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    const isCurrent = captureAuthSession();
 
     async function hydrate() {
       const accessToken = getAccessToken();
@@ -39,17 +43,17 @@ export function AuthHydrator() {
       }
 
       let user = await fetchMe(accessToken);
-      if (cancelled) return;
+      if (cancelled || !isCurrent()) return;
 
       if (!user && refreshToken) {
         // Shared single-flight with ApiClient — this hook and the page's
         // React Query hooks all wake on the same expired token, and the BE
         // revokes on rotate, so independent refreshes would kill the session.
         const refreshedAccess = await refreshAccessToken();
-        if (cancelled) return;
+        if (cancelled || !isCurrent()) return;
         if (refreshedAccess) {
           user = await fetchMe(refreshedAccess);
-          if (cancelled) return;
+          if (cancelled || !isCurrent()) return;
         }
       }
 
@@ -91,8 +95,8 @@ export function AuthHydrator() {
       mergedForUserRef.current = null;
       return;
     }
-    if (mergedForUserRef.current === userId) return;
-    mergedForUserRef.current = userId;
+    if (mergedForUserRef.current === sessionVersion) return;
+    mergedForUserRef.current = sessionVersion;
 
     // Both endpoints are @PreAuthorize("hasRole('RUNNER')") backend-side, but
     // this hydrator is mounted globally in providers.tsx — so every
@@ -105,10 +109,7 @@ export function AuthHydrator() {
 
     const localItems = useCartStore.getState().items;
     const localIds = useSavedEventsStore.getState().ids;
-    const isCurrentUser = () => {
-      const auth = useAuthStore.getState();
-      return auth.isAuthenticated && auth.user?.id === userId;
-    };
+    const isCurrentUser = captureAuthSession();
 
     Promise.all([mergeCart(localItems), mergeSavedEvents(localIds)])
       .then(([mergedItems, mergedSummaries]) => {
@@ -128,7 +129,7 @@ export function AuthHydrator() {
         useCartStore.getState().setSyncEnabled(true);
         useSavedEventsStore.getState().setSyncEnabled(true);
       });
-  }, [isAuthenticated, userId, role]);
+  }, [isAuthenticated, userId, role, sessionVersion]);
 
   return null;
 }

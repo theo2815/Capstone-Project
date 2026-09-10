@@ -124,3 +124,48 @@ it("does not overwrite a different runner's merged data with an older response",
   expect(nextCart.items).toEqual([nextItem]);
   expect(nextSaved.ids).toEqual([nextEvent.id]);
 });
+
+it("starts a fresh merge on same-runner relogin and ignores the previous session", async () => {
+  const { cart, saved } = startMerge();
+  const latest = deferred<CartItem[]>();
+  vi.mocked(cartApi.mergeCart).mockReturnValueOnce(latest.promise);
+  vi.mocked(savedApi.mergeSavedEvents).mockResolvedValueOnce([]);
+  act(() => {
+    useAuthStore.getState().logout(); resetUserScopedStores();
+    useAuthStore.getState().setUser(runner);
+  });
+  expect(cartApi.mergeCart).toHaveBeenCalledTimes(2);
+  await act(async () => { cart.resolve([mergedItem]); saved.resolve([savedEvent]); });
+  expect(useCartStore.getState()).toMatchObject({ items: [], syncEnabled: false });
+  await act(async () => { latest.resolve([{ ...mergedItem, price: 200 }]); });
+  expect(useCartStore.getState()).toMatchObject({ items: [{ ...mergedItem, price: 200 }], syncEnabled: true });
+});
+
+it.each([true, false])("ignores initial auth hydration after a new login (old response success=%s)", async (success) => {
+  const pending = deferred<Response>();
+  useAuthStore.getState().logout();
+  vi.mocked(auth.getAccessToken).mockReturnValue("old-access");
+  vi.mocked(auth.getRefreshToken).mockReturnValue("old-refresh");
+  vi.stubGlobal("fetch", vi.fn(() => pending.promise));
+  const clearTokens = vi.spyOn(auth, "clearTokens");
+  vi.spyOn(cartApi, "mergeCart").mockResolvedValue([]); vi.spyOn(savedApi, "mergeSavedEvents").mockResolvedValue([]);
+  render(<QueryClientProvider client={client}><AuthHydrator /></QueryClientProvider>);
+  act(() => useAuthStore.getState().setUser({ ...runner, id: "new-runner" }));
+  await act(async () => { pending.resolve(new Response(JSON.stringify({ success, data: runner }), { status: success ? 200 : 401 })); });
+  expect(useAuthStore.getState().user?.id).toBe("new-runner");
+  expect(clearTokens).not.toHaveBeenCalled();
+  expect(fetch).toHaveBeenCalledTimes(1); // No old-session refresh either.
+  vi.unstubAllGlobals();
+});
+
+it("restores a valid current session on page refresh", async () => {
+  useAuthStore.getState().logout();
+  vi.mocked(auth.getAccessToken).mockReturnValue("access");
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, data: runner }))));
+  vi.spyOn(cartApi, "mergeCart").mockResolvedValue([mergedItem]); vi.spyOn(savedApi, "mergeSavedEvents").mockResolvedValue([savedEvent]);
+  render(<QueryClientProvider client={client}><AuthHydrator /></QueryClientProvider>);
+  await waitFor(() => expect(useCartStore.getState().syncEnabled).toBe(true));
+  expect(useAuthStore.getState().user).toEqual(runner);
+  expect(useSavedEventsStore.getState().ids).toEqual([savedEvent.id]);
+  vi.unstubAllGlobals();
+});
