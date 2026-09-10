@@ -43,9 +43,9 @@ class ApiClient {
       res = await fetch(`${this.baseUrl}${path}`, {
         ...options,
         headers,
-        signal:
-          options?.signal ??
-          AbortSignal.timeout(isFormData ? 120_000 : 30_000),
+        signal: options?.signal
+          ? AbortSignal.any([options.signal, AbortSignal.timeout(isFormData ? 120_000 : 30_000)])
+          : AbortSignal.timeout(isFormData ? 120_000 : 30_000),
       });
     } catch (e) {
       if (
@@ -144,8 +144,8 @@ class ApiClient {
     return (await this.fetchRaw<T>(path, options)).data;
   }
 
-  async get<T>(path: string): Promise<T> {
-    return this.fetch<T>(path, { method: "GET" });
+  async get<T>(path: string, options?: { signal?: AbortSignal }): Promise<T> {
+    return this.fetch<T>(path, { method: "GET", ...options });
   }
 
   // GET that also reads the X-Total-Count response header (CORS-exposed) for

@@ -14,7 +14,7 @@ import type { PaginatedResponse } from "@/types/api";
 
 interface UseInfiniteListArgs<T> {
   queryKey: QueryKey;
-  fetchPage: (offset: number, limit: number) => Promise<PaginatedResponse<T>>;
+  fetchPage: (offset: number, limit: number, signal: AbortSignal) => Promise<PaginatedResponse<T>>;
   limit: number;
   initialPage?: PaginatedResponse<T>;
   enabled?: boolean;
@@ -64,7 +64,7 @@ export function useInfiniteList<T extends { id: string }>({
 }: UseInfiniteListArgs<T>): UseInfiniteListResult<T> {
   const query = useInfiniteQuery({
     queryKey,
-    queryFn: ({ pageParam }) => fetchPage(pageParam, limit),
+    queryFn: ({ pageParam, signal }) => fetchPage(pageParam, limit, signal),
     initialPageParam: 0,
     getNextPageParam: (last) => {
       // Advance by rows actually returned: a short page (fair ranker caps,
@@ -84,7 +84,7 @@ export function useInfiniteList<T extends { id: string }>({
     items: dedupeItems(pages),
     // Every page carries the same server total; read the latest fetched one.
     total: pages.at(-1)?.total ?? 0,
-    isLoading: query.isPending,
+    isLoading: query.isPending && (enabled ?? true),
     isFetching: query.isFetching,
     isFetchingNextPage: query.isFetchingNextPage,
     hasNextPage: query.hasNextPage,

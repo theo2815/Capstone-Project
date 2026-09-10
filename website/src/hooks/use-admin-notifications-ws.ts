@@ -1,5 +1,8 @@
 "use client";
 
+import { captureAuthSession } from "@/lib/auth-session";
+import { useAuthStore } from "@/store/auth-store";
+
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/auth";
@@ -39,12 +42,15 @@ interface AdminInboxFrame {
 
 export function useAdminNotificationsWs(enabled: boolean): void {
   const queryClient = useQueryClient();
+  const user = useAuthStore((s) => s.user);
+  const sessionVersion = useAuthStore((s) => s.sessionVersion);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptsRef = useRef(0);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || user?.role !== "ADMIN" || !useAuthStore.getState().isAuthenticated) return;
+    const isCurrent = captureAuthSession();
     let cancelled = false;
 
     function clearReconnectTimer() {
@@ -55,7 +61,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
     }
 
     function connect() {
-      if (cancelled) return;
+      if (cancelled || !isCurrent()) return;
       const url = buildWsUrl("/ws/admin/notifications");
       const token = getAccessToken();
       if (!token) return;
@@ -63,7 +69,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        if (cancelled) return;
+        if (cancelled || !isCurrent()) return;
         attemptsRef.current = 0;
         // Publish status so useAdminQueueRealtime can drop to the slow
         // 5-min heartbeat — the push channel is doing the heavy lifting.
@@ -78,7 +84,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
       };
 
       ws.onmessage = (event) => {
-        if (cancelled) return;
+        if (cancelled || !isCurrent()) return;
         try {
           const data = JSON.parse(event.data) as AdminInboxFrame;
           switch (data.type) {
@@ -111,7 +117,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
       };
 
       ws.onclose = () => {
-        if (cancelled) return;
+        if (cancelled || !isCurrent()) return;
         wsRef.current = null;
         // Connection gone — flip to the aggressive 30-s polling cadence
         // until ws.onopen brings us back. Reconnect attempts continue in
@@ -142,5 +148,5 @@ export function useAdminNotificationsWs(enabled: boolean): void {
       // new WS connects.
       useAdminWsStatusStore.getState().setStatus("degraded");
     };
-  }, [enabled, queryClient]);
+  }, [enabled, queryClient, user?.id, user?.role, sessionVersion]);
 }

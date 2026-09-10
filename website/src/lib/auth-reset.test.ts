@@ -1,6 +1,25 @@
-import { expect, it } from "vitest";
-import { resetUserScopedStores } from "./auth-reset";
+import { afterEach, expect, it } from "vitest";
+import { captureGuestBuffer, resetUserScopedStores } from "./auth-reset";
 import { usePendingPaymentStore } from "@/store/pending-payment-store";
+import { useAuthStore } from "@/store/auth-store";
+import { useCartStore } from "@/store/cart-store";
+import { useSavedEventsStore } from "@/store/saved-events-store";
+
+afterEach(() => { useAuthStore.getState().logout(); resetUserScopedStores(); });
+
+it.each([false, true])("transfers only guest buffers across login (authenticated=%s)", (authenticated) => {
+  useAuthStore.getState().logout();
+  if (authenticated) useAuthStore.getState().setUser({ id: "old-owner", role: "RUNNER", name: "Runner", email: "runner@example.test", createdAt: "2026-09-10" });
+  const item = { photoId: "old-photo", eventId: "event", thumbnailUrl: "", price: 100 };
+  useCartStore.getState().setItems([item]);
+  useSavedEventsStore.getState().setIds(["event"]);
+  const restore = captureGuestBuffer();
+  resetUserScopedStores();
+  useAuthStore.getState().setUser({ id: "next-owner", role: "RUNNER", name: "Next", email: "next@example.test", createdAt: "2026-09-10" });
+  restore();
+  expect(useCartStore.getState().items).toEqual(authenticated ? [] : [item]);
+  expect(useSavedEventsStore.getState().ids).toEqual(authenticated ? [] : ["event"]);
+});
 
 it("clears the pending payment from memory and persistence on a session reset", async () => {
   usePendingPaymentStore.getState().set({

@@ -89,10 +89,10 @@ export function AdminFlagCard({
 
   async function run(
     verb: "hide" | "dismiss" | "escalate",
-    action: Promise<void>,
+    action: Promise<boolean>,
   ) {
     try {
-      await action;
+      if (!(await action)) return;
       showToast({ kind: "info", message: `${DONE_LABEL[verb]} · ${flag.id}` });
     } catch {
       showToast({

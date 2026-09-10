@@ -1,3 +1,5 @@
+import type { DisputeReason, DisputeResolution } from "@/lib/admin-disputes";
+
 export type OrderStatus =
   | "PENDING"
   | "PAID"
@@ -64,4 +66,49 @@ export interface OrderPhotoDetail {
   thumbnailUrl?: string;
   previewUrl?: string;
   downloadUrl?: string;
+}
+
+// Backend order-history row, distinct from the checkout creation response.
+export interface OrderSummary {
+  id: string;
+  eventId: string;
+  photoIds: string[];
+  total: number;
+  paymentMethod: string;
+  paidAt: string;
+  eventName?: string;
+  eventSlug?: string;
+  eventDate?: string;
+  eventState?: "upcoming" | "live" | "open" | "past";
+  status?: OrderStatus;
+  couponCode?: string | null;
+  discountTotal?: number;
+  disputes?: RunnerDispute[];
+}
+
+// Embedded on every OrderSummary / OrderDetail payload from /me/orders. Carries
+// what the /orders surface needs to render the status chip, timeline, cancel
+// button, and admin's resolution note — without a separate per-order fetch.
+// Mirrors the BE RunnerDisputeDto.
+export type RunnerDisputeStatus =
+  | "open"
+  | "resolved"
+  | "denied"
+  | "escalated"
+  | "withdrawn";
+
+export interface RunnerDispute {
+  id: string;
+  photoId: string;
+  reason: DisputeReason;
+  note: string;
+  status: RunnerDisputeStatus;
+  resolution: DisputeResolution | null;
+  refundAmount: number | null;
+  // Most-recent admin_decision_log.reason for this dispute (resolve / deny /
+  // escalate). Null when admin hasn't engaged yet.
+  resolutionNote: string | null;
+  openedAt: string;
+  resolvedAt: string | null;
+  withdrawnAt: string | null;
 }

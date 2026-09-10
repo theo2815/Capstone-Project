@@ -19,7 +19,7 @@ import {
   withdrawDispute,
   type RunnerDispute,
 } from "@/lib/api-orders";
-import { type MockOrder } from "@/store/orders-store";
+import { type OrderSummary } from "@/types/order";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import {
@@ -62,7 +62,7 @@ export default function OrdersPage() {
 
 function OrdersBody() {
   const { user } = useAuth();
-  const [refundOrder, setRefundOrder] = useState<MockOrder | null>(null);
+  const [refundOrder, setRefundOrder] = useState<OrderSummary | null>(null);
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -214,7 +214,7 @@ function ReceiptsSlab({
   onRefundRequest,
   pendingExpand,
 }: {
-  onRefundRequest: (order: MockOrder) => void;
+  onRefundRequest: (order: OrderSummary) => void;
   pendingExpand: string | null;
 }) {
   const { orders } = useOrdersList();
@@ -280,8 +280,8 @@ function ReceiptRow({
   onRefundRequest,
   pendingExpand,
 }: {
-  order: MockOrder;
-  onRefundRequest: (order: MockOrder) => void;
+  order: OrderSummary;
+  onRefundRequest: (order: OrderSummary) => void;
   pendingExpand: string | null;
 }) {
   const eventName = order.eventName ?? null;
@@ -662,7 +662,7 @@ function ReceiptsEmpty() {
   );
 }
 
-function computeSpendStats(orders: ReadonlyArray<MockOrder>): {
+function computeSpendStats(orders: ReadonlyArray<OrderSummary>): {
   total: number;
   orderCount: number;
   photoCount: number;

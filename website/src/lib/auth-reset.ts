@@ -1,5 +1,5 @@
 import { useCartStore } from "@/store/cart-store";
-import { useOrdersStore } from "@/store/orders-store";
+import { useAuthStore } from "@/store/auth-store";
 import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
@@ -46,7 +46,8 @@ export function resetUserScopedStores(): void {
   resetPhotographerHydrationGuard();
   // Notification inboxes now live in Query; auth transitions clear that cache.
   useUserMediaStore.getState().clear();
-  useOrdersStore.getState().clear();
+  // Drain the retired orders cache; Query is the only order-history owner.
+  try { globalThis.localStorage?.removeItem("quickpitik-orders"); } catch { /* Storage may be unavailable. */ }
   usePendingPaymentStore.getState().clear();
   useCartStore.getState().clear();
   useSavedEventsStore.getState().clear();
@@ -77,6 +78,9 @@ export function resetUserScopedStores(): void {
 // That invariant is why this can be a straight restore instead of scoping the
 // persist keys by userId.
 export function captureGuestBuffer(): () => void {
+  // /login is reachable while signed in. That cart belongs to the existing
+  // account, so an account switch must not reclassify it as guest data.
+  if (useAuthStore.getState().isAuthenticated) return () => {};
   const items = useCartStore.getState().items;
   const ids = useSavedEventsStore.getState().ids;
 

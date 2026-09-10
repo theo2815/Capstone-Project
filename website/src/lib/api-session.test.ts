@@ -18,6 +18,24 @@ function nextSession() {
 beforeEach(() => { useAuthStore.getState().setUser(user); setTokens("old-access", "old-refresh"); });
 afterEach(() => { useAuthStore.getState().logout(); clearTokens(); setStepUpHandler(null); vi.unstubAllGlobals(); });
 
+it.each(["query cancellation", "request timeout"])("GET preserves %s when supplied a Query signal", async (cause) => {
+  const query = new AbortController();
+  const timeout = new AbortController();
+  const timer = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeout.signal);
+  vi.stubGlobal("fetch", vi.fn((_url, options: RequestInit) => new Promise((_resolve, reject) => {
+    options.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+  })));
+  try {
+    const request = api.get("/me/orders", { signal: query.signal });
+    const result = expect(request).rejects.toThrow("Request timed out");
+    (cause === "query cancellation" ? query : timeout).abort();
+    await result;
+    expect(timer).toHaveBeenCalledWith(30_000);
+  } finally {
+    timer.mockRestore();
+  }
+});
+
 it("deduplicates refresh within a session, but never joins or commits an old session's refresh", async () => {
   const old = deferred<Response>(), current = deferred<Response>();
   const fetch = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise); vi.stubGlobal("fetch", fetch);

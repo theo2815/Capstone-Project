@@ -92,14 +92,15 @@ export interface AdminTrendPoint {
   payouts: number;
 }
 
-export async function fetchAdminKpis(): Promise<AdminKpis> {
-  return api.get<AdminKpis>("/admin/kpis");
+export async function fetchAdminKpis(signal?: AbortSignal): Promise<AdminKpis> {
+  return api.get<AdminKpis>("/admin/kpis", { signal });
 }
 
 export async function fetchAdminKpiTrend(
   days: number = 30,
+  signal?: AbortSignal,
 ): Promise<AdminTrendPoint[]> {
-  return api.get<AdminTrendPoint[]>(`/admin/kpis/trend?days=${days}`);
+  return api.get<AdminTrendPoint[]>(`/admin/kpis/trend?days=${days}`, { signal });
 }
 
 // ───────────────────────────────────────────── Users (verifications + photographers)
@@ -386,9 +387,11 @@ function buildFlagsQs(args: AdminFlagListArgs): string {
 
 export function fetchAdminFlags(
   args: AdminFlagListArgs = {},
+  signal?: AbortSignal,
 ): Promise<PaginatedResponse<Flag>> {
   return api.get<PaginatedResponse<Flag>>(
     `/admin/flags?${buildFlagsQs(args)}`,
+    { signal },
   );
 }
 
@@ -761,8 +764,9 @@ export interface AdminSalesKpis {
 
 export async function fetchAdminSalesKpis(
   range: AdminSalesRange = "ytd",
+  signal?: AbortSignal,
 ): Promise<AdminSalesKpis> {
-  return api.get<AdminSalesKpis>(`/admin/sales/kpis?range=${range}`);
+  return api.get<AdminSalesKpis>(`/admin/sales/kpis?range=${range}`, { signal });
 }
 
 export interface AdminSalesEventRow {
@@ -787,6 +791,7 @@ export interface AdminSalesByEventArgs {
 
 export async function fetchAdminSalesByEvent(
   args: AdminSalesByEventArgs = {},
+  signal?: AbortSignal,
 ): Promise<AdminSalesEventRow[]> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
@@ -794,6 +799,7 @@ export async function fetchAdminSalesByEvent(
   if (args.order) p.set("order", args.order);
   const res = await api.get<PaginatedResponse<AdminSalesEventRow>>(
     `/admin/sales/by-event?${p.toString()}`,
+    { signal },
   );
   return res.items;
 }

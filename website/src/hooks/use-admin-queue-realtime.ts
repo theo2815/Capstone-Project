@@ -1,5 +1,8 @@
 "use client";
 
+import { captureAuthSession } from "@/lib/auth-session";
+import { useAuthStore } from "@/store/auth-store";
+
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
@@ -23,17 +26,20 @@ const DEGRADED_INTERVAL_MS = 30_000;
 
 export function useAdminQueueRealtime(enabled: boolean): void {
   const queryClient = useQueryClient();
+  const user = useAuthStore((s) => s.user);
+  const sessionVersion = useAuthStore((s) => s.sessionVersion);
   const status = useAdminWsStatusStore((s) => s.status);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || user?.role !== "ADMIN" || !useAuthStore.getState().isAuthenticated) return;
+    const isCurrent = captureAuthSession();
     const intervalMs =
       status === "healthy" ? HEALTHY_INTERVAL_MS : DEGRADED_INTERVAL_MS;
 
     const tick = () => {
       // A backgrounded admin tab has nobody looking at it — skip the pull
       // The next visible tick catches up.
-      if (document.hidden) return;
+      if (document.hidden || !isCurrent()) return;
       queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "payouts"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
@@ -43,5 +49,5 @@ export function useAdminQueueRealtime(enabled: boolean): void {
 
     const id = setInterval(tick, intervalMs);
     return () => clearInterval(id);
-  }, [enabled, status, queryClient]);
+  }, [enabled, status, queryClient, user?.id, user?.role, sessionVersion]);
 }
