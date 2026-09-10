@@ -1,21 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
+import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { useAdminUsersData } from "@/lib/admin-users-data";
 import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
-import {
-  useAdminPayoutStore,
-  mergePayoutsWithOverrides,
-} from "@/store/admin-payout-store";
 import { cn } from "@/lib/utils";
 import {
   useAdminKpis,
   useAdminFlags,
-  useAdminPayouts,
-  EMPTY_PAYOUTS,
 } from "@/hooks/use-admin-data";
 
 // Compact at-a-glance metrics row. Sits above the inbox queue (Phase 1)
@@ -43,10 +38,9 @@ export function AdminKpiStrip() {
   const { rows: userRows } = useAdminUsersData();
   const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
   const serverOpenFlags = useAdminFlags({ status: "open" })?.total ?? 0;
-  const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
   // A-1 followup: hydrate payouts from BE so the fallback path matches the
   // live data shape instead of the empty mock seed.
-  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
+  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
   // Live-mode preference: when GET /admin/kpis returns, override the
   // 4 counts the strip surfaces. Falls back to derivation from the merged
   // admin users hook while the kpis endpoint is still loading.
@@ -66,10 +60,7 @@ export function AdminKpiStrip() {
 
     let openDisputes = disputes.filter((d) => d.status === "open").length;
     let openFlags = serverOpenFlags;
-    let pendingPayouts = mergePayoutsWithOverrides(
-      serverPayouts,
-      payoutOverrides,
-    ).filter((p) => p.status === "pending_review").length;
+    let pendingPayouts = serverPayouts.filter((p) => p.status === "pending_review").length;
     // Event requests (V46) have no client-side fallback — BE count only.
     const pendingEventRequests = liveKpis?.pendingEventRequests ?? 0;
 
@@ -124,7 +115,6 @@ export function AdminKpiStrip() {
     userRows,
     disputes,
     serverOpenFlags,
-    payoutOverrides,
     serverPayouts,
     liveKpis,
   ]);

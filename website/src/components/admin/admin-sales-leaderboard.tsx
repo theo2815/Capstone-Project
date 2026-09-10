@@ -15,7 +15,7 @@ import {
 const TOP_LIMIT = 10;
 
 // Two-column ranked board for /admin/sales. Photographer side is grounded in
-// real cycle data (ADMIN_PAYOUT_SEED). Event side is "implied GMV" — derived
+// canonical payout-cycle data. Event side is "implied GMV" — derived
 // from EVENT_CATALOG.photoCount × per-photo price — and carries an Implied
 // kicker badge until backend Phase F lands order-level event attribution.
 export function AdminSalesLeaderboard() {

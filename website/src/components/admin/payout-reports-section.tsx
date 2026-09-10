@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
 import { Slab } from "@/components/profile-shell";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
@@ -20,14 +21,6 @@ import {
   type PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
 import { useAdminPayoutReports, usePayoutReportActions, EMPTY_REPORTS } from "@/hooks/use-payout-reports";
-import {
-  mergePayoutsWithOverrides,
-  useAdminPayoutStore,
-} from "@/store/admin-payout-store";
-import {
-  useAdminPayouts,
-  EMPTY_PAYOUTS,
-} from "@/hooks/use-admin-data";
 import { useToast } from "@/hooks/use-toast";
 import { useUrlState } from "@/hooks/use-url-state";
 import { formatLongDate } from "@/lib/format";
@@ -59,10 +52,9 @@ function statusTone(status: PayoutReportStatus): AdminStatusPillTone {
 
 export function PayoutReportsSection() {
   const { acknowledge, resolve } = usePayoutReportActions();
-  const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
   const reportsQuery = useAdminPayoutReports();
   const serverReports = reportsQuery.data ?? EMPTY_REPORTS;
-  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
+  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
   const { showToast } = useToast();
 
   const [reportRowId, setReportRowId] = useUrlState<string>("report", "");
@@ -87,11 +79,11 @@ export function PayoutReportsSection() {
   const openCount = reports.filter((r) => r.status === "open").length;
 
   const cyclesById = useMemo(() => {
-    const merged = mergePayoutsWithOverrides(serverPayouts, payoutOverrides);
+    const merged = serverPayouts;
     const map = new Map<string, (typeof merged)[number]>();
     for (const c of merged) map.set(c.id, c);
     return map;
-  }, [serverPayouts, payoutOverrides]);
+  }, [serverPayouts]);
 
   const openReport = useMemo(
     () => (reportRowId ? reports.find((r) => r.id === reportRowId) ?? null : null),

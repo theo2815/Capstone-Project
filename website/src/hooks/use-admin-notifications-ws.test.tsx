@@ -20,7 +20,7 @@ it("refreshes canonical queues on reconnect and filed events, and ignores messag
   const { unmount } = renderHook(() => useAdminNotificationsWs(true), { wrapper });
   socket.onopen();
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "disputes"] });
-  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "payouts", "reports"] });
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "payouts"] });
   invalidate.mockClear();
   socket.onmessage({ data: JSON.stringify({ type: "dispute_filed" }) });
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "disputes"] });

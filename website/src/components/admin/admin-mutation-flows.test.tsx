@@ -8,6 +8,7 @@ import type { PayoutReport } from "@/lib/admin-payout-reports";
 import { useAuthStore } from "@/store/auth-store";
 import { adminDisputeKeys } from "@/hooks/use-admin-disputes";
 import { payoutReportKeys } from "@/hooks/use-payout-reports";
+import { adminPayoutKeys } from "@/hooks/use-admin-payouts";
 import { admin, dispute, report } from "@/test/fixtures/admin";
 import { useToastStore } from "@/store/toast-store";
 import { AdminDisputeActionAside } from "./admin-dispute-action-aside";
@@ -26,9 +27,6 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/inbox",
   useSearchParams: () => new URLSearchParams(fixtures.search),
 }));
-vi.mock("@/hooks/use-admin-data", () => ({
-  useAdminPayouts: () => fixtures.payouts,
-}));
 
 let client: QueryClient;
 beforeEach(() => {
@@ -41,12 +39,15 @@ beforeEach(() => {
   useAuthStore.getState().setUser(admin);
   vi.spyOn(api, "get").mockImplementation(async (path) => path.startsWith("/admin/disputes")
     ? { items: fixtures.disputes, total: fixtures.disputes.length }
-    : { items: fixtures.reports, total: fixtures.reports.length });
+    : path.startsWith("/admin/payouts/reports")
+      ? { items: fixtures.reports, total: fixtures.reports.length }
+      : { items: fixtures.payouts, total: fixtures.payouts.length });
   useToastStore.getState().clear();
   vi.spyOn(console, "error").mockImplementation(() => {});
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(adminDisputeKeys.list(admin.id), [dispute]);
   client.setQueryData(payoutReportKeys.adminList(admin.id), [report]);
+  client.setQueryData(adminPayoutKeys.list(admin.id), []);
 });
 afterEach(() => {
   cleanup();

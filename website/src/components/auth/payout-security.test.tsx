@@ -7,8 +7,8 @@ import { setTokens, clearTokens } from "@/lib/auth";
 import { StepUpProvider } from "./step-up-provider";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/store/auth-store";
-import { useAdminPayoutStore, mergePayoutsWithOverrides } from "@/store/admin-payout-store";
-import { useAdminPayouts, usePayoutActions } from "@/hooks/use-admin-data";
+import { useAdminPayouts, usePayoutActions } from "@/hooks/use-admin-payouts";
+import { admin, payoutCycle } from "@/test/fixtures/admin";
 
 const mocks = vi.hoisted(() => ({
   resolve: null as null | ((token: string | null) => void),
@@ -18,8 +18,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth", () => ({ getAccessToken: () => "access", getRefreshToken: () => "refresh", setTokens: vi.fn(), clearTokens: vi.fn() }));
 vi.mock("@/lib/auth-reset", () => ({ captureGuestBuffer: () => () => {}, resetUserScopedStores: vi.fn() }));
 vi.mock("@/lib/api-admin", () => ({
-  fetchAdminPayouts: vi.fn(async () => [{ id: "PAY-TEST", status: mocks.status, approvedBy: "admin-a", secondApprovedBy: null }]),
-  approvePayout: vi.fn(async () => ({ status: "pending_review", approvedBy: "admin-a", secondApprovedBy: null })),
+  fetchAdminPayouts: vi.fn(async () => [{ ...payoutCycle, id: "PAY-TEST", status: mocks.status, approvedBy: "admin-a" }]),
+  approvePayout: vi.fn(async () => ({ ...payoutCycle, id: "PAY-TEST", approvedBy: "admin-a" })),
   holdPayout: vi.fn(), markPayoutPaid: vi.fn(), rejectPayout: vi.fn(),
   markPayoutProcessing: vi.fn(), markPayoutFailed: vi.fn(), markPayoutReturned: vi.fn(),
   bulkApprovePayouts: vi.fn(async () => ({ groupId: "group", results: [{ id: "PAY-TEST", ok: true }, { id: "missing", ok: false }] })),
@@ -33,7 +33,6 @@ vi.mock("./step-up-modal", () => ({ StepUpModal: (props: { open: boolean; onReso
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useAdminPayoutStore.getState().clear();
   useAuthStore.getState().logout();
   mocks.status = "pending_review";
   mocks.open = false;
@@ -58,18 +57,19 @@ test.each(["/auth/mfa/verify", "/admin/mfa/confirm", "/admin/mfa/disable"])("wro
 });
 
 test("first approval stays pending and subsequent provider state is visible", async () => {
+  useAuthStore.getState().setUser(admin);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const { result } = renderHook(() => ({ payouts: useAdminPayouts(), actions: usePayoutActions() }), { wrapper: queryWrapper(client) });
-  await waitFor(() => expect(result.current.payouts).not.toBeNull());
+  await waitFor(() => expect(result.current.payouts.isSuccess).toBe(true));
   await act(async () => { await result.current.actions.approve("PAY-TEST"); });
-  expect(result.current.payouts?.[0].status).toBe("pending_review");
-  expect(useAdminPayoutStore.getState().log[0].decision).toBe("approval_recorded");
+  expect(result.current.payouts.data?.[0].status).toBe("pending_review");
+  expect(result.current.payouts.data?.[0].approvedBy).toBe(admin.id);
+  expect(result.current.payouts.data?.[0].secondApprovedBy).toBeNull();
   mocks.status = "paid";
   await act(async () => { await client.invalidateQueries({ queryKey: ["admin", "payouts"] }); });
-  await waitFor(() => expect(result.current.payouts?.[0].status).toBe("paid"));
-  expect(mergePayoutsWithOverrides(result.current.payouts!, useAdminPayoutStore.getState().overrides)[0].status).toBe("paid");
+  await waitFor(() => expect(result.current.payouts.data?.[0].status).toBe("paid"));
   await act(async () => { expect(await result.current.actions.bulkApprove(["PAY-TEST", "missing"])).toBe(false); });
-  expect(useAdminPayoutStore.getState().overrides).toEqual({});
+  expect(result.current.payouts.data?.[0].status).toBe("paid");
   client.clear();
 });
 

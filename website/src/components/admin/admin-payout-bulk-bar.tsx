@@ -11,6 +11,7 @@ import {
 
 interface AdminPayoutBulkBarProps {
   count: number;
+  submitting: boolean;
   totalAmount: number;
   approveDisabled: boolean;
   approveDisabledReason: string | null;
@@ -25,6 +26,7 @@ interface AdminPayoutBulkBarProps {
 // is visible, the Approve button is the page's only fresh accent.
 export function AdminPayoutBulkBar({
   count,
+  submitting,
   totalAmount,
   approveDisabled,
   approveDisabledReason,
@@ -58,7 +60,7 @@ export function AdminPayoutBulkBar({
           <button
             type="button"
             onClick={onApprove}
-            disabled={approveDisabled}
+            disabled={approveDisabled || submitting}
             className={`${BTN_PRIMARY} ${BTN_SIZE.sm} disabled:hover:bg-fresh`}
           >
             Approve {count}
@@ -66,6 +68,7 @@ export function AdminPayoutBulkBar({
           <button
             type="button"
             onClick={onHold}
+            disabled={submitting}
             className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
           >
             Hold {count}…
@@ -73,6 +76,7 @@ export function AdminPayoutBulkBar({
           <button
             type="button"
             onClick={onClear}
+            disabled={submitting}
             className={`${BTN_GHOST} ${BTN_SIZE.sm} px-3`}
           >
             Clear

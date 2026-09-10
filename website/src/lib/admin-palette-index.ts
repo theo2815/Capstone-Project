@@ -9,15 +9,13 @@ import {
   type Flag,
 } from "@/lib/admin-flags";
 import {
-  ADMIN_PAYOUT_SEED,
   ADMIN_PAYOUT_STATUS_LABEL,
   type AdminPayoutCycle,
 } from "@/lib/admin-payouts";
-import { mergePayout } from "@/store/admin-payout-store";
 
 // Phase 5 — admin command palette index. Pure functions only; no React,
-// no store hooks. The palette supplies canonical dispute/flag records and
-// the remaining legacy user/payout snapshots.
+// no store hooks. The palette supplies canonical dispute/flag/payout records and
+// the remaining legacy user snapshots.
 //
 // Two surface contracts:
 //   buildPaletteIndex(snapshots) → PaletteEntry[]   — flat, deduped list
@@ -75,7 +73,7 @@ export interface PaletteSnapshots {
   disputes: ReadonlyArray<Dispute>;
   /** Server rows from useAdminFlags(); empty while loading or gated off. */
   flags: ReadonlyArray<Flag>;
-  payoutOverrides: Record<string, Partial<AdminPayoutCycle>>;
+  payouts: readonly AdminPayoutCycle[];
 }
 
 interface PageSeed {
@@ -274,12 +272,9 @@ function buildFlagEntries(flags: ReadonlyArray<Flag>): PaletteEntry[] {
 }
 
 function buildPayoutEntries(
-  payoutOverrides: Record<string, Partial<AdminPayoutCycle>>,
+  payouts: readonly AdminPayoutCycle[],
 ): PaletteEntry[] {
-  const merged = ADMIN_PAYOUT_SEED.map((p) =>
-    mergePayout(p, payoutOverrides[p.id]),
-  );
-  return merged.map((p) => {
+  return payouts.map((p) => {
     const statusLabel = ADMIN_PAYOUT_STATUS_LABEL[p.status];
     const subjectLabel = p.brandName ?? p.photographerName;
     const subtitle = `${statusLabel} · ${subjectLabel} · ₱${p.amount.toLocaleString()} · ${p.itemCount} sales`;
@@ -354,7 +349,7 @@ export function buildPaletteIndex(
     ...(ADMIN_FLAGS_ENABLED
       ? buildFlagEntries(snapshots.flags)
       : []),
-    ...buildPayoutEntries(snapshots.payoutOverrides),
+    ...buildPayoutEntries(snapshots.payouts),
     ...buildPhotographerEntries(snapshots.userPool),
   ];
 }

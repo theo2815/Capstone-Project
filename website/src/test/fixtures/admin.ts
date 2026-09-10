@@ -1,5 +1,6 @@
 import type { Dispute } from "@/lib/admin-disputes";
 import type { PayoutReport } from "@/lib/admin-payout-reports";
+import type { AdminPayoutCycle } from "@/lib/admin-payouts";
 import type { User } from "@/types/user";
 
 export const admin: User = {
@@ -21,3 +22,12 @@ export const report: PayoutReport = {
   acknowledgedAt: null, acknowledgeReply: null, resolvedAt: null, resolutionNote: null,
 };
 
+export const payoutCycle: AdminPayoutCycle = {
+  id: "cycle-1", photographerId: "photographer-1", photographerName: "Photographer",
+  brandName: null, handle: "photographer", weekOf: "2026-09-07", amount: 25000,
+  itemCount: 100, method: "gcash", provider: "manual", status: "pending_review",
+  submittedAt: "2026-09-10T00:00:00Z", reviewedAt: null, paidAt: null,
+  paymentReference: null, holdReason: null, rejectedReason: null, failedReason: null,
+  approvedBy: null, secondApprovedBy: null,
+  payoutAccount: { method: "gcash", accountNumber: "09000000000", accountName: "Test Photographer", qr: null },
+};

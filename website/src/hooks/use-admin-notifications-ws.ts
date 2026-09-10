@@ -77,7 +77,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
         useAdminUsersServerStore.getState().invalidate();
         void useAdminUsersServerStore.getState().refetch();
         void queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
-        void queryClient.invalidateQueries({ queryKey: ["admin", "payouts", "reports"] });
+        void queryClient.invalidateQueries({ queryKey: ["admin", "payouts"] });
         void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
       };
 

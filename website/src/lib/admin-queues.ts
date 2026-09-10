@@ -1,12 +1,7 @@
-import {
-  useAdminPayoutStore,
-  mergePayoutsWithOverrides,
-} from "@/store/admin-payout-store";
+import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
 import {
   useAdminFlags,
   useAdminKpis,
-  useAdminPayouts,
-  EMPTY_PAYOUTS,
 } from "@/hooks/use-admin-data";
 import { getAdminUsersDataSnapshot } from "@/lib/admin-users-data";
 import { ROUTES } from "@/lib/constants";
@@ -37,7 +32,7 @@ function countPendingPhotographers(): number {
 // useAdminAttentionTarget / useAdminQueueCounts are hooks because the
 // payouts count now hydrates from BE via useAdminPayouts (React Query).
 // Dispute/event counts come from backend KPIs; the remaining legacy user
-// and payout stores are migrated separately.
+// store is migrated separately.
 
 export interface AdminAttentionTarget {
   href: string;
@@ -46,7 +41,7 @@ export interface AdminAttentionTarget {
 }
 
 export function useAdminAttentionTarget(): AdminAttentionTarget | null {
-  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
+  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
   // BE-hydrated; useAdminFlags is a no-op when the feature gate is off.
   const openFlags = useAdminFlags({ status: "open" })?.total ?? 0;
   const kpis = useAdminKpis();
@@ -90,12 +85,8 @@ export function useAdminAttentionTarget(): AdminAttentionTarget | null {
     };
   }
 
-  // Payouts — BE-hydrated count; mock seed is empty in the new flow.
-  const payoutOverrides = useAdminPayoutStore.getState().overrides;
-  const pendingPayouts = mergePayoutsWithOverrides(
-    serverPayouts,
-    payoutOverrides,
-  ).filter((p) => p.status === "pending_review").length;
+  // Payouts — count the canonical backend rows.
+  const pendingPayouts = serverPayouts.filter((p) => p.status === "pending_review").length;
   if (pendingPayouts > 0) {
     return {
       href: ROUTES.ADMIN_PAYOUTS,
@@ -120,17 +111,13 @@ export interface AdminQueueCounts {
 // to render the row-level count and the "QUEUES · N open / all clear"
 // summary line.
 export function useAdminQueueCounts(): AdminQueueCounts {
-  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
+  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
   const flags = useAdminFlags({ status: "open" })?.total ?? 0;
   const kpis = useAdminKpis();
   const events = kpis?.pendingEventRequests ?? 0;
-  const payoutOverrides = useAdminPayoutStore.getState().overrides;
 
   const disputes = kpis?.openDisputes ?? 0;
-  const payouts = mergePayoutsWithOverrides(
-    serverPayouts,
-    payoutOverrides,
-  ).filter((p) => p.status === "pending_review").length;
+  const payouts = serverPayouts.filter((p) => p.status === "pending_review").length;
   const inbox = countPendingPhotographers();
 
   return {

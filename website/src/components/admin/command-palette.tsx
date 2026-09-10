@@ -12,7 +12,7 @@ import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
-import { useAdminPayoutStore } from "@/store/admin-payout-store";
+import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
 import { useAdminUsersData } from "@/lib/admin-users-data";
 import {
   buildPaletteIndex,
@@ -49,7 +49,7 @@ export function CommandPalette() {
   const { rows: userPool } = useAdminUsersData();
   const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
   const flags = useAdminFlags()?.items ?? EMPTY_FLAGS;
-  const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
+  const payouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
 
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -64,9 +64,9 @@ export function CommandPalette() {
         userPool,
         disputes,
         flags,
-        payoutOverrides,
+        payouts,
       }),
-    [userPool, disputes, flags, payoutOverrides],
+    [userPool, disputes, flags, payouts],
   );
 
   const indexById = useMemo(() => {

@@ -12,6 +12,7 @@ import { AdminStatusPill, type AdminStatusPillTone } from "./admin-status-pill";
 
 interface AdminPayoutRowProps {
   cycle: AdminPayoutCycle;
+  submitting: boolean;
   selected: boolean;
   selectionActive: boolean;
   /** Phase 4: J/K keyboard focus indicator. Adds an ink ring + offset. */
@@ -59,6 +60,7 @@ function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
 // action buttons stopPropagation so they don't trigger the row click.
 export function AdminPayoutRow({
   cycle,
+  submitting,
   selected,
   selectionActive,
   focused,
@@ -100,9 +102,10 @@ export function AdminPayoutRow({
           type="checkbox"
           aria-label={`Select payout ${cycle.id}`}
           checked={selected}
+          disabled={submitting}
           onChange={onToggleSelect}
           onClick={(e) => e.stopPropagation()}
-          className="mt-1 accent-ink shrink-0 size-4 cursor-pointer"
+          className="mt-1 accent-ink shrink-0 size-4 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         />
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-3 flex-wrap">
@@ -188,6 +191,7 @@ export function AdminPayoutRow({
       </div>
 
       <RowActions
+        submitting={submitting}
         status={cycle.status}
         provider={cycle.provider ?? "manual"}
         onApprove={(e) => {
@@ -218,6 +222,7 @@ export function AdminPayoutRow({
 //   processing     → Mark paid, Hold        held     → Approve
 //   terminal (paid/failed/returned/rejected/cancelled) → none
 function RowActions({
+  submitting,
   status,
   provider,
   onApprove,
@@ -226,6 +231,7 @@ function RowActions({
   onMarkProcessing,
 }: {
   status: AdminPayoutStatus;
+  submitting: boolean;
   provider: string;
   onApprove: (e: React.MouseEvent) => void;
   onHold: (e: React.MouseEvent) => void;
@@ -234,9 +240,9 @@ function RowActions({
 }) {
   if (provider !== "manual") return null;
   const PILL =
-    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-4 py-1.5";
+    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-4 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed";
   const GHOST =
-    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-1.5";
+    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed";
 
   const canApprove = status === "pending_review" || status === "held";
   const canMarkProcessing = status === "approved";
@@ -252,22 +258,22 @@ function RowActions({
   return (
     <div className="mt-4 flex items-center gap-2 flex-wrap">
       {canApprove && (
-        <button type="button" onClick={onApprove} className={PILL}>
+        <button type="button" disabled={submitting} onClick={onApprove} className={PILL}>
           Approve
         </button>
       )}
       {canMarkProcessing && (
-        <button type="button" onClick={onMarkProcessing} className={PILL}>
+        <button type="button" disabled={submitting} onClick={onMarkProcessing} className={PILL}>
           Mark processing
         </button>
       )}
       {canMarkPaid && (
-        <button type="button" onClick={onMarkPaid} className={PILL}>
+        <button type="button" disabled={submitting} onClick={onMarkPaid} className={PILL}>
           Mark paid…
         </button>
       )}
       {canHold && (
-        <button type="button" onClick={onHold} className={GHOST}>
+        <button type="button" disabled={submitting} onClick={onHold} className={GHOST}>
           Hold…
         </button>
       )}
