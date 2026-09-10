@@ -125,9 +125,11 @@ Project guides live in the vault under `Agent Skills/`. **Read the matching guid
 
 ## External Working Directories
 
-| Path | Project | Access rule |
-|------|---------|-------------|
-| `…\Start Up project\BatchMyPhotos` | Desktop app (Electron) | **Only access when explicitly requested.** Separate environment — do not pre-emptively read or edit based on monorepo activity. |
+| Project | Path | Access rule |
+|---------|------|-------------|
+| BatchMyPhotos (desktop, Electron) | per member — `docs/team-workspaces.md` | **Only access when explicitly requested.** Separate environment — do not pre-emptively read or edit based on monorepo activity. |
+
+**These paths are per team member.** Resolve them from `docs/team-workspaces.md` — match `git config user.email` to a member, then confirm the directory exists. Never assume the lead's layout; never guess.
 
 BatchMyPhotos is itself a multi-project repo (`desktop/` Electron · `backend/` its own Express server · `website/`) — **NOT** the QuickPitik Spring Boot `backend/` or Next.js `website/`. When the user picks `desktop`, ask which sub-project, then **lock the session into `…\BatchMyPhotos\`**. The only exception is blur-detection work, which spans BatchMyPhotos ↔ `ai-api` here.
 
@@ -138,7 +140,7 @@ BatchMyPhotos is itself a multi-project repo (`desktop/` Electron · `backend/` 
 Session memory, tasks, decisions, the live work board, and working notes that don't belong in the repo. **Shared with the whole team** — any agent, any tool, reads and writes it.
 
 - **Git repo (its own, separate from this monorepo):** `https://github.com/theo2815/Capstone-Obsidian-Vault.git` (private).
-- **How to find it:** clone the vault repo and keep it alongside this one so any agent can locate it by a stable relative path. On the maintainer's machine it lives at `C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault`.
+- **How to find it:** the clone location differs per team member — resolve it from `docs/team-workspaces.md` (match `git config user.email`, then confirm the directory exists). There is no reliable relative path from this repo to the vault.
 - **The vault owns its own `AGENTS.md`** — the shared-brain ritual, sync rules, the hand-off protocol, naming conventions, and folder layout. Read it; this file does not duplicate it.
 
 **Session start (MANDATORY):**
@@ -158,6 +160,7 @@ Do not start editing, planning, or searching before the vault is read and a modu
 | I want to know… | Read |
 |---|---|
 | Who's working on what right now / hand-offs | vault `ACTIVE.md` |
+| Where a given member's vault / BatchMyPhotos / monorepo lives | `docs/team-workspaces.md` |
 | Current status, test counts, ship-state | vault `VAULT-INDEX.md` / `ROLE-STATUS.md`; or run the module's test command |
 | Product vision + user journeys | `docs/project-vision.md` |
 | Phased roadmap (frozen history + live pointers) | `docs/IMPLEMENTATION_PLAN.md` |

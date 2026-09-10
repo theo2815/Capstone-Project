@@ -9,7 +9,9 @@ paths:
 Any task that creates, redesigns, or polishes **web or desktop** UI/UX — components, pages, layouts, styling, animations, design systems — is governed by the **Frontend Design** skill. It overrides default approaches (Tailwind / shadcn defaults).
 
 **Read it in full before producing any UI work it covers:**
-`C:\Users\Theo Cedric Chan\Documents\Obsidian Vault\QuickPitik Vault\Agent Skills\Frontend Design.md`
+`<vault root>\Agent Skills\Frontend Design.md`
+
+`<vault root>` differs per team member — resolve it from `docs/team-workspaces.md` (match `git config user.email`, then confirm the directory exists).
 
 Applies to `website/` and `desktop/`. Does **NOT** apply to `mobile/` — that uses Mobile Design (`.claude/rules/mobile-design.md`).
 
