@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
 
 interface AdminEscalateModalProps {
   open: boolean;
+  submitting?: boolean;
   onClose: () => void;
   onSubmit: (note: string | null) => void;
   /** Header line — e.g. "Escalate dispute DSP-A1B2C3" or "Escalate flag FLG-001" */
@@ -19,6 +20,7 @@ interface AdminEscalateModalProps {
 // even without a note so admin can escalate quickly.
 export function AdminEscalateModal({
   open,
+  submitting = false,
   onClose,
   onSubmit,
   targetLabel,
@@ -26,15 +28,19 @@ export function AdminEscalateModal({
 }: AdminEscalateModalProps) {
   const [note, setNote] = useState("");
 
+  useEffect(() => {
+    if (!open) setNote("");
+  }, [open]);
+
   function handleSubmit() {
     const trimmed = note.trim();
     onSubmit(trimmed.length > 0 ? trimmed : null);
-    setNote("");
   }
 
   return (
     <AdminFormModal
       open={open}
+      submitting={submitting}
       onClose={onClose}
       onSubmit={handleSubmit}
       title={targetLabel}

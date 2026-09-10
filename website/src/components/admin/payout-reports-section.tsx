@@ -88,6 +88,7 @@ export function PayoutReportsSection() {
   }
 
   const [reportRowId, setReportRowId] = useUrlState<string>("report", "");
+  const [submitting, setSubmitting] = useState(false);
   const [actionMode, setActionMode] = useState<PayoutReportActionMode | null>(
     null,
   );
@@ -120,9 +121,12 @@ export function PayoutReportsSection() {
     [reportRowId, reports],
   );
 
-  function handleAcknowledge(note: string) {
-    if (!openReport) return;
-    acknowledge(openReport.id, note);
+  async function handleAcknowledge(note: string) {
+    if (!openReport || submitting) return;
+    setSubmitting(true);
+    const ok = await acknowledge(openReport.id, note);
+    setSubmitting(false);
+    if (!ok) return;
     refreshAfterAction();
     setActionMode(null);
     showToast({
@@ -131,9 +135,12 @@ export function PayoutReportsSection() {
     });
   }
 
-  function handleResolve(note: string) {
-    if (!openReport) return;
-    resolve(openReport.id, note);
+  async function handleResolve(note: string) {
+    if (!openReport || submitting) return;
+    setSubmitting(true);
+    const ok = await resolve(openReport.id, note);
+    setSubmitting(false);
+    if (!ok) return;
     refreshAfterAction();
     setActionMode(null);
     setReportRowId("");
@@ -198,6 +205,7 @@ export function PayoutReportsSection() {
           actions={
             <ReportActions
               report={openReport}
+              submitting={submitting}
               onAcknowledge={() => setActionMode("acknowledge")}
               onResolve={() => setActionMode("resolve")}
             />
@@ -213,6 +221,7 @@ export function PayoutReportsSection() {
       {openReport && actionMode && (
         <PayoutReportActionModal
           open={true}
+          submitting={submitting}
           mode={actionMode}
           report={openReport}
           onClose={() => setActionMode(null)}
@@ -286,11 +295,12 @@ function ReportRow({ report, cycleAmount, onOpen }: ReportRowProps) {
 
 interface ReportActionsProps {
   report: PayoutReport;
+  submitting: boolean;
   onAcknowledge: () => void;
   onResolve: () => void;
 }
 
-function ReportActions({ report, onAcknowledge, onResolve }: ReportActionsProps) {
+function ReportActions({ report, submitting, onAcknowledge, onResolve }: ReportActionsProps) {
   if (report.status === "resolved") {
     return (
       <p className="font-sans text-sm text-slate-soft">
@@ -304,7 +314,8 @@ function ReportActions({ report, onAcknowledge, onResolve }: ReportActionsProps)
         <button
           type="button"
           onClick={onAcknowledge}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
+          disabled={submitting}
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Acknowledge…
         </button>
@@ -312,7 +323,8 @@ function ReportActions({ report, onAcknowledge, onResolve }: ReportActionsProps)
       <button
         type="button"
         onClick={onResolve}
-        className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
+        disabled={submitting}
+        className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Resolve…
       </button>

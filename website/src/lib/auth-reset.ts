@@ -1,5 +1,6 @@
 import { useCartStore } from "@/store/cart-store";
 import { useOrdersStore } from "@/store/orders-store";
+import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useUserMediaStore } from "@/store/user-media-store";
@@ -62,6 +63,7 @@ export function resetUserScopedStores(): void {
   useMyRunnerMessagesStore.getState().reset();
   useUserMediaStore.getState().clear();
   useOrdersStore.getState().clear();
+  usePendingPaymentStore.getState().clear();
   useCartStore.getState().clear();
   useSavedEventsStore.getState().clear();
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import {
   AdminFormSection,
@@ -10,6 +10,7 @@ import {
 
 interface AdminDenyDisputeModalProps {
   open: boolean;
+  submitting?: boolean;
   onClose: () => void;
   onSubmit: (reason: string) => void;
   disputeId: string;
@@ -29,6 +30,7 @@ const DENY_REASONS: ReadonlyArray<{ value: string; label: string }> = [
 // reason string passed to useAdminDisputeStore.deny(disputeId, reason).
 export function AdminDenyDisputeModal({
   open,
+  submitting = false,
   onClose,
   onSubmit,
   disputeId,
@@ -38,6 +40,13 @@ export function AdminDenyDisputeModal({
   );
   const [note, setNote] = useState("");
 
+  useEffect(() => {
+    if (!open) {
+      setNote("");
+      setSelectedReason(DENY_REASONS[0]!.value);
+    }
+  }, [open]);
+
   function handleSubmit() {
     const label =
       DENY_REASONS.find((r) => r.value === selectedReason)?.label ??
@@ -45,13 +54,12 @@ export function AdminDenyDisputeModal({
     const composed =
       note.trim().length > 0 ? `${label} — ${note.trim()}` : label;
     onSubmit(composed);
-    setNote("");
-    setSelectedReason(DENY_REASONS[0]!.value);
   }
 
   return (
     <AdminFormModal
       open={open}
+      submitting={submitting}
       onClose={onClose}
       onSubmit={handleSubmit}
       title={`Deny ${disputeId}`}

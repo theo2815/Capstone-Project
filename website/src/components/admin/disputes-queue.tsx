@@ -94,6 +94,7 @@ export function DisputesQueue() {
   const { showToast } = useToast();
 
   const [rowId, setRowId] = useUrlState<string>("row", "");
+  const [submitting, setSubmitting] = useState(false);
   const [resolveOpen, setResolveOpen] = useState(false);
   const [denyOpen, setDenyOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
@@ -209,14 +210,17 @@ export function DisputesQueue() {
     setRowId(id);
   }
 
-  function handleContinueResolve(args: PendingResolve) {
-    if (!openRow) return;
+  async function handleContinueResolve(args: PendingResolve) {
+    if (!openRow || submitting) return;
     if (args.resolution === "deny") {
-      resolve(openRow.id, {
+      setSubmitting(true);
+      const ok = await resolve(openRow.id, {
         resolution: "deny",
         refundAmount: null,
         reason: args.note,
       });
+      setSubmitting(false);
+      if (!ok) return;
       setResolveOpen(false);
       showToast({
         kind: "info",
@@ -227,13 +231,16 @@ export function DisputesQueue() {
     setPendingResolve(args);
   }
 
-  function handleConfirmRefund() {
-    if (!openRow || !pendingResolve) return;
-    resolve(openRow.id, {
+  async function handleConfirmRefund() {
+    if (!openRow || !pendingResolve || submitting) return;
+    setSubmitting(true);
+    const ok = await resolve(openRow.id, {
       resolution: pendingResolve.resolution,
       refundAmount: pendingResolve.refundAmount,
       reason: pendingResolve.note,
     });
+    setSubmitting(false);
+    if (!ok) return;
     setPendingResolve(null);
     setResolveOpen(false);
     showToast({ kind: "success", message: `Refunded · ${openRow.id}` });
@@ -243,16 +250,22 @@ export function DisputesQueue() {
     setPendingResolve(null);
   }
 
-  function handleDeny(reason: string) {
-    if (!openRow) return;
-    deny(openRow.id, reason);
+  async function handleDeny(reason: string) {
+    if (!openRow || submitting) return;
+    setSubmitting(true);
+    const ok = await deny(openRow.id, reason);
+    setSubmitting(false);
+    if (!ok) return;
     setDenyOpen(false);
     showToast({ kind: "info", message: `Denied · ${openRow.id}` });
   }
 
-  function handleEscalate(note: string | null) {
-    if (!openRow) return;
-    escalate(openRow.id, note);
+  async function handleEscalate(note: string | null) {
+    if (!openRow || submitting) return;
+    setSubmitting(true);
+    const ok = await escalate(openRow.id, note);
+    setSubmitting(false);
+    if (!ok) return;
     setEscalateOpen(false);
     showToast({ kind: "info", message: `Escalated · ${openRow.id}` });
   }
@@ -348,6 +361,7 @@ export function DisputesQueue() {
           actions={
             <DisputeDrawerActions
               dispute={openRow}
+              submitting={submitting}
               onResolve={() => setResolveOpen(true)}
               onDeny={() => setDenyOpen(true)}
               onEscalate={() => setEscalateOpen(true)}
@@ -361,6 +375,7 @@ export function DisputesQueue() {
       {openRow && (
         <>
           <AdminResolveDisputeModal
+            submitting={submitting}
             open={resolveOpen}
             escDisabled={pendingResolve !== null}
             onClose={() => {
@@ -375,6 +390,7 @@ export function DisputesQueue() {
             pendingResolve.resolution !== "deny" &&
             pendingResolve.refundAmount !== null && (
               <AdminRefundConfirmModal
+                submitting={submitting}
                 open={true}
                 onCancel={handleCancelRefund}
                 onConfirm={handleConfirmRefund}
@@ -384,12 +400,14 @@ export function DisputesQueue() {
               />
             )}
           <AdminDenyDisputeModal
+            submitting={submitting}
             open={denyOpen}
             onClose={() => setDenyOpen(false)}
             onSubmit={handleDeny}
             disputeId={openRow.id}
           />
           <AdminEscalateModal
+            submitting={submitting}
             open={escalateOpen}
             onClose={() => setEscalateOpen(false)}
             onSubmit={handleEscalate}
@@ -512,11 +530,13 @@ function DisputeSubtitle({ dispute }: { dispute: Dispute }) {
 
 function DisputeDrawerActions({
   dispute,
+  submitting,
   onResolve,
   onDeny,
   onEscalate,
 }: {
   dispute: Dispute;
+  submitting: boolean;
   onResolve: () => void;
   onDeny: () => void;
   onEscalate: () => void;
@@ -539,7 +559,8 @@ function DisputeDrawerActions({
         <button
           type="button"
           onClick={onEscalate}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
+          disabled={submitting}
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Escalate…
         </button>
@@ -548,7 +569,8 @@ function DisputeDrawerActions({
         <button
           type="button"
           onClick={onDeny}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
+          disabled={submitting}
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Deny…
         </button>
@@ -557,7 +579,8 @@ function DisputeDrawerActions({
         <button
           type="button"
           onClick={onResolve}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+          disabled={submitting}
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Resolve…
         </button>

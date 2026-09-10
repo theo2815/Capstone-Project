@@ -105,9 +105,14 @@ export function AuthHydrator() {
 
     const localItems = useCartStore.getState().items;
     const localIds = useSavedEventsStore.getState().ids;
+    const isCurrentUser = () => {
+      const auth = useAuthStore.getState();
+      return auth.isAuthenticated && auth.user?.id === userId;
+    };
 
     Promise.all([mergeCart(localItems), mergeSavedEvents(localIds)])
       .then(([mergedItems, mergedSummaries]) => {
+        if (!isCurrentUser()) return;
         useCartStore.getState().setItems(mergedItems);
         useSavedEventsStore.getState().setSummaries(mergedSummaries);
       })
@@ -115,6 +120,8 @@ export function AuthHydrator() {
         // Spec rule: do NOT clear local on merge failure. Retry on next load.
       })
       .finally(() => {
+        // Logout/account changes must not re-enable writes for a stale merge.
+        if (!isCurrentUser()) return;
         // Flip sync ON regardless of merge outcome — subsequent toggles are
         // best-effort against the server, and the next mount will retry merge
         // if this one failed.

@@ -13,6 +13,7 @@ import { formatPrice } from "@/lib/utils";
 
 interface AdminResolveDisputeModalProps {
   open: boolean;
+  submitting?: boolean;
   /** When true, parent disables ESC handling (stacked refund-confirm child is open). */
   escDisabled?: boolean;
   onClose: () => void;
@@ -33,6 +34,7 @@ interface AdminResolveDisputeModalProps {
 // the parent on Continue so the confirm-modal can read the same values.
 export function AdminResolveDisputeModal({
   open,
+  submitting = false,
   escDisabled = false,
   onClose,
   onContinue,
@@ -85,6 +87,7 @@ export function AdminResolveDisputeModal({
   return (
     <AdminFormModal
       open={open}
+      submitting={submitting}
       onClose={onClose}
       onSubmit={handleSubmit}
       title={`Resolve ${disputeId}`}

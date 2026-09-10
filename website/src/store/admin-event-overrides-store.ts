@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useToastStore } from "@/store/toast-store";
 import type { ListEvent } from "@/app/events/events-browser";
 import { deriveEventState } from "@/lib/event-catalog";
 import {
@@ -20,12 +21,6 @@ import {
 // Consumers should read through `getCatalogWithOverrides()` /
 // `useEventCatalog()` from `@/lib/event-catalog` — never call
 // `useAdminEventOverridesStore()` directly inside non-admin pages.
-
-function fireBackendEventAction(label: string, p: Promise<unknown>): void {
-  void p.catch((err) => {
-    console.error(`[admin/events] ${label} backend call failed`, err);
-  });
-}
 
 export type EventOverridePatch = Partial<
   Pick<ListEvent, "name" | "date" | "location" | "city" | "status" | "state">
@@ -77,7 +72,8 @@ interface AdminEventOverridesState {
    *  match the persisted record. Rejects on backend failure — callers should
    *  surface a toast and keep the form open. */
   createEvent: (input: CreateEventInput) => Promise<ListEvent>;
-  deleteEvent: (id: string) => void;
+  /** Commits deletion after backend confirmation; rejects on failure. */
+  deleteEvent: (id: string) => Promise<void>;
   restoreEvent: (id: string) => void;
   clear: () => void;
 }
@@ -90,7 +86,7 @@ function deriveCity(location: string): string {
 }
 
 export const useAdminEventOverridesStore = create<AdminEventOverridesState>(
-  (set) => ({
+  (set, get) => ({
     overrides: {},
     submissions: [],
     tombstones: [],
@@ -165,26 +161,22 @@ export const useAdminEventOverridesStore = create<AdminEventOverridesState>(
       set((s) => ({ submissions: [event, ...s.submissions] }));
       return event;
     },
-    deleteEvent: (id) => {
-      let needsBackendDelete = false;
-      set((s) => {
-        const subIdx = s.submissions.findIndex((e) => e.id === id);
-        if (subIdx >= 0) {
-          // Brand-new submission — drop it entirely, no tombstone needed.
-          const next = s.submissions.slice();
-          next.splice(subIdx, 1);
-          // Submission was never persisted on the backend if create call
-          // hadn't completed yet; live-mode safety: still issue DELETE so a
-          // backend-side row created in flight gets cleaned up.
-          needsBackendDelete = true;
-          return { submissions: next };
-        }
-        if (s.tombstones.includes(id)) return {};
-        needsBackendDelete = true;
-        return { tombstones: [...s.tombstones, id] };
-      });
-      if (needsBackendDelete) {
-        fireBackendEventAction("deleteEvent", apiDeleteEvent(id));
+    deleteEvent: async (id) => {
+      if (get().tombstones.includes(id)) return;
+      try {
+        await apiDeleteEvent(id);
+        set((s) => ({
+          submissions: s.submissions.filter((event) => event.id !== id),
+          // A created row may already appear in the refetched server list.
+          tombstones: s.tombstones.includes(id) ? s.tombstones : [...s.tombstones, id],
+        }));
+      } catch (error) {
+        console.error("[admin/events] deleteEvent failed", error);
+        useToastStore.getState().showToast({
+          kind: "error",
+          message: "Couldn't delete event — please try again.",
+        });
+        throw error;
       }
     },
     restoreEvent: (id) =>

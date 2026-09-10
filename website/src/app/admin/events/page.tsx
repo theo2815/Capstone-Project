@@ -202,22 +202,23 @@ export default function AdminEventsPage() {
   }
 
   async function handleDelete(event: ListEvent) {
-    const ok = await confirm({
+    await confirm({
       title: "Delete event?",
       message: (
         <>
           Removes <strong className="text-ink">{event.name}</strong> from{" "}
           <span className="font-mono text-[13px]">/events</span>, the
-          photographer upload picker, and the admin board. This is a mock
-          delete — the real backend will soft-archive instead.
+          photographer upload picker, and the admin board.
         </>
       ),
       confirmLabel: "Delete event",
       danger: true,
+      onConfirm: async () => {
+        await deleteEvent(event.id);
+        void queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
+        showToast({ kind: "info", message: `Deleted · ${event.name}` });
+      },
     });
-    if (!ok) return;
-    deleteEvent(event.id);
-    showToast({ kind: "info", message: `Deleted · ${event.name}` });
   }
 
   return (

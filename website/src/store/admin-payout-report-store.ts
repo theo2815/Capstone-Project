@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useToastStore } from "@/store/toast-store";
 import {
   PAYOUT_REPORT_REASON_LABEL,
   type PayoutReport,
@@ -9,11 +10,8 @@ import {
   resolvePayoutReport as apiResolveReport,
 } from "@/lib/api-admin";
 
-// Mock-mode store of admin actions on the payout-reports section. Phase G
-// wiring fires the matching `api-admin` PATCH in the background after the
-// local override is applied — Q-A2 RESOLVED 2026-05-09 means the backend
-// writes the photographer-message insert in the same TX. Photographer-side
-// submitReport() is photographer-scope; admin actions land here.
+// Admin decisions are mirrored locally only after backend confirmation.
+// Photographer-side submitReport() is separate from these admin actions.
 //
 // acknowledge() and resolve() photographer-side notifications fire BE-side
 // via AdminPayoutReportService → AdminDecisionLogService.pushMessage
@@ -23,9 +21,11 @@ import {
 // does NOT push an inbox message — the photographer already saw the
 // submission they themselves filed.
 
-function fireBackendReportAction(label: string, p: Promise<unknown>): void {
-  void p.catch((err) => {
-    console.error(`[admin/reports] ${label} backend call failed`, err);
+function toastBackendFailure(label: string, error: unknown): void {
+  console.error(`[admin/reports] ${label} failed`, error);
+  useToastStore.getState().showToast({
+    kind: "error",
+    message: `Couldn't ${label} payout report — please try again.`,
   });
 }
 
@@ -52,8 +52,8 @@ interface AdminPayoutReportStoreState {
   overrides: Record<string, Partial<PayoutReport>>;
   log: PayoutReportLogEntry[];
   submitReport: (payload: SubmitReportPayload) => PayoutReport;
-  acknowledge: (id: string, reply: string) => void;
-  resolve: (id: string, resolutionNote: string) => void;
+  acknowledge: (id: string, reply: string) => Promise<boolean>;
+  resolve: (id: string, resolutionNote: string) => Promise<boolean>;
   clear: () => void;
 }
 
@@ -106,52 +106,59 @@ export const useAdminPayoutReportStore = create<AdminPayoutReportStoreState>(
       }));
       return report;
     },
-    acknowledge: (id, reply) => {
-      const at = nowIso();
-      set((s) => ({
-        overrides: {
-          ...s.overrides,
-          [id]: {
-            ...s.overrides[id],
-            status: "acknowledged",
-            acknowledgedAt: at,
-            acknowledgeReply: reply,
+    acknowledge: async (id, reply) => {
+      try {
+        await apiAcknowledgeReport(id, reply);
+        const at = nowIso();
+        set((s) => ({
+          overrides: {
+            ...s.overrides,
+            [id]: {
+              ...s.overrides[id],
+              status: "acknowledged",
+              acknowledgedAt: at,
+              acknowledgeReply: reply,
+            },
           },
-        },
-        log: appendLog(s.log, {
-          reportId: id,
-          decision: "acknowledged",
-          note: reply,
-          decidedAt: at,
-        }),
-      }));
-      // Backend writes photographer-message in the same TX (Q-A2 RESOLVED).
-      fireBackendReportAction("acknowledge", apiAcknowledgeReport(id, reply));
+          log: appendLog(s.log, {
+            reportId: id,
+            decision: "acknowledged",
+            note: reply,
+            decidedAt: at,
+          }),
+        }));
+        return true;
+      } catch (error) {
+        toastBackendFailure("acknowledge", error);
+        return false;
+      }
     },
-    resolve: (id, resolutionNote) => {
-      const at = nowIso();
-      set((s) => ({
-        overrides: {
-          ...s.overrides,
-          [id]: {
-            ...s.overrides[id],
-            status: "resolved",
-            resolvedAt: at,
-            resolutionNote,
+    resolve: async (id, resolutionNote) => {
+      try {
+        await apiResolveReport(id, resolutionNote);
+        const at = nowIso();
+        set((s) => ({
+          overrides: {
+            ...s.overrides,
+            [id]: {
+              ...s.overrides[id],
+              status: "resolved",
+              resolvedAt: at,
+              resolutionNote,
+            },
           },
-        },
-        log: appendLog(s.log, {
-          reportId: id,
-          decision: "resolved",
-          note: resolutionNote,
-          decidedAt: at,
-        }),
-      }));
-      // Backend writes photographer-message in the same TX (Q-A2 RESOLVED).
-      fireBackendReportAction(
-        "resolve",
-        apiResolveReport(id, resolutionNote),
-      );
+          log: appendLog(s.log, {
+            reportId: id,
+            decision: "resolved",
+            note: resolutionNote,
+            decidedAt: at,
+          }),
+        }));
+        return true;
+      } catch (error) {
+        toastBackendFailure("resolve", error);
+        return false;
+      }
     },
     clear: () => set({ submissions: [], overrides: {}, log: [] }),
   }),

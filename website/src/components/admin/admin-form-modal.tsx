@@ -21,7 +21,7 @@ import { Modal } from "@/components/ui/modal";
 
 const FOOTER_CLS = "flex items-center justify-end gap-3 pt-2";
 const CANCEL_BTN_CLS =
-  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2";
+  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed";
 const SUBMIT_BTN_CLS =
   "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink disabled:cursor-not-allowed";
 
@@ -40,6 +40,7 @@ interface AdminFormModalProps {
   intro?: ReactNode;
   submitLabel: string;
   submitDisabled?: boolean;
+  submitting?: boolean;
   cancelLabel?: string;
   /** Pass true while a stacked confirmation child is open above this form. */
   escDisabled?: boolean;
@@ -53,37 +54,44 @@ export function AdminFormModal({
   intro,
   submitLabel,
   submitDisabled = false,
+  submitting = false,
   cancelLabel = "Cancel",
   escDisabled = false,
   children,
 }: AdminFormModalProps) {
   function handle(e: FormEvent) {
     e.preventDefault();
-    if (submitDisabled) return;
+    if (submitDisabled || submitting) return;
     onSubmit();
+  }
+  function handleClose() {
+    if (!submitting) onClose();
   }
   return (
     <Modal
       isOpen={open}
-      onClose={onClose}
+      onClose={handleClose}
       title={title}
-      escDisabled={escDisabled}
+      escDisabled={escDisabled || submitting}
+      hideClose={submitting}
     >
       <form onSubmit={handle} className="space-y-5">
         {intro && (
           <p className="font-sans text-sm text-ink-soft">{intro}</p>
         )}
-        {children}
+        <fieldset disabled={submitting} className="min-w-0 space-y-5">
+          {children}
+        </fieldset>
         <div className={FOOTER_CLS}>
-          <button type="button" onClick={onClose} className={CANCEL_BTN_CLS}>
+          <button type="button" onClick={handleClose} disabled={submitting} className={CANCEL_BTN_CLS}>
             {cancelLabel}
           </button>
           <button
             type="submit"
-            disabled={submitDisabled}
+            disabled={submitDisabled || submitting}
             className={SUBMIT_BTN_CLS}
           >
-            {submitLabel}
+            {submitting ? "Saving…" : submitLabel}
           </button>
         </div>
       </form>
@@ -98,6 +106,7 @@ interface AdminConfirmModalProps {
   title: string;
   confirmLabel: string;
   confirmDisabled?: boolean;
+  submitting?: boolean;
   cancelLabel?: string;
   escDisabled?: boolean;
   children: ReactNode;
@@ -114,30 +123,35 @@ export function AdminConfirmModal({
   title,
   confirmLabel,
   confirmDisabled = false,
+  submitting = false,
   cancelLabel = "Cancel",
   escDisabled = false,
   children,
 }: AdminConfirmModalProps) {
+  function handleClose() {
+    if (!submitting) onClose();
+  }
   return (
     <Modal
       isOpen={open}
-      onClose={onClose}
+      onClose={handleClose}
       title={title}
-      escDisabled={escDisabled}
+      escDisabled={escDisabled || submitting}
+      hideClose={submitting}
     >
       <div className="space-y-5">
         {children}
         <div className={FOOTER_CLS}>
-          <button type="button" onClick={onClose} className={CANCEL_BTN_CLS}>
+          <button type="button" onClick={handleClose} disabled={submitting} className={CANCEL_BTN_CLS}>
             {cancelLabel}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            disabled={confirmDisabled}
+            disabled={confirmDisabled || submitting}
             className={SUBMIT_BTN_CLS}
           >
-            {confirmLabel}
+            {submitting ? "Saving…" : confirmLabel}
           </button>
         </div>
       </div>

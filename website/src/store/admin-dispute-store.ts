@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useToastStore } from "@/store/toast-store";
 import {
   ADMIN_DISPUTES,
   type Dispute,
@@ -17,12 +18,8 @@ import {
 // resolve / deny / escalate. The FE reads them via
 // GET /me/photographer/messages and no longer fires FE-side notify helpers.
 
-// Mock-mode store of admin actions on the disputes queue. Phase G wiring
-// fires the matching `api-admin` call in the background after the local
-// override is applied — Q-A2 RESOLVED 2026-05-09 means the backend writes
-// the dispute_resolved photographer-message insert in the same TX, so the
-// FE only fires the action and lets the photographer's next inbox poll
-// surface the new row.
+// Admin decisions are mirrored locally only after backend confirmation.
+// The backend also sends photographer notifications in the same transaction.
 //
 // Runner-submitted disputes (post-2026-05-08): submitDispute() pushes a fully-
 // formed Dispute into `submissions[]`. getEffectiveDisputes() concatenates
@@ -31,9 +28,11 @@ import {
 // Runner-side write travels via `submitOrderRefund` in `api-orders.ts` per
 // Phase E wiring; the admin store mirrors locally for the demo.
 
-function fireBackendDisputeAction(label: string, p: Promise<unknown>): void {
-  void p.catch((err) => {
-    console.error(`[admin/disputes] ${label} backend call failed`, err);
+function toastBackendFailure(label: string, error: unknown): void {
+  console.error(`[admin/disputes] ${label} failed`, error);
+  useToastStore.getState().showToast({
+    kind: "error",
+    message: `Couldn't ${label} dispute — please try again.`,
   });
 }
 
@@ -71,9 +70,9 @@ interface AdminDisputeStoreState {
       refundAmount: number | null;
       reason: string | null;
     },
-  ) => void;
-  deny: (disputeId: string, reason: string | null) => void;
-  escalate: (disputeId: string, reason: string | null) => void;
+  ) => Promise<boolean>;
+  deny: (disputeId: string, reason: string | null) => Promise<boolean>;
+  escalate: (disputeId: string, reason: string | null) => Promise<boolean>;
   submitDispute: (payload: SubmitDisputePayload) => Dispute;
   clear: () => void;
 }
@@ -95,77 +94,89 @@ export const useAdminDisputeStore = create<AdminDisputeStoreState>((set) => ({
   overrides: {},
   submissions: [],
   log: [],
-  resolve: (disputeId, { resolution, refundAmount, reason }) => {
-    set((s) => ({
-      overrides: {
-        ...s.overrides,
-        [disputeId]: {
-          ...s.overrides[disputeId],
-          status: "resolved",
+  resolve: async (disputeId, { resolution, refundAmount, reason }) => {
+    try {
+      await apiResolveDispute(disputeId, { resolution, refundAmount, reason });
+      set((s) => ({
+        overrides: {
+          ...s.overrides,
+          [disputeId]: {
+            ...s.overrides[disputeId],
+            status: "resolved",
+            resolution,
+            refundAmount,
+            resolvedAt: new Date().toISOString(),
+          },
+        },
+        log: appendLog(s.log, {
+          disputeId,
+          decision: "resolved",
           resolution,
           refundAmount,
-          resolvedAt: new Date().toISOString(),
-        },
-      },
-      log: appendLog(s.log, {
-        disputeId,
-        decision: "resolved",
-        resolution,
-        refundAmount,
-        reason,
-        decidedAt: new Date().toISOString(),
-      }),
-    }));
-    fireBackendDisputeAction(
-      "resolve",
-      apiResolveDispute(disputeId, { resolution, refundAmount, reason }),
-    );
+          reason,
+          decidedAt: new Date().toISOString(),
+        }),
+      }));
+      return true;
+    } catch (error) {
+      toastBackendFailure("resolve", error);
+      return false;
+    }
   },
-  deny: (disputeId, reason) => {
-    set((s) => ({
-      overrides: {
-        ...s.overrides,
-        [disputeId]: {
-          ...s.overrides[disputeId],
-          status: "denied",
+  deny: async (disputeId, reason) => {
+    try {
+      await apiDenyDispute(disputeId, reason);
+      set((s) => ({
+        overrides: {
+          ...s.overrides,
+          [disputeId]: {
+            ...s.overrides[disputeId],
+            status: "denied",
+            resolution: "deny",
+            refundAmount: null,
+            resolvedAt: new Date().toISOString(),
+          },
+        },
+        log: appendLog(s.log, {
+          disputeId,
+          decision: "denied",
           resolution: "deny",
           refundAmount: null,
-          resolvedAt: new Date().toISOString(),
-        },
-      },
-      log: appendLog(s.log, {
-        disputeId,
-        decision: "denied",
-        resolution: "deny",
-        refundAmount: null,
-        reason,
-        decidedAt: new Date().toISOString(),
-      }),
-    }));
-    fireBackendDisputeAction("deny", apiDenyDispute(disputeId, reason));
+          reason,
+          decidedAt: new Date().toISOString(),
+        }),
+      }));
+      return true;
+    } catch (error) {
+      toastBackendFailure("deny", error);
+      return false;
+    }
   },
-  escalate: (disputeId, reason) => {
-    set((s) => ({
-      overrides: {
-        ...s.overrides,
-        [disputeId]: {
-          ...s.overrides[disputeId],
-          status: "escalated",
+  escalate: async (disputeId, reason) => {
+    try {
+      await apiEscalateDispute(disputeId, reason);
+      set((s) => ({
+        overrides: {
+          ...s.overrides,
+          [disputeId]: {
+            ...s.overrides[disputeId],
+            status: "escalated",
+          },
         },
-      },
-      log: appendLog(s.log, {
-        disputeId,
-        decision: "escalated",
-        resolution: null,
-        refundAmount: null,
-        reason,
-        decidedAt: new Date().toISOString(),
-      }),
-    }));
-    fireBackendDisputeAction(
-      "escalate",
-      apiEscalateDispute(disputeId, reason),
-    );
+        log: appendLog(s.log, {
+          disputeId,
+          decision: "escalated",
+          resolution: null,
+          refundAmount: null,
+          reason,
+          decidedAt: new Date().toISOString(),
+        }),
+      }));
+      return true;
+    } catch (error) {
+      toastBackendFailure("escalate", error);
+      return false;
+    }
   },
   submitDispute: (payload) => {
     const dispute: Dispute = {
