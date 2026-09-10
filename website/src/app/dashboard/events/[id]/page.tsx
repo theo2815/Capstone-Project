@@ -46,7 +46,9 @@ import type {
   PhotographerLibraryPhoto,
 } from "@/lib/photographer-mock";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import { cn, copyToClipboard } from "@/lib/utils";
+import { isInAppBrowser } from "@/lib/in-app-browser";
+import { savePhoto, showInAppSaveHint } from "@/lib/save-photo";
+import { cn, copyToClipboard, triggerDownload } from "@/lib/utils";
 
 // Focused share page. Direction A composition: SiteHeader (no dashboard rail
 // — escaped via the conditional in app/dashboard/layout.tsx) → back chip →
@@ -806,18 +808,23 @@ function PhotoLibrary({
     }
   }
 
-  async function handleDownloadAll() {
+  async function handleDownload(photoIds?: string[]) {
+    if (photoIds?.length === 0 || downloading) return;
+    if (photoIds?.length === 1) {
+      await handleDownloadSingle(photoIds[0]);
+      return;
+    }
+    if (isInAppBrowser()) {
+      showInAppSaveHint();
+      return;
+    }
     setDownloading(true);
     try {
       const { url } = await preparePhotographerBundle(eventId);
       // Top-level navigation to the tokened ZIP; the server sends
       // Content-Disposition: attachment, so the browser downloads without
       // leaving the page (same shape as the order-bundle download).
-      const a = document.createElement("a");
-      a.href = url;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      triggerDownload(url, photoIds ? { photoIds: photoIds.join(",") } : undefined);
       showToast({ kind: "success", message: "Preparing your ZIP…" });
     } catch {
       showToast({
@@ -840,27 +847,23 @@ function PhotoLibrary({
       setOpenIndex((i) => (i === null || i >= photos.length - 1 ? i : i + 1)),
     [photos.length],
   );
-  const handleDownloadSingle = useCallback(async () => {
-    const photoId = openIndex !== null ? photos[openIndex]?.id : undefined;
-    if (!photoId) return;
+  const handleDownloadSingle = useCallback(async (photoId: string) => {
+    setDownloading(true);
     try {
       const result = await fetchPhotographerPhotoDownload(photoId);
       if (result?.url) {
-        const a = document.createElement("a");
-        a.href = result.url;
-        a.download = "";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        showToast({ kind: "success", message: "Download started." });
+        const saved = await savePhoto(result.url);
+        if (saved === "downloaded") showToast({ kind: "success", message: "Download started." });
         return;
       }
       showToast({ kind: "error", message: "Download unavailable — try again." });
     } catch (err) {
       console.error("[photographer/download] failed", err);
       showToast({ kind: "error", message: "Download failed. Try again." });
+    } finally {
+      setDownloading(false);
     }
-  }, [openIndex, photos, showToast]);
+  }, [showToast]);
 
   const openPhoto = openIndex !== null ? photos[openIndex] : null;
   const previewItem: PhotoPreviewItem | null = openPhoto
@@ -900,7 +903,7 @@ function PhotoLibrary({
             {section === "active" && list.total > 0 && (
               <button
                 type="button"
-                onClick={handleDownloadAll}
+                onClick={() => handleDownload()}
                 disabled={downloading}
                 className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
               >
@@ -981,7 +984,9 @@ function PhotoLibrary({
           count={selected.size}
           restoreCount={photos.filter((photo) => selected.has(photo.id) && !photo.deletionStartedAt).length}
           allSelected={photos.length > 0 && selected.size === photos.length}
-          busy={busy}
+          busy={busy || downloading}
+          downloading={downloading}
+          onDownload={() => handleDownload([...selected])}
           onToggleAll={toggleAll}
           onTrash={() => runTrashOrRestore("trash")}
           onRestore={() => runTrashOrRestore("restore")}
@@ -1001,7 +1006,7 @@ function PhotoLibrary({
           onClose={handleClose}
           onPrev={openIndex > 0 ? handlePrev : undefined}
           onNext={openIndex < photos.length - 1 ? handleNext : undefined}
-          onDownload={handleDownloadSingle}
+          onDownload={() => handleDownloadSingle(previewItem.id)}
         />
       )}
     </section>
@@ -1057,6 +1062,8 @@ function SelectionBar({
   restoreCount,
   allSelected,
   busy,
+  downloading,
+  onDownload,
   onToggleAll,
   onTrash,
   onRestore,
@@ -1068,6 +1075,8 @@ function SelectionBar({
   restoreCount: number;
   allSelected: boolean;
   busy: boolean;
+  downloading: boolean;
+  onDownload: () => void;
   onToggleAll: () => void;
   onTrash: () => void;
   onRestore: () => void;
@@ -1095,14 +1104,24 @@ function SelectionBar({
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {section === "active" ? (
-            <button
-              type="button"
-              onClick={onTrash}
-              disabled={busy || count === 0}
-              className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
-            >
-              {busy ? "Working…" : `Delete ${count}`}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onDownload}
+                disabled={busy || count === 0}
+                className={cn(BTN_SECONDARY, BTN_SIZE.sm, "tnum")}
+              >
+                {downloading ? "Preparing…" : `Download ${count}`}
+              </button>
+              <button
+                type="button"
+                onClick={onTrash}
+                disabled={busy || count === 0}
+                className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+              >
+                {busy ? "Working…" : `Delete ${count}`}
+              </button>
+            </>
           ) : (
             <>
               <button

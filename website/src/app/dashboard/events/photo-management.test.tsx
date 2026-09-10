@@ -9,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   rows: 120,
   purging: false,
   covered: [] as unknown[],
+  activeRows: 1,
+  get: vi.fn(),
+  save: vi.fn(async () => 'downloaded'),
+  download: vi.fn(),
 }));
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'event-1' }), notFound: () => { throw Error('404'); } }));
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: async () => {} }) }));
@@ -17,10 +21,12 @@ vi.mock('@/hooks/use-confirmation', () => ({ useConfirmation: () => ({ confirm: 
 vi.mock('@/components/layout/site-header', () => ({ SiteHeader: () => null }));
 vi.mock('@/components/dashboard/event-coupon-modal', () => ({ EventCouponModal: () => null }));
 vi.mock('@/components/dashboard/my-event-form', () => ({ MyEventForm: () => null }));
-vi.mock('@/components/photos/photo-preview-card', () => ({ PhotoPreviewCard: () => null }));
+vi.mock('@/components/photos/photo-preview-card', () => ({ PhotoPreviewCard: ({ onDownload }: { onDownload: () => void }) => <button onClick={onDownload}>Download photo</button> }));
+vi.mock('@/lib/save-photo', () => ({ savePhoto: mocks.save, showInAppSaveHint: vi.fn() }));
+vi.mock('@/lib/utils', async (original) => ({ ...await original<typeof import('@/lib/utils')>(), triggerDownload: mocks.download }));
 vi.mock('@/components/profile-shell', () => ({ Slab: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock('@/components/events/event-tile', () => ({ EventTile: ({ event }: { event: { name: string } }) => <div>{event.name}</div> }));
-vi.mock('@/lib/api', () => ({ api: { post: mocks.post }, refreshAccessToken: vi.fn() }));
+vi.mock('@/lib/api', () => ({ api: { post: mocks.post, get: mocks.get }, refreshAccessToken: vi.fn() }));
 vi.mock('@/hooks/use-photographer-data', () => ({
   COVERED_EVENTS_MAX: 200,
   usePhotographerEvents: () => mocks.covered,
@@ -30,16 +36,47 @@ vi.mock('@/hooks/use-photographer-data', () => ({
     pricingMode: 'free', handle: 'reviewer',
   } }),
   usePhotographerEventPhotos: (_id: string, { deleted }: { deleted: boolean }) => ({
-    items: Array.from({ length: deleted ? mocks.rows : 1 }, (_, i) => ({
+    items: Array.from({ length: deleted ? mocks.rows : mocks.activeRows }, (_, i) => ({
       id: `photo-${i}`, eventId: 'event-1', tone: 0, span: 'default', salesCount: 0,
       uploadedAt: '2026-09-07T00:00:00Z', deletedAt: deleted ? '2026-09-07T01:00:00Z' : null,
       deletionStartedAt: deleted && mocks.purging ? '2026-09-07T02:00:00Z' : null,
-    })), total: deleted ? mocks.rows : 1, isLoading: false, isFetchingNextPage: false,
+    })), total: deleted ? mocks.rows : 3028, isLoading: false, isFetchingNextPage: false,
     fetchNextPage: vi.fn(),
   }),
 }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); mocks.activeRows = 1; });
 describe('photographer photo management', () => {
+  it('sends single-photo and single-selection saves through the same existing save helper', async () => {
+    mocks.get.mockResolvedValue({ url: 'https://storage.test/photo?attachment=signed' });
+    render(<EventPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open photo 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Download photo' }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Download 1' }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2));
+    expect(mocks.get).toHaveBeenLastCalledWith('/me/photographer/photos/photo-0/download');
+    expect(mocks.save).toHaveBeenLastCalledWith('https://storage.test/photo?attachment=signed');
+  });
+
+  it('downloads all independently of 60 loaded tiles, then posts only selected IDs for a ZIP', async () => {
+    mocks.activeRows = 60;
+    mocks.post.mockResolvedValueOnce({ url: 'https://api.test/bundle?token=signed' } as never);
+    render(<EventPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Download all' }));
+    await waitFor(() => expect(mocks.download).toHaveBeenCalledWith('https://api.test/bundle?token=signed', undefined));
+    expect(mocks.post).toHaveBeenCalledWith('/me/photographer/events/event-1/download-bundle', {});
+    mocks.post.mockResolvedValueOnce({ url: 'https://api.test/bundle?token=signed' } as never);
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select photo 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select photo 2' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Download 2' }));
+    await waitFor(() => expect(mocks.download).toHaveBeenLastCalledWith('https://api.test/bundle?token=signed', { photoIds: 'photo-0,photo-1' }));
+    expect(screen.getByRole('button', { name: 'Delete 2' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete 2' }));
+    await waitFor(() => expect(mocks.post).toHaveBeenLastCalledWith('/me/photographer/events/event-1/photos/trash', { photoIds: ['photo-0', 'photo-1'] }));
+  });
   it('permanent deletion must respect the backend maximum of 100 IDs per request', async () => {
     render(<EventPage />);
     fireEvent.click(screen.getByRole('tab', { name: 'Deleted' }));

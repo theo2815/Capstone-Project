@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { isIOS, isInAppBrowser } from "@/lib/in-app-browser";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -34,11 +35,13 @@ export function safeHttpUrl(u: string | null | undefined): string | null {
 
 // Guarded clipboard write. Resolves true/false (never throws) so callers can
 // toast an honest "couldn't copy" instead of a silent no-op or a false
-// success. Tries the async Clipboard API first, then falls back to the legacy
-// execCommand("copy") path for contexts where navigator.clipboard is absent or
-// rejects — insecure origins and in-app browsers (Facebook/Instagram WebView),
-// which is exactly where photographers open share links.
+// success. Desktop prefers the async Clipboard API; iOS/webviews try a
+// synchronous copy first to retain the tap. The legacy path also covers
+// unavailable/denied clipboard access, including insecure development origins.
 export async function copyToClipboard(text: string): Promise<boolean> {
+  // WebKit/webviews can lose the tap's activation while writeText rejects.
+  // Try their synchronous fallback while still inside the click handler.
+  if ((isIOS() || isInAppBrowser()) && legacyCopy(text)) return true;
   if (typeof navigator !== "undefined" && navigator.clipboard) {
     try {
       await navigator.clipboard.writeText(text);
@@ -52,21 +55,35 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 
 function legacyCopy(text: string): boolean {
   if (typeof document === "undefined") return false;
+  const focused = document.activeElement;
+  const selection = document.getSelection();
+  const ranges = selection
+    ? Array.from({ length: selection.rangeCount }, (_, i) => selection.getRangeAt(i).cloneRange())
+    : [];
+  const ta = document.createElement("textarea");
   try {
-    const ta = document.createElement("textarea");
     ta.value = text;
-    // Keep it off-screen and non-disruptive: no scroll jump, no focus flash.
+    // Keep it focusable on iOS without a scroll jump, zoom, or focus flash.
     ta.setAttribute("readonly", "");
     ta.style.position = "fixed";
-    ta.style.top = "-9999px";
+    ta.style.top = "0";
+    ta.style.left = "0";
+    ta.style.fontSize = "16px";
     ta.style.opacity = "0";
     document.body.appendChild(ta);
+    ta.focus({ preventScroll: true });
     ta.select();
-    const ok = document.execCommand("copy");
-    ta.remove();
-    return ok;
+    ta.setSelectionRange(0, text.length);
+    return document.execCommand("copy");
   } catch {
     return false;
+  } finally {
+    ta.remove();
+    if (focused instanceof HTMLElement) focused.focus({ preventScroll: true });
+    if (selection) {
+      selection.removeAllRanges();
+      ranges.forEach((range) => selection.addRange(range));
+    }
   }
 }
 
@@ -99,9 +116,27 @@ export function safeUUID(): string {
 // Programmatic save of a signed attachment URL — the same anchor-click the
 // orders page and the photographer library use, shared because free-event
 // tiles, both lightboxes and the share page all need it.
-export function triggerDownload(url: string): void {
+export function triggerDownload(url: string, fields?: Record<string, string>): void {
   const href = safeHttpUrl(url);
   if (!href) return;
+  if (fields) {
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = href;
+    form.hidden = true;
+    for (const [name, value] of Object.entries(fields)) {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    }
+    document.body.appendChild(form);
+    form.submit();
+    // Submission queues navigation; detaching synchronously cancels it in Chrome.
+    setTimeout(() => form.remove(), 1000);
+    return;
+  }
   const a = document.createElement("a");
   a.href = href;
   a.download = "";

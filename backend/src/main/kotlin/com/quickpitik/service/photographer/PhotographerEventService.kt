@@ -159,7 +159,7 @@ class PhotographerEventService(
             ?.takeIf { it.deletionStartedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
         val ttl = storageProperties.presignedTtl.photographerDownload
-        val url = storageService.presignedGetUrl(photo.s3Key, ttl)
+        val url = storageService.presignedDownloadUrl(photo.s3Key, ttl, "quickpitik-${photo.id}.jpg")
         return PhotographerDownloadDto(
             url = url,
             expiresAt = OffsetDateTime.now().plus(ttl),

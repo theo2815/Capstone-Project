@@ -182,6 +182,18 @@ class PhotographerBundleServiceTest {
     }
 
     @Test
+    fun `selection contains exactly the requested active originals and rejects missing ids`() {
+        stubEvent()
+        val first = row("first", "101")
+        val second = row("second", "102")
+        stubRows(first, second, row("unselected", null))
+        assertEquals(listOf("first", "second"), service.prepare(photographerId, eventId, setOf(first.id, second.id)).entries.map { it.s3Key })
+        assertEquals("image/jpeg", service.prepare(photographerId, eventId, setOf(first.id)).contentType)
+        assertFailsWith<NotFoundException> { service.prepare(photographerId, eventId, emptySet()) }
+        assertFailsWith<NotFoundException> { service.prepare(photographerId, eventId, setOf(first.id, UUID.randomUUID())) }
+    }
+
+    @Test
     fun `failed second original aborts instead of finalizing a partial archive`() {
         Mockito.`when`(storageService.open("k1")).thenReturn(ByteArrayInputStream(byteArrayOf(1, 2, 3)))
         Mockito.`when`(storageService.open("k2")).thenAnswer { throw java.io.IOException("storage unavailable") }

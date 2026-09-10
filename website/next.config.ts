@@ -47,7 +47,7 @@ const CSP = [
   "frame-ancestors 'none'",
   "object-src 'none'",
   "base-uri 'self'",
-  "form-action 'self'",
+  `form-action 'self' ${API_ORIGIN}`,
 ].join("; ");
 
 const securityHeaders = [
