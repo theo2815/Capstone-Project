@@ -15,7 +15,6 @@ import {
   fetchPerEventEarnings,
   fetchPhotographerPayouts,
   fetchPhotographerPayoutBalance,
-  fetchPhotographerPayoutReports,
   fetchPhotographerTransactions,
   type PayoutBalanceResponse,
   type PerEventEarning,
@@ -32,10 +31,6 @@ import type {
   PhotographerLibraryPhoto,
   PhotographerPayout,
 } from "@/lib/photographer-mock";
-import type {
-  PayoutReport,
-  PayoutReportStatus,
-} from "@/lib/admin-payout-reports";
 import type { PhotographerProfile } from "@/lib/photographer-registry";
 import type { PaginatedResponse } from "@/types/api";
 
@@ -177,17 +172,6 @@ export function usePhotographerPayoutBalance(): PayoutBalanceResponse | null {
     queryKey: ["photographer", "payouts", "balance"],
     queryFn: () => fetchPhotographerPayoutBalance(),
     staleTime: 30_000,
-  });
-  return query.data ?? null;
-}
-
-export function usePhotographerPayoutReports(args: {
-  status?: PayoutReportStatus;
-} = {}): PayoutReport[] | null {
-  const query = useQuery<PayoutReport[] | null>({
-    queryKey: ["photographer", "payouts", "reports", args],
-    queryFn: () => fetchPhotographerPayoutReports(args),
-    staleTime: EARNINGS_STALE_MS,
   });
   return query.data ?? null;
 }

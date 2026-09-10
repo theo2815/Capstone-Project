@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { ListEvent } from "@/types/event";
 import { StatusChip } from "@/components/events/event-tile";
 import { ROUTES } from "@/lib/constants";
 import type { EventReviewStatus } from "@/lib/photographer-mock";

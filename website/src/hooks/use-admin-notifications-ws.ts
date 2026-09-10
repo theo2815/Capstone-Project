@@ -20,12 +20,8 @@ import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 //   - event_change_requested  so the V46 event requests queue and its counts
 //                             refresh without a reload.
 //
-//   - dispute_filed         → no-op for now. The admin dispute store is
-//   - payout_report_filed     mock-fed in v1; Phase G migrates them onto
-//                             real BE fetchers and at that point this hook
-//                             becomes the invalidation dispatch site.
-//                             Logged at info so the BE push is visible in
-//                             DevTools even before the store is wired.
+//   - dispute_filed / payout_report_filed → invalidate the matching Query
+//     lists and KPI counts so incoming work is visible immediately.
 //
 // Reconnect policy mirrors usePhotographerNotificationsWs — indefinite
 // retry with 1s → 30s backoff.
@@ -80,9 +76,13 @@ export function useAdminNotificationsWs(enabled: boolean): void {
         // next read by the queue page.
         useAdminUsersServerStore.getState().invalidate();
         void useAdminUsersServerStore.getState().refetch();
+        void queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
+        void queryClient.invalidateQueries({ queryKey: ["admin", "payouts", "reports"] });
+        void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
       };
 
       ws.onmessage = (event) => {
+        if (cancelled) return;
         try {
           const data = JSON.parse(event.data) as AdminInboxFrame;
           switch (data.type) {
@@ -96,14 +96,11 @@ export function useAdminNotificationsWs(enabled: boolean): void {
               void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
               break;
             case "dispute_filed":
+              void queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
+              void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
+              break;
             case "payout_report_filed":
-              // TODO(Phase G): invalidate admin-dispute-store /
-              // admin-payout-report-store once they migrate off mocks.
-              if (process.env.NODE_ENV !== "production") {
-                console.info(
-                  `[admin/ws] ${data.type} entity=${data.entityId} actor=${data.actorId}`,
-                );
-              }
+              void queryClient.invalidateQueries({ queryKey: ["admin", "payouts", "reports"] });
               break;
             default:
               // Unknown type — log and drop (dev only — entity/actor ids

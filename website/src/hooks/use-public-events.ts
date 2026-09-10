@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { fetchEventsList, type EventsListFilters } from "@/lib/api-events";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { ListEvent } from "@/types/event";
 
 // Events change on admin edits, not by the half-minute. Cover URLs inside are
 // presigned for 1 h, so 5 min is comfortably safe.

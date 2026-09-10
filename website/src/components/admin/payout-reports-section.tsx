@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Slab } from "@/components/profile-shell";
 import { Kicker } from "@/components/ui/kicker";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   AdminStatusPill,
   type AdminStatusPillTone,
@@ -16,20 +16,17 @@ import {
 import {
   PAYOUT_REPORT_REASON_LABEL,
   PAYOUT_REPORT_STATUS_LABEL,
-  mergeReportsWithOverrides,
   type PayoutReport,
   type PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
-import { useAdminPayoutReportStore } from "@/store/admin-payout-report-store";
+import { useAdminPayoutReports, usePayoutReportActions, EMPTY_REPORTS } from "@/hooks/use-payout-reports";
 import {
   mergePayoutsWithOverrides,
   useAdminPayoutStore,
 } from "@/store/admin-payout-store";
 import {
-  useAdminPayoutReports,
   useAdminPayouts,
   EMPTY_PAYOUTS,
-  EMPTY_REPORTS,
 } from "@/hooks/use-admin-data";
 import { useToast } from "@/hooks/use-toast";
 import { useUrlState } from "@/hooks/use-url-state";
@@ -51,7 +48,7 @@ function statusTone(status: PayoutReportStatus): AdminStatusPillTone {
 // /admin/payouts second section — runs below the existing PayoutsQueue and
 // surfaces photographer-filed reports about specific cycles. State machine
 // is open → acknowledged → resolved; admin actions on a report fire an
-// inbox message back to the photographer (handled inside the store).
+// inbox message back to the photographer (handled by the backend).
 //
 // Drawer + action modal mirror the Disputes pattern: row click opens a
 // focus-mode drawer; drawer footer has the status-conditional verbs;
@@ -61,31 +58,12 @@ function statusTone(status: PayoutReportStatus): AdminStatusPillTone {
 // within each bucket, newest reportedAt first.
 
 export function PayoutReportsSection() {
-  // A-1 followup for reports: read from BE. The local submissions array in
-  // Zustand only ever contains reports filed in *this* browser session
-  // (photographer-side), so a fresh admin tab saw "No reports yet" even
-  // when reports existed on the server. overrides still layer for instant
-  // feedback after acknowledge/resolve.
-  const overrides = useAdminPayoutReportStore((s) => s.overrides);
-  const acknowledge = useAdminPayoutReportStore((s) => s.acknowledge);
-  const resolve = useAdminPayoutReportStore((s) => s.resolve);
+  const { acknowledge, resolve } = usePayoutReportActions();
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
-  const serverReports = useAdminPayoutReports() ?? EMPTY_REPORTS;
+  const reportsQuery = useAdminPayoutReports();
+  const serverReports = reportsQuery.data ?? EMPTY_REPORTS;
   const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
-  const queryClient = useQueryClient();
   const { showToast } = useToast();
-
-  function refreshAfterAction() {
-    // Local override already gives instant feedback; this kicks a refetch so
-    // BE state becomes the source of truth (and the photographer's
-    // /dashboard/billing reports cache, if mounted, also catches up).
-    queryClient.invalidateQueries({
-      queryKey: ["admin", "payouts", "reports"],
-    });
-    queryClient.invalidateQueries({
-      queryKey: ["photographer", "payouts", "reports"],
-    });
-  }
 
   const [reportRowId, setReportRowId] = useUrlState<string>("report", "");
   const [submitting, setSubmitting] = useState(false);
@@ -94,18 +72,17 @@ export function PayoutReportsSection() {
   );
 
   const reports = useMemo(() => {
-    const all = mergeReportsWithOverrides(serverReports, overrides);
     const order: Record<PayoutReportStatus, number> = {
       open: 0,
       acknowledged: 1,
       resolved: 2,
     };
-    return [...all].sort((a, b) => {
+    return [...serverReports].sort((a, b) => {
       const so = order[a.status] - order[b.status];
       if (so !== 0) return so;
       return b.reportedAt.localeCompare(a.reportedAt);
     });
-  }, [serverReports, overrides]);
+  }, [serverReports]);
 
   const openCount = reports.filter((r) => r.status === "open").length;
 
@@ -127,7 +104,6 @@ export function PayoutReportsSection() {
     const ok = await acknowledge(openReport.id, note);
     setSubmitting(false);
     if (!ok) return;
-    refreshAfterAction();
     setActionMode(null);
     showToast({
       kind: "success",
@@ -141,7 +117,6 @@ export function PayoutReportsSection() {
     const ok = await resolve(openReport.id, note);
     setSubmitting(false);
     if (!ok) return;
-    refreshAfterAction();
     setActionMode(null);
     setReportRowId("");
     showToast({
@@ -162,7 +137,15 @@ export function PayoutReportsSection() {
           : `${reports.length} total`
       }
     >
-      {reports.length === 0 ? (
+      {reportsQuery.isPending ? <p role="status">Loading reports…</p> :
+        reportsQuery.isError && !reportsQuery.data ? (
+          <div role="alert" className="space-y-4">
+            <p>Couldn&apos;t load payout reports.</p>
+            <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void reportsQuery.refetch()}>
+              Try again
+            </button>
+          </div>
+        ) : reports.length === 0 ? (
         <p className="font-sans text-sm text-slate-soft">
           No photographer reports yet.
         </p>

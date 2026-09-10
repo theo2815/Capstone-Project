@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAdminDisputeStore } from "@/store/admin-dispute-store";
+import { useDisputeActions } from "@/hooks/use-admin-disputes";
 import { useToast } from "@/hooks/use-toast";
 import type { Dispute, DisputeResolution } from "@/lib/admin-disputes";
 import { AdminResolveDisputeModal } from "./admin-resolve-dispute-modal";
@@ -43,9 +43,7 @@ export function AdminDisputeActionAside({
   runnerHandle,
 }: AdminDisputeActionAsideProps) {
   const { showToast } = useToast();
-  const resolve = useAdminDisputeStore((s) => s.resolve);
-  const deny = useAdminDisputeStore((s) => s.deny);
-  const escalate = useAdminDisputeStore((s) => s.escalate);
+  const { resolve, deny, escalate } = useDisputeActions();
 
   const [submitting, setSubmitting] = useState(false);
   const [resolveOpen, setResolveOpen] = useState(false);

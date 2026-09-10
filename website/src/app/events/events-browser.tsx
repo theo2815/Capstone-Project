@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Event } from "@/types/event";
+import type { EventState, ListEvent } from "@/types/event";
 import {
   Dropdown,
   DropdownItem,
@@ -13,9 +13,6 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useEventCatalog } from "@/lib/event-catalog";
 import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-
-export type EventState = "upcoming" | "live" | "open" | "past";
-export type ListEvent = Event & { state: EventState; city: string };
 
 type DateKey = "any" | "upcoming" | "live" | "recent" | "archive";
 

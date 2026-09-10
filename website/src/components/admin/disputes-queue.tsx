@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminDisputeCard } from "@/components/admin/admin-dispute-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
@@ -17,11 +18,7 @@ import { AdminResolveDisputeModal } from "@/components/admin/admin-resolve-dispu
 import { AdminRefundConfirmModal } from "@/components/admin/admin-refund-confirm-modal";
 import { AdminDenyDisputeModal } from "@/components/admin/admin-deny-dispute-modal";
 import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
-import {
-  useAdminDisputeStore,
-  mergeDisputesWithOverrides,
-} from "@/store/admin-dispute-store";
-import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-data";
+import { useAdminDisputes, useDisputeActions, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
@@ -35,8 +32,6 @@ import {
 import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
 import { formatLongDate } from "@/lib/format";
 import { formatPrice } from "@/lib/utils";
-
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STATUS_LABEL: Record<DisputeStatus, string> = {
   open: "Open",
@@ -85,12 +80,9 @@ interface PendingResolve {
 // can stand down via escDisabled while any modal is on top.
 
 export function DisputesQueue() {
-  const overrides = useAdminDisputeStore((s) => s.overrides);
-  const submissions = useAdminDisputeStore((s) => s.submissions);
-  const resolve = useAdminDisputeStore((s) => s.resolve);
-  const deny = useAdminDisputeStore((s) => s.deny);
-  const escalate = useAdminDisputeStore((s) => s.escalate);
-  const serverDisputes = useAdminDisputes() ?? EMPTY_DISPUTES;
+  const { resolve, deny, escalate } = useDisputeActions();
+  const query = useAdminDisputes();
+  const effective = query.data ?? EMPTY_DISPUTES;
   const { showToast } = useToast();
 
   const [rowId, setRowId] = useUrlState<string>("row", "");
@@ -100,11 +92,6 @@ export function DisputesQueue() {
   const [escalateOpen, setEscalateOpen] = useState(false);
   const [pendingResolve, setPendingResolve] = useState<PendingResolve | null>(
     null,
-  );
-
-  const effective = useMemo(
-    () => mergeDisputesWithOverrides(serverDisputes, overrides, submissions),
-    [serverDisputes, overrides, submissions],
   );
 
   const byId = useMemo(() => {
@@ -119,8 +106,8 @@ export function DisputesQueue() {
   }, [rowId, byId]);
 
   useEffect(() => {
-    if (rowId && !openRow) setRowId("");
-  }, [rowId, openRow, setRowId]);
+    if (query.isSuccess && !query.isFetching && rowId && !openRow) setRowId("");
+  }, [query.isSuccess, query.isFetching, rowId, openRow, setRowId]);
 
   const open = useMemo(
     () =>
@@ -270,6 +257,16 @@ export function DisputesQueue() {
     showToast({ kind: "info", message: `Escalated · ${openRow.id}` });
   }
 
+  if (query.isPending) return <p role="status" className="py-6">Loading disputes…</p>;
+  if (query.isError && !query.data) return (
+    <div role="alert" className="space-y-4 py-6">
+      <p>Couldn&apos;t load disputes.</p>
+      <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void query.refetch()}>
+        Try again
+      </button>
+    </div>
+  );
+
   return (
     <>
       <DisputeSlab
@@ -418,35 +415,6 @@ export function DisputesQueue() {
       )}
     </>
   );
-}
-
-export function useOpenDisputesCount(): number {
-  const overrides = useAdminDisputeStore((s) => s.overrides);
-  const submissions = useAdminDisputeStore((s) => s.submissions);
-  const serverDisputes = useAdminDisputes() ?? EMPTY_DISPUTES;
-  return useMemo(
-    () =>
-      mergeDisputesWithOverrides(serverDisputes, overrides, submissions).filter(
-        (d) => d.status === "open",
-      ).length,
-    [serverDisputes, overrides, submissions],
-  );
-}
-
-export function useRefundedThisWeekTotal(): number {
-  const overrides = useAdminDisputeStore((s) => s.overrides);
-  const submissions = useAdminDisputeStore((s) => s.submissions);
-  const serverDisputes = useAdminDisputes() ?? EMPTY_DISPUTES;
-  return useMemo(() => {
-    const cutoff = Date.now() - SEVEN_DAYS_MS;
-    return mergeDisputesWithOverrides(serverDisputes, overrides, submissions)
-      .filter((d) => {
-        if (d.status !== "resolved" || d.refundAmount === null) return false;
-        const t = new Date(d.resolvedAt ?? "").getTime();
-        return Number.isFinite(t) && t >= cutoff;
-      })
-      .reduce((acc, d) => acc + (d.refundAmount ?? 0), 0);
-  }, [serverDisputes, overrides, submissions]);
 }
 
 function DisputeSlab({
@@ -715,7 +683,6 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
             />
           )}
         <AdminDisputeActivityList
-          disputeId={dispute.id}
           activity={dispute.activity}
         />
       </section>

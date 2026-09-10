@@ -32,6 +32,17 @@ const eslintConfig = [
     ],
   },
   {
+    files: ["src/{components,hooks,lib,store,types}/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": ["error", {
+        patterns: [{
+          group: ["@/app/**", "**/app/**"],
+          message: "Reusable modules must not import routes. Move shared contracts into their domain or types/.",
+        }],
+      }],
+    },
+  },
+  {
     rules: {
       // Severity is "warn" during the gradual readability migration so the
       // backlog of legacy text-[10px] / text-xs usages stays visible in PR

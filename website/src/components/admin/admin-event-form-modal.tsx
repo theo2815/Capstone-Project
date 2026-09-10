@@ -8,7 +8,7 @@ import {
   AdminTextInput,
   AdminTextarea,
 } from "@/components/admin/admin-form-fields";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { ListEvent } from "@/types/event";
 import {
   ACCEPTED_IMAGE_MIME,
   validateImageFile,

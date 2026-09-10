@@ -12,7 +12,7 @@ import {
   type ChangeEvent,
   type DragEvent,
 } from "react";
-import type { EventState, ListEvent } from "@/app/events/events-browser";
+import type { EventState, ListEvent } from "@/types/event";
 import { VerificationBanner } from "@/components/dashboard/verification-banner";
 import { SiteHeader } from "@/components/layout/site-header";
 import { ErrorBoundary } from "@/components/ui/error-boundary";

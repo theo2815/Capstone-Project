@@ -39,7 +39,7 @@ import { ROUTES } from "@/lib/constants";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { formatMemberSince, formatRaceDate } from "@/lib/format";
 import type { PhotographerEventSummary } from "@/lib/photographer-mock";
-import type { EventState, ListEvent } from "@/app/events/events-browser";
+import type { EventState, ListEvent } from "@/types/event";
 import { deriveEventState } from "@/lib/event-catalog";
 import {
   usePhotographerSettingsStore,

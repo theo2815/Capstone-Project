@@ -10,10 +10,7 @@ import {
   useAdminPayoutStore,
   mergePayoutsWithOverrides,
 } from "@/store/admin-payout-store";
-import {
-  useAdminDisputeStore,
-  getEffectiveDisputes,
-} from "@/store/admin-dispute-store";
+import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import {
   useAdminPayouts,
   useAdminSalesKpisLive,
@@ -43,8 +40,7 @@ export interface SalesKpis {
 export function useSalesKpis(): SalesKpis {
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
   const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
-  const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
-  const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
+  const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
 
   const derived = useMemo(() => {
     const cycles = mergePayoutsWithOverrides(serverPayouts, payoutOverrides);
@@ -52,7 +48,6 @@ export function useSalesKpis(): SalesKpis {
     const gmv = totalSalesCount * PHOTO_PRICE_PHP;
     const split = splitGmv(gmv);
 
-    const disputes = getEffectiveDisputes(disputeOverrides, disputeSubmissions);
     const refundsIssued = disputes.reduce(
       (s, d) => s + (d.refundAmount ?? 0),
       0,
@@ -67,7 +62,7 @@ export function useSalesKpis(): SalesKpis {
       photographerKeep: split.keep,
       totalSalesCount,
     };
-  }, [serverPayouts, payoutOverrides, disputeOverrides, disputeSubmissions]);
+  }, [serverPayouts, payoutOverrides, disputes]);
 
   // Live mode: prefer server data when present, fall back to derivation while
   // the query is loading or in mock mode.
@@ -190,11 +185,9 @@ export interface SalesEventRow {
 
 export function useSalesByEvent(): SalesEventRow[] {
   const catalog = useEventCatalog();
-  const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
-  const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
+  const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
 
   const derived = useMemo(() => {
-    const disputes = getEffectiveDisputes(disputeOverrides, disputeSubmissions);
     const refundsByEvent = new Map<string, number>();
     for (const d of disputes) {
       if (d.refundAmount === null || d.refundAmount === undefined) continue;
@@ -223,7 +216,7 @@ export function useSalesByEvent(): SalesEventRow[] {
           refundsIssued: refundsByEvent.get(e.id) ?? 0,
         };
       });
-  }, [catalog, disputeOverrides, disputeSubmissions]);
+  }, [catalog, disputes]);
 
   // Live mode: prefer server data when present, fall back to derivation.
   const live = useAdminSalesByEventLive();
@@ -249,14 +242,12 @@ export interface RefundPulse {
 export function useRefundPulse(): RefundPulse {
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
   const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
-  const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
-  const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
+  const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
 
   return useMemo(() => {
     const cycles = mergePayoutsWithOverrides(serverPayouts, payoutOverrides);
     const gmv =
       cycles.reduce((s, c) => s + c.itemCount, 0) * PHOTO_PRICE_PHP;
-    const disputes = getEffectiveDisputes(disputeOverrides, disputeSubmissions);
     let refundsIssued = 0;
     let refundCount = 0;
     let openCount = 0;
@@ -277,5 +268,5 @@ export function useRefundPulse(): RefundPulse {
       openCount,
       escalatedCount,
     };
-  }, [serverPayouts, payoutOverrides, disputeOverrides, disputeSubmissions]);
+  }, [serverPayouts, payoutOverrides, disputes]);
 }

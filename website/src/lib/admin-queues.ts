@@ -1,4 +1,3 @@
-import { useAdminDisputeStore, getEffectiveDisputes } from "@/store/admin-dispute-store";
 import {
   useAdminPayoutStore,
   mergePayoutsWithOverrides,
@@ -37,8 +36,8 @@ function countPendingPhotographers(): number {
 //
 // useAdminAttentionTarget / useAdminQueueCounts are hooks because the
 // payouts count now hydrates from BE via useAdminPayouts (React Query).
-// The other queues still read snapshot state from Zustand — the React
-// Query call is the only reactive piece that forces this to be a hook.
+// Dispute/event counts come from backend KPIs; the remaining legacy user
+// and payout stores are migrated separately.
 
 export interface AdminAttentionTarget {
   href: string;
@@ -50,14 +49,10 @@ export function useAdminAttentionTarget(): AdminAttentionTarget | null {
   const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   // BE-hydrated; useAdminFlags is a no-op when the feature gate is off.
   const openFlags = useAdminFlags({ status: "open" })?.total ?? 0;
-  const pendingEventRequests = useAdminKpis()?.pendingEventRequests ?? 0;
+  const kpis = useAdminKpis();
+  const pendingEventRequests = kpis?.pendingEventRequests ?? 0;
 
-  // Disputes — read effective state via store overrides + seed + submissions
-  const disputeState = useAdminDisputeStore.getState();
-  const openDisputes = getEffectiveDisputes(
-    disputeState.overrides,
-    disputeState.submissions,
-  ).filter((d) => d.status === "open").length;
+  const openDisputes = kpis?.openDisputes ?? 0;
   if (openDisputes > 0) {
     return {
       href: ROUTES.ADMIN_DISPUTES,
@@ -127,14 +122,11 @@ export interface AdminQueueCounts {
 export function useAdminQueueCounts(): AdminQueueCounts {
   const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
   const flags = useAdminFlags({ status: "open" })?.total ?? 0;
-  const events = useAdminKpis()?.pendingEventRequests ?? 0;
-  const disputeState = useAdminDisputeStore.getState();
+  const kpis = useAdminKpis();
+  const events = kpis?.pendingEventRequests ?? 0;
   const payoutOverrides = useAdminPayoutStore.getState().overrides;
 
-  const disputes = getEffectiveDisputes(
-    disputeState.overrides,
-    disputeState.submissions,
-  ).filter((d) => d.status === "open").length;
+  const disputes = kpis?.openDisputes ?? 0;
   const payouts = mergePayoutsWithOverrides(
     serverPayouts,
     payoutOverrides,

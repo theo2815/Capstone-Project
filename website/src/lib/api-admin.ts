@@ -17,7 +17,7 @@ import type {
   PayoutReport,
   PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { ListEvent } from "@/types/event";
 import type {
   EventReviewStatus,
   PendingPricingChange,
@@ -299,6 +299,23 @@ export async function fetchAdminDisputes(
     `/admin/disputes?${buildDisputesQs(args)}`,
   );
   return res.items;
+}
+
+// The backend exposes a paginated list, but no GET /disputes/{id}.
+// Deep links must search beyond the first page before declaring a 404.
+export async function fetchAdminDispute(disputeId: string, signal?: AbortSignal): Promise<Dispute | null> {
+  let offset = 0;
+  while (true) {
+    signal?.throwIfAborted();
+    const page = await api.get<PaginatedResponse<Dispute>>(
+      `/admin/disputes?${buildDisputesQs({ offset })}`,
+    );
+    signal?.throwIfAborted();
+    const dispute = page.items.find((row) => row.id === disputeId);
+    if (dispute) return dispute;
+    offset += page.items.length;
+    if (page.items.length === 0 || offset >= page.total) return null;
+  }
 }
 
 export interface ResolveDisputeArgs {

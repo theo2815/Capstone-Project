@@ -5,34 +5,26 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminKpis,
   fetchAdminKpiTrend,
-  fetchAdminDisputes,
   fetchAdminFlags,
   hideAdminFlag,
   dismissAdminFlag,
   escalateAdminFlag,
   fetchAdminPayouts,
-  fetchAdminPayoutReports,
   fetchAdminEvents,
   fetchAdminSalesKpis,
   fetchAdminSalesByEvent,
   type AdminKpis,
   type AdminTrendPoint,
-  type AdminDisputeStatusFilter,
   type AdminFlagListArgs,
   type AdminSalesEventRow,
   type AdminSalesKpis,
   type AdminSalesRange,
 } from "@/lib/api-admin";
-import type { Dispute } from "@/lib/admin-disputes";
 import type { Flag } from "@/lib/admin-flags";
 import type {
   AdminPayoutCycle,
   AdminPayoutStatus,
 } from "@/lib/admin-payouts";
-import type {
-  PayoutReport,
-  PayoutReportStatus,
-} from "@/lib/admin-payout-reports";
 import type { AdminEventListArgs, AdminEventRow } from "@/lib/api-admin";
 import type { PaginatedResponse } from "@/types/api";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
@@ -51,10 +43,8 @@ const SALES_STALE_MS = 60_000;
 // query loads, which defeats every downstream useMemo keyed on it (the whole
 // derive chain recomputes per render). Same trick as the upload page's
 // EMPTY_SEED.
-export const EMPTY_DISPUTES: Dispute[] = [];
 export const EMPTY_FLAGS: Flag[] = [];
 export const EMPTY_PAYOUTS: AdminPayoutCycle[] = [];
-export const EMPTY_REPORTS: PayoutReport[] = [];
 
 // ───────────────────────────────────────────── KPIs
 
@@ -74,20 +64,6 @@ export function useAdminKpiTrend(
     queryKey: ["admin", "kpis", "trend", days],
     queryFn: () => fetchAdminKpiTrend(days),
     staleTime: KPI_STALE_MS,
-  });
-  return query.data ?? null;
-}
-
-// ───────────────────────────────────────────── Disputes
-
-export function useAdminDisputes(args: {
-  status?: AdminDisputeStatusFilter;
-  q?: string;
-} = {}): Dispute[] | null {
-  const query = useQuery<Dispute[]>({
-    queryKey: ["admin", "disputes", args],
-    queryFn: () => fetchAdminDisputes(args),
-    staleTime: LIST_STALE_MS,
   });
   return query.data ?? null;
 }
@@ -172,19 +148,6 @@ export function useAdminPayouts(args: {
   const query = useQuery<AdminPayoutCycle[]>({
     queryKey: ["admin", "payouts", args],
     queryFn: () => fetchAdminPayouts(args),
-    staleTime: LIST_STALE_MS,
-  });
-  return query.data ?? null;
-}
-
-// ───────────────────────────────────────────── Payout reports
-
-export function useAdminPayoutReports(args: {
-  status?: PayoutReportStatus;
-} = {}): PayoutReport[] | null {
-  const query = useQuery<PayoutReport[]>({
-    queryKey: ["admin", "payouts", "reports", args],
-    queryFn: () => fetchAdminPayoutReports(args),
     staleTime: LIST_STALE_MS,
   });
   return query.data ?? null;

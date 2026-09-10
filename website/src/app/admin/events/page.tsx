@@ -16,7 +16,7 @@ import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store
 import { useAdminEvents } from "@/hooks/use-admin-data";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirmation } from "@/hooks/use-confirmation";
-import type { EventState, ListEvent } from "@/app/events/events-browser";
+import type { EventState, ListEvent } from "@/types/event";
 
 // Admin Events page. Four slabs (Live / Upcoming / Recent / Archive) of
 // <AdminEventCard>s. Lifecycle state is derived from `event.date`

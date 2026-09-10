@@ -4,7 +4,7 @@
 //
 // State machine: open → acknowledged → resolved. Each transition pushes a
 // PhotographerMessage to the photographer's inbox so the loop closes
-// without email. Mirror of the dispute pattern; mock-only until Phase F.
+// without email. Records and timestamps are owned by the backend.
 
 export type PayoutReportReason =
   | "not_received"
@@ -44,38 +44,6 @@ export const PAYOUT_REPORT_STATUS_LABEL: Record<PayoutReportStatus, string> = {
   acknowledged: "Acknowledged",
   resolved: "Resolved",
 };
-
-// One demo report so the admin section has content on first paint without
-// the photographer needing to file one. Tied to a paid cycle (the most
-// common report shape: "you marked it paid but money never landed").
-export const ADMIN_PAYOUT_REPORTS: ReadonlyArray<PayoutReport> = [];
-
-export function mergeReport(
-  base: PayoutReport,
-  patch: Partial<PayoutReport> | undefined,
-): PayoutReport {
-  return patch ? { ...base, ...patch } : base;
-}
-
-export function getEffectiveReports(
-  submissions: ReadonlyArray<PayoutReport>,
-  overrides: Record<string, Partial<PayoutReport>>,
-): PayoutReport[] {
-  const seed = ADMIN_PAYOUT_REPORTS.map((r) => mergeReport(r, overrides[r.id]));
-  const submitted = submissions.map((r) => mergeReport(r, overrides[r.id]));
-  return [...submitted, ...seed];
-}
-
-// Layers admin's local acknowledge/resolve overrides on top of BE reports
-// for instant feedback after an action — same pattern as
-// mergePayoutsWithOverrides. The BE catches up on the next refetch and
-// becomes the source of truth.
-export function mergeReportsWithOverrides(
-  serverReports: ReadonlyArray<PayoutReport>,
-  overrides: Record<string, Partial<PayoutReport>>,
-): PayoutReport[] {
-  return serverReports.map((r) => mergeReport(r, overrides[r.id]));
-}
 
 // Lookup used by the photographer billing page to decide between
 // "File a report" (no prior report) and "Track your report" (any prior

@@ -5,10 +5,7 @@ import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { useAdminUsersData } from "@/lib/admin-users-data";
-import {
-  useAdminDisputeStore,
-  getEffectiveDisputes,
-} from "@/store/admin-dispute-store";
+import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import {
   useAdminPayoutStore,
   mergePayoutsWithOverrides,
@@ -44,8 +41,7 @@ interface KpiEntry {
 
 export function AdminKpiStrip() {
   const { rows: userRows } = useAdminUsersData();
-  const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
-  const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
+  const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
   const serverOpenFlags = useAdminFlags({ status: "open" })?.total ?? 0;
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
   // A-1 followup: hydrate payouts from BE so the fallback path matches the
@@ -68,10 +64,7 @@ export function AdminKpiStrip() {
       }
     }
 
-    let openDisputes = getEffectiveDisputes(
-      disputeOverrides,
-      disputeSubmissions,
-    ).filter((d) => d.status === "open").length;
+    let openDisputes = disputes.filter((d) => d.status === "open").length;
     let openFlags = serverOpenFlags;
     let pendingPayouts = mergePayoutsWithOverrides(
       serverPayouts,
@@ -129,8 +122,7 @@ export function AdminKpiStrip() {
       : all.filter((e) => e.label !== "Flags");
   }, [
     userRows,
-    disputeOverrides,
-    disputeSubmissions,
+    disputes,
     serverOpenFlags,
     payoutOverrides,
     serverPayouts,

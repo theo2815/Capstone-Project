@@ -1,112 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import { getCatalogWithOverrides } from "@/lib/event-catalog";
-import { useAdminDisputeStore } from "./admin-dispute-store";
-import { useAdminPayoutReportStore } from "./admin-payout-report-store";
 import { useAdminEventOverridesStore } from "./admin-event-overrides-store";
 import { useToastStore } from "./toast-store";
 
-const disputeId = "dispute-1";
-const reportId = "report-1";
-const reason = "Reviewed the supporting evidence.";
-const resolution = { resolution: "refund_partial" as const, refundAmount: 100, reason };
-
-const decisions = [
-  {
-    label: "resolve dispute",
-    method: "post" as const,
-    endpoint: `/admin/disputes/${disputeId}/resolve`,
-    payload: resolution,
-    store: useAdminDisputeStore,
-    run: () => useAdminDisputeStore.getState().resolve(disputeId, resolution),
-    id: disputeId,
-    status: "resolved",
-  },
-  {
-    label: "deny dispute",
-    method: "post" as const,
-    endpoint: `/admin/disputes/${disputeId}/deny`,
-    payload: { reason },
-    store: useAdminDisputeStore,
-    run: () => useAdminDisputeStore.getState().deny(disputeId, reason),
-    id: disputeId,
-    status: "denied",
-  },
-  {
-    label: "escalate dispute",
-    method: "post" as const,
-    endpoint: `/admin/disputes/${disputeId}/escalate`,
-    payload: { reason },
-    store: useAdminDisputeStore,
-    run: () => useAdminDisputeStore.getState().escalate(disputeId, reason),
-    id: disputeId,
-    status: "escalated",
-  },
-  {
-    label: "acknowledge payout report",
-    method: "fetch" as const,
-    endpoint: `/admin/payouts/reports/${reportId}/acknowledge`,
-    payload: { method: "PATCH", body: JSON.stringify({ reply: reason }) },
-    store: useAdminPayoutReportStore,
-    run: () => useAdminPayoutReportStore.getState().acknowledge(reportId, reason),
-    id: reportId,
-    status: "acknowledged",
-  },
-  {
-    label: "resolve payout report",
-    method: "fetch" as const,
-    endpoint: `/admin/payouts/reports/${reportId}/resolve`,
-    payload: { method: "PATCH", body: JSON.stringify({ resolutionNote: reason }) },
-    store: useAdminPayoutReportStore,
-    run: () => useAdminPayoutReportStore.getState().resolve(reportId, reason),
-    id: reportId,
-    status: "resolved",
-  },
-];
-
 beforeEach(() => {
-  useAdminDisputeStore.getState().clear();
-  useAdminPayoutReportStore.getState().clear();
   useAdminEventOverridesStore.getState().clear();
   useToastStore.getState().clear();
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(() => vi.restoreAllMocks());
-
-describe.each(decisions)("$label", ({ method, endpoint, payload, store, run, id, status }) => {
-  it("preserves the prior record and decision log when the backend rejects", async () => {
-    // Retain a prior confirmed decision too, rather than merely an empty store.
-    vi.spyOn(api, method).mockResolvedValueOnce({}).mockRejectedValueOnce(new Error("Backend unavailable"));
-    expect(await run()).toBe(true);
-    const before = store.getState();
-
-    expect(await run()).toBe(false);
-
-    expect(store.getState()).toBe(before);
-    expect(useToastStore.getState().toasts).toEqual([
-      expect.objectContaining({ kind: "error", message: expect.stringContaining("please try again") }),
-    ]);
-  });
-
-  it("waits for confirmation before committing exactly one decision", async () => {
-    let confirm!: (value: unknown) => void;
-    const response = new Promise((resolve) => { confirm = resolve; });
-    const request = vi.spyOn(api, method).mockReturnValue(response);
-    const before = store.getState();
-
-    const outcome = run();
-    expect(request).toHaveBeenCalledWith(endpoint, payload);
-    expect(store.getState()).toBe(before);
-    expect(useToastStore.getState().toasts).toEqual([]);
-
-    confirm({});
-    expect(await outcome).toBe(true);
-    expect(store.getState().overrides[id]?.status).toBe(status);
-    expect(store.getState().log).toHaveLength(1);
-    expect(store.getState().log[0].decision).toBe(status);
-  });
-});
 
 describe("delete event", () => {
   const event = {

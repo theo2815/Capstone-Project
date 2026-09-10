@@ -15,7 +15,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   usePhotographerPayouts,
   usePhotographerPayoutBalance,
-  usePhotographerPayoutReports,
   usePhotographerTransactions,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
@@ -29,10 +28,9 @@ import {
 } from "@/lib/photographer-mock";
 import {
   getLatestReportForCycle,
-  mergeReportsWithOverrides,
   type PayoutReport,
 } from "@/lib/admin-payout-reports";
-import { useAdminPayoutReportStore } from "@/store/admin-payout-report-store";
+import { usePhotographerPayoutReports, EMPTY_REPORTS } from "@/hooks/use-payout-reports";
 import { resolveCurrentPhotographer } from "@/lib/current-photographer";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -106,15 +104,8 @@ function PayoutsSlab() {
   const photographer = resolveCurrentPhotographer(user);
   // Read reports from BE so admin acknowledge/resolve responses surface to
   // the photographer (the local submissions array only held reports from
-  // *this* browser session). overrides still apply for instant feedback
-  // after the photographer submits their own.
-  const serverReports = usePhotographerPayoutReports() ?? [];
-  const overrides = useAdminPayoutReportStore((s) => s.overrides);
-
-  const reports = useMemo(
-    () => mergeReportsWithOverrides(serverReports, overrides),
-    [serverReports, overrides],
-  );
+  // *this* browser session). The query is scoped to the current account.
+  const reports = usePhotographerPayoutReports().data ?? EMPTY_REPORTS;
 
   // Lookup of latestReport per cycle id, scoped to the current photographer.
   // null entries mean "no report yet" — row shows File a report; non-null

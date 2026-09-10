@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { useToastStore } from "@/store/toast-store";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { ListEvent } from "@/types/event";
 import { deriveEventState } from "@/lib/event-catalog";
 import {
   createAdminEvent as apiCreateEvent,

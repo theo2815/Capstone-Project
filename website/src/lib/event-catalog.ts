@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { EventState, ListEvent } from "@/app/events/events-browser";
+import type { EventState, ListEvent } from "@/types/event";
 import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
 
 // Event-catalog helpers. The live source for `/events` is `fetchEventsList()`

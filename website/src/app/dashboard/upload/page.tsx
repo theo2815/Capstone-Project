@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { EventState, ListEvent } from "@/app/events/events-browser";
+import type { EventState, ListEvent } from "@/types/event";
 import { Slab } from "@/components/profile-shell";
 import {
   EventFilterBar,

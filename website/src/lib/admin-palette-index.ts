@@ -1,7 +1,6 @@
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { type AdminUserRow } from "@/lib/admin-user-registry";
 import {
-  ADMIN_DISPUTES,
   DISPUTE_REASON_LABEL,
   type Dispute,
 } from "@/lib/admin-disputes";
@@ -14,13 +13,11 @@ import {
   ADMIN_PAYOUT_STATUS_LABEL,
   type AdminPayoutCycle,
 } from "@/lib/admin-payouts";
-import { mergeDispute } from "@/store/admin-dispute-store";
 import { mergePayout } from "@/store/admin-payout-store";
 
 // Phase 5 — admin command palette index. Pure functions only; no React,
-// no store hooks. The palette component passes in current store snapshots
-// (overrides maps) so the index reflects in-flight admin actions instead
-// of stale seeds.
+// no store hooks. The palette supplies canonical dispute/flag records and
+// the remaining legacy user/payout snapshots.
 //
 // Two surface contracts:
 //   buildPaletteIndex(snapshots) → PaletteEntry[]   — flat, deduped list
@@ -75,7 +72,7 @@ export interface PaletteSnapshots {
   /** Merged admin user pool — already includes server rows + optimistic
    *  overrides + submissions. See lib/admin-users-data.ts. */
   userPool: AdminUserRow[];
-  disputeOverrides: Record<string, Partial<Dispute>>;
+  disputes: ReadonlyArray<Dispute>;
   /** Server rows from useAdminFlags(); empty while loading or gated off. */
   flags: ReadonlyArray<Flag>;
   payoutOverrides: Record<string, Partial<AdminPayoutCycle>>;
@@ -224,13 +221,8 @@ function buildVerificationEntries(
   });
 }
 
-function buildDisputeEntries(
-  disputeOverrides: Record<string, Partial<Dispute>>,
-): PaletteEntry[] {
-  const merged = ADMIN_DISPUTES.map((d) =>
-    mergeDispute(d, disputeOverrides[d.id]),
-  );
-  return merged.map((d) => {
+function buildDisputeEntries(disputes: ReadonlyArray<Dispute>): PaletteEntry[] {
+  return disputes.map((d) => {
     const reasonLabel = DISPUTE_REASON_LABEL[d.reason];
     const statusLabel = capitalize(d.status);
     const subtitle = `${statusLabel} · ${reasonLabel} · @${d.runnerHandle} ↔ @${d.photographerHandle}`;
@@ -358,7 +350,7 @@ export function buildPaletteIndex(
   return [
     ...buildPageEntries(),
     ...buildVerificationEntries(snapshots.userPool),
-    ...buildDisputeEntries(snapshots.disputeOverrides),
+    ...buildDisputeEntries(snapshots.disputes),
     ...(ADMIN_FLAGS_ENABLED
       ? buildFlagEntries(snapshots.flags)
       : []),

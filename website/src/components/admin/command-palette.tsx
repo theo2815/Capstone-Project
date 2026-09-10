@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
-import { useAdminDisputeStore } from "@/store/admin-dispute-store";
+import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { useAdminPayoutStore } from "@/store/admin-payout-store";
 import { useAdminUsersData } from "@/lib/admin-users-data";
 import {
@@ -24,10 +24,8 @@ import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { useAdminFlags, EMPTY_FLAGS } from "@/hooks/use-admin-data";
 import { cn } from "@/lib/utils";
 
-// Phase 5 admin ⌘K command palette. Reads live snapshots from the four
-// admin stores so in-flight overrides flow into the index immediately
-// (e.g. an approved photographer disappears from the verifications group
-// without a refresh). Pure UI; navigation is router.push to whatever
+// Admin ⌘K command palette. Uses Query-backed disputes/flags and the
+// existing user/payout data sources. Navigation is router.push to whatever
 // route the entry advertises — for queue rows that's
 // /admin/inbox?type=<queue>&row=<id> so the queue's drawer auto-opens.
 //
@@ -49,7 +47,7 @@ export function CommandPalette() {
   const pushRecent = useAdminPaletteStore((s) => s.pushRecent);
 
   const { rows: userPool } = useAdminUsersData();
-  const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
+  const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
   const flags = useAdminFlags()?.items ?? EMPTY_FLAGS;
   const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
 
@@ -64,11 +62,11 @@ export function CommandPalette() {
     () =>
       buildPaletteIndex({
         userPool,
-        disputeOverrides,
+        disputes,
         flags,
         payoutOverrides,
       }),
-    [userPool, disputeOverrides, flags, payoutOverrides],
+    [userPool, disputes, flags, payoutOverrides],
   );
 
   const indexById = useMemo(() => {
