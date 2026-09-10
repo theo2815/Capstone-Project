@@ -28,7 +28,7 @@ open class GenericPtpCamera(
     val session: PtpSession,
     info: PtpDeviceInfo,
     val cameraKey: String,
-    val quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model),
+    val quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model, info.operationsSupported),
 ) : Closeable {
     /** Re-read after vendor setup: the advertised operation set can change (libgphoto2: EOS M2). */
     var info: PtpDeviceInfo = info
@@ -85,7 +85,7 @@ open class GenericPtpCamera(
 
 class CanonEosCamera(
     session: PtpSession, info: PtpDeviceInfo, cameraKey: String,
-    quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model),
+    quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model, info.operationsSupported),
 ) : GenericPtpCamera(session, info, cameraKey, quirks) {
     private var remote = false
     private var eventMode = false
@@ -95,7 +95,8 @@ class CanonEosCamera(
         eventPolling = session.hasInterruptEndpoint || (quirks.vendorEvents && Ptp.OP_EOS_GET_EVENT in info.operationsSupported),
         physicalShutter = "EOS remote mode with card polling; verify this model and firmware before a shoot.",
         assumptions = listOfNotNull(
-            "Remote mode 0x%X keeps the display and shutter live and is left on at close (verified on EOS R6 and R10 only).".format(quirks.eosRemoteMode),
+            quirks.eosRemoteMode?.let { "Remote mode 0x%X keeps the display and shutter live and is left on at close (verified on EOS R6 and R10 only).".format(it) }
+                ?: "No remote mode is sent on this body (libgphoto2); shutter behaviour while connected is untested.",
             quirks.note,
         ),
     )
@@ -103,7 +104,9 @@ class CanonEosCamera(
     // opens, even for plain file listing: a bare session parks the body on its PC-connection
     // screen with the shutter dead (R6, 2026-05-26); remote mode keeps it live (R6/R10, 2026-09-02/04).
     override fun startSession() {
-        session.eosSetRemoteMode(quirks.eosRemoteMode)
+        session.skipCloseSession = quirks.skipCloseSession
+        val mode = quirks.eosRemoteMode ?: return
+        session.eosSetRemoteMode(mode)
         remote = true
         refreshInfo()
     }
@@ -135,7 +138,7 @@ class CanonEosCamera(
 
 class NikonPtpCamera(
     session: PtpSession, info: PtpDeviceInfo, cameraKey: String,
-    quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model),
+    quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model, info.operationsSupported),
 ) : GenericPtpCamera(session, info, cameraKey, quirks) {
     private val eventOps = if (!quirks.vendorEvents) mutableListOf() else
         listOf(Ptp.OP_NIKON_GET_EVENT_EX, Ptp.OP_NIKON_GET_EVENT).filter { it in info.operationsSupported }.toMutableList()
@@ -166,10 +169,27 @@ class NikonPtpCamera(
     }
 }
 
+/** Canon bodies without the EOS extension (pre-2007 EOS in PTP mode, most PowerShot/IXUS): basic PTP import only. */
+class CanonBasicPtpCamera(
+    session: PtpSession, info: PtpDeviceInfo, cameraKey: String,
+    quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model, info.operationsSupported),
+) : GenericPtpCamera(session, info, cameraKey, quirks) {
+    override val capabilities get() = super.capabilities.copy(
+        physicalShutter = "Canon basic PTP: card import only. This body advertises no EOS remote mode, so live shooting from the body over USB is not available.",
+        assumptions = listOfNotNull(
+            "Pre-2007 EOS bodies and PowerShot/IXUS compacts lock their controls in PTP mode and cannot report body shots; libgphoto2 has no capture path for them either. Older EOS: set Communication to PTP, not Normal.",
+            quirks.note,
+        ),
+    )
+    override fun startLive() {
+        throw CameraSetupException("This Canon speaks only basic PTP over USB. Use card import after shooting; live auto-upload is not available on this body.")
+    }
+}
+
 /** Fujifilm X/GFX: tether modes push new shots as objects the card scan picks up; card-reader mode is import-only. */
 class FujiPtpCamera(
     session: PtpSession, info: PtpDeviceInfo, cameraKey: String,
-    quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model),
+    quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model, info.operationsSupported),
 ) : GenericPtpCamera(session, info, cameraKey, quirks) {
     override val objectAddedEvents get() = setOf(Ptp.EV_FUJI_OBJECT_ADDED)
     override val capabilities get() = super.capabilities.copy(
@@ -190,7 +210,7 @@ class FujiPtpCamera(
 /** LUMIX PC(Tether): standard PTP plus LUMIX object-added events; host-memory transfers are not implemented. */
 class PanasonicPtpCamera(
     session: PtpSession, info: PtpDeviceInfo, cameraKey: String,
-    quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model),
+    quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model, info.operationsSupported),
 ) : GenericPtpCamera(session, info, cameraKey, quirks) {
     override val objectAddedEvents get() = setOf(Ptp.EV_PANASONIC_OBJECT_ADDED, Ptp.EV_PANASONIC_OBJECT_ADDED_SDRAM)
     override val capabilities get() = super.capabilities.copy(
@@ -216,7 +236,7 @@ object CameraDrivers {
         vid == id || info.manufacturer.startsWith(prefix, true)
 
     fun usbGuidance(vid: Int): String = when (vid) {
-        0x04a9 -> "Canon: start auto-upload to enter EOS mode. If the shutter stays locked, unplug to shoot, then use card import."
+        0x04a9 -> "Canon: start auto-upload to enter EOS mode. If the shutter stays locked, unplug to shoot, then use card import. Pre-2007 EOS and PowerShot bodies: set Communication to PTP; card import only."
         0x04b0 -> "Nikon: choose MTP/PTP. The body shoots normally while connected; playback on the body is off until unplugged, and a swapped card needs a replug."
         0x054c -> "Sony: use PC Remote, save to PC + Camera, keep Camera priority, and send JPEGs to the PC. Use MTP for card import."
         0x04cb -> "Fujifilm: use USB TETHER SHOOTING AUTO to shoot with the body and save to card; USB CARD READER is for import only."
@@ -245,13 +265,14 @@ object CameraDrivers {
         try {
             session.checkCancellation { context.ensureActive() }
             val info = session.identify()
-            val quirks = CameraQuirks.forCamera(device.vendorId, device.productId, info.model)
+            val quirks = CameraQuirks.forCamera(device.vendorId, device.productId, info.model, info.operationsSupported)
             val serial = info.serialNumber.ifBlank { runCatching { device.serialNumber }.getOrNull().orEmpty() }
             // Without a serial, keep recovery scoped to this attachment instead of guessing body identity.
             val key = fingerprint(device.vendorId, device.productId, info.manufacturer, info.model,
                 serial.ifBlank { "attachment:${device.deviceName}:${device.deviceId}" })
             driver = when {
                 isCanon(device.vendorId, info) -> CanonEosCamera(session, info, key, quirks)
+                isVendor(device.vendorId, info, 0x04a9, "Canon") -> CanonBasicPtpCamera(session, info, key, quirks)
                 live && isSony(device.vendorId, info) -> SonyPtpCamera(session, info, key, quirks)
                 isVendor(device.vendorId, info, 0x04b0, "Nikon") -> NikonPtpCamera(session, info, key, quirks)
                 isVendor(device.vendorId, info, 0x04cb, "Fuji") -> FujiPtpCamera(session, info, key, quirks)

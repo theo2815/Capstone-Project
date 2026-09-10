@@ -43,7 +43,7 @@ class CameraDriverTest {
     @Test fun `quirk table mirrors libgphoto2 for Canon families and Nikon 1`() {
         assertEquals(0x15, CameraQuirks.forCamera(0x04a9, 0x32c5, "Canon EOS M50").eosRemoteMode)
         assertEquals(1, CameraQuirks.forCamera(0x04a9, 0, "Canon EOS M6 Mark II").eosRemoteMode)
-        assertEquals(0x11, CameraQuirks.forCamera(0x04a9, 0, "Canon PowerShot SX720 HS").eosRemoteMode)
+        assertEquals(0x11, CameraQuirks.forCamera(0x04a9, 0, "Canon PowerShot SX720 HS", listOf(Ptp.OP_EOS_REMOTE_RELEASE_ON)).eosRemoteMode)
         assertEquals(CameraQuirks(), CameraQuirks.forCamera(0x054c, 0x0da7, "ILCE-7M4"))
         assertFalse(CameraQuirks.forCamera(0, 0, "Canon EOS R6").vendorEvents)
         assertTrue(CameraQuirks.forCamera(0, 0, "Canon EOS R6 Mark II").vendorEvents)
@@ -72,6 +72,42 @@ class CameraDriverTest {
             transport.commands(),
         )
         assertTrue(transport.closed)
+    }
+
+    @Test fun `quirk table mirrors libgphoto2 close-session and PowerShot rules`() {
+        assertTrue(CameraQuirks.forCamera(0x04a9, 0, "Canon EOS 5D Mark IV").skipCloseSession)
+        assertTrue(CameraQuirks.forCamera(0x04a9, 0, "Canon EOS R").skipCloseSession)
+        assertFalse(CameraQuirks.forCamera(0x04a9, 0, "Canon EOS R5").skipCloseSession)
+        val release = listOf(Ptp.OP_EOS_REMOTE_RELEASE_ON)
+        assertEquals(0x15, CameraQuirks.forCamera(0x04a9, 0, "Canon PowerShot G7 X Mark II", release).eosRemoteMode)
+        assertEquals(1, CameraQuirks.forCamera(0x04a9, 0, "Canon PowerShot G7 X Mark II").eosRemoteMode)
+        assertNull(CameraQuirks.forCamera(0x04a9, 0, "Canon PowerShot SX600 HS", release).eosRemoteMode)
+        assertEquals(0x11, CameraQuirks.forCamera(0x04a9, 0, "Canon PowerShot G5 X", release).eosRemoteMode)
+        assertEquals(0x15, CameraQuirks.forCamera(0x04a9, 0, "Canon EOS M50m2").eosRemoteMode)
+    }
+
+    @Test fun `Canon bodies flagged by libgphoto2 keep their session open at close`() {
+        val transport = ScriptedPtp(ok(0), ok(1), data(Ptp.OP_GET_DEVICE_INFO, 2, deviceInfoBytes("Canon EOS 5D Mark IV")), ok(2), ok(3), ok(4))
+        val session = PtpSession(transport)
+        val camera = canon(session, CameraQuirks.forCamera(0x04a9, 0, "Canon EOS 5D Mark IV"))
+        session.openSession()
+        camera.startSession()
+        camera.close()
+        assertEquals(listOf(Ptp.OP_OPEN_SESSION to 1, Ptp.OP_EOS_SET_REMOTE_MODE to 1, Ptp.OP_GET_DEVICE_INFO to null,
+            Ptp.OP_EOS_SET_REMOTE_MODE to 0, Ptp.OP_EOS_SET_REMOTE_MODE to 1), transport.commands())
+        assertTrue(transport.closed)
+    }
+
+    @Test fun `Canon basic PTP bodies import but refuse live and 64-bit EOS arrivals are recognised`() {
+        val basic = CanonBasicPtpCamera(PtpSession(ScriptedPtp()), info("Canon",
+            listOf(Ptp.OP_GET_OBJECT_HANDLES, Ptp.OP_GET_OBJECT_INFO, Ptp.OP_GET_OBJECT)), "camera")
+        basic.startSession()
+        assertTrue(basic.capabilities.cardImport)
+        assertThrows(CameraSetupException::class.java) { basic.startLive() }
+        fun record(code: Int) = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN).putInt(12).putInt(code).putInt(42).array()
+        assertTrue(EosEvents.parse(record(0xC1A7)).single().isObjectArrival)
+        assertTrue(EosEvents.parse(record(0xC1B6)).single().isObjectArrival)
+        assertFalse(EosEvents.parse(record(0xC191)).single().isObjectArrival)
     }
 
     @Test fun `Fujifilm priority is handed back to the camera only when it reads USB`() {

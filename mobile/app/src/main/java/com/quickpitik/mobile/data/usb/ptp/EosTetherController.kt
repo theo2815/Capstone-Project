@@ -22,6 +22,7 @@ data class EosEvent(val code: Int, val handle: Long) {
     val isObjectArrival: Boolean
         get() = code == Ptp.EOS_EVENT_OBJECT_ADDED_EX ||
             code == Ptp.EOS_EVENT_OBJECT_ADDED_EX64 ||
+            code == Ptp.EOS_EVENT_OBJECT_ADDED_EX64_LFN ||
             code == Ptp.EOS_EVENT_REQUEST_OBJECT_TRANSFER
 }
 

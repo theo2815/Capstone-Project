@@ -15,6 +15,8 @@ class PtpSession internal constructor(private val transport: PtpTransport) : Clo
     private var closed = false
     val hasInterruptEndpoint get() = transport.hasInterruptEndpoint
     val isUsable get() = wire.usable && !closed
+    /** libgphoto2 PTP_DONT_CLOSE_SESSION bodies: leave the session open; the next OpenSession is accepted as already open. */
+    var skipCloseSession = false
     fun checkCancellation(check: () -> Unit) { wire.checkCancelled = check }
     fun allowUnknownObjectLength() { wire.allowUnknownObjectLength = true }
 
@@ -122,7 +124,7 @@ class PtpSession internal constructor(private val transport: PtpTransport) : Clo
         if (closed) return
         wire.checkCancelled = {}
         try {
-            if (sessionOpen && wire.usable) runCatching { closeSession() }
+            if (sessionOpen && wire.usable && !skipCloseSession) runCatching { closeSession() }
         } finally {
             closed = true
             transport.close()

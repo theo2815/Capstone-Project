@@ -2,6 +2,19 @@
 
 Scope: Android USB ingestion into the existing Room/WorkManager/backend pipeline. Preserve physical-shutter Canon capture and on-card originals. Wi-Fi, remote shutter/live view, multi-camera operation, and RAW cloud processing are outside this increment. This repository has no iOS app; this work adds no iPhone USB implementation.
 
+## Target camera list classified — 2026-09-11 (phase 4)
+
+The per-model matrix for the Canon, Nikon and Sony target list lives in
+[`usb-camera-compatibility.md`](usb-camera-compatibility.md) (Verified / Implemented /
+Partial / Unavailable, one home for that fact). Code changes behind it, all from
+libgphoto2's ptp2 table: the Canon 64-bit object-added event codes are now 0xC1A7 and
+0xC1B6 (0xC191 was a cancel event), seven 2016-era EOS bodies skip `CloseSession`
+(`PTP_DONT_CLOSE_SESSION`), the PowerShot/IXUS remote-mode rule applies only when
+`RemoteReleaseOn` is advertised (libgphoto2 `is_canon_eos_m`), and Canon bodies without
+the EOS extension get `CanonBasicPtpCamera`: import works, live start stops with
+guidance instead of scanning a locked body. Validation: `testDebugUnitTest` 158/158,
+compileDebugKotlin clean, no device attached.
+
 ## Manufacturer specifications checked — 2026-09-11 (phase 3)
 
 Two official packages (kept outside the repo, reference only, nothing bundled):

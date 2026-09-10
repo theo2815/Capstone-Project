@@ -79,7 +79,9 @@ object Ptp {
     // standard interrupt endpoint). These signal a freshly captured frame.
     const val EOS_EVENT_OBJECT_ADDED_EX = 0xC181
     const val EOS_EVENT_REQUEST_OBJECT_TRANSFER = 0xC186
-    const val EOS_EVENT_OBJECT_ADDED_EX64 = 0xC191
+    // 0xC191 is RequestCancelTransferDT in libgphoto2; the 64-bit arrivals are 0xC1A7 and its long-filename twin 0xC1B6.
+    const val EOS_EVENT_OBJECT_ADDED_EX64 = 0xC1A7
+    const val EOS_EVENT_OBJECT_ADDED_EX64_LFN = 0xC1B6
 
     // Response codes.
     const val RC_OK = 0x2001
