@@ -1,13 +1,9 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import {
-  fetchBrand,
-  fetchPayoutAccounts,
-  fetchSocials,
-} from "@/lib/api-photographer-settings";
+  usePhotographerSettingsQueries,
+} from "@/hooks/use-photographer-settings";
 import {
   BRAND_COLOR_HEX,
   DEFAULT_WATERMARK_PLACEMENT,
@@ -22,45 +18,13 @@ import { useUserMediaStore } from "@/store/user-media-store";
  * The bridge is populated only from successful query results and is reset on
  * auth transitions.
  */
-export const photographerSettingsKeys = {
-  all: ["photographer", "settings"] as const,
-  brand: ["photographer", "settings", "brand"] as const,
-  socials: ["photographer", "settings", "socials"] as const,
-  payouts: ["photographer", "settings", "payouts"] as const,
-};
-
-const RETRY_DELAY_MS = 2_000;
-
 export function resetPhotographerHydrationGuard(): void {
   // Query keys include the auth session version, so a logout/login cannot
   // reuse old results. Keep this compatibility export for auth-reset callers.
 }
 
 export function usePhotographerSettingsHydration(): void {
-  const session = usePrivateQuerySession("PHOTOGRAPHER");
-  const querySuffix = [...session.key];
-
-  const brand = useQuery({
-    queryKey: [...photographerSettingsKeys.brand, ...querySuffix],
-    queryFn: fetchBrand,
-    enabled: session.enabled,
-    retry: 2,
-    retryDelay: RETRY_DELAY_MS,
-  });
-  const socials = useQuery({
-    queryKey: [...photographerSettingsKeys.socials, ...querySuffix],
-    queryFn: fetchSocials,
-    enabled: session.enabled,
-    retry: 2,
-    retryDelay: RETRY_DELAY_MS,
-  });
-  const payouts = useQuery({
-    queryKey: [...photographerSettingsKeys.payouts, ...querySuffix],
-    queryFn: fetchPayoutAccounts,
-    enabled: session.enabled,
-    retry: 2,
-    retryDelay: RETRY_DELAY_MS,
-  });
+  const { session, brand, socials, payouts } = usePhotographerSettingsQueries();
 
   useEffect(() => {
     if (!session.enabled || !brand.data) return;

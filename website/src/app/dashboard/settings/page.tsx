@@ -69,7 +69,7 @@ import {
   type RegionGroup,
 } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
-import { photographerSettingsKeys } from "@/hooks/use-photographer-settings-hydration";
+import { photographerSettingsKeys } from "@/hooks/use-photographer-settings";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { validateHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
