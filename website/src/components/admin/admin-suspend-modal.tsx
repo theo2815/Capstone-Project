@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import {
   AdminFormSection,
@@ -10,6 +10,7 @@ import {
 
 interface AdminSuspendModalProps {
   open: boolean;
+  submitting?: boolean;
   onClose: () => void;
   onSubmit: (reason: string) => void;
   photographerName: string;
@@ -26,10 +27,11 @@ const SUSPEND_REASONS: ReadonlyArray<{ value: string; label: string }> = [
 
 // Suspend-with-reason modal. Same shape as the verifications Reject modal —
 // canned reasons + 280-char note. The composed string flows through
-// useAdminUserStore.suspend(userId, reason). Suspension is reversible from
+// useAdminUserActions().suspend(userId, reason). Suspension is reversible from
 // the same action aside via the Unsuspend button.
 export function AdminSuspendModal({
   open,
+  submitting = false,
   onClose,
   onSubmit,
   photographerName,
@@ -39,20 +41,24 @@ export function AdminSuspendModal({
   );
   const [note, setNote] = useState("");
 
+  useEffect(() => {
+    if (!open) { setNote(""); setSelectedReason(SUSPEND_REASONS[0]!.value); }
+  }, [open]);
+
   function handleSubmit() {
+    if (submitting) return;
     const label =
       SUSPEND_REASONS.find((r) => r.value === selectedReason)?.label ??
       selectedReason;
     const composed =
       note.trim().length > 0 ? `${label} — ${note.trim()}` : label;
     onSubmit(composed);
-    setNote("");
-    setSelectedReason(SUSPEND_REASONS[0]!.value);
   }
 
   return (
     <AdminFormModal
       open={open}
+      submitting={submitting}
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Suspend account"

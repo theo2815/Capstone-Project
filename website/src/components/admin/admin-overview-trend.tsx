@@ -1,11 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useAdminUserStore } from "@/store/admin-user-store";
 import {
   getDailyDecisionsSeed30d,
   getDailyUploads30d,
-  mergeDecisionsWithLog,
   totalAmount,
 } from "@/lib/admin-overview-mock";
 import { AdminTrendChart } from "./admin-trend-chart";
@@ -14,13 +12,8 @@ import { cn } from "@/lib/utils";
 
 type TrendMode = "decisions" | "uploads";
 
-// Wraps <AdminTrendChart> with the Decisions/Uploads toggle. Toggle state is
-// local — never URL or Zustand. The active button carries the page's only
-// fresh accent (one-fresh-per-viewport rule). Decisions series merges live
-// admin-store log entries into a seeded historical baseline so day 1 isn't
-// an empty chart.
+// Toggle state is local; decision totals come from the backend trend.
 export function AdminOverviewTrend() {
-  const log = useAdminUserStore((s) => s.log);
   const [mode, setMode] = useState<TrendMode>("decisions");
   // Live-mode override for decisions: prefer GET /admin/kpis/trend?days=30.
   // Uploads stay derived (no server endpoint specced).
@@ -34,8 +27,8 @@ export function AdminOverviewTrend() {
         amount: point.decisions,
       }));
     }
-    return mergeDecisionsWithLog(getDailyDecisionsSeed30d(), log);
-  }, [mode, log, liveTrend]);
+    return getDailyDecisionsSeed30d();
+  }, [mode, liveTrend]);
 
   const total = useMemo(() => totalAmount(series), [series]);
   const unit = mode === "decisions" ? "decisions" : "uploads";

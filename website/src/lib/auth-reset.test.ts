@@ -23,3 +23,9 @@ it("clears the pending payment from memory and persistence on a session reset", 
   expect(usePendingPaymentStore.getState().pending).toBeNull();
   expect(localStorage.getItem("quickpitik-pending-payment")).not.toContain("guest-return-token");
 });
+
+it("removes the retired persisted admin submissions and decision log", () => {
+  localStorage.setItem("quickpitik-admin-user-store", JSON.stringify({ state: { submissions: { private: {} }, log: [{ reason: "private" }] } }));
+  resetUserScopedStores();
+  expect(localStorage.getItem("quickpitik-admin-user-store")).toBeNull();
+});

@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
-import { useAdminUsersServerStore } from "@/lib/admin-users-data";
+import { adminUserKeys } from "@/hooks/use-admin-users";
 
 // Adaptive polling fallback for the admin queues. Pairs with
 // useAdminNotificationsWs — when the push channel is up we run a slow
@@ -13,8 +13,7 @@ import { useAdminUsersServerStore } from "@/lib/admin-users-data";
 //
 // invalidateQueries is observer-aware: keys with no mounted observer no-op
 // (no fetch fires), so this is essentially free on pages that don't read
-// the admin queues. The Zustand-backed useAdminUsersServerStore needs an
-// explicit refetch call because it lives outside React Query.
+// the admin queues. All migrated queues share observer-aware invalidation.
 //
 // Closes A-2. See [[website/decisions#2026-05-17...]] for the original
 // claim this hook fulfills.
@@ -33,16 +32,13 @@ export function useAdminQueueRealtime(enabled: boolean): void {
 
     const tick = () => {
       // A backgrounded admin tab has nobody looking at it — skip the pull
-      // (the users-store refetch below is a direct fetch, not observer-aware,
-      // so without this a hidden tab pulled the 200-row list every 30 s).
       // The next visible tick catches up.
       if (document.hidden) return;
       queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "payouts"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
-      useAdminUsersServerStore.getState().invalidate();
-      void useAdminUsersServerStore.getState().refetch();
+      void queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
     };
 
     const id = setInterval(tick, intervalMs);

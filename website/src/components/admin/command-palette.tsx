@@ -13,7 +13,7 @@ import { Kicker } from "@/components/ui/kicker";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
-import { useAdminUsersData } from "@/lib/admin-users-data";
+import { useAdminUsers, EMPTY_ADMIN_USERS } from "@/hooks/use-admin-users";
 import {
   buildPaletteIndex,
   fuzzyScore,
@@ -46,7 +46,7 @@ export function CommandPalette() {
   const recents = useAdminPaletteStore((s) => s.recents);
   const pushRecent = useAdminPaletteStore((s) => s.pushRecent);
 
-  const { rows: userPool } = useAdminUsersData();
+  const userPool = useAdminUsers().data ?? EMPTY_ADMIN_USERS;
   const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
   const flags = useAdminFlags()?.items ?? EMPTY_FLAGS;
   const payouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;

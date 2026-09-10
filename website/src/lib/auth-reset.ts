@@ -6,9 +6,7 @@ import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useUserMediaStore } from "@/store/user-media-store";
 import { useAdminLegendStore } from "@/store/admin-legend-store";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
-import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
-import { useAdminUsersServerStore } from "@/lib/admin-users-data";
 import { useMyPhotographerMessagesStore } from "@/lib/me-photographer-messages-data";
 import { useMyRunnerMessagesStore } from "@/lib/me-runner-messages-data";
 import { resetPhotographerHydrationGuard } from "@/hooks/use-photographer-settings-hydration";
@@ -66,8 +64,8 @@ export function resetUserScopedStores(): void {
   // Admin stores — decision logs, queue caches, optimistic overrides, and
   // command-palette recents. The legend + WS status stores reset via their
   // existing setters since they don't expose a `clear()` action.
-  useAdminUserStore.getState().clear();
-  useAdminUsersServerStore.getState().clear();
+  // Retired persisted demo submissions/logs must not survive an auth transition.
+  try { globalThis.localStorage?.removeItem("quickpitik-admin-user-store"); } catch { /* Storage may be unavailable. */ }
   useAdminPaletteStore.getState().setOpen(false);
   useAdminPaletteStore.getState().clearRecents();
   useAdminLegendStore.getState().setOpen(false);

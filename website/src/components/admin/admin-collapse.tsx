@@ -51,15 +51,15 @@ export function CollapsibleReviewSlab({
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls={bodyId}
-        className={`group w-full flex items-baseline justify-between gap-4 md:gap-6 text-left ${
+        className={`group w-full flex flex-wrap items-baseline justify-between gap-4 md:gap-6 text-left ${
           open ? "mb-8 md:mb-10" : ""
         }`}
       >
-        <div className="flex items-baseline gap-4 min-w-0">
+        <div className="flex flex-wrap items-baseline gap-4 min-w-0">
           <span className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.15em] text-slate-soft tnum">
             {number}
           </span>
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink shrink-0">
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink break-words min-w-0">
             {title}
           </p>
           {caption && (
@@ -68,7 +68,7 @@ export function CollapsibleReviewSlab({
             </p>
           )}
         </div>
-        <div className="flex items-baseline gap-3 md:gap-4 shrink-0">
+        <div className="ml-auto flex items-baseline gap-3 md:gap-4 shrink-0">
           {trailing && (
             <div className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
               {trailing}

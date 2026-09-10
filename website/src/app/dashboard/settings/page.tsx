@@ -48,10 +48,8 @@ import {
 } from "@/lib/api-photographer-settings";
 import { syncVerificationNow } from "@/lib/photographer-verification-sync";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
-import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAuthStore } from "@/store/auth-store";
 import { useUserMediaStore } from "@/store/user-media-store";
-import type { AdminUserRow } from "@/lib/admin-user-registry";
 import type { User } from "@/types/user";
 import {
   ACCEPTED_IMAGE_MIME,
@@ -64,9 +62,7 @@ import {
 } from "@/lib/image-utils";
 import {
   REGION_GROUP_LABEL,
-  formatRegionLabel,
   getRegion,
-  type PHRegion,
   type RegionGroup,
 } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
@@ -771,64 +767,6 @@ function SlabStatusChip({ ready }: { ready: boolean }) {
   );
 }
 
-// Mirror a fresh "Submit for review" into the admin store so the
-// /admin/verifications queue shows the row. Phase F backend will receive
-// the submit POST and emit a server-rendered row on the admin's next poll;
-// in mock mode, we have to bridge the two stores ourselves. Returns null
-// when there's no authenticated session (defensive — caller bails).
-function buildAdminSubmissionRow(
-  regions: readonly PHRegion[],
-): AdminUserRow | null {
-  const sessionUser = useAuthStore.getState().user;
-  if (!sessionUser) return null;
-  const settings = usePhotographerSettingsStore.getState();
-  const regionLabel = settings.region
-    ? formatRegionLabel(
-        regions,
-        settings.region.regionCode,
-        settings.region.provinceCode,
-      )
-    : null;
-  return {
-    userId: sessionUser.id,
-    role: "PHOTOGRAPHER",
-    email: sessionUser.email,
-    name: sessionUser.name,
-    avatarUrl: sessionUser.avatarUrl ?? null,
-    brandName: settings.brandName.trim() || null,
-    handle: settings.handle.trim() || null,
-    region: regionLabel,
-    // City isn't a separate field in photographer-settings yet — fall back to
-    // the region label so the admin row still shows a location string.
-    city: regionLabel ?? "—",
-    createdAt: sessionUser.createdAt,
-    verificationStatus: "pending",
-    suspendedAt: null,
-    suspensionReason: null,
-    settingsSnapshot: {
-      hasCover: !!settings.cover,
-      hasBrandName: settings.brandName.trim().length > 0,
-      hasWatermark: !!settings.watermark,
-      hasHandle: settings.handle.trim().length >= 3,
-      hasRegion: !!settings.region,
-      socialCount: settings.socials.filter((s) => s.url.trim().length > 0)
-        .length,
-      payoutCount: settings.payouts.length,
-    },
-  };
-}
-
-// `regions` comes from useRegions() at the component boundary — these two are
-// plain functions (they read Zustand via getState()), so the list has to be
-// passed in rather than hooked. The label is only a fallback for the admin
-// queue, which resolves its own via formatRegionLabel; an empty list here just
-// leaves it null.
-function mirrorSubmissionToAdminStore(regions: readonly PHRegion[]): void {
-  const row = buildAdminSubmissionRow(regions);
-  if (!row) return;
-  useAdminUserStore.getState().upsertSubmission(row);
-}
-
 // Phase 1 — consume the BE submitVerification response instead of fire-and-
 // forget. Three outcomes per the controller + DTO:
 //   1. { status: "pending" }                 — accepted; row in DB is PENDING.
@@ -837,7 +775,6 @@ function mirrorSubmissionToAdminStore(regions: readonly PHRegion[]): void {
 // Returns whether the BE accepted, so callers (the nudge modal) can decide
 // to close their own UI or stay open for a retry.
 async function submitForReview(opts: {
-  regions: readonly PHRegion[];
   setStatus: (s: VerificationStatus) => void;
   showToast: (t: { kind: "info" | "success" | "error"; message: string }) => void;
 }): Promise<{ submitted: boolean }> {
@@ -845,7 +782,6 @@ async function submitForReview(opts: {
     const response = await submitVerification();
     if (response.status === "pending") {
       opts.setStatus("pending");
-      mirrorSubmissionToAdminStore(opts.regions);
       opts.showToast({
         kind: "info",
         message: "Submitted for review. We'll let you know.",
@@ -980,72 +916,17 @@ function EventCouponsSlab() {
 }
 
 
-// While status === "pending", keep the admin store's snapshot in sync with
-// the photographer's live edits, and auto-flip back to "incomplete" if any
-// required field is removed. The photographer is allowed to keep editing
-// after they've submitted (a sealed-envelope model would be cleaner but
-// makes "I have a typo, can I fix it?" require admin support churn), so
-// the admin always sees the latest snapshot. If they delete a required
-// field while pending, the application can't stay pending — drop it from
-// the admin queue and put the photographer back in the "Not yet verified"
-// state so they re-submit when fixed.
+// Preserve the existing local completeness gate while editing pending settings.
 function PendingEditWatcher() {
   const { editing } = useEditMode();
-  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
-  const setStatus = usePhotographerSettingsStore(
-    (s) => s.setVerificationStatus,
-  );
+  const setStatus = usePhotographerSettingsStore((s) => s.setVerificationStatus);
   const complete = useAllRequiredFilled();
-  // Subscribe to every snapshot-contributing field so this effect re-fires
-  // on any settings change. The `useAllRequiredFilled` boolean alone isn't
-  // enough — if the photographer edits a non-gating detail (brand name,
-  // bio, social URL) the boolean stays true and the effect wouldn't
-  // re-mirror without these explicit subscriptions.
-  const cover = usePhotographerSettingsStore((s) => s.cover);
-  const brandName = usePhotographerSettingsStore((s) => s.brandName);
-  const bio = usePhotographerSettingsStore((s) => s.bio);
-  const brandColor = usePhotographerSettingsStore((s) => s.brandColor);
-  const watermark = usePhotographerSettingsStore((s) => s.watermark);
-  const handle = usePhotographerSettingsStore((s) => s.handle);
-  const region = usePhotographerSettingsStore((s) => s.region);
-  const socials = usePhotographerSettingsStore((s) => s.socials);
-  const payouts = usePhotographerSettingsStore((s) => s.payouts);
-  const avatar = useUserMediaStore((s) => s.avatar);
-
   useEffect(() => {
-    if (status !== "pending") return;
-    // Pause the auto-withdraw + admin-mirror loop while the photographer is
-    // mid-edit. Otherwise transient field clears during an edit (e.g. wiping
-    // the brand name to retype it) would yank their pending submission. Save
-    // commits trigger the rest of the page to re-evaluate.
-    if (editing) return;
-    const sessionUser = useAuthStore.getState().user;
-    if (!sessionUser) return;
-    if (!complete) {
-      useAdminUserStore.getState().revokeSubmission(sessionUser.id);
+    if (status === "pending" && !editing && !complete && useAuthStore.getState().user) {
       setStatus("incomplete");
-      return;
     }
-    mirrorSubmissionToAdminStore(regions);
-  }, [
-    regions,
-    status,
-    complete,
-    editing,
-    cover,
-    brandName,
-    bio,
-    brandColor,
-    watermark,
-    handle,
-    region,
-    socials,
-    payouts,
-    avatar,
-    setStatus,
-  ]);
-
+  }, [status, complete, editing, setStatus]);
   return null;
 }
 
@@ -1056,7 +937,6 @@ function PendingEditWatcher() {
 // the nudge resets so it can fire again on next completion).
 function ReadyToSubmitNudge() {
   const { editing } = useEditMode();
-  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -1103,7 +983,7 @@ function ReadyToSubmitNudge() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await submitForReview({ regions, setStatus, showToast });
+      await submitForReview({ setStatus, showToast });
     } finally {
       setSubmitting(false);
       // Close the modal regardless of outcome — the toast surfaces success
@@ -1213,7 +1093,6 @@ function useAllRequiredFilled(): boolean {
 
 function VerificationStatusPanel() {
   const { editing, beginEdit } = useEditMode();
-  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -1231,7 +1110,7 @@ function VerificationStatusPanel() {
       // `/admin/verifications`. The photographer sits in `pending` until a
       // human reviews them. Phase 1 wires the real BE call: the helper
       // flips local state only after the BE confirms.
-      await submitForReview({ regions, setStatus, showToast });
+      await submitForReview({ setStatus, showToast });
     } finally {
       setSubmitting(false);
     }
@@ -1249,11 +1128,6 @@ function VerificationStatusPanel() {
     if (!ok) return;
     try {
       const response = await withdrawVerification();
-      const sessionUser = useAuthStore.getState().user;
-      if (sessionUser) {
-        // Drop the optimistic submission row from the admin store mirror.
-        useAdminUserStore.getState().revokeSubmission(sessionUser.id);
-      }
       // BE returns the new status — use it directly. Should always be
       // "incomplete" after a successful withdraw; defensive narrow anyway.
       const next =

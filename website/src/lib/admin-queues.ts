@@ -3,22 +3,8 @@ import {
   useAdminFlags,
   useAdminKpis,
 } from "@/hooks/use-admin-data";
-import { getAdminUsersDataSnapshot } from "@/lib/admin-users-data";
+import { usePendingVerificationsCount } from "@/hooks/use-admin-users";
 import { ROUTES } from "@/lib/constants";
-
-function countPendingPhotographers(): number {
-  let count = 0;
-  for (const row of getAdminUsersDataSnapshot()) {
-    if (
-      row.role === "PHOTOGRAPHER" &&
-      row.verificationStatus === "pending" &&
-      row.suspendedAt === null
-    ) {
-      count += 1;
-    }
-  }
-  return count;
-}
 
 // One-fresh-per-viewport rule: at most ONE rail row carries the breathing
 // fresh attention dot. Priority order:
@@ -31,8 +17,8 @@ function countPendingPhotographers(): number {
 //
 // useAdminAttentionTarget / useAdminQueueCounts are hooks because the
 // payouts count now hydrates from BE via useAdminPayouts (React Query).
-// Dispute/event counts come from backend KPIs; the remaining legacy user
-// store is migrated separately.
+// Dispute/event counts come from backend KPIs; verification counts subscribe
+// to the canonical user directory.
 
 export interface AdminAttentionTarget {
   href: string;
@@ -41,6 +27,7 @@ export interface AdminAttentionTarget {
 }
 
 export function useAdminAttentionTarget(): AdminAttentionTarget | null {
+  const pendingVerifications = usePendingVerificationsCount();
   const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
   // BE-hydrated; useAdminFlags is a no-op when the feature gate is off.
   const openFlags = useAdminFlags({ status: "open" })?.total ?? 0;
@@ -68,7 +55,6 @@ export function useAdminAttentionTarget(): AdminAttentionTarget | null {
   // the new daily home for the verifications queue (Phase 1 admin redesign).
   // /admin/verifications still exists as a deep-link route but no longer
   // appears in the rail.
-  const pendingVerifications = countPendingPhotographers();
   if (pendingVerifications > 0) {
     return {
       href: ROUTES.ADMIN_INBOX,
@@ -118,7 +104,7 @@ export function useAdminQueueCounts(): AdminQueueCounts {
 
   const disputes = kpis?.openDisputes ?? 0;
   const payouts = serverPayouts.filter((p) => p.status === "pending_review").length;
-  const inbox = countPendingPhotographers();
+  const inbox = usePendingVerificationsCount();
 
   return {
     inbox,

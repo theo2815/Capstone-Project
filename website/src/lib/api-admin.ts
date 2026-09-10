@@ -22,7 +22,7 @@ import type {
   EventReviewStatus,
   PendingPricingChange,
 } from "@/lib/photographer-mock";
-import type { DecisionLogEntry } from "@/store/admin-user-store";
+import type { DecisionLogEntry } from "@/lib/admin-user-registry";
 import type { PaginatedResponse } from "@/types/api";
 import { safeUUID } from "@/lib/utils";
 
@@ -132,13 +132,25 @@ function buildUsersQs(args: AdminUserListArgs): string {
   return p.toString();
 }
 
+// Directory consumers filter locally, so load every unfiltered page. Explicit
+// pagination/filter callers retain the endpoint's page semantics.
 export async function fetchAdminUsers(
   args: AdminUserListArgs = {},
+  signal?: AbortSignal,
 ): Promise<AdminUserRow[]> {
-  const res = await api.get<PaginatedResponse<AdminUserRow>>(
-    `/admin/users?${buildUsersQs(args)}`,
-  );
-  return res.items;
+  const rows: AdminUserRow[] = [];
+  let offset = args.offset ?? 0;
+  const paged = args.offset !== undefined || args.limit !== undefined || args.status !== undefined;
+  while (true) {
+    signal?.throwIfAborted();
+    const page = await api.get<PaginatedResponse<AdminUserRow>>(
+      `/admin/users?${buildUsersQs({ ...args, offset })}`,
+    );
+    signal?.throwIfAborted();
+    rows.push(...page.items);
+    offset += page.items.length;
+    if (paged || page.items.length === 0 || offset >= page.total) return rows;
+  }
 }
 
 export async function fetchAdminUserDetail(

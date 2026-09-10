@@ -39,3 +39,14 @@ export const adminEvent: import("@/lib/api-admin").AdminEventRow = {
   createdByHandle: null, createdByName: null, visibility: "public", pricingMode: "paid",
   watermarkPolicy: "platform", reviewStatus: "approved", reviewNote: null, pendingChange: null,
 };
+
+export const adminUser: import("@/lib/admin-user-registry").AdminUserRow = {
+  userId: "photographer-1", role: "PHOTOGRAPHER", name: "Test Photographer", email: "photographer@example.test",
+  avatarUrl: null, brandName: "Test Studio", handle: "test-studio", region: "Cebu", city: "Cebu",
+  createdAt: "2026-09-10T00:00:00Z", verificationStatus: "pending", suspendedAt: null, suspensionReason: null,
+  settingsSnapshot: { hasCover: true, hasBrandName: true, hasWatermark: true, hasHandle: true, hasRegion: true, socialCount: 1, payoutCount: 1 },
+};
+export const adminUserSettings: import("@/lib/api-admin").AdminPhotographerSettingsResponse = {
+  userId: adminUser.userId, handle: adminUser.handle!, brandName: adminUser.brandName!, brandColor: "none", bio: "Photographer bio",
+  avatarUrl: null, region: null, cover: null, watermark: null, socials: [], payouts: [],
+};

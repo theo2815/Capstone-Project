@@ -5,7 +5,7 @@ import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
-import { useAdminUsersData } from "@/lib/admin-users-data";
+import { useAdminUsers, EMPTY_ADMIN_USERS } from "@/hooks/use-admin-users";
 import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { cn } from "@/lib/utils";
 import {
@@ -35,7 +35,7 @@ interface KpiEntry {
 }
 
 export function AdminKpiStrip() {
-  const { rows: userRows } = useAdminUsersData();
+  const userRows = useAdminUsers().data ?? EMPTY_ADMIN_USERS;
   const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
   const serverOpenFlags = useAdminFlags({ status: "open" })?.total ?? 0;
   // A-1 followup: hydrate payouts from BE so the fallback path matches the

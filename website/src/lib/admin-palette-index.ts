@@ -68,7 +68,7 @@ export const PALETTE_KIND_ORDER: ReadonlyArray<PaletteEntryKind> = [
 
 export interface PaletteSnapshots {
   /** Merged admin user pool — already includes server rows + optimistic
-   *  overrides + submissions. See lib/admin-users-data.ts. */
+   *  backend rows. See hooks/use-admin-users.ts. */
   userPool: AdminUserRow[];
   disputes: ReadonlyArray<Dispute>;
   /** Server rows from useAdminFlags(); empty while loading or gated off. */

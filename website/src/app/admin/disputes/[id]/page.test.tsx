@@ -8,7 +8,7 @@ import { useAuthStore } from "@/store/auth-store";
 import Page from "./page";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ id: "dispute-1" }), notFound: vi.fn() }));
-vi.mock("@/lib/admin-users-data", () => ({ useAdminUsersData: () => ({ rows: [] }) }));
+vi.mock("@/hooks/use-admin-users", () => ({ useAdminUsers: () => ({ data: [] }), EMPTY_ADMIN_USERS: [] }));
 let client: QueryClient;
 beforeEach(() => {
   useAuthStore.getState().setUser(admin);

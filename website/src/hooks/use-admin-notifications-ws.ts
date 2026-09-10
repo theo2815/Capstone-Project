@@ -4,17 +4,14 @@ import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/auth";
 import { buildWsUrl } from "@/lib/ws-url";
-import { useAdminUsersServerStore } from "@/lib/admin-users-data";
+import { adminUserKeys } from "@/hooks/use-admin-users";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 
 // WebSocket push for the admin queue. Subscribes to /ws/admin/notifications
 // (handshake gated on ADMIN role server-side) and reacts to every
 // AdminInboxEvent emitted by the BE:
 //
-//   - verification_submitted → invalidate useAdminUsersServerStore so the
-//     /admin/photographers and /admin/inbox queues pick up the new row on
-//     next read. Active subscribers already re-read via the useEffect
-//     keyed on `fetchedAt`, so this lands without page interaction.
+//   - verification_submitted → invalidate user queries and KPI counts.
 //
 //   - event_submitted       → invalidate ["admin","events"] + ["admin","kpis"]
 //   - event_change_requested  so the V46 event requests queue and its counts
@@ -74,8 +71,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
         // Reconnect grace — flush the user cache so any verification
         // submission that landed during the down window surfaces on the
         // next read by the queue page.
-        useAdminUsersServerStore.getState().invalidate();
-        void useAdminUsersServerStore.getState().refetch();
+        void queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
         void queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
         void queryClient.invalidateQueries({ queryKey: ["admin", "payouts"] });
         void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
@@ -87,8 +83,8 @@ export function useAdminNotificationsWs(enabled: boolean): void {
           const data = JSON.parse(event.data) as AdminInboxFrame;
           switch (data.type) {
             case "verification_submitted":
-              useAdminUsersServerStore.getState().invalidate();
-              void useAdminUsersServerStore.getState().refetch();
+              void queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
+              void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
               break;
             case "event_submitted":
             case "event_change_requested":
