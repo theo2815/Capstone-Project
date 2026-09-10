@@ -17,6 +17,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Check } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { WatermarkPlacementEditor } from "@/components/dashboard/watermark-placement-editor";
@@ -68,6 +69,7 @@ import {
   type RegionGroup,
 } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
+import { photographerSettingsKeys } from "@/hooks/use-photographer-settings-hydration";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { validateHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
@@ -243,6 +245,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     watermark: null,
   });
   const { showToast } = useToast();
+  const queryClient = useQueryClient();
 
   // BE-sourced hydration of the photographer-settings + user-media stores
   // now lives on DashboardShell via `usePhotographerSettingsHydration` so
@@ -612,6 +615,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
           watermark: null,
         };
         setEditing(false);
+        void queryClient.invalidateQueries({ queryKey: photographerSettingsKeys.all });
         // Refresh completeness from the BE now the save landed, so the Submit
         // button + banners reflect it without waiting for the next focus/poll.
         void syncVerificationNow();
@@ -658,7 +662,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     } finally {
       if (isCurrent()) setSaving(false);
     }
-  }, [saving, showToast]);
+  }, [queryClient, saving, showToast]);
 
   const value = useMemo<EditModeContextValue>(
     () => ({

@@ -1,4 +1,6 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAuthStore } from "@/store/auth-store";
 import { resetUserScopedStores } from "@/lib/auth-reset";
@@ -22,6 +24,16 @@ vi.mock("@/lib/api-photographer-settings", async (importActual) => ({
 }));
 
 const photographer = { id: "photographer", role: "PHOTOGRAPHER" as const, name: "Photo", email: "photo@example.test", createdAt: "2026-09-10" };
+
+function render(ui: ReactElement) {
+  return rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        {children}
+      </QueryClientProvider>
+    ),
+  });
+}
 
 beforeEach(() => {
   useAuthStore.getState().setUser(photographer);
