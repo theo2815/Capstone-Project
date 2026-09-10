@@ -141,14 +141,16 @@ class NikonPtpCamera(
         listOf(Ptp.OP_NIKON_GET_EVENT_EX, Ptp.OP_NIKON_GET_EVENT).filter { it in info.operationsSupported }.toMutableList()
     override val capabilities get() = super.capabilities.copy(
         eventPolling = super.capabilities.eventPolling || eventOps.isNotEmpty(),
-        physicalShutter = "Nikon card monitoring; keep camera control enabled and verify shooting in MTP/PTP mode.",
+        physicalShutter = "Nikon PC camera mode: body shutter and dials stay active per Nikon's USB/MTP spec; verify on a body before a shoot.",
         assumptions = listOfNotNull(
-            "A plain MTP/PTP session leaves the body shootable (gphoto2 tethered capture relies on this on Nikon DSLRs); Z bodies are unverified here. No control-mode or ApplicationMode writes are sent.",
+            "Per Nikon's USB/MTP specifications (Remote SDK 2.0.0 package, all 15 Z bodies): the camera connects in PC camera mode with body controls active, shots go to the card, and remote mode is entered only by ChangeCameraMode or control commands, which are never sent. Hardware pass pending.",
             quirks.note,
         ),
     )
     override fun events(): List<Long> {
-        val handles = super.events().toMutableList()
+        // Nikon's spec: read events from the interrupt pipe or the vendor queue, never both.
+        if (eventOps.isEmpty()) return super.events()
+        val handles = mutableListOf<Long>()
         while (eventOps.isNotEmpty()) {
             val op = eventOps.first()
             try {
@@ -215,7 +217,7 @@ object CameraDrivers {
 
     fun usbGuidance(vid: Int): String = when (vid) {
         0x04a9 -> "Canon: start auto-upload to enter EOS mode. If the shutter stays locked, unplug to shoot, then use card import."
-        0x04b0 -> "Nikon: choose MTP/PTP and keep camera control enabled. If this mode locks shooting, use card import after shooting."
+        0x04b0 -> "Nikon: choose MTP/PTP. The body shoots normally while connected; playback on the body is off until unplugged, and a swapped card needs a replug."
         0x054c -> "Sony: use PC Remote, save to PC + Camera, keep Camera priority, and send JPEGs to the PC. Use MTP for card import."
         0x04cb -> "Fujifilm: use USB TETHER SHOOTING AUTO to shoot with the body and save to card; USB CARD READER is for import only."
         0x04da -> "Panasonic: use PC(Tether) for shooting or PTP/MTP for import. PC(Storage) cannot be read here. Keep saving to the camera card enabled."

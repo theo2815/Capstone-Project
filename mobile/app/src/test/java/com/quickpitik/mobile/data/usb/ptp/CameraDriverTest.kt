@@ -168,6 +168,16 @@ class CameraDriverTest {
             transport.writes.map { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).getShort(6).toInt() and 0xffff })
     }
 
+    @Test fun `Nikon vendor event queue is used instead of the interrupt pipe when advertised`() {
+        val extended = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
+            .putShort(1).putShort(0).putShort(Ptp.EV_OBJECT_ADDED.toShort()).putShort(1).putInt(42).array()
+        val transport = ScriptedPtp(data(Ptp.OP_NIKON_GET_EVENT_EX, 0, extended), ok(0))
+            .apply { interrupts.add(PtpWire.container(Ptp.TYPE_EVENT, Ptp.EV_OBJECT_ADDED, 0, words(7))) }
+        val camera = NikonPtpCamera(PtpSession(transport), info("Nikon", listOf(Ptp.OP_NIKON_GET_EVENT_EX)), "camera")
+        assertEquals(listOf(42L), camera.events())
+        assertEquals(1, transport.interrupts.size)
+    }
+
     @Test fun `Nikon 1 avoids broken advertised vendor event commands`() {
         val transport = ScriptedPtp()
         val camera = NikonPtpCamera(PtpSession(transport), info("Nikon", listOf(Ptp.OP_NIKON_GET_EVENT))

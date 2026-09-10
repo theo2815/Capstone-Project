@@ -18,7 +18,7 @@ class SonyPtpCamera(
     override val capabilities get() = super.capabilities.copy(
         transientObjects = ready,
         physicalShutter = "Sony PC Remote protocol ${version / 100}: camera + PC JPEG copies; verify card backup and physical shutter before a shoot.",
-        assumptions = listOf("PC Remote with Camera priority and PC+Camera saving keeps the body shutter usable (Sony help guide; unverified here). No priority or save-destination writes are sent."),
+        assumptions = listOf("Per Sony's Camera Control PTP 2/3 Reference: Position Key 0 = camera priority, Save Destination 0x11 = host + card, shot handle 0xFFFFC001; body shutter in PC Remote per Sony and Capture One docs. Hardware pass pending. No priority or save-destination writes are sent."),
     )
 
     override fun startLive() {
@@ -67,10 +67,10 @@ class SonyPtpCamera(
     }
 
     private fun readProperties(): Map<Int, SonyPtpData.Property> = if (ALL_PROPERTIES in operations) {
-        SonyPtpData.properties(session.vendorData(ALL_PROPERTIES))
+        SonyPtpData.properties(session.vendorData(ALL_PROPERTIES), version)
     } else {
         listOf(DESTINATION, OBJECT_IN_MEMORY, PRIORITY).filter { it in properties }.associateWith {
-            SonyPtpData.property(session.vendorData(PROPERTY, it), it)
+            SonyPtpData.property(session.vendorData(PROPERTY, it), it, version)
         }
     }
 
@@ -93,7 +93,7 @@ class SonyPtpCamera(
     }
 }
 
-/** Bounded readers for Sony's v2/v3 datasets (protocol reference pinned in mobile/docs). */
+/** Bounded readers for Sony's v2/v3 datasets (layouts per Sony's Camera Control PTP 2/3 Reference and its example parser). */
 internal object SonyPtpData {
     data class Extension(val version: Int, val codes: List<Int>)
     data class Property(val type: Int, val value: Long?)
@@ -111,25 +111,25 @@ internal object SonyPtpData {
         Extension(version, codes)
     }
 
-    fun properties(bytes: ByteArray): Map<Int, Property> = read(bytes) { bb ->
-        val count = bb.count(7)
-        bb.int // reserved
+    fun properties(bytes: ByteArray, version: Int = 300): Map<Int, Property> = read(bytes) { bb ->
+        val count = bb.count(7) // the spec's UINT64 count: low word here, high word next
+        bb.int
         val result = LinkedHashMap<Int, Property>()
         repeat(count) {
             val code = bb.u16()
             if (result.containsKey(code)) throw PtpException("Duplicate Sony property descriptor.")
-            result[code] = descriptor(bb)
+            result[code] = descriptor(bb, version)
         }
         if (bb.hasRemaining()) throw PtpException("Unexpected Sony property data.")
         result
     }
 
-    fun property(bytes: ByteArray, expectedCode: Int): Property = read(bytes) { bb ->
+    fun property(bytes: ByteArray, expectedCode: Int, version: Int = 300): Property = read(bytes) { bb ->
         if (bb.u16() != expectedCode) throw PtpException("Sony returned the wrong property.")
-        descriptor(bb).also { if (bb.hasRemaining()) throw PtpException("Unexpected Sony property data.") }
+        descriptor(bb, version).also { if (bb.hasRemaining()) throw PtpException("Unexpected Sony property data.") }
     }
 
-    private fun descriptor(bb: ByteBuffer): Property {
+    private fun descriptor(bb: ByteBuffer, version: Int): Property {
         val type = bb.u16()
         bb.get(); bb.get() // writable and enabled flags are irrelevant to read-only ingest
         bb.value(type) // default
@@ -138,15 +138,12 @@ internal object SonyPtpData {
         when (form) {
             0 -> Unit
             1 -> repeat(3) { bb.value(type) }
-            2 -> repeat(bb.u16()) { bb.value(type) }
+            2 -> {
+                repeat(bb.u16()) { bb.value(type) }
+                // Camera Control PTP 3 always carries a second value list after an enumeration; PTP 2 never does.
+                if (version >= 300) repeat(bb.u16()) { bb.value(type) }
+            }
             else -> throw PtpException("Unsupported Sony property form.")
-        }
-        // ponytail: upstream's <512 secondary-enum heuristic; use a versioned layout if a body exceeds it.
-        // A following descriptor starts at 0x5xxx/0xdxxx.
-        if (bb.remaining() >= 2 && (bb.getShort(bb.position()).toInt() and 0xffff) < 0x200) {
-            val count = bb.u16()
-            if (form != 2 && count != 0) throw PtpException("Unexpected Sony secondary property values.")
-            repeat(count) { bb.value(type) }
         }
         return Property(type, current)
     }

@@ -2,6 +2,40 @@
 
 Scope: Android USB ingestion into the existing Room/WorkManager/backend pipeline. Preserve physical-shutter Canon capture and on-card originals. Wi-Fi, remote shutter/live view, multi-camera operation, and RAW cloud processing are outside this increment. This repository has no iOS app; this work adds no iPhone USB implementation.
 
+## Manufacturer specifications checked — 2026-09-11 (phase 3)
+
+Two official packages (kept outside the repo, reference only, nothing bundled):
+Sony *Camera Remote Command 2.02.00* (Camera Control PTP 2 and PTP 3 References plus
+Linux/Windows example source, from Sony's Camera Remote Command page) and Nikon
+*Remote SDK 2.0.0* (S-SDKZ-200BF), whose `Command/English` folder holds the "USB Still
+Image Capture Device MTP Specifications" for 15 Z bodies (Z30, Z50, Z50II, Z5, Z5II, Z6,
+Z6II, Z6III, Z7, Z7II, Z8, Z9, Zf, Zfc, ZR). Neither SDK runs on Android; the documents
+are what matter.
+
+**Sony, confirmed against the reference and example parser:** operations 0x9201 /
+0x9202 / 0x9209, shot handle 0xFFFFC001, Shooting File Info 0xD215 (high bit plus the
+number of buffered images), Still Image Save Destination 0xD222 (0x0001 host, 0x0010
+card, 0x0011 both), Position Key 0xD25A (0x00 camera priority, 0x01 PC Remote priority,
+reset to 0x00 at session close). Our second `GetExtDeviceInfo` parameter is the spec's
+"device property option" flag. PTP 3 is 2020 and newer bodies, PTP 2 the older ones,
+matching the 300-then-200 negotiation. One parser change: PTP 3 always carries a second
+value list after an enumeration form and PTP 2 never does, so `SonyPtpData` now takes
+the negotiated version instead of guessing from the next word. Later options the spec
+documents: Content Transfer Mode and "Remote Control with Transfer Mode" read the card
+without changing the USB menu on supporting bodies.
+
+**Nikon, confirmed for all 15 Z specs:** the camera connects in "PC camera mode" with
+body dials, buttons and shutter active; "remote mode" (body controls ignored) is entered
+only by `ChangeCameraMode` or control commands, which we never send. Shots go to the
+card by default and `RecordingMedia` must not be changed unless the host handles RAM
+transfers. Events come from the interrupt pipe or `GetEventEx` and the host must use only
+one; the Nikon adapter now polls the vendor queue alone when it is advertised. Playback
+on the body is disabled while connected, and a card swapped mid-connection is not seen
+until a replug (both now in the guidance copy).
+
+Validation (2026-09-11, phase 3): `.\gradlew.bat --offline testDebugUnitTest compileDebugKotlin --console=plain`
+from `mobile/` — BUILD SUCCESSFUL, **155 tests, 0 failures/errors/skips** (153 + 2). Still no device attached.
+
 ## Model-agnostic compatibility layer — 2026-09-11 (phase 2)
 
 Goal: support bodies we cannot test by building on standards and documented vendor
@@ -81,8 +115,8 @@ mode chosen on the camera; the host can neither switch it nor talk to a transfer
 | Brand | Mode that keeps the body shootable | Transfer-only modes (locked by firmware) | Host must not send |
 |---|---|---|---|
 | Canon EOS | PTP with remote mode 1 held; shots to card; host polls the card (`EOS_GetEvent` reports 0/111 body shots on R6) | Bare session / remote mode 0 | `CaptureDestination=host` (Busy until Live View), `RemoteRelease*`, `UILock`, `SetModeDialDisable` |
-| Nikon | MTP/PTP, plain session; gphoto2 tethered capture is documented on Nikon DSLRs; NX Tether/CCP2 expose "Enable Controls on Camera Body" | none known; Z bodies unverified here | `ChangeCameraMode(1)`, `ApplicationMode 0xD1F0=1` (hides the filesystem) |
-| Sony | PC Remote with Save Dest PC+Camera and `PriorityMode 0xD25A` = Camera; frames at handle `0xffffc001` | MTP and Mass Storage (different PID per mode) | `PriorityMode=1`, save-dest or exposure writes |
+| Nikon | MTP/PTP, plain session = Nikon's "PC camera mode" with body controls active (Nikon USB/MTP specs, all 15 Z bodies; gphoto2 tethered capture on DSLRs) | none known; hardware pass pending | `ChangeCameraMode(1)`, `ApplicationMode 0xD1F0=1` (hides the filesystem), `RecordingMedia` |
+| Sony | PC Remote with Save Destination 0x0011 and Position Key `0xD25A` = 0x00 camera priority (Sony Camera Control PTP 2/3 Reference); frames at handle `0xFFFFC001` | MTP and Mass Storage (different PID per mode) | `PositionKey=1`, save-dest or exposure writes |
 | Fujifilm | USB TETHER SHOOTING AUTO (saves to card and pushes); shutter stays on the body | USB CARD READER; FIXED never writes the card | `PriorityMode 0xD207=2` and PC Mode `0xD38C=1` (gphoto2 #570 is exactly that lock) |
 | Panasonic | PC(Tether), body-shutter push unproven; no Android app supports it | PC(Storage) is mass storage (class 8, not probed) | `SetCaptureTarget`, `InitiateCapture` |
 
