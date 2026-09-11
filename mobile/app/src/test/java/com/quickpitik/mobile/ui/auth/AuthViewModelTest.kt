@@ -181,7 +181,8 @@ class AuthViewModelTest {
     }
 
     @Test fun `logout clears the session first, resets the view, then revokes best-effort`() {
-        respond = { _, _ -> MockResponse().setResponseCode(500) } // a failed revoke must not matter
+        val recorded = CountDownLatch(1)
+        respond = { _, _ -> recorded.countDown(); MockResponse().setResponseCode(500) } // a failed revoke must not matter
         session.saveSession("access-1", "PHOTOGRAPHER", "Juan", "juan@x.com", refreshToken = "refresh-1")
         ViewMode.set(session, true)
         val vm = AuthViewModel(application)
@@ -194,6 +195,8 @@ class AuthViewModelTest {
         assertEquals(AuthState.Idle, vm.authState.value)
         val revoke = requireNotNull(backend.server.takeRequest(5, TimeUnit.SECONDS))
         assertEquals("/api/v1/auth/logout", revoke.path)
+        // takeRequest returns before the dispatcher runs; wait for it to record the body.
+        assertTrue(recorded.await(5, TimeUnit.SECONDS))
         assertTrue(bodies("/api/v1/auth/logout").single().contains(""""refreshToken":"refresh-1""""))
 
         // Nothing to revoke: no request at all.
