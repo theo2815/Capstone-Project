@@ -6,6 +6,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.test.TestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -17,14 +19,16 @@ import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 
 /**
- * Swaps Dispatchers.Main for an Unconfined test dispatcher for one test:
- * viewModelScope launches run eagerly and network resumptions complete on
- * OkHttp's threads, so a test just awaits the StateFlow. Replaces the
- * setMain/resetMain pair that used to be hand-written in every ViewModel test.
+ * Swaps Dispatchers.Main for a test dispatcher for one test. Unconfined by
+ * default: viewModelScope launches run eagerly and network resumptions complete
+ * on OkHttp's threads, so a test just awaits the StateFlow. Pass a
+ * StandardTestDispatcher instead when the code under test delays: its
+ * [scheduler] then skips those delays in virtual time.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class MainDispatcherRule : TestWatcher() {
-    override fun starting(description: Description) = Dispatchers.setMain(UnconfinedTestDispatcher())
+class MainDispatcherRule(private val dispatcher: TestDispatcher = UnconfinedTestDispatcher()) : TestWatcher() {
+    val scheduler: TestCoroutineScheduler get() = dispatcher.scheduler
+    override fun starting(description: Description) = Dispatchers.setMain(dispatcher)
     override fun finished(description: Description) = Dispatchers.resetMain()
 }
 

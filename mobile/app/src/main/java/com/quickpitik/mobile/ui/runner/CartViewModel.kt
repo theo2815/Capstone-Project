@@ -64,6 +64,10 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionManager = SessionManager.getInstance(application)
     private val repository: CartRepository = CartRepositoryImpl()
 
+    // The receipt route relaunches the poll on every entry; without this a
+    // stale loop's Timeout could overwrite the fresh loop's Paid.
+    private var pollJob: Job? = null
+
     val cartItems: StateFlow<List<CartItemDto>> = repository.cartItems
 
     val cartTotal: StateFlow<Double> = repository.cartItems
@@ -190,6 +194,12 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val token = sessionManager.getAccessToken()
             repository.removeFromCart(token, photoId)
+                .onSuccess {
+                    // The checkout sheet's discount was priced for the old item
+                    // set; re-price it so the shown total never drifts from the
+                    // charged one.
+                    _couponPreview.value?.let { previewCoupon(it.code) }
+                }
                 .onFailure {
                     _cartMessage.value = it.localizedMessage
                         ?: "Couldn't remove that photo. Try again."
@@ -399,7 +409,8 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val isGuest = !shareToken.isNullOrBlank()
-        viewModelScope.launch {
+        pollJob?.cancel()
+        pollJob = viewModelScope.launch {
             var attempts = 0
             while (attempts < POLL_MAX_ATTEMPTS) {
                 attempts++
