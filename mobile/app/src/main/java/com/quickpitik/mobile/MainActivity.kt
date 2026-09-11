@@ -125,12 +125,14 @@ import com.quickpitik.mobile.ui.theme.Slate
 // role guard and, minus the receipt route, by the bottom-nav gate.
 // "photographer/{handle}" and the auth routes belong to NEITHER role set —
 // they are shared surfaces.
-private val RUNNER_ROUTES = setOf(
+// The receipt route carries the optional guest ?token=. One constant feeds both
+// the NavHost registration and this guard set so the two can never drift (F5:
+// the bare "orders/return/{orderId}" had once dropped out of the guard).
+internal const val RECEIPT_ROUTE_PATTERN = "orders/return/{orderId}?token={token}"
+
+internal val RUNNER_ROUTES = setOf(
     "events", "gallery", "profile", "settings", "verify",
-    // The receipt route carries the optional guest ?token=; the registered
-    // pattern (and thus currentRoute) includes it, so match it exactly (F5) —
-    // the bare "orders/return/{orderId}" had dropped out of the guard.
-    "orders?orderId={orderId}", "orders/return/{orderId}?token={token}",
+    "orders?orderId={orderId}", RECEIPT_ROUTE_PATTERN,
 )
 
 // Deep-link ids must be path/query-safe before being spliced into a route
@@ -140,7 +142,7 @@ private val DEEP_LINK_ID = Regex("^[A-Za-z0-9._-]{1,64}$")
 
 // Where the runner bottom nav shows: the tab surfaces + the orders list, but
 // NOT the modal PayMongo receipt ("orders/return/{orderId}").
-private val RUNNER_NAV_ROUTES = setOf(
+internal val RUNNER_NAV_ROUTES = setOf(
     "events", "gallery", "profile", "settings", "orders?orderId={orderId}",
 )
 
@@ -160,7 +162,7 @@ private val STUDIO_TAB_ORDER = listOf(
     "studio/settings",
 )
 
-private fun tabIndexForRoute(route: String?): Int {
+internal fun tabIndexForRoute(route: String?): Int {
     if (route == null) return -1
     val clean = route.substringBefore("?")
     val rIdx = RUNNER_TAB_ORDER.indexOfFirst { it.substringBefore("?") == clean }
@@ -170,7 +172,7 @@ private fun tabIndexForRoute(route: String?): Int {
     return -1
 }
 
-private fun arePeerTabs(fromRoute: String?, toRoute: String?): Boolean {
+internal fun arePeerTabs(fromRoute: String?, toRoute: String?): Boolean {
     if (fromRoute == null || toRoute == null) return false
     val f = fromRoute.substringBefore("?")
     val t = toRoute.substringBefore("?")
@@ -216,18 +218,11 @@ class MainActivity : ComponentActivity() {
                 val sessionManager = remember { SessionManager.getInstance(this@MainActivity) }
                 val startDestination = remember {
                     ViewMode.init(sessionManager)
-                    when {
-                        sessionManager.getAccessToken() == null -> "login"
-                        // A photographer who killed the app while in runner
-                        // view cold-starts back into runner view — starting in
-                        // studio with the flag still set would strand the flag,
-                        // because studio is legal for the true role and the
-                        // guard would never fire.
-                        isPhotographerRole(sessionManager.getUserRole()) &&
-                            sessionManager.isRunnerView() -> "runner"
-                        isPhotographerRole(sessionManager.getUserRole()) -> "studio"
-                        else -> "runner"
-                    }
+                    startDestinationFor(
+                        signedIn = sessionManager.getAccessToken() != null,
+                        photographer = isPhotographerRole(sessionManager.getUserRole()),
+                        runnerView = sessionManager.isRunnerView(),
+                    )
                 }
                 val runnerView by ViewMode.runnerView.collectAsState()
 
@@ -335,14 +330,8 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(navBackStackEntry, runnerView) {
                     val route = navBackStackEntry?.destination?.route ?: return@LaunchedEffect
                     if (sessionManager.getAccessToken() == null) return@LaunchedEffect
-                    val photographer = isPhotographerRole(sessionManager.getUserRole())
-                    val effectiveRunner = !photographer || runnerView
-                    when {
-                        route in RUNNER_ROUTES && !effectiveRunner ->
-                            navController.navigate("studio") { launchSingleTop = true }
-                        route.startsWith("studio") && !photographer ->
-                            navController.navigate("runner") { launchSingleTop = true }
-                    }
+                    guardRedirect(isPhotographerRole(sessionManager.getUserRole()), runnerView, route)
+                        ?.let { navController.navigate(it) { launchSingleTop = true } }
                 }
 
                 // RunnerTopBar's "Switch to photographer" lands here — the bar
@@ -937,7 +926,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             composable(
-                                route = "orders/return/{orderId}?token={token}",
+                                route = RECEIPT_ROUTE_PATTERN,
                                 arguments = listOf(
                                     navArgument("orderId") { type = NavType.StringType },
                                     navArgument("token") {
@@ -986,12 +975,7 @@ class MainActivity : ComponentActivity() {
                                 // has no PayMongo handoff — land on the receipt so the cart
                                 // clears and the downloads show, mirroring the deep-link
                                 // return. A null order is the PayMongo bail-back → orders list.
-                                val route = order?.let {
-                                    val id = Uri.encode(it.id)
-                                    it.returnToken?.takeIf { t -> t.isNotBlank() }
-                                        ?.let { t -> "orders/return/$id?token=${Uri.encode(t)}" }
-                                        ?: "orders/return/$id"
-                                } ?: "orders"
+                                val route = order?.let { receiptRoute(it.id, it.returnToken) } ?: "orders"
                                 navController.navigate(route) {
                                     popUpTo("events") { saveState = true }
                                     launchSingleTop = true
@@ -1011,52 +995,25 @@ class MainActivity : ComponentActivity() {
         pickQuickpitikUri(intent)?.let { deepLinkUri = it }
     }
 
-    private fun pickQuickpitikUri(intent: Intent?): Uri? {
-        val data = intent?.data ?: return null
-        if (data.scheme.equals("quickpitik", ignoreCase = true)) return data
-        val path = data.path?.lowercase().orEmpty()
-        // startsWith, not ==: the manifest filter uses pathPrefix, so the OS
-        // also delivers "/verify-email/" — an exact match would drop it.
-        if ((data.scheme.equals("http", ignoreCase = true) || data.scheme.equals("https", ignoreCase = true)) &&
-            (path.startsWith("/verify-email") || path.startsWith("/confirm-email-change"))) {
-            return data
-        }
-        return null
-    }
-
-    // Maps:
-    //   quickpitik://orders/return?orderId=…&token=…  →  orders/return/{orderId}
-    //                                                    (the receipt screen)
-    //   quickpitik://cart?orderId=…                   →  re-open cart sheet
     private fun handleQuickpitikUri(
         uri: Uri,
         navController: NavController,
         cartViewModel: CartViewModel,
     ) {
-        // Host carries the route — Android parses "quickpitik://orders/return"
-        // as scheme=quickpitik, host=orders, path=/return.
-        val host = uri.host?.lowercase() ?: return
-        val path = uri.path?.lowercase().orEmpty()
-        // Email-token links are role-neutral auth surfaces — route them BEFORE
-        // the photographer guard below, or a photographer's own verification /
+        val target = deepLinkTarget(uri) ?: return
+        // Email-token links are role-neutral auth surfaces — routed BEFORE the
+        // photographer guard below, or a photographer's own verification /
         // email-change link would bounce to studio with the token unredeemed.
-        // startsWith mirrors the manifest's pathPrefix so a trailing slash
-        // still routes.
-        when {
-            host == "confirm-email-change" || path.startsWith("/confirm-email-change") -> {
-                val token = uri.getQueryParameter("token").orEmpty()
-                navController.navigate("confirm-email-change?token=$token") {
-                    launchSingleTop = true
-                }
+        when (target) {
+            is DeepLinkTarget.ConfirmEmail -> {
+                navController.navigate("confirm-email-change?token=${target.token}") { launchSingleTop = true }
                 return
             }
-            host == "verify-email" || path.startsWith("/verify-email") -> {
-                val token = uri.getQueryParameter("token").orEmpty()
-                navController.navigate("verify-email?token=$token") {
-                    launchSingleTop = true
-                }
+            is DeepLinkTarget.VerifyEmail -> {
+                navController.navigate("verify-email?token=${target.token}") { launchSingleTop = true }
                 return
             }
+            else -> Unit
         }
         // Every quickpitik:// target below is a runner surface. A photographer
         // token would 403 the cart fetch and land on screens with no way back,
@@ -1069,50 +1026,123 @@ class MainActivity : ComponentActivity() {
             navController.navigate("studio") { launchSingleTop = true }
             return
         }
-        when {
-            host == "orders" && path.startsWith("/return") -> {
-                val orderId = uri.getQueryParameter("orderId")
+        val overEvents: androidx.navigation.NavOptionsBuilder.() -> Unit = {
+            popUpTo("events") { saveState = true }
+            launchSingleTop = true
+        }
+        when (target) {
+            is DeepLinkTarget.OrderReturn -> {
                 cartViewModel.closeCartSheet()
                 cartViewModel.closeCheckoutSheet()
                 cartViewModel.resetCheckoutState()
-                // F6: validate the id and ENCODE both params before building the
-                // route — a malformed/hostile id falls back to the orders list
+                // F6: a malformed/hostile id falls back to the orders list
                 // instead of dead-ending or crashing route parsing.
-                if (orderId.isNullOrBlank() || !DEEP_LINK_ID.matches(orderId)) {
-                    cartViewModel.fetchCart()
-                    navController.navigate("orders") {
-                        popUpTo("events") { saveState = true }
-                        launchSingleTop = true
-                    }
-                } else {
-                    val token = uri.getQueryParameter("token")
-                    val encodedId = Uri.encode(orderId)
-                    val route = if (token.isNullOrBlank()) "orders/return/$encodedId"
-                        else "orders/return/$encodedId?token=${Uri.encode(token)}"
-                    navController.navigate(route) {
-                        popUpTo("events") { saveState = true }
-                        launchSingleTop = true
-                    }
-                }
-
+                val route = receiptRoute(target.orderId, target.token)
+                if (route == null) cartViewModel.fetchCart()
+                navController.navigate(route ?: "orders", overEvents)
             }
-            host == "orders" -> {
+            DeepLinkTarget.Orders -> {
                 cartViewModel.closeCartSheet()
                 cartViewModel.closeCheckoutSheet()
                 cartViewModel.resetCheckoutState()
                 cartViewModel.fetchCart()
-                navController.navigate("orders") {
-                    popUpTo("events") { saveState = true }
-                    launchSingleTop = true
-                }
+                navController.navigate("orders", overEvents)
             }
-            host == "cart" -> {
+            DeepLinkTarget.Cart -> {
                 cartViewModel.closeCheckoutSheet()
                 cartViewModel.resetCheckoutState()
                 cartViewModel.fetchCart()
                 cartViewModel.openCartSheet()
             }
+            else -> Unit
         }
+    }
+}
+
+// Routing decisions lifted out of the Activity so they can be tested without a
+// NavHost: cold-start destination, the role guard, the deep-link mapping and
+// the receipt route. The Activity keeps only the side effects.
+
+/**
+ * A photographer who killed the app while in runner view cold-starts back into
+ * runner view — starting in studio with the flag still set would strand the
+ * flag, because studio is legal for the true role and the guard would never fire.
+ */
+internal fun startDestinationFor(signedIn: Boolean, photographer: Boolean, runnerView: Boolean): String = when {
+    !signedIn -> "login"
+    photographer && runnerView -> "runner"
+    photographer -> "studio"
+    else -> "runner"
+}
+
+/**
+ * Where the destination-change guard sends a wrong-role visitor, or null to let
+ * them through. Runner routes check the EFFECTIVE role (a photographer in runner
+ * view passes); studio routes check the TRUE role (a photographer in runner view
+ * may still deep-return to studio). Shared surfaces are in neither set.
+ */
+internal fun guardRedirect(photographer: Boolean, runnerView: Boolean, route: String): String? {
+    val effectiveRunner = !photographer || runnerView
+    return when {
+        route in RUNNER_ROUTES && !effectiveRunner -> "studio"
+        route.startsWith("studio") && !photographer -> "runner"
+        else -> null
+    }
+}
+
+/**
+ * The receipt route for an order id plus optional guest RETURN token, or null
+ * when the id is not route-safe (F6: the scheme-only deep-link filter is
+ * exported, so a hostile id must never be spliced into a route string).
+ */
+internal fun receiptRoute(orderId: String?, token: String?): String? {
+    if (orderId.isNullOrBlank() || !DEEP_LINK_ID.matches(orderId)) return null
+    val id = Uri.encode(orderId)
+    return if (token.isNullOrBlank()) "orders/return/$id" else "orders/return/$id?token=${Uri.encode(token)}"
+}
+
+internal sealed class DeepLinkTarget {
+    data class ConfirmEmail(val token: String) : DeepLinkTarget()
+    data class VerifyEmail(val token: String) : DeepLinkTarget()
+    data class OrderReturn(val orderId: String?, val token: String?) : DeepLinkTarget()
+    data object Orders : DeepLinkTarget()
+    data object Cart : DeepLinkTarget()
+}
+
+/**
+ * Only quickpitik:// links and the two https email-token paths the manifest
+ * filters on reach the app. startsWith, not ==: the manifest uses pathPrefix,
+ * so the OS also delivers "/verify-email/" — an exact match would drop it.
+ */
+internal fun pickQuickpitikUri(intent: Intent?): Uri? {
+    val data = intent?.data ?: return null
+    if (data.scheme.equals("quickpitik", ignoreCase = true)) return data
+    val path = data.path?.lowercase().orEmpty()
+    if ((data.scheme.equals("http", ignoreCase = true) || data.scheme.equals("https", ignoreCase = true)) &&
+        (path.startsWith("/verify-email") || path.startsWith("/confirm-email-change"))) {
+        return data
+    }
+    return null
+}
+
+/**
+ * Maps an accepted link to what the app should do. Host carries the route —
+ * Android parses "quickpitik://orders/return" as scheme=quickpitik, host=orders,
+ * path=/return. Null = nothing we handle.
+ */
+internal fun deepLinkTarget(uri: Uri): DeepLinkTarget? {
+    val host = uri.host?.lowercase() ?: return null
+    val path = uri.path?.lowercase().orEmpty()
+    return when {
+        host == "confirm-email-change" || path.startsWith("/confirm-email-change") ->
+            DeepLinkTarget.ConfirmEmail(uri.getQueryParameter("token").orEmpty())
+        host == "verify-email" || path.startsWith("/verify-email") ->
+            DeepLinkTarget.VerifyEmail(uri.getQueryParameter("token").orEmpty())
+        host == "orders" && path.startsWith("/return") ->
+            DeepLinkTarget.OrderReturn(uri.getQueryParameter("orderId"), uri.getQueryParameter("token"))
+        host == "orders" -> DeepLinkTarget.Orders
+        host == "cart" -> DeepLinkTarget.Cart
+        else -> null
     }
 }
 

@@ -320,8 +320,8 @@ fun RunnerGalleryScreen(
     }
 
     val submitBib = {
-        val clean = bibInput.trim().uppercase()
-        if (clean.isNotEmpty()) {
+        val clean = normalizeBib(bibInput)
+        if (clean != null) {
             bibInput = clean
             submittedBib = clean
             showFindSheet = false
@@ -1439,3 +1439,6 @@ private fun PhotoGridSkeleton() {
         }
     }
 }
+
+/** The one place a typed bib is normalised: trimmed, upper-cased ("b-4082" → "B-4082"), empty = no search. */
+internal fun normalizeBib(raw: String): String? = raw.trim().uppercase().ifEmpty { null }
