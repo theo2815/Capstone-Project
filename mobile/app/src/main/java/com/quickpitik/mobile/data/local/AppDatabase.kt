@@ -13,6 +13,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun cameraTransferDao(): CameraTransferDao
 
     companion object {
+        internal const val DB_NAME = "quickpitik_db"
+
         val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE upload_queue ADD COLUMN uploadedPhotoId TEXT DEFAULT NULL")
@@ -46,7 +48,7 @@ abstract class AppDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "quickpitik_db"
+                    DB_NAME
                 ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
                 INSTANCE = instance
                 instance

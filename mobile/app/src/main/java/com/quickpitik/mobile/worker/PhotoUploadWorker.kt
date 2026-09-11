@@ -252,7 +252,7 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         }
     }
 
-    private companion object {
+    internal companion object {
         // Retire metadata only after verified local deletion. Originals never expire by age.
         const val COMPLETED_TTL_MS = 7L * 24 * 60 * 60 * 1000
 

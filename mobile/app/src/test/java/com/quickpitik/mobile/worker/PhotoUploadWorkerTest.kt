@@ -5,9 +5,11 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker
 import androidx.work.testing.TestListenableWorkerBuilder
 import com.quickpitik.mobile.data.local.AppDatabase
+import com.quickpitik.mobile.data.local.AppDatabase.Companion.DB_NAME
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.worker.PhotoUploadWorker.Companion.MAX_RETRIES
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.*
 import okhttp3.mockwebserver.MockResponse
@@ -557,11 +559,5 @@ class PhotoUploadWorkerTest {
 
     private companion object {
         const val EVENT = "11111111-1111-1111-1111-111111111111"
-
-        // Mirrors PhotoUploadWorker's private MAX_RETRIES.
-        const val MAX_RETRIES = 5
-
-        // Mirrors the name AppDatabase passes to Room.databaseBuilder.
-        const val DB_NAME = "quickpitik_db"
     }
 }

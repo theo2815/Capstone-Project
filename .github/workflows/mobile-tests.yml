@@ -1,0 +1,32 @@
+name: mobile-tests
+
+on:
+  push:
+    branches: [dev-main, main]
+    paths: ['mobile/**', '.github/workflows/mobile-tests.yml']
+  pull_request:
+    paths: ['mobile/**', '.github/workflows/mobile-tests.yml']
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      # The JVM suite: Robolectric + MockWebServer, no device. Same command the
+      # module docs record by hand; this is the first time anything runs it
+      # unattended. Release and instrumented variants are deliberately not built.
+      - run: ./gradlew testDebugUnitTest --console=plain --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: mobile-unit-test-report
+          path: mobile/app/build/reports/tests/testDebugUnitTest
