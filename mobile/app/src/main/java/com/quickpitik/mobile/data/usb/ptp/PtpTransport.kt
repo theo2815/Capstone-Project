@@ -133,7 +133,7 @@ internal class AndroidPtpTransport(manager: UsbManager, device: UsbDevice) : Ptp
         } finally { ownership.release() }
     }
 
-    private companion object {
+    internal companion object {
         // ponytail: one camera per phone; use per-device leases if multi-camera is introduced.
         val ownership = Semaphore(1, true)
     }

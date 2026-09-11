@@ -90,3 +90,6 @@ dev-start.ps1
 
 .vercel
 .env*
+
+# Fujifilm Camera Control SDK (confidential; copied by hand, never committed)
+mobile/fuji-sdk/

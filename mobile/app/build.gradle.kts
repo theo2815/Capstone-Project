@@ -6,6 +6,10 @@ plugins {
     kotlin("kapt")
 }
 
+// Fujifilm SDK is present only on machines that copied it (mobile/docs/usb-tethering-plan.md § Fujifilm SDK).
+val fujiSdkDir = rootProject.file("fuji-sdk")
+val fujiSdk = fujiSdkDir.resolve("HEADERS/XAPI.H").exists() && fujiSdkDir.resolve("Android/arm64-v8a/XAPI.so").exists()
+
 android {
     namespace = "com.quickpitik.mobile"
     compileSdk = 34
@@ -30,6 +34,17 @@ android {
             "GOOGLE_SERVER_CLIENT_ID",
             "\"${project.findProperty("QP_GOOGLE_SERVER_CLIENT_ID") ?: ""}\"",
         )
+        buildConfigField("boolean", "FUJI_SDK", fujiSdk.toString())
+        if (fujiSdk) {
+            ndk { abiFilters += "arm64-v8a" }
+            externalNativeBuild { cmake { arguments += "-DFUJI_SDK_DIR=${fujiSdkDir.absoluteFile.invariantSeparatorsPath}" } }
+        }
+    }
+
+    if (fujiSdk) {
+        ndkVersion = "27.2.12479018"
+        externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
+        sourceSets["main"].jniLibs.srcDir(fujiSdkDir.resolve("Android"))
     }
 
     // Release signing from a gitignored mobile/keystore.properties:
