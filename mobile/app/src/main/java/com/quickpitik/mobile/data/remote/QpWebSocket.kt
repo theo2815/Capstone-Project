@@ -191,7 +191,7 @@ class QpWebSocket(
         }
     }
 
-    private fun backoffMs(attempt: Int): Long =
+    internal fun backoffMs(attempt: Int): Long =
         min(MAX_BACKOFF_MS, (1000.0 * 2.0.pow(min(attempt, 5))).toLong())
 
     companion object {
