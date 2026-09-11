@@ -18,7 +18,7 @@ class UsbEventCaptureController(
     private val store: CameraTransferStore,
     private val awaitDevice: suspend (Long) -> Unit = { delay(it) },
     private val openCamera: suspend (UsbDevice, Boolean) -> LiveCamera = { device, warm ->
-        CameraDrivers.open(manager, device, live = true, warmUp = warm)
+        CameraDrivers.openLive(manager, device, warm)
     },
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {

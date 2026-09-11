@@ -2,6 +2,7 @@ package com.quickpitik.mobile.data.usb.ptp
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import com.quickpitik.mobile.data.usb.fuji.FujiSdkCameras
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -247,6 +248,10 @@ object CameraDrivers {
         0x1003 -> "Sigma: choose the PTP/MTP USB mode for card import."
         else -> "Choose PTP/MTP for card import. Live shooting depends on the camera USB mode; confirm a test photo saves to the card."
     }
+
+    /** Live watch entry point: Fujifilm's SDK when it applies, otherwise the PTP drivers. */
+    suspend fun openLive(manager: UsbManager, device: UsbDevice, warmUp: Boolean = true): LiveCamera =
+        FujiSdkCameras.open(device, FujiSdkCameras.androidHandle(manager)) ?: open(manager, device, live = true, warmUp = warmUp)
 
     suspend fun open(manager: UsbManager, device: UsbDevice, live: Boolean = false, warmUp: Boolean = true): GenericPtpCamera {
         val context = currentCoroutineContext()
