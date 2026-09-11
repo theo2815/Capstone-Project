@@ -1,7 +1,11 @@
 package com.quickpitik.mobile.data.remote
 
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,6 +18,7 @@ import retrofit2.HttpException
 import retrofit2.Response
 import java.io.IOException
 import java.net.ConnectException
+import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
@@ -47,6 +52,18 @@ class RetrofitClientTest {
         assertEquals("not a url", RetrofitClient.resolveImageUrl("not a url"))
         assertNull(RetrofitClient.resolveImageUrl(null))
         assertEquals("", RetrofitClient.resolveImageUrl(""))
+    }
+
+    @Test fun `a storage url minted against localhost is fetched from the configured backend host`() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse())
+            server.start(InetAddress.getByName("127.0.0.1"), 0)
+            // The SERVER setting names the laptop by address; the backend mints storage URLs against localhost.
+            RetrofitClient.setBaseUrl("127.0.0.1:${server.port}")
+            val coil = OkHttpClient.Builder().addInterceptor(HostRewriteInterceptor).build() // as QuickPitikApp builds it
+            coil.newCall(Request.Builder().url("http://localhost:${server.port}/storage/a.jpg").build()).execute().close()
+            assertEquals("127.0.0.1:${server.port}", server.takeRequest().getHeader("Host"))
+        }
     }
 
     @Test fun `the websocket origin mirrors the scheme of the base url`() {
