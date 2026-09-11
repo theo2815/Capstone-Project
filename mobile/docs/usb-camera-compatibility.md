@@ -30,6 +30,11 @@ left on at close; the card scan is the detector; EOS events are used where a bod
 them (adaptive, off on R6/R10). Camera-side setting on R-series: `Choose USB connection
 app` = *Photo Import/Remote Control*. On DSLRs before 2010 the menu is `Communication`,
 which must be *PTP*, not *Normal* (Canon's own protocol, not PTP).
+Second official source: Canon's EDSDK 13.20.21 API reference §1.3 (models supported as of
+May 2026) lists every EOS-extension body below including R6, R10, the R-series and PowerShot
+V10, and marks the EOS M family (M, M2, M3, M10, M5, M6, M100, M50) "remote capture functions
+are not supported", which is why the M50 row stays Partial. The SDK itself has no Android
+build and is not used (vault mobile decisions, 2026-09-11).
 
 | Model | Protocol | Import | Live | Notes |
 |---|---|---|---|---|
@@ -45,14 +50,14 @@ which must be *PTP*, not *Normal* (Canon's own protocol, not PTP).
 | EOS R (Ra), RP | EOS extension | Implemented | Implemented | CloseSession skipped (as above); USB app = Photo Import/Remote Control |
 | EOS R6, R10 | EOS extension | **Verified** | **Verified** | R6: 214 live photos (2026-09-02), remote-mode gate passed (2026-09-11); R10: warm-up session before the first vendor op, remote-mode gate pending |
 | EOS R5, R5 Mark II, R5 C (photo mode), R3, R1 | EOS extension | Implemented | Implemented | same path as R6; R5 C only while in photo mode |
-| EOS R6 Mark II, R6 Mark III, R7, R8, R50, R50 V, R100 | EOS extension | Implemented | Implemented | same path as R6 |
+| EOS R6 Mark II, R6 Mark III, R6 V, R7, R8, R50, R50 V, R100 | EOS extension | Implemented | Implemented | same path as R6; R6 V and R50 V are real names per Canon's May 2026 list |
 | EOS M50 | EOS extension, remote mode 0x15 | Implemented | Partial | libgphoto2 value for the EOS M family; body-shutter behaviour in that mode is untested |
 | PowerShot G7 X Mark II | EOS extension, remote mode 0x15 | Implemented | Partial | libgphoto2 lists capture support; body-shutter behaviour untested |
 | PowerShot G1 X Mark III, PowerShot V1, PowerShot V10 | expected EOS-style | Implemented | Partial | not in libgphoto2's table; the PowerShot rule applies only if the body advertises RemoteReleaseOn, otherwise plain remote mode 1 |
 | IXUS 132 | basic PTP | Implemented | Unavailable | compact in transfer mode; libgphoto2 has no capture path |
 | PowerShot G1 (2000) | no PTP | Unavailable | Unavailable | pre-PTP proprietary Canon protocol; the phone cannot talk to it |
 | EOS C50 | cinema line | Unknown | Unavailable | still-photo PTP tethering is not documented for the cinema bodies; expect import of stills at most |
-| "EOS 4D Digital", "R6 V" | — | — | — | not Canon model names; the nearest bodies are covered above (R6 Mark III, R50 V) |
+| "EOS 4D Digital" | — | — | — | not a Canon model name; the nearest bodies are covered above |
 
 ## Nikon
 
