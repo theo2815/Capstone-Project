@@ -43,7 +43,7 @@ which must be *PTP*, not *Normal* (Canon's own protocol, not PTP).
 | EOS 5D Mark IV, 80D, 5DS, 5DS R, 2000D (Rebel T7) | EOS extension | Implemented | Implemented | CloseSession skipped at the end of a session (libgphoto2: the body rejects every command after it) |
 | EOS 1DX Mark II, 1DX Mark III, 850D (Kiss X10i) | EOS extension | Implemented | Implemented | |
 | EOS R (Ra), RP | EOS extension | Implemented | Implemented | CloseSession skipped (as above); USB app = Photo Import/Remote Control |
-| EOS R6, R10 | EOS extension | **Verified** | **Verified** | R6: 214 live photos (2026-09-02); R10: warm-up session before the first vendor op |
+| EOS R6, R10 | EOS extension | **Verified** | **Verified** | R6: 214 live photos (2026-09-02), remote-mode gate passed (2026-09-11); R10: warm-up session before the first vendor op, remote-mode gate pending |
 | EOS R5, R5 Mark II, R5 C (photo mode), R3, R1 | EOS extension | Implemented | Implemented | same path as R6; R5 C only while in photo mode |
 | EOS R6 Mark II, R6 Mark III, R7, R8, R50, R50 V, R100 | EOS extension | Implemented | Implemented | same path as R6 |
 | EOS M50 | EOS extension, remote mode 0x15 | Implemented | Partial | libgphoto2 value for the EOS M family; body-shutter behaviour in that mode is untested |

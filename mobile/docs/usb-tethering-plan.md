@@ -143,6 +143,8 @@ browse the card and press the shutter mid-browse (must fire); Start → shoot �
 press the shutter without unplugging (must fire, normal screen); Start again without a
 replug (first frame must arrive); R10 first browse after attach (warm-up now covers it).
 If a restart after Stop fails only because of the final mode 1, revert that one line.
+R6 (firmware 1.5.2, OPPO CPH2375, Android 13) passed all four steps on 2026-09-11 with
+53/53 frames uploaded; R10 pending, so the guidance copy stays until it passes.
 EOS M / PowerShot bodies use remote mode `0x15` in libgphoto2 and are untested here.
 
 Validation (2026-09-11): from `mobile/`, `.\gradlew.bat --offline testDebugUnitTest compileDebugKotlin --console=plain` —
