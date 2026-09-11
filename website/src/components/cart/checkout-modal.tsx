@@ -14,6 +14,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
 import { useOwnedPhotoIds } from "@/hooks/use-owned-photo-ids";
+import { useCheckoutActions } from "@/hooks/use-checkout-actions";
 import { useConfirmationStore } from "@/store/confirmation-store";
 import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { useConfirmation } from "@/hooks/use-confirmation";
@@ -22,10 +23,7 @@ import { useScrollLock } from "@/lib/scroll-lock";
 import { cn, formatOrderRef, formatPrice, safeUUID } from "@/lib/utils";
 import {
   buildOrderReturnPath,
-  cancelPendingPayment,
   classifyExpired,
-  fetchPendingStatus,
-  postOrder,
   type OrderStatusPayload,
 } from "@/lib/api-orders";
 import { postCouponPreview, type CouponPreview } from "@/lib/api-coupons";
@@ -120,6 +118,7 @@ export function CheckoutModal({
   const clearCart = useCartStore((s) => s.clear);
   const removeItem = useCartStore((s) => s.removeItem);
   const queryClient = useQueryClient();
+  const checkoutActions = useCheckoutActions();
   // Photos the runner already owns — gates the pay button + brands the 409.
   const ownedPhotoIds = useOwnedPhotoIds();
 
@@ -339,7 +338,7 @@ export function CheckoutModal({
     setStep("processing");
 
     try {
-      const order = await postOrder({
+      const order = await checkoutActions.createOrder({
         items: items.map((i) => ({ photoId: i.photoId, eventId: i.eventId })),
         paymentMethod: "qrph",
         recipientEmail: isAuthenticated ? undefined : email,
@@ -347,6 +346,10 @@ export function CheckoutModal({
         ...(coupon?.code ? { couponCode: coupon.code } : {}),
         idempotencyKey,
       });
+      if (!order) {
+        setStep("payment");
+        return;
+      }
 
       if (order.status === "PAID" || order.status === "FULFILLED") {
         // Idempotent replay of an already-paid order (e.g. paid, then the
@@ -454,7 +457,8 @@ export function CheckoutModal({
       paymentCheckInFlight.current = true;
       setCheckingPayment(true);
       try {
-        const status = await fetchPendingStatus(qrPayment, { verify: opts.verify });
+        const status = await checkoutActions.checkStatus(qrPayment, { verify: opts.verify });
+        if (!status) return;
         setQrCheckError(null);
         if (status.status === "PAID" || status.status === "FULFILLED") {
           completeFromStatus(status, qrPayment);
@@ -478,7 +482,7 @@ export function CheckoutModal({
         setCheckingPayment(false);
       }
     },
-    [clearPending, completeFromStatus, qrPayment, resetToPayment],
+    [checkoutActions, clearPending, completeFromStatus, qrPayment, resetToPayment],
   );
 
   const pollingActive =
@@ -506,7 +510,8 @@ export function CheckoutModal({
     setCancelling(true);
     setQrCheckError(null);
     try {
-      const status = await cancelPendingPayment(qrPayment);
+      const status = await checkoutActions.cancelPayment(qrPayment);
+      if (!status) return;
       if (status.status === "PAID" || status.status === "FULFILLED") {
         completeFromStatus(status, qrPayment);
       } else {
