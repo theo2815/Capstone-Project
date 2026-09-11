@@ -1,6 +1,9 @@
 package com.quickpitik.mobile.ui.auth
 
 import android.app.Application
+import android.os.Bundle
+import android.os.Parcel
+import androidx.lifecycle.SavedStateHandle
 import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.ViewMode
@@ -14,6 +17,7 @@ import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -21,14 +25,18 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.Serializable
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Password login, registration, the OTP reset chain and sign-out — everything
- * in AuthViewModel except the Google leg, which AuthViewModelGoogleTest covers.
- * The one-shot reset token and the parked Google token share the same rule:
- * memory only, consumed once, dropped by a fresh request.
+ * Password login, registration, the OTP reset chain, sign-out and the two
+ * email links — everything in AuthViewModel except the Google leg, which
+ * AuthViewModelGoogleTest covers. The one-shot reset token and the parked
+ * Google token share the same rule: memory only, consumed once, dropped by a
+ * fresh request. Email-link tokens are one-shot on the backend instead, which
+ * fails a spent one exactly like a forged one: each is sent once.
  */
 @RunWith(RobolectricTestRunner::class)
 class AuthViewModelTest {
@@ -59,6 +67,24 @@ class AuthViewModelTest {
     private fun AuthViewModel.awaitAuth() = authState.awaitFirst { it is AuthState.Success || it is AuthState.Error }
     private fun AuthViewModel.awaitReset() =
         passwordResetState.awaitFirst { it is PasswordResetState.Success || it is PasswordResetState.Error }
+    private fun AuthViewModel.awaitLink(token: String) = emailLinks.awaitFirst { token in it }.getValue(token)
+
+    /**
+     * What survives a process death: the handle's values, written to a Parcel
+     * the way the system writes the saved-state Bundle, then read back.
+     */
+    private fun afterProcessDeath(handle: SavedStateHandle): SavedStateHandle {
+        val out = Bundle().apply { handle.keys().forEach { putSerializable(it, handle.get<Serializable>(it)) } }
+        val parcel = Parcel.obtain()
+        return try {
+            parcel.writeBundle(out)
+            parcel.setDataPosition(0)
+            val back = requireNotNull(parcel.readBundle(javaClass.classLoader))
+            SavedStateHandle(back.keySet().associateWith { back.getSerializable(it, Serializable::class.java) })
+        } finally {
+            parcel.recycle()
+        }
+    }
 
     @Test fun `login lands a complete session, refuses a blank one, and shows the backend's own message`() {
         respond = { _, _ -> ok(AUTH) }
@@ -175,6 +201,81 @@ class AuthViewModelTest {
         vm.logout()
         assertNull(session.getAccessToken())
         assertNull(backend.server.takeRequest(500, TimeUnit.MILLISECONDS))
+    }
+
+    @Test fun `a verify link is sent once however often the screen asks, and a refusal reads as the backend's words`() {
+        val release = CountDownLatch(1)
+        respond = { _, _ -> release.await(5, TimeUnit.SECONDS); ok("""{"message":"Email confirmed. Thanks!"}""") }
+        val vm = AuthViewModel(application)
+
+        vm.verifyEmail("v-1")
+        vm.verifyEmail("v-1") // a rotation while the POST is still out
+        release.countDown()
+        assertEquals(EmailLinkState.Success("Email confirmed. Thanks!"), vm.awaitLink("v-1"))
+        vm.verifyEmail("v-1") // a rotation after the answer
+        assertEquals("/api/v1/auth/verify-email", backend.server.takeRequest(5, TimeUnit.SECONDS)?.path)
+        assertNull(backend.server.takeRequest(500, TimeUnit.MILLISECONDS))
+        assertTrue(bodies("/api/v1/auth/verify-email").single().contains(""""token":"v-1""""))
+
+        // A spent token fails like a forged one: the backend's words, not "HTTP 400".
+        respond = { _, _ ->
+            MockResponse().setResponseCode(400).setBody(
+                """{"success":false,"errors":[{"code":"INVALID_VERIFICATION_TOKEN","message":"Verification link expired or already used"}]}""",
+            )
+        }
+        vm.verifyEmail("v-2")
+        assertEquals(EmailLinkState.Error("Verification link expired or already used"), vm.awaitLink("v-2"))
+
+        // A link without a token fails on the phone.
+        vm.verifyEmail("")
+        assertEquals(EmailLinkState.Error("Invalid or missing verification token."), vm.awaitLink(""))
+        assertEquals(2, bodies("/api/v1/auth/verify-email").size)
+    }
+
+    @Test fun `a confirmed email change signs this phone out and shows the backend's message, a refused one keeps the session`() {
+        respond = { _, _ -> ok("""{"message":"Email updated. Sign in again with your new address."}""") }
+        session.saveSession("access-1", "RUNNER", "Juan", "juan@x.com", refreshToken = "refresh-1")
+        val vm = AuthViewModel(application)
+
+        vm.confirmEmailChange("c-1")
+        assertEquals(EmailLinkState.Success("Email updated. Sign in again with your new address."), vm.awaitLink("c-1"))
+        assertNull(session.getAccessToken())
+        assertNull(session.getRefreshToken())
+        assertTrue(bodies("/api/v1/auth/confirm-email-change").single().contains(""""token":"c-1""""))
+
+        respond = { _, _ ->
+            MockResponse().setResponseCode(409).setBody(
+                """{"success":false,"errors":[{"code":"EMAIL_TAKEN","message":"That email was registered to another account before you confirmed."}]}""",
+            )
+        }
+        session.saveSession("access-2", "RUNNER", "Juan", "juan@x.com", refreshToken = "refresh-2")
+        vm.confirmEmailChange("c-2")
+        assertEquals(EmailLinkState.Error("That email was registered to another account before you confirmed."), vm.awaitLink("c-2"))
+        assertEquals("access-2", session.getAccessToken())
+    }
+
+    @Test fun `an answered link outlives process death, and one that died in flight is sent again`() {
+        val release = CountDownLatch(1)
+        respond = { _, body ->
+            if (body.contains("v-2")) release.await(5, TimeUnit.SECONDS)
+            ok("""{"message":"Email confirmed. Thanks!"}""")
+        }
+        val saved = SavedStateHandle()
+        val vm = AuthViewModel(application, saved)
+        vm.verifyEmail("v-1")
+        val answer = vm.awaitLink("v-1")
+        vm.verifyEmail("v-2") // the process dies before this one is answered
+        requireNotNull(backend.server.takeRequest(5, TimeUnit.SECONDS)) // v-1
+        requireNotNull(backend.server.takeRequest(5, TimeUnit.SECONDS)) // v-2, first life
+
+        val reborn = AuthViewModel(application, afterProcessDeath(saved))
+        reborn.verifyEmail("v-1")
+        reborn.verifyEmail("v-2")
+        assertEquals(answer, reborn.emailLinks.value["v-1"])
+        assertNotNull("v-2 must be sent again", backend.server.takeRequest(5, TimeUnit.SECONDS))
+        release.countDown()
+        assertEquals(EmailLinkState.Success("Email confirmed. Thanks!"), reborn.awaitLink("v-2"))
+        assertNull("v-1 must not be sent again", backend.server.takeRequest(500, TimeUnit.MILLISECONDS))
     }
 
     private companion object {

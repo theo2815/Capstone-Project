@@ -20,69 +20,30 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.quickpitik.mobile.data.local.SessionManager
-import com.quickpitik.mobile.data.remote.EmailChangeConfirmRequest
-import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.Slate
 
-enum class ConfirmEmailChangeState {
-    Loading, Success, Error
-}
-
 @Composable
 fun ConfirmEmailChangeScreen(
+    viewModel: AuthViewModel,
     token: String?,
     onNavigateToLogin: () -> Unit,
 ) {
-    val context = LocalContext.current
-    // rememberSaveable + requestFired: the token is one-shot server-side.
-    // Plain remember would reset on rotation/process death, re-fire the
-    // LaunchedEffect, and turn a real success into "Confirmation Failed".
-    var uiState by rememberSaveable { mutableStateOf(ConfirmEmailChangeState.Loading) }
-    var errorMessage by rememberSaveable { mutableStateOf("") }
-    var successMessage by rememberSaveable { mutableStateOf("Email updated successfully! Please sign in again with your new address.") }
-    var requestFired by rememberSaveable { mutableStateOf(false) }
-
-    LaunchedEffect(token) {
-        if (requestFired) return@LaunchedEffect
-        requestFired = true
-        if (token.isNullOrBlank()) {
-            errorMessage = "Invalid or missing email confirmation token."
-            uiState = ConfirmEmailChangeState.Error
-            return@LaunchedEffect
-        }
-        try {
-            val response = RetrofitClient.apiService.confirmEmailChange(EmailChangeConfirmRequest(token))
-            if (response.success) {
-                // Clear active local session to force re-login with the new email
-                SessionManager.getInstance(context).clearSession()
-                response.data?.message?.let { msg ->
-                    if (msg.isNotBlank()) successMessage = msg
-                }
-                uiState = ConfirmEmailChangeState.Success
-            } else {
-                errorMessage = response.error ?: "Failed to confirm email change."
-                uiState = ConfirmEmailChangeState.Error
-            }
-        } catch (e: Exception) {
-            errorMessage = e.localizedMessage ?: "A network error occurred."
-            uiState = ConfirmEmailChangeState.Error
-        }
-    }
+    // Same one-shot rule as VerifyEmailScreen. On success the ViewModel has
+    // already cleared this phone's session, forcing a sign-in with the new email.
+    val key = token.orEmpty()
+    LaunchedEffect(key) { viewModel.confirmEmailChange(key) }
+    val links by viewModel.emailLinks.collectAsState()
 
     Column(
         modifier = Modifier
@@ -92,8 +53,8 @@ fun ConfirmEmailChangeScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        when (uiState) {
-            ConfirmEmailChangeState.Loading -> {
+        when (val state = links[key] ?: EmailLinkState.Loading) {
+            EmailLinkState.Loading -> {
                 CircularProgressIndicator(color = Ink)
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
@@ -102,7 +63,7 @@ fun ConfirmEmailChangeScreen(
                     fontSize = 16.sp
                 )
             }
-            ConfirmEmailChangeState.Success -> {
+            is EmailLinkState.Success -> {
                 Icon(
                     imageVector = Icons.Default.CheckCircle,
                     contentDescription = "Success",
@@ -118,7 +79,8 @@ fun ConfirmEmailChangeScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = successMessage,
+                    text = state.message?.takeIf { it.isNotBlank() }
+                        ?: "Email updated successfully! Please sign in again with your new address.",
                     color = Slate,
                     fontSize = 16.sp,
                     textAlign = TextAlign.Center
@@ -135,7 +97,7 @@ fun ConfirmEmailChangeScreen(
                     Text("Sign In Again", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
-            ConfirmEmailChangeState.Error -> {
+            is EmailLinkState.Error -> {
                 Icon(
                     imageVector = Icons.Default.Warning,
                     contentDescription = "Error",
@@ -151,7 +113,7 @@ fun ConfirmEmailChangeScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = errorMessage,
+                    text = state.message,
                     color = Slate,
                     fontSize = 16.sp,
                     textAlign = TextAlign.Center

@@ -2,21 +2,27 @@ package com.quickpitik.mobile.ui.auth
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.ViewMode
+import com.quickpitik.mobile.data.remote.ApiResponseEnvelope
 import com.quickpitik.mobile.data.remote.AuthResponse
+import com.quickpitik.mobile.data.remote.EmailChangeConfirmRequest
 import com.quickpitik.mobile.data.remote.ForgotPasswordRequest
 import com.quickpitik.mobile.data.remote.GoogleLoginRequest
 import com.quickpitik.mobile.data.remote.LoginRequest
 import com.quickpitik.mobile.data.remote.LogoutRequest
+import com.quickpitik.mobile.data.remote.MessageResponse
 import com.quickpitik.mobile.data.remote.RegisterRequest
 import com.quickpitik.mobile.data.remote.ResetPasswordRequest
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.VerifyEmailRequest
 import com.quickpitik.mobile.data.remote.VerifyResetOtpRequest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.io.Serializable
 
 sealed class AuthState {
     object Idle : AuthState()
@@ -43,13 +49,41 @@ sealed class PasswordResetState {
     data class Error(val message: String) : PasswordResetState()
 }
 
-class AuthViewModel(application: Application) : AndroidViewModel(application) {
+/**
+ * Where one email link stands: the address-verification link or the
+ * email-change confirmation. Serializable because answers live in
+ * SavedStateHandle; Loading is never stored, it just means "no answer yet".
+ */
+sealed class EmailLinkState : Serializable {
+    object Loading : EmailLinkState()
+    data class Success(val message: String?) : EmailLinkState()
+    data class Error(val message: String) : EmailLinkState()
+}
+
+private const val EMAIL_LINKS = "emailLinks"
+
+class AuthViewModel(
+    application: Application,
+    // Supplied by the owner's default factory, backed by its saved state;
+    // tests pass their own.
+    private val savedState: SavedStateHandle = SavedStateHandle(),
+) : AndroidViewModel(application) {
     private val sessionManager = SessionManager.getInstance(application)
     private val _authState = MutableStateFlow<AuthState>(AuthState.Idle)
     val authState: StateFlow<AuthState> = _authState
 
     private val _passwordResetState = MutableStateFlow<PasswordResetState>(PasswordResetState.Idle)
     val passwordResetState: StateFlow<PasswordResetState> = _passwordResetState
+
+    // Answered email links by token. The backend fails a spent token exactly
+    // like a forged one, so a second POST would paint "failed" over a real
+    // success. Saved state, so rotation and process death both keep the answer.
+    val emailLinks: StateFlow<Map<String, EmailLinkState>> = savedState.getStateFlow(EMAIL_LINKS, emptyMap())
+
+    // Email-link tokens this instance has sent: no second POST while the first
+    // is still out (a rotation mid-request). Memory only on purpose — a request
+    // that dies with the process left no answer, so the next life sends it again.
+    private val sentEmailTokens = mutableSetOf<String>()
 
     // The one-shot continuation token from verify-reset-otp, consumed by
     // confirmPasswordReset. Memory only — a short-lived credential must never
@@ -290,6 +324,53 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 _passwordResetState.value = PasswordResetState.Error(RetrofitClient.parseError(e))
             }
+        }
+    }
+
+    /** POST /auth/verify-email for the link in the registration mail. */
+    fun verifyEmail(token: String) {
+        redeemEmailLink(token, "Invalid or missing verification token.", "Verification failed.") {
+            RetrofitClient.apiService.verifyEmail(VerifyEmailRequest(token))
+        }
+    }
+
+    /**
+     * POST /auth/confirm-email-change for the link mailed to the new address.
+     * On success the backend has revoked every refresh token, so this phone's
+     * session is already dead: it is dropped before the answer shows.
+     */
+    fun confirmEmailChange(token: String) {
+        redeemEmailLink(token, "Invalid or missing email confirmation token.", "Failed to confirm email change.") {
+            RetrofitClient.apiService.confirmEmailChange(EmailChangeConfirmRequest(token))
+                .also { if (it.success) sessionManager.clearSession() }
+        }
+    }
+
+    // Sends a token at most once: an answer on file or a POST already out means
+    // there is nothing to do. A blank token fails here without a request.
+    private fun redeemEmailLink(
+        token: String,
+        missing: String,
+        fallback: String,
+        call: suspend () -> ApiResponseEnvelope<MessageResponse>,
+    ) {
+        if (token in emailLinks.value || !sentEmailTokens.add(token)) return
+        viewModelScope.launch {
+            val answer = if (token.isBlank()) {
+                EmailLinkState.Error(missing)
+            } else {
+                try {
+                    val envelope = call()
+                    if (envelope.success) {
+                        EmailLinkState.Success(envelope.data?.message)
+                    } else {
+                        EmailLinkState.Error(envelope.error ?: fallback)
+                    }
+                } catch (e: Exception) {
+                    EmailLinkState.Error(RetrofitClient.parseError(e))
+                }
+            }
+            savedState[EMAIL_LINKS] = emailLinks.value + (token to answer)
         }
     }
 

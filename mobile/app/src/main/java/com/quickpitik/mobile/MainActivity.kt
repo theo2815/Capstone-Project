@@ -556,6 +556,11 @@ class MainActivity : ComponentActivity() {
                             ) { backStackEntry ->
                                 val token = backStackEntry.arguments?.getString("token")
                                 VerifyEmailScreen(
+                                    // Its own AuthViewModel, scoped to this entry
+                                    // (not the shared authViewModel): one send per
+                                    // visit, the answer kept in the entry's saved
+                                    // state; a later tap of the link is a new visit.
+                                    viewModel = viewModel(backStackEntry),
                                     token = token,
                                     // popUpTo(0): the deep link can arrive with
                                     // any stack underneath (login OR a live
@@ -585,9 +590,11 @@ class MainActivity : ComponentActivity() {
                             ) { backStackEntry ->
                                 val token = backStackEntry.arguments?.getString("token")
                                 ConfirmEmailChangeScreen(
+                                    // Entry-scoped, same as verify-email above.
+                                    viewModel = viewModel(backStackEntry),
                                     token = token,
                                     onNavigateToLogin = {
-                                        // On success the screen cleared the
+                                        // On success confirmEmailChange cleared the
                                         // session — finish the logout the same
                                         // way forcedLogout does: cart + the
                                         // in-memory runner-view flag, which
