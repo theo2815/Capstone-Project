@@ -194,7 +194,8 @@ private fun TetherConsoleView(
                             when (record.uploadStatus) {
                                 "COMPLETED" -> "synced"
                                 "UPLOADING" -> "uploading"
-                                "FAILED" -> "failed" + (record.errorMessage?.let { ": $it" } ?: "")
+                                "DUPLICATE" -> "already uploaded"
+                                "FAILED" -> "failed" + (record.errorMessage?.let { ": ${friendlyUploadError(it)}" } ?: "")
                                 else -> "waiting to upload"
                             },
                     )
@@ -349,7 +350,10 @@ private fun TetherConsoleView(
             CameraConnectionState.Searching,
             CameraConnectionState.Disconnected -> CameraConnectPrompt(
                 isSearching = cam is CameraConnectionState.Searching,
-                onRescan = { viewModel.refreshCameraConnection() }
+                onRescan = { viewModel.refreshCameraConnection() },
+                // Nothing on the port at all is what an OTG switch left off looks like.
+                showOtgTip = phoneHasOtgSwitch(),
+                onOpenSettings = { context.startActivity(Intent(Settings.ACTION_SETTINGS)) },
             )
         }
 
@@ -460,7 +464,7 @@ private fun TetherConsoleView(
             queueStats.lastError?.let { errorMessage ->
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    text = "Last error: $errorMessage",
+                    text = errorMessage,
                     style = MaterialTheme.typography.bodySmall,
                     color = SlateSoft,
                     maxLines = 2,
@@ -482,6 +486,15 @@ private fun TetherConsoleView(
                     onClick = { viewModel.retryFailedUploads() },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = queueStats.uploadingCount == 0
+                )
+            }
+            // Duplicates only leave the Failed list; their phone copy stays (a match is not deletion proof).
+            if (queueStats.duplicateCount > 0) {
+                Spacer(modifier = Modifier.height(10.dp))
+                GhostCta(
+                    text = "Remove ${queueStats.duplicateCount} duplicate" + if (queueStats.duplicateCount == 1) "" else "s",
+                    onClick = { viewModel.removeDuplicateUploads() },
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
@@ -536,6 +549,8 @@ private fun CameraConnectPrompt(
     onRescan: () -> Unit,
     message: String = "Connect your camera using a data-capable USB cable and select PTP / Photo Import or its supported PC tether mode.",
     action: String = "Re-scan USB",
+    showOtgTip: Boolean = false,
+    onOpenSettings: () -> Unit = {},
 ) {
     QpCard(modifier = Modifier.fillMaxWidth()) {
         StatusChip(
@@ -574,12 +589,36 @@ private fun CameraConnectPrompt(
         Divider(color = Line)
         Spacer(modifier = Modifier.height(12.dp))
 
+        if (showOtgTip) {
+            Text(text = "Plugged in but nothing happens?", color = Ink, style = Typography.titleSmall)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Turn on OTG: open Settings, search \"OTG\" and switch it on. Some phones turn it off after 10 minutes.",
+                color = Slate,
+                style = Typography.bodyMedium,
+                lineHeight = 20.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            GhostCta(text = "Open phone settings", onClick = onOpenSettings, modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
         GhostCta(
             text = action,
             onClick = onRescan,
             modifier = Modifier.fillMaxWidth()
         )
     }
+}
+
+// Brands whose phones ship an OTG switch that turns itself off when idle.
+private val OTG_SWITCH_BRANDS = setOf("oppo", "realme", "oneplus", "vivo")
+private fun phoneHasOtgSwitch() = Build.MANUFACTURER.lowercase() in OTG_SWITCH_BRANDS
+
+@Preview(showBackground = true)
+@Composable
+private fun CameraConnectOtgTipPreview() {
+    CameraConnectPrompt(isSearching = false, onRescan = {}, showOtgTip = true)
 }
 
 @Preview(showBackground = true)
@@ -846,6 +885,7 @@ private fun SyncQueueTile(record: UploadRecord, onClick: () -> Unit = {}) {
         "UPLOADING" -> "uploading"
         "COMPLETED" -> "synced"
         "FAILED" -> "failed"
+        "DUPLICATE" -> "already uploaded"
         else -> "queued"
     }
     Box(
@@ -885,6 +925,13 @@ private fun SyncQueueTile(record: UploadRecord, onClick: () -> Unit = {}) {
                         tint = SuccessGreen,
                         modifier = Modifier.size(12.dp)
                     )
+                    // Already in another event: a settled, neutral mark, not a success for this event.
+                    "DUPLICATE" -> Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = Slate,
+                        modifier = Modifier.size(12.dp)
+                    )
                     else -> Icon(
                         Icons.Default.Close,
                         contentDescription = null,
@@ -901,9 +948,9 @@ private fun SyncQueueTile(record: UploadRecord, onClick: () -> Unit = {}) {
 @Composable
 private fun SyncQueueTileStatesPreview() {
     // Nonexistent paths render the BoneDeep placeholder — the badge per state
-    // is what this preview pins (queued / uploading / synced / failed).
+    // is what this preview pins (queued / uploading / synced / failed / duplicate).
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("QUEUED", "UPLOADING", "COMPLETED", "FAILED").forEach { status ->
+        listOf("QUEUED", "UPLOADING", "COMPLETED", "FAILED", "DUPLICATE").forEach { status ->
             SyncQueueTile(
                 UploadRecord(
                     id = status.hashCode().toLong(),

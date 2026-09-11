@@ -142,6 +142,8 @@ data class QueueStats(
     val queuedCount: Int = 0,
     val uploadingCount: Int = 0,
     val failedCount: Int = 0,
+    /** FAILED rows that are "already in another event" refusals; the Remove duplicates action settles them. */
+    val duplicateCount: Int = 0,
     val totalCount: Int = 0,
     val progress: Float = 0f,
     /**
@@ -158,6 +160,36 @@ data class QueueStats(
      */
     val recentRecords: List<com.quickpitik.mobile.data.local.UploadRecord> = emptyList(),
 )
+
+private val DUPLICATE_IN_EVENT = Regex("""^This photo already exists in your event '(.*)'\.$""")
+private val NETWORK_HINTS = listOf("upload interrupted", "timeout", "timed out", "unable to resolve host",
+    "failed to connect", "connection abort", "connection reset", "network is unreachable")
+
+/**
+ * Plain wording for the sync card's latest failure. Rows store the backend
+ * message or the exception text, never the code, so this matches wording;
+ * anything unrecognised passes through unchanged.
+ */
+// ponytail: matches backend wording; store the error code on the row if the backend copy starts drifting.
+internal fun friendlyUploadError(raw: String): String {
+    DUPLICATE_IN_EVENT.find(raw)?.let { match ->
+        val event = match.groupValues[1]
+        return if (event == "another event") "This photo is already in another of your events, so it wasn't added here. Nothing to fix."
+            else "This photo is already in your event \"$event\", so it wasn't added here. Nothing to fix."
+    }
+    val lower = raw.lowercase()
+    return when {
+        raw == "This event is not accepting uploads." -> "This event isn't accepting uploads right now. Check its dates or status."
+        raw == "This event belongs to another photographer." -> "This event belongs to another photographer, so photos can't be added to it."
+        raw.startsWith("Upload must be image/") || raw.startsWith("Image dimensions exceed") ->
+            "This file can't be uploaded. Use a JPEG, PNG or WebP under 25 MB."
+        raw.startsWith("The uploaded file wasn't found in storage") -> "The upload didn't finish. Tap Retry to send it again."
+        raw.startsWith("Storage upload returned HTTP") -> "The photo didn't reach cloud storage. Tap Retry to send it again."
+        raw == "Upload rejected by server." -> "QuickPitik didn't accept this photo. Tap Retry. If it keeps happening, contact support."
+        NETWORK_HINTS.any { it in lower } -> "Couldn't reach QuickPitik. Check your connection. Photos retry on their own."
+        else -> raw
+    }
+}
 
 /**
  * UI-side state for the manual "Import from camera card" flow (Increment 1 of
@@ -872,8 +904,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 dao.getStatusCounts(sessionManager.getUserEmail().orEmpty()),
                 dao.getRecentRecords(RECENT_RECORDS_LIMIT, sessionManager.getUserEmail().orEmpty()),
                 dao.getLatestFailedMessage(sessionManager.getUserEmail().orEmpty()),
-            ) { counts, recent, latestError -> Triple(counts, recent, latestError) }
-                .collectLatest { (counts, recent, latestError) ->
+                dao.countFailedDuplicates(sessionManager.getUserEmail().orEmpty()),
+            ) { counts, recent, latestError, duplicates -> Triple(counts, recent, latestError) to duplicates }
+                .collectLatest { (inputs, duplicates) ->
+                val (counts, recent, latestError) = inputs
                 if (counts.isEmpty()) {
                     _queueStats.value = QueueStats()
                     return@collectLatest
@@ -884,6 +918,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 val queued = byStatus["QUEUED"] ?: 0
                 val uploading = byStatus["UPLOADING"] ?: 0
                 val failed = byStatus["FAILED"] ?: 0
+                val duplicate = byStatus["DUPLICATE"] ?: 0 // settled, like FAILED, so the bar still reaches 100%
                 val total = counts.sumOf { it.count }
 
                 // Progress is BATCH-relative. COMPLETED rows persist forever as
@@ -892,10 +927,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 // photo showed 500/501 ≈ 99% instantly. Baseline = rows already
                 // settled when the current batch began (idle → active edge).
                 val active = queued + uploading > 0
-                if (active && !uploadBatchActive) uploadBatchBaseline = synced + failed
+                if (active && !uploadBatchActive) uploadBatchBaseline = synced + failed + duplicate
                 uploadBatchActive = active
                 val batchTotal = total - uploadBatchBaseline
-                val batchDone = (synced + failed) - uploadBatchBaseline
+                val batchDone = (synced + failed + duplicate) - uploadBatchBaseline
                 val progress = when {
                     !active -> if (total > 0) 1f else 0f
                     batchTotal > 0 -> batchDone.toFloat() / batchTotal.toFloat()
@@ -907,9 +942,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     queuedCount = queued,
                     uploadingCount = uploading,
                     failedCount = failed,
+                    duplicateCount = duplicates,
                     totalCount = total,
                     progress = progress,
-                    lastError = latestError?.takeIf { it.isNotBlank() },
+                    lastError = latestError?.takeIf { it.isNotBlank() }?.let(::friendlyUploadError),
                     recentRecords = recent, // already newest-first
                 )
             }
@@ -928,6 +964,13 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         viewModelScope.launch {
             database.uploadQueueDao().requeueFailed(sessionManager.getUserEmail().orEmpty())
             runSyncEngine()
+        }
+    }
+
+    /** Takes "already in another event" failures off the Failed list; nothing is deleted. */
+    fun removeDuplicateUploads() {
+        viewModelScope.launch {
+            database.uploadQueueDao().markFailedDuplicates(sessionManager.getUserEmail().orEmpty())
         }
     }
 

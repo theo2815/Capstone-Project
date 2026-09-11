@@ -95,15 +95,32 @@ interface UploadQueueDao {
     )
     suspend fun requeueFailed(owner: String? = null): Int
 
+    /** FAILED rows the backend refused because the same bytes are already in another of the owner's events. */
+    @Query(
+        "SELECT COUNT(*) FROM upload_queue WHERE uploadStatus = 'FAILED' AND " +
+            "errorMessage LIKE 'This photo already exists in your event%' AND (:owner IS NULL OR photographerId = :owner)"
+    )
+    fun countFailedDuplicates(owner: String? = null): Flow<Int>
+
+    /**
+     * Moves those rows out of FAILED for good. Row, message and phone copy are kept:
+     * a duplicate match is not deletion proof (see the repository USB plan).
+     */
+    @Query(
+        "UPDATE upload_queue SET uploadStatus = 'DUPLICATE' WHERE uploadStatus = 'FAILED' AND " +
+            "errorMessage LIKE 'This photo already exists in your event%' AND (:owner IS NULL OR photographerId = :owner)"
+    )
+    suspend fun markFailedDuplicates(owner: String? = null): Int
+
     /**
      * Records for [eventId] that should block a card photo from being re-imported:
      * anything still in flight (QUEUED / UPLOADING) or already landed (COMPLETED).
      * FAILED is intentionally excluded so the user can retry from the card after
-     * a transient backend hiccup.
+     * a transient backend hiccup. DUPLICATE blocks: the backend refuses those bytes every time.
      */
     @Query(
         "SELECT * FROM upload_queue WHERE eventId = :eventId AND (:owner IS NULL OR photographerId = :owner) AND " +
-            "uploadStatus IN ('QUEUED', 'UPLOADING', 'COMPLETED')"
+            "uploadStatus IN ('QUEUED', 'UPLOADING', 'COMPLETED', 'DUPLICATE')"
     )
     suspend fun getActiveOrCompletedForEvent(eventId: String, owner: String? = null): List<UploadRecord>
 }

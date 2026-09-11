@@ -156,17 +156,43 @@ class UploadQueueDaoTest {
      * The re-import guard. FAILED is deliberately excluded so a photographer can
      * retry a frame from the card after a transient backend hiccup — if this
      * query ever starts matching FAILED, that retry silently stops working.
+     * DUPLICATE blocks: the backend refuses those bytes every time.
      */
     @Test
-    fun `getActiveOrCompletedForEvent covers in-flight and landed but never failed`() = runTest {
+    fun `getActiveOrCompletedForEvent covers in-flight, landed and duplicates but never failed`() = runTest {
         val queued = dao.insertRecord(record(status = "QUEUED"))
         val uploading = dao.insertRecord(record(status = "UPLOADING"))
         val completed = dao.insertRecord(record(status = "COMPLETED"))
+        val duplicate = dao.insertRecord(record(status = "DUPLICATE"))
         dao.insertRecord(record(status = "FAILED"))
 
         val blocking = dao.getActiveOrCompletedForEvent(EVENT).map { it.id }.toSet()
 
-        assertEquals(setOf(queued, uploading, completed), blocking)
+        assertEquals(setOf(queued, uploading, completed, duplicate), blocking)
+    }
+
+    /** Only the backend's "already in another event" refusal counts; the row and its message stay. */
+    @Test
+    fun `markFailedDuplicates settles only this owner's duplicate failures`() = runTest {
+        val dup = dao.insertRecord(record(status = "FAILED"))
+        dao.updateStatus(dup, "FAILED", DUPLICATE)
+        val otherFailure = dao.insertRecord(record(status = "FAILED"))
+        dao.updateStatus(otherFailure, "FAILED", "Upload rejected by server.")
+        val otherOwner = dao.insertRecord(record(status = "FAILED").copy(photographerId = "other@example.com"))
+        dao.updateStatus(otherOwner, "FAILED", DUPLICATE)
+
+        assertEquals(1, dao.countFailedDuplicates("shooter@example.com").first())
+        assertEquals(1, dao.markFailedDuplicates("shooter@example.com"))
+
+        val settled = requireNotNull(dao.getRecordById(dup))
+        assertEquals("DUPLICATE", settled.uploadStatus)
+        assertEquals(DUPLICATE, settled.errorMessage)
+        assertEquals("FAILED", requireNotNull(dao.getRecordById(otherFailure)).uploadStatus)
+        assertEquals("FAILED", requireNotNull(dao.getRecordById(otherOwner)).uploadStatus)
+        assertEquals(0, dao.countFailedDuplicates("shooter@example.com").first())
+        // Retry never revives a duplicate: only the other failure goes back to the queue.
+        assertEquals(1, dao.requeueFailed("shooter@example.com"))
+        assertEquals("DUPLICATE", requireNotNull(dao.getRecordById(dup)).uploadStatus)
     }
 
     @Test
@@ -203,5 +229,6 @@ class UploadQueueDaoTest {
 
     private companion object {
         const val EVENT = "11111111-1111-1111-1111-111111111111"
+        const val DUPLICATE = "This photo already exists in your event 'TEST MOBILE'."
     }
 }
