@@ -47,6 +47,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.ui.common.PhotoPreview
+import com.quickpitik.mobile.ui.common.peso
+import com.quickpitik.mobile.ui.common.toPreviewData
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.ErrorRed
@@ -185,7 +188,7 @@ fun CartSheet(
                     ) {
                         Kicker("Subtotal")
                         Text(
-                            text = "₱${"%,.2f".format(total)}",
+                            text = peso(total),
                             style = NumeralStyle.copy(fontSize = 32.sp),
                             color = Ink,
                         )
@@ -371,7 +374,7 @@ private fun CartSheetRow(
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(
-                text = "₱${"%,.0f".format(item.price)}",
+                text = peso(item.price, 0),
                 style = NumeralStyle.copy(fontSize = 14.sp),
                 color = Ink,
             )

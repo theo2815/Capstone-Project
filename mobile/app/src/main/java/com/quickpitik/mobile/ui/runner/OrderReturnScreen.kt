@@ -49,6 +49,8 @@ import com.quickpitik.mobile.data.download.PhotoDownloader
 import com.quickpitik.mobile.data.remote.OrderDetailDto
 import com.quickpitik.mobile.data.remote.OrderPhotoDetailDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.ui.common.formatManila
+import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.BrandLogo
@@ -68,9 +70,6 @@ import com.quickpitik.mobile.ui.theme.TileShape
 import com.quickpitik.mobile.ui.theme.Typography
 import com.quickpitik.mobile.ui.theme.rememberQpHaptic
 import kotlinx.coroutines.launch
-import java.time.OffsetDateTime
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 // /orders/return parity — mirrors website OrdersReturnPage. Polls the order
@@ -265,8 +264,8 @@ private fun PaidBody(
                         append(photoWord)
                         append(" from ")
                         append(eventName)
-                        append(" for ₱")
-                        append("%,.0f".format(detail.total))
+                        append(" for ")
+                        append(peso(detail.total, 0))
                         append('.')
                     },
                     style = Typography.bodyLarge,
@@ -543,16 +542,5 @@ private fun FailedBody(message: String, onBrowseEvents: () -> Unit) {
 // "MAY 27 2026 · 3:42 PM PHT" — mirrors the website formatPaidAt.
 private fun formatPaidAt(iso: String?): String {
     if (iso.isNullOrBlank()) return "—"
-    return try {
-        val zoned = OffsetDateTime.parse(iso).atZoneSameInstant(MANILA)
-        val date = zoned.format(DATE_FMT).uppercase(Locale.ROOT)
-        val time = zoned.format(TIME_FMT).uppercase(Locale.ROOT)
-        "$date · $time PHT"
-    } catch (_: Exception) {
-        iso
-    }
+    return formatManila(iso, "MMM d yyyy · h:mm a")?.let { "${it.uppercase()} PHT" } ?: iso
 }
-
-private val MANILA: ZoneId = ZoneId.of("Asia/Manila")
-private val DATE_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d yyyy", Locale.ENGLISH)
-private val TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)

@@ -1,4 +1,4 @@
-package com.quickpitik.mobile.ui.runner
+package com.quickpitik.mobile.ui.common
 
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import org.junit.Assert.assertEquals

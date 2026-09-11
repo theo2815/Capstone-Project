@@ -31,6 +31,12 @@ import com.quickpitik.mobile.data.download.PhotoDownloader
 import com.quickpitik.mobile.data.remote.OrderListItemDto
 import com.quickpitik.mobile.data.remote.OrderPhotoDetailDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.ui.common.MANILA
+import com.quickpitik.mobile.ui.common.PhotoPreview
+import com.quickpitik.mobile.ui.common.PhotoPreviewMode
+import com.quickpitik.mobile.ui.common.formatManila
+import com.quickpitik.mobile.ui.common.peso
+import com.quickpitik.mobile.ui.common.toOwnedPreviewData
 import com.quickpitik.mobile.ui.theme.*
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
@@ -350,7 +356,7 @@ fun OrdersScreen(
                                         // `total` above is already the net charged amount.
                                         if (order.discountTotal > 0.0) {
                                             Spacer(modifier = Modifier.height(4.dp))
-                                            val saved = "₱%,.2f".format(order.discountTotal)
+                                            val saved = peso(order.discountTotal)
                                             Text(
                                                 text = order.couponCode?.let { "Coupon $it · saved $saved" }
                                                     ?: "Coupon saved $saved",
@@ -365,7 +371,7 @@ fun OrdersScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                text = String.format("Total paid: ₱%,.2f", order.total),
+                                                text = "Total paid: ${peso(order.total)}",
                                                 style = Typography.titleSmall,
                                                 fontWeight = FontWeight.Bold,
                                                 color = Fresh
@@ -535,17 +541,6 @@ fun OrdersScreen(
     }
 }
 
-// previewUrl is already the CLEAN original for an order the caller owns
-// (backend OrderService.previewUrlOf serves photo.s3Key — the G-2 fix), so no
-// cleanUrl field is needed here. thumbnailUrl is the watermarked fallback.
-private fun OrderPhotoDetailDto.toOwnedPreviewData(eventName: String?): PhotoPreviewData =
-    PhotoPreviewData(
-        id = id,
-        price = 0.0,
-        imageUrl = previewUrl ?: thumbnailUrl,
-        eventName = eventName,
-    )
-
 // Mirrors website /orders SpendSlab — "Lifetime totals" snapshot. Three stats
 // across the top of the list: total spent (fresh accent), order count, photos
 // kept. "Since {month-year}" derived from the earliest paidAt, mirroring the
@@ -564,7 +559,7 @@ private fun SpendSection(stats: SpendStats) {
 
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                text = String.format(Locale.US, "₱%,.2f", stats.total),
+                text = peso(stats.total),
                 style = NumeralStyle.copy(fontSize = 36.sp, fontWeight = FontWeight.ExtraBold),
                 color = Fresh
             )
@@ -768,7 +763,7 @@ private fun ReceiptRowItem(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = String.format(Locale.US, "₱%,.2f", order.total),
+                text = peso(order.total),
                 style = NumeralStyle.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold),
                 color = Ink
             )
@@ -804,13 +799,8 @@ private fun labelForPaymentMethod(method: String?): String {
     }
 }
 
-private val RECEIPT_DATE_FMT: DateTimeFormatter =
-    DateTimeFormatter.ofPattern("MMM dd · yyyy", Locale.US)
-
-private fun formatReceiptDate(iso: String?): String {
-    val dt = parsePaidAt(iso) ?: return "RECENT"
-    return dt.format(RECEIPT_DATE_FMT).uppercase()
-}
+private fun formatReceiptDate(iso: String?): String =
+    formatManila(iso, "MMM dd · yyyy")?.uppercase() ?: "RECENT"
 
 internal data class SpendStats(
     val total: Double,
@@ -838,7 +828,7 @@ internal fun computeSpendStats(orders: List<OrderListItemDto>): SpendStats {
         total = total,
         orderCount = orders.size,
         photoCount = photoCount,
-        firstPurchase = earliest?.format(SPEND_MONTH_FMT)
+        firstPurchase = earliest?.atZoneSameInstant(MANILA)?.format(SPEND_MONTH_FMT)
     )
 }
 

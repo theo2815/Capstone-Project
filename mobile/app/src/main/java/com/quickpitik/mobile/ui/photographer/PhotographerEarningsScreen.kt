@@ -50,6 +50,8 @@ import com.quickpitik.mobile.data.remote.PayoutBalanceDto
 import com.quickpitik.mobile.data.remote.PhotographerPayoutDto
 import com.quickpitik.mobile.data.remote.PhotographerTransactionDto
 import com.quickpitik.mobile.data.remote.WeeklyRevenuePointDto
+import com.quickpitik.mobile.ui.common.formatManila
+import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.BadgeShape
 import com.quickpitik.mobile.ui.theme.Bone
@@ -73,8 +75,8 @@ import com.quickpitik.mobile.ui.theme.StatusChip
 import com.quickpitik.mobile.ui.theme.StatusTone
 import com.quickpitik.mobile.ui.theme.Typography
 import com.quickpitik.mobile.ui.theme.WarningOrange
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
@@ -208,7 +210,7 @@ private fun LifetimeSlab(
         Kicker(text = "Lifetime kept", color = SlateSoft)
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = "₱%,.0f".format(lifetimeKept),
+            text = peso(lifetimeKept, 0),
             style = NumeralStyle.copy(fontSize = 44.sp, fontWeight = FontWeight.SemiBold),
             color = Fresh,
         )
@@ -300,7 +302,7 @@ private fun Sparkline(
                     style = Typography.bodySmall,
                 )
                 Text(
-                    text = "₱%,.0f".format(selected.amount),
+                    text = peso(selected.amount, 0),
                     style = NumeralStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
                     color = Ink,
                 )
@@ -321,7 +323,7 @@ private fun BreakdownSlab(overview: EarningsOverviewDto) {
         ) {
             BreakdownStat(
                 kicker = "This week",
-                value = "₱%,.0f".format(overview.thisWeek),
+                value = peso(overview.thisWeek, 0),
                 caption = "+${overview.thisWeekSold} sold",
                 modifier = Modifier.weight(1f),
             )
@@ -333,7 +335,7 @@ private fun BreakdownSlab(overview: EarningsOverviewDto) {
             )
             BreakdownStat(
                 kicker = "This month",
-                value = "₱%,.0f".format(overview.thisMonth),
+                value = peso(overview.thisMonth, 0),
                 caption = "+${overview.thisMonthSold} sold",
                 modifier = Modifier.weight(1f),
             )
@@ -344,7 +346,7 @@ private fun BreakdownSlab(overview: EarningsOverviewDto) {
         Kicker(text = "Payout pending", color = SlateSoft)
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "₱%,.0f".format(overview.payoutPending),
+            text = peso(overview.payoutPending, 0),
             style = NumeralStyle.copy(fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
             color = Ink,
         )
@@ -398,7 +400,7 @@ private fun WalletSlab(
             title = { Text("Request this payout?", color = Ink, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    text = "₱%,.2f".format(balance.unpaidBalance) +
+                    text = peso(balance.unpaidBalance) +
                         " will be queued for review. You can only have one open request at a time.",
                     color = Slate,
                     style = Typography.bodyMedium,
@@ -441,7 +443,7 @@ private fun WalletSlab(
         )
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = "₱%,.2f".format(balance.unpaidBalance),
+            text = peso(balance.unpaidBalance),
             style = NumeralStyle.copy(fontSize = 32.sp, fontWeight = FontWeight.SemiBold),
             color = Ink,
         )
@@ -457,7 +459,7 @@ private fun WalletSlab(
             ) {
                 Text(text = "Clearing", color = Slate, style = Typography.bodySmall)
                 Text(
-                    text = "₱%,.2f".format(balance.clearing),
+                    text = peso(balance.clearing),
                     style = NumeralStyle.copy(fontSize = 13.sp),
                     color = Slate,
                 )
@@ -486,7 +488,7 @@ private fun WalletSlab(
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "After a recent payout-account change, requests are paused " +
-                        "until ${balance.accountCooldownUntil?.take(10) ?: ""}.",
+                        "until ${formatManila(balance.accountCooldownUntil, "yyyy-MM-dd") ?: ""}.",
                     color = Slate,
                     style = Typography.bodySmall,
                 )
@@ -525,9 +527,9 @@ private fun WalletSlab(
                         "Set up a payout account in Settings to request payouts."
                     !hasQr -> "Upload your payout account QR in Settings before requesting."
                     canWithdraw ->
-                        "Minimum withdrawal ₱%,.0f".format(balance.minimum)
+                        "Minimum withdrawal ${peso(balance.minimum, 0)}"
                     else ->
-                        "Reach ₱%,.0f to request a payout".format(balance.minimum)
+                        "Reach ${peso(balance.minimum, 0)} to request a payout"
                 },
                 color = SlateSoft,
                 style = Typography.bodySmall,
@@ -574,13 +576,13 @@ private fun OpenRequestBlock(
         ) {
             StatusChip(text = statusLabel, tone = tone)
             Text(
-                text = "₱%,.2f".format(openRequest?.amount ?: fallbackAmount),
+                text = peso(openRequest?.amount ?: fallbackAmount),
                 style = NumeralStyle.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
                 color = Ink,
             )
         }
         // The field clients should render (weekOf is deprecated backend-side).
-        val requestedOn = openRequest?.requestedAt?.take(10)
+        val requestedOn = formatManila(openRequest?.requestedAt, "yyyy-MM-dd")
         if (!requestedOn.isNullOrBlank()) {
             Spacer(modifier = Modifier.height(6.dp))
             Kicker(text = "Requested · $requestedOn", color = SlateSoft)
@@ -759,7 +761,8 @@ private fun TransactionsSheet(
             // SERVER's per-month figure over all transactions, so it stays
             // correct even when the loaded page only holds part of a month.
             val groups = remember(transactions) {
-                transactions.groupBy { it.paidAt.take(7) } // "YYYY-MM"
+                // "YYYY-MM" on Manila's calendar, the key the backend's monthTotals use.
+                transactions.groupBy { formatManila(it.paidAt, "yyyy-MM") ?: it.paidAt.take(7) }
                     .toSortedMap(compareByDescending { it })
             }
             LazyColumn(
@@ -781,7 +784,7 @@ private fun TransactionsSheet(
                             val subtotal = monthTotals[monthKey]
                             if (subtotal != null) {
                                 Text(
-                                    text = "+₱%,.0f".format(subtotal),
+                                    text = "+${peso(subtotal, 0)}",
                                     style = NumeralStyle.copy(fontSize = 13.sp),
                                     color = Ink,
                                 )
@@ -843,13 +846,14 @@ private fun TransactionRow(transaction: PhotographerTransactionDto) {
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = formatIsoTimestamp(transaction.paidAt),
+                    text = formatManila(transaction.paidAt, "MMM d, yyyy · h:mm a")
+                        ?: transaction.paidAt.substringBefore("T"),
                     color = SlateSoft,
                     style = Typography.bodySmall,
                 )
             }
             Text(
-                text = "+₱%,.0f".format(transaction.amountKept),
+                text = "+${peso(transaction.amountKept, 0)}",
                 style = NumeralStyle.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
                 color = Ink,
             )
@@ -872,11 +876,9 @@ private fun EarningsLoadingSkeleton() {
     }
 }
 
+// weekOf is a calendar date (backend LocalDate): no zone to convert.
 private fun formatWeekLabel(weekOf: String): String = try {
-    val parser = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    val formatter = SimpleDateFormat("MMM d", Locale.getDefault())
-    val date = parser.parse(weekOf) ?: Date()
-    formatter.format(date)
+    LocalDate.parse(weekOf).format(DateTimeFormatter.ofPattern("MMM d", Locale.US))
 } catch (e: Exception) {
     weekOf
 }
@@ -889,13 +891,4 @@ internal fun isFutureIso(iso: String): Boolean = try {
     java.time.OffsetDateTime.parse(iso).toInstant().isAfter(java.time.Instant.now())
 } catch (e: Exception) {
     false
-}
-
-private fun formatIsoTimestamp(isoString: String): String = try {
-    val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
-    val formatter = SimpleDateFormat("MMM d, yyyy · h:mm a", Locale.getDefault())
-    val date = parser.parse(isoString.substring(0, 19)) ?: Date()
-    formatter.format(date)
-} catch (e: Exception) {
-    isoString.substringBefore("T")
 }

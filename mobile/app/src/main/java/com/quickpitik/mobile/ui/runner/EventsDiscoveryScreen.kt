@@ -32,6 +32,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.ui.common.*
 import com.quickpitik.mobile.ui.theme.*
 import kotlinx.coroutines.launch
 

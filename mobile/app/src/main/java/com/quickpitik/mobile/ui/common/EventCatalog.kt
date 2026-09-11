@@ -1,4 +1,4 @@
-package com.quickpitik.mobile.ui.runner
+package com.quickpitik.mobile.ui.common
 
 import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
@@ -6,6 +6,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 
 // Operational lifecycle mirrors the website's event-catalog.ts, using the event
 // date rather than stored status. Discovery uses deriveEventDisplayState below
@@ -43,7 +44,7 @@ fun extractCity(location: String): String {
     return if (idx == -1) location.trim() else location.substring(idx + 1).trim()
 }
 
-private val DATE_LABEL_FORMATTER = DateTimeFormatter.ofPattern("MMM d, yyyy")
+private val DATE_LABEL_FORMATTER = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
 
 fun eventDateLabel(date: String): String =
     runCatching { LocalDate.parse(date).format(DATE_LABEL_FORMATTER).uppercase() }.getOrDefault(date)

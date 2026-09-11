@@ -60,6 +60,8 @@ import com.quickpitik.mobile.data.remote.EarningsOverviewDto
 import com.quickpitik.mobile.data.remote.PayoutBalanceDto
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerTransactionDto
+import com.quickpitik.mobile.ui.common.formatManila
+import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -399,7 +401,7 @@ private fun ApprovedHomeBody(
                 Kicker(text = "This week", color = SlateSoft)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "₱${String.format("%,.0f", thisWeek)}",
+                    text = peso(thisWeek, 0),
                     style = NumeralStyle.copy(fontSize = 24.sp),
                     color = Ink,
                 )
@@ -504,13 +506,13 @@ private fun ApprovedHomeBody(
             )
             MetricTile(
                 kicker = "This month",
-                value = "₱${String.format("%,.0f", earnings?.thisMonth ?: 0.0)}",
+                value = peso(earnings?.thisMonth ?: 0.0, 0),
                 hint = "earned",
                 modifier = Modifier.weight(1f),
             )
             MetricTile(
                 kicker = "Lifetime",
-                value = "₱${String.format("%,.0f", earnings?.lifetimeKept ?: 0.0)}",
+                value = peso(earnings?.lifetimeKept ?: 0.0, 0),
                 hint = "kept",
                 modifier = Modifier.weight(1f),
             )
@@ -542,7 +544,7 @@ private fun ApprovedHomeBody(
                 ) {
                     StatusChip(text = line, tone = tone)
                     Text(
-                        text = "₱%,.2f".format(open?.amount ?: balance.unpaidBalance),
+                        text = peso(open?.amount ?: balance.unpaidBalance),
                         style = NumeralStyle.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
                         color = Ink,
                     )
@@ -596,13 +598,13 @@ private fun ApprovedHomeBody(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = formatPaidAt(tx.paidAt),
+                                text = formatManila(tx.paidAt, "MMM d")?.uppercase() ?: tx.paidAt,
                                 color = SlateSoft,
                                 fontSize = 11.sp,
                             )
                         }
                         Text(
-                            text = "₱${String.format("%,.0f", tx.amountKept)}",
+                            text = peso(tx.amountKept, 0),
                             color = Ink,
                             style = NumeralStyle.copy(fontSize = 16.sp),
                         )
@@ -641,20 +643,6 @@ private fun MetricTile(
             color = SlateSoft,
             fontSize = 10.sp,
         )
-    }
-}
-
-private fun formatPaidAt(iso: String): String {
-    return try {
-        val parts = iso.substring(0, 10).split("-")
-        val months = listOf(
-            "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
-        )
-        val month = months[parts[1].toInt() - 1]
-        "$month ${parts[2].toInt()}"
-    } catch (e: Exception) {
-        iso
     }
 }
 

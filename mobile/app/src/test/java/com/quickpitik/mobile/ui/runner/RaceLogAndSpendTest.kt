@@ -48,6 +48,10 @@ class RaceLogAndSpendTest {
             ),
         )
         assertEquals(SpendStats(169.5, 4, 6, "Nov 2025"), stats)
+
+        // "Since" is Manila's month: 20:00 UTC on Nov 30 is already Dec 1 there.
+        val boundary = computeSpendStats(listOf(order("e5", listOf("g"), 1.0, paidAt = "2025-11-30T20:00:00Z")))
+        assertEquals("Dec 2025", boundary.firstPurchase)
     }
 
     private fun order(

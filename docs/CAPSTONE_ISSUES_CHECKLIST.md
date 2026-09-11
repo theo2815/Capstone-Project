@@ -98,6 +98,7 @@
   - **Affected Files:**
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/*`
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/photographer/*`
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/common/PhotoPreview.kt`
   - **Action Plan:** Update deprecated Material3 and Compose calls to current recommendations.
 
 - [x] **31. Mobile & Web — Rebrand "Race Log" / "Race Logs" Terminology to "Saved Events"**
@@ -121,7 +122,7 @@
     - Added `deriveEventDisplayState()` for race-day-only discovery labels and filters.
     - Kept `deriveEventState()` and `canUploadToEvent()` aligned on days 0..3 so gallery sockets and photographer Sync controls survive the grace window; later-day upload cards say "Uploading".
   - **Affected Files:**
-    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventCatalog.kt`
+    - `mobile/app/src/main/java/com/quickpitik/mobile/ui/common/EventCatalog.kt`
     - `mobile/app/src/main/java/com/quickpitik/mobile/ui/runner/EventsDiscoveryScreen.kt`
   - **Action Plan:** Restrict `EventState.LIVE` (or the "Live now" UI indicator) strictly to the actual day of the event (`days == 0L`), while preserving photographer upload capability window separately if needed.
 

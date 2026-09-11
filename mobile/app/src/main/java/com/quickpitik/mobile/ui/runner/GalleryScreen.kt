@@ -88,6 +88,12 @@ import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.QpWebSocket
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.WsState
+import com.quickpitik.mobile.ui.common.EventState
+import com.quickpitik.mobile.ui.common.PhotoPreview
+import com.quickpitik.mobile.ui.common.PhotoPreviewMode
+import com.quickpitik.mobile.ui.common.deriveEventState
+import com.quickpitik.mobile.ui.common.peso
+import com.quickpitik.mobile.ui.common.toPreviewData
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -873,8 +879,8 @@ private fun BrowseScreen(
                             PrimaryCta(
                                 text = when {
                                     allInCart -> "Added · ${paidPhotos.size} in cart ✓"
-                                    paidPhotos.size == 1 -> "Buy 1 · ₱${"%,.0f".format(bulkTotal)} →"
-                                    else -> "Buy all ${paidPhotos.size} · ₱${"%,.0f".format(bulkTotal)} →"
+                                    paidPhotos.size == 1 -> "Buy 1 · ${peso(bulkTotal, 0)} →"
+                                    else -> "Buy all ${paidPhotos.size} · ${peso(bulkTotal, 0)} →"
                                 },
                                 enabled = !allInCart,
                                 onClick = { onBuyAll(paidPhotos) },

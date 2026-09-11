@@ -34,7 +34,7 @@ import com.quickpitik.mobile.data.usb.CameraConnectionState
 import com.quickpitik.mobile.data.usb.ptp.CardPhoto
 import com.quickpitik.mobile.data.usb.ptp.UsbCardBrowseController
 import com.quickpitik.mobile.data.usb.ptp.UsbCardImportController
-import com.quickpitik.mobile.ui.runner.canUploadToEvent
+import com.quickpitik.mobile.ui.common.canUploadToEvent
 import com.quickpitik.mobile.worker.PhotoUploadWorker
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException

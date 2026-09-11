@@ -34,11 +34,12 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
-import com.quickpitik.mobile.ui.runner.EventState
-import com.quickpitik.mobile.ui.runner.deriveEventState
-import com.quickpitik.mobile.ui.runner.deriveEventDisplayState
-import com.quickpitik.mobile.ui.runner.eventDateLabel
-import com.quickpitik.mobile.ui.runner.extractCity
+import com.quickpitik.mobile.ui.common.EventState
+import com.quickpitik.mobile.ui.common.deriveEventState
+import com.quickpitik.mobile.ui.common.deriveEventDisplayState
+import com.quickpitik.mobile.ui.common.eventDateLabel
+import com.quickpitik.mobile.ui.common.extractCity
+import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -507,7 +508,7 @@ private fun LiveEventCard(
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "₱%,.2f earned".format(event.revenueKept),
+                text = "${peso(event.revenueKept)} earned",
                 style = NumeralStyle.copy(fontSize = 16.sp),
                 color = Ink,
             )

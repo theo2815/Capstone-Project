@@ -82,6 +82,8 @@ import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SelfieRefDto
+import com.quickpitik.mobile.ui.common.eventDateLabel
+import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -714,7 +716,7 @@ fun AboutStrip(
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
-                    text = "₱${"%,.0f".format(detail.pricePerPhoto)}",
+                    text = peso(detail.pricePerPhoto, 0),
                     style = NumeralStyle.copy(fontSize = 40.sp, lineHeight = 44.sp),
                     color = Fresh,
                 )
@@ -724,7 +726,7 @@ fun AboutStrip(
             if (detail.bundlePrice != null && detail.bundleSize != null) {
                 Spacer(Modifier.height(4.dp))
                 Kicker(
-                    "or ₱${"%,.0f".format(detail.bundlePrice)} for ${detail.bundleSize}",
+                    "or ${peso(detail.bundlePrice, 0)} for ${detail.bundleSize}",
                     color = Ink,
                 )
             }

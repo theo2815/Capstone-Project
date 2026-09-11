@@ -18,6 +18,8 @@ import com.quickpitik.mobile.data.remote.SearchByFaceJsonRequest
 import com.quickpitik.mobile.data.remote.SelfieRefDto
 import com.quickpitik.mobile.data.remote.WsFrameEnvelope
 import com.quickpitik.mobile.data.remote.WsState
+import com.quickpitik.mobile.ui.common.EventState
+import com.quickpitik.mobile.ui.common.deriveEventState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

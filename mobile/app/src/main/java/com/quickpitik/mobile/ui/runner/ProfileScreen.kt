@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.*
+import com.quickpitik.mobile.ui.common.*
 import com.quickpitik.mobile.ui.theme.*
 import kotlinx.coroutines.launch
 
@@ -894,7 +895,7 @@ private fun RaceLogRow(
                                 )
                             }
                             Text(
-                                text = "₱%,.2f".format(entry.totalSpent),
+                                text = peso(entry.totalSpent),
                                 style = NumeralStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
                                 color = Ink,
                             )

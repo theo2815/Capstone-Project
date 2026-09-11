@@ -1,4 +1,4 @@
-package com.quickpitik.mobile.ui.runner
+package com.quickpitik.mobile.ui.common
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -68,7 +68,9 @@ import coil.request.ImageRequest
 import coil.size.Size
 import kotlinx.coroutines.launch
 import com.quickpitik.mobile.data.remote.CartItemDto
+import com.quickpitik.mobile.data.remote.OrderPhotoDetailDto
 import com.quickpitik.mobile.data.remote.PhotoDto
+import com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.BadgeShape
@@ -88,8 +90,8 @@ import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.Typography
 
-// Unified photo lightbox — the one preview surface used by both the cart sheet
-// and the gallery photo-details flow. Mirrors website PhotoPreviewCard's
+// Unified photo lightbox — the one preview surface every photo grid opens, for
+// runners and photographers alike. Mirrors website PhotoPreviewCard's
 // below-`lg` layout: a photograph on an ink stage with the chrome floating
 // over it (counter top-left, close top-right, prev/next at the vertical centre
 // where a thumb can reach) and one bone strip underneath carrying event ·
@@ -121,7 +123,7 @@ data class PhotoPreviewData(
     val caption: String? = null,
 )
 
-// PhotoPreview has two flavors. Browse is the runner buy-flow (Add to cart /
+// PhotoPreview has four modes. Browse is the runner buy-flow (Add to cart /
 // Buy now). OwnerReview is for the photographer reviewing their own uploads
 // from the event-share page — same Dialog/Pager shell, no purchase UI,
 // "X sold" stat in place of price.
@@ -151,6 +153,26 @@ fun CartItemDto.toPreviewData(): PhotoPreviewData = PhotoPreviewData(
     imageUrl = thumbnailUrl,
     eventName = eventName,
 )
+
+// previewUrl is already the CLEAN original for an order the caller owns
+// (backend OrderService.previewUrlOf serves photo.s3Key — the G-2 fix), so no
+// cleanUrl field is needed here. thumbnailUrl is the watermarked fallback.
+fun OrderPhotoDetailDto.toOwnedPreviewData(eventName: String?): PhotoPreviewData =
+    PhotoPreviewData(
+        id = id,
+        price = 0.0,
+        imageUrl = previewUrl ?: thumbnailUrl,
+        eventName = eventName,
+    )
+
+fun PhotographerLibraryPhotoDto.toOwnerPreviewData(eventName: String?): PhotoPreviewData =
+    PhotoPreviewData(
+        id = id,
+        price = 0.0,
+        imageUrl = RetrofitClient.resolveImageUrl(thumbnailUrl?.takeIf { it.isNotBlank() }),
+        eventName = eventName,
+        salesCount = salesCount,
+    )
 
 /**
  * "Photo by @handle →" credit line in the strip. Tappable only when the
@@ -436,7 +458,7 @@ fun PhotoPreview(
                         Spacer(modifier = Modifier.width(16.dp))
                         when (mode) {
                             PhotoPreviewMode.Browse -> Text(
-                                text = "₱${"%,.2f".format(activePhoto.couponPrice ?: activePhoto.price)}",
+                                text = peso(activePhoto.couponPrice ?: activePhoto.price),
                                 style = NumeralStyle.copy(fontSize = 22.sp),
                                 color = Ink,
                             )
@@ -467,7 +489,7 @@ fun PhotoPreview(
                     ) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Coupon ${activePhoto.couponCode} · −${activePhoto.couponPercentOff}% · was ₱${"%,.2f".format(activePhoto.price)}",
+                            text = "Coupon ${activePhoto.couponCode} · −${activePhoto.couponPercentOff}% · was ${peso(activePhoto.price)}",
                             style = Typography.bodySmall,
                             color = Slate,
                         )
