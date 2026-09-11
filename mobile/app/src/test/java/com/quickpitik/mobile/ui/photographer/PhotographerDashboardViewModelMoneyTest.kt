@@ -11,6 +11,7 @@ import com.quickpitik.mobile.data.remote.WatermarkSettingsDto
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
+import com.quickpitik.mobile.support.awaitRoomIdle
 import com.quickpitik.mobile.support.ok
 import com.quickpitik.mobile.support.signInAs
 import okhttp3.mockwebserver.Dispatcher
@@ -67,6 +68,7 @@ class PhotographerDashboardViewModelMoneyTest {
 
     @After fun tearDown() {
         viewModels.clear()
+        awaitRoomIdle(application)
         AppDatabase.getDatabase(application).close()
         SessionManager.getInstance(application).clearSession()
     }

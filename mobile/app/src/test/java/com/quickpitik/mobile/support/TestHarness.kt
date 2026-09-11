@@ -1,6 +1,8 @@
 package com.quickpitik.mobile.support
 
+import android.app.Application
 import androidx.test.core.app.ApplicationProvider
+import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +21,8 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.rules.ExternalResource
 import org.junit.rules.TestWatcher
 import org.junit.runner.Description
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.TimeUnit
 
 /**
  * Swaps Dispatchers.Main for a test dispatcher for one test. Unconfined by
@@ -71,3 +75,24 @@ fun signInAs(role: String): SessionManager =
 /** Blocks until the flow emits a value [accept]s; fails the test after [timeoutMs]. */
 fun <T> Flow<T>.awaitFirst(timeoutMs: Long = 5_000, accept: (T) -> Boolean): T =
     runBlocking { withTimeout(timeoutMs) { first(accept) } }
+
+/**
+ * Blocks until every query already handed to Room's IO pool has finished. A
+ * ViewModel's Room flows can still be mid-query when its test ends; closing the
+ * database under them throws "Illegal connection pointer" into the next
+ * coroutine test. Clear the ViewModels first (so nothing new starts), call
+ * this, then close the database.
+ */
+fun awaitRoomIdle(application: Application) {
+    // Room's default executor is androidx.arch.core's fixed pool of 4 threads
+    // (arch_disk_io_*, core-runtime 2.2.0). One barrier task per thread: once
+    // all four run at the same time, everything queued before them is done.
+    // ponytail: pool size read off core-runtime 2.2.0 with javap; re-check on
+    // upgrade (a bigger pool would drain early, a smaller one times out).
+    val barrier = CyclicBarrier(ROOM_IO_THREADS + 1)
+    val io = AppDatabase.getDatabase(application).queryExecutor
+    repeat(ROOM_IO_THREADS) { io.execute { barrier.await(5, TimeUnit.SECONDS) } }
+    barrier.await(5, TimeUnit.SECONDS)
+}
+
+private const val ROOM_IO_THREADS = 4

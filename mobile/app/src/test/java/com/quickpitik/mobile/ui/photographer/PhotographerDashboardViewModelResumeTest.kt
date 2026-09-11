@@ -8,6 +8,7 @@ import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
+import com.quickpitik.mobile.support.awaitRoomIdle
 import com.quickpitik.mobile.support.signInAs
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -41,11 +42,9 @@ class PhotographerDashboardViewModelResumeTest {
 
     @After fun tearDown() {
         viewModels.clear()
-        // These tests finish within milliseconds of constructing the ViewModel, so
-        // its startup Room queries are still on the executor; closing the database
-        // under them throws into the next coroutine-test class as an uncaught
-        // exception. Let them settle first.
-        Thread.sleep(250)
+        // These tests finish within milliseconds of constructing the ViewModel,
+        // so its startup Room queries are still on the executor.
+        awaitRoomIdle(application)
         AppDatabase.getDatabase(application).close()
         tether.edit().clear().commit()
         SessionManager.getInstance(application).clearSession()

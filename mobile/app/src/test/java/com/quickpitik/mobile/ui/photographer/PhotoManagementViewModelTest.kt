@@ -8,6 +8,7 @@ import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.support.MainDispatcherRule
+import com.quickpitik.mobile.support.awaitRoomIdle
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -53,6 +54,7 @@ class PhotoManagementViewModelTest {
     @After
     fun tearDown() {
         viewModels.clear()
+        awaitRoomIdle(application)
         AppDatabase.getDatabase(application).close()
         server.shutdown()
         RetrofitClient.resetBaseUrl()
