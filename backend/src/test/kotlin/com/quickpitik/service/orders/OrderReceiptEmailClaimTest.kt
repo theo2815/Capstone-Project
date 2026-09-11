@@ -19,14 +19,20 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.service.email.ResendClient
+import com.quickpitik.support.testTransactionTemplate
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.support.AbstractPlatformTransactionManager
+import org.springframework.transaction.support.DefaultTransactionStatus
+import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -182,18 +188,86 @@ class OrderReceiptEmailClaimTest {
         )
     }
 
+    // P1.1 (2026-09-11 architecture plan): the send used to run inside a
+    // REQUIRES_NEW transaction, so Resend's three attempts with Thread.sleep
+    // backoff pinned one of Hikari's ten connections for the whole outage —
+    // eight concurrent listeners could starve the pool at race finish. The
+    // claim still has to be transactional; the HTTP call must not be.
+    @Test
+    fun `the receipt is sent outside the transaction that claims it`() {
+        val tx = TxTracker()
+        val order = stubReadyOrder()
+        var openAtClaim: Boolean? = null
+        var openAtSend: Boolean? = null
+        Mockito.`when`(orderRepository.claimReceiptSend(eqArg(order.id), anyArg())).thenAnswer {
+            openAtClaim = tx.open
+            1
+        }
+        Mockito.`when`(resendClient.send(anyArg())).thenAnswer {
+            openAtSend = tx.open
+            ResendSendEmailResponse(id = "re_123")
+        }
+
+        service(tx.template).sendReceiptIfPending(order.id)
+
+        assertEquals(true, openAtClaim, "the claim is a @Modifying UPDATE — it must stay in the transaction")
+        assertEquals(false, openAtSend, "Resend must not be called while a DB connection is held")
+    }
+
+    @Test
+    fun `a failed send releases the claim in its own transaction`() {
+        val tx = TxTracker()
+        val order = stubReadyOrder()
+        stubClaimResult(order, won = true)
+        Mockito.`when`(resendClient.send(anyArg())).thenThrow(RuntimeException("resend down"))
+        var openAtRelease: Boolean? = null
+        Mockito.`when`(orderRepository.releaseReceiptSend(eqArg(order.id))).thenAnswer {
+            openAtRelease = tx.open
+            1
+        }
+
+        service(tx.template).sendReceiptIfPending(order.id)
+
+        // The claim transaction is long gone by now, so the release needs one
+        // of its own or the UPDATE never reaches Postgres.
+        assertEquals(true, openAtRelease, "the release must run inside a transaction of its own")
+    }
+
     // ─── fixtures ─────────────────────────────────────────────────────────
 
-    private fun service() = OrderReceiptEmailService(
-        orderRepository,
-        orderItemRepository,
-        eventRepository,
-        downloadGrantRepository,
-        resendClient,
-        ResendProperties(),
-        PaymongoProperties(),
-        OrderAccessTokenService(PlatformProperties()),
-    )
+    private fun service(transactionTemplate: TransactionTemplate = testTransactionTemplate()) =
+        OrderReceiptEmailService(
+            orderRepository,
+            orderItemRepository,
+            eventRepository,
+            downloadGrantRepository,
+            resendClient,
+            ResendProperties(),
+            PaymongoProperties(),
+            OrderAccessTokenService(PlatformProperties()),
+            transactionTemplate,
+        )
+
+    /** A TransactionTemplate that reports whether it currently has one open. */
+    private class TxTracker {
+        var open = false
+        val template: TransactionTemplate = TransactionTemplate(
+            object : AbstractPlatformTransactionManager() {
+                override fun doGetTransaction(): Any = Any()
+                override fun doBegin(transaction: Any, definition: TransactionDefinition) {
+                    open = true
+                }
+
+                override fun doCommit(status: DefaultTransactionStatus) {
+                    open = false
+                }
+
+                override fun doRollback(status: DefaultTransactionStatus) {
+                    open = false
+                }
+            },
+        )
+    }
 
     private fun stubClaimResult(order: Order, won: Boolean) {
         Mockito.`when`(orderRepository.claimReceiptSend(eqArg(order.id), anyArg()))

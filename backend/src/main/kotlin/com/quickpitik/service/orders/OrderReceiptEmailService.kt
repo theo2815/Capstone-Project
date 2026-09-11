@@ -11,8 +11,7 @@ import com.quickpitik.repository.OrderRepository
 import com.quickpitik.service.email.ResendClient
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Propagation
-import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -44,18 +43,56 @@ class OrderReceiptEmailService(
     private val resendProperties: ResendProperties,
     private val paymongoProperties: PaymongoProperties,
     private val orderAccessTokenService: OrderAccessTokenService,
+    private val transactionTemplate: TransactionTemplate,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // New TX — this is invoked from a @TransactionalEventListener after the
-    // outer webhook TX has already committed, so any reads must run under
-    // their own transaction context.
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    // Two phases. Phase A runs in a transaction: every read, every skip
+    // condition, and the conditional claim (a @Modifying UPDATE, so it has to
+    // be in one). Phase B runs with no connection held, because ResendClient
+    // retries up to 3× with Thread.sleep backoff — holding one of Hikari's ten
+    // connections across a Resend outage let a handful of concurrent listeners
+    // starve the pool at race finish (2026-09-11 architecture audit, P-3).
+    //
+    // The template's default REQUIRED propagation stands in for the old
+    // REQUIRES_NEW: the only caller is OrderPaidEmailListener, an @Async
+    // AFTER_COMMIT listener, so there is never an ambient transaction to join.
     fun sendReceiptIfPending(orderId: UUID) {
+        val receipt = transactionTemplate.execute { claimReceipt(orderId) } ?: return
+
+        try {
+            val response = resendClient.send(
+                ResendSendEmailRequest(
+                    from = receipt.sender,
+                    to = listOf(receipt.recipient),
+                    subject = receipt.subject,
+                    html = receipt.html,
+                ),
+            )
+            log.info(
+                "Receipt sent · orderId={} resendId={} to={}",
+                orderId,
+                response.id,
+                receipt.recipient,
+            )
+        } catch (ex: Exception) {
+            log.error("Receipt send failed · orderId={} err={}", orderId, ex.message, ex)
+            // Hand the claim back so a manual reprocess or a future PayMongo
+            // webhook re-delivery can try again — the same door the old
+            // don't-stamp-on-failure behaviour left open. Needs its own
+            // transaction: the claim's committed long before we get here.
+            transactionTemplate.executeWithoutResult { orderRepository.releaseReceiptSend(orderId) }
+        }
+    }
+
+    // Returns the rendered mail once this caller owns the send slot, or null
+    // when there is nothing to send. Rendering stays in here so no detached
+    // entity is read outside the transaction; it is string building, not I/O.
+    private fun claimReceipt(orderId: UUID): PreparedReceipt? {
         val order = orderRepository.findById(orderId).orElse(null)
         if (order == null) {
             log.warn("Receipt skipped — order {} not found", orderId)
-            return
+            return null
         }
         if (order.emailSentAt != null) {
             log.info(
@@ -63,23 +100,23 @@ class OrderReceiptEmailService(
                 orderId,
                 order.emailSentAt,
             )
-            return
+            return null
         }
         if (order.recipientEmail.isBlank()) {
             log.warn("Receipt skipped — order {} has no recipient email", orderId)
-            return
+            return null
         }
 
         val items = orderItemRepository.findByIdOrderId(order.id)
         if (items.isEmpty()) {
             log.warn("Receipt skipped — order {} has no items", orderId)
-            return
+            return null
         }
         val grants = downloadGrantRepository.findByIdOrderId(order.id).associateBy { it.id.photoId }
         val entitledCount = items.count { item -> grants[item.id.photoId] != null }
         if (entitledCount == 0) {
             log.warn("Receipt skipped — order {} has no download grants yet", orderId)
-            return
+            return null
         }
 
         val event = eventRepository.findById(order.eventId).orElse(null)
@@ -93,9 +130,6 @@ class OrderReceiptEmailService(
             listTotal = items.sumOf { it.pricePhpAtPurchase },
             discountTotal = items.sumOf { it.discountPhp },
         )
-        val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
-        val subject = buildSubject(event?.name)
-        val recipient = order.recipientEmail
 
         // Claim the send slot BEFORE calling Resend, not after. The early
         // emailSentAt check above is only a cheap fast path — two concurrent
@@ -105,32 +139,23 @@ class OrderReceiptEmailService(
         // never burns its one claim.
         if (orderRepository.claimReceiptSend(orderId, OffsetDateTime.now()) == 0) {
             log.info("Receipt already claimed by a concurrent send for order {} — skipping", orderId)
-            return
+            return null
         }
 
-        try {
-            val response = resendClient.send(
-                ResendSendEmailRequest(
-                    from = sender,
-                    to = listOf(recipient),
-                    subject = subject,
-                    html = html,
-                ),
-            )
-            log.info(
-                "Receipt sent · orderId={} resendId={} to={}",
-                orderId,
-                response.id,
-                recipient,
-            )
-        } catch (ex: Exception) {
-            log.error("Receipt send failed · orderId={} err={}", orderId, ex.message, ex)
-            // Hand the claim back so a manual reprocess or a future PayMongo
-            // webhook re-delivery can try again — the same door the old
-            // don't-stamp-on-failure behaviour left open.
-            orderRepository.releaseReceiptSend(orderId)
-        }
+        return PreparedReceipt(
+            sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>",
+            recipient = order.recipientEmail,
+            subject = buildSubject(event?.name),
+            html = html,
+        )
     }
+
+    private data class PreparedReceipt(
+        val sender: String,
+        val recipient: String,
+        val subject: String,
+        val html: String,
+    )
 
     private fun buildSubject(eventName: String?): String =
         if (eventName != null) "Your QuickPitik receipt · $eventName"
