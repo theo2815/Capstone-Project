@@ -26,6 +26,8 @@ import kotlinx.coroutines.isActive
 class UsbCardBrowseController(
     private val manager: UsbManager,
     private val deviceProvider: () -> UsbDevice?,
+    // Test seam, same shape as UsbEventCaptureController's: production opens the real body.
+    private val openCamera: suspend (UsbDevice) -> GenericPtpCamera = { CameraDrivers.open(manager, it) },
 ) {
     /** Streamed lifecycle of a single browse run — the VM maps these to UI state. */
     sealed class Progress {
@@ -61,7 +63,7 @@ class UsbCardBrowseController(
             return
         }
 
-        val camera = try { CameraDrivers.open(manager, device) }
+        val camera = try { openCamera(device) }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { emit(Progress.Failed(e.message ?: MSG_OPEN_FAILED)); return }
         val session = camera.session
