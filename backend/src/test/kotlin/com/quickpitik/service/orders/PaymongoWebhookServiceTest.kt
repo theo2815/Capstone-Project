@@ -110,10 +110,56 @@ class PaymongoWebhookServiceTest {
         Mockito.verify(publisher, Mockito.times(1)).publishEvent(OrderPaidEvent(order.id, null))
     }
 
-    private fun paidEvent() = PaymongoWebhookEvent(
+    // payment.failed / qrph.expired: the reservation must be released so the
+    // runner can check out again, and the payment must not sit PENDING for the
+    // reconciler to keep polling (2026-09-11 test-suite audit — no test).
+    @Test
+    fun `a payment failure expires the pending order and marks the payment failed`() {
+        val order = Order(
+            eventId = UUID.randomUUID(),
+            recipientEmail = "runner@example.com",
+            paymentMethodWire = PaymentMethod.QRPH.wire,
+            totalPhp = BigDecimal("125.00"),
+        )
+        val payment = Payment(
+            orderId = order.id,
+            provider = "paymongo",
+            providerRef = "pi_test",
+            amountPhp = order.totalPhp,
+        )
+        val orders = Mockito.mock(OrderRepository::class.java)
+        val payments = Mockito.mock(PaymentRepository::class.java)
+        val grants = Mockito.mock(DownloadGrantRepository::class.java)
+        val minting = Mockito.mock(TransactionMintingService::class.java)
+        Mockito.`when`(payments.findAllByProviderAndProviderRefForUpdate("paymongo", "pi_test"))
+            .thenReturn(listOf(payment))
+        Mockito.`when`(orders.findByIdForUpdate(order.id)).thenReturn(order)
+        val service = PaymongoWebhookService(
+            orders,
+            Mockito.mock(OrderItemRepository::class.java),
+            payments,
+            grants,
+            minting,
+            Mockito.mock(ApplicationEventPublisher::class.java),
+            Mockito.mock(PaymongoRefundService::class.java),
+        )
+
+        val result = service.handle(event("payment.failed"))
+
+        assertEquals(PaymentStatus.FAILED, payment.status)
+        assertEquals(OrderStatus.EXPIRED, order.status)
+        assertEquals(true, result["applied"])
+        // A failure never fulfils anything.
+        Mockito.verifyNoInteractions(grants)
+        Mockito.verifyNoInteractions(minting)
+    }
+
+    private fun paidEvent() = event("payment.paid")
+
+    private fun event(type: String) = PaymongoWebhookEvent(
         PaymongoEventData(
             attributes = PaymongoEventAttributes(
-                type = "payment.paid",
+                type = type,
                 data = PaymongoResource(
                     id = "pay_test",
                     attributes = PaymongoResourceAttributes(

@@ -168,6 +168,26 @@ class AuthServiceTest {
         Mockito.verify(userRepository, Mockito.never()).save(anyArg())
     }
 
+    // ADMIN is only ever created by BootstrapAdminRunner. This check is the
+    // sole server-side block on self-minting one through the public form.
+    @Test
+    fun `register refuses the ADMIN role before touching the repository`() {
+        val ex = assertFailsWith<ValidationException> {
+            service().register(
+                RegisterRequest(
+                    name = "Wannabe Admin",
+                    email = "admin@example.com",
+                    password = "correct-horse-battery-staple-42",
+                    role = Role.ADMIN,
+                ),
+            )
+        }
+
+        assertEquals("INVALID_ROLE", ex.code)
+        assertEquals("role", ex.field)
+        Mockito.verifyNoInteractions(userRepository)
+    }
+
     // ─── V29 lockout ──────────────────────────────────────────────────────
 
     // The point of the whole feature: guessing right on the attempt after the

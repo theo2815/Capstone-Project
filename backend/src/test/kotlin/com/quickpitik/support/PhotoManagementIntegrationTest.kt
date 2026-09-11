@@ -233,4 +233,30 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         Mockito.verifyNoInteractions(storage)
     }
 
+    // Face search reads through findByEventAndPersonIds, which is not one of the
+    // gallery queries the first test covers; its deleted_at filter lives only in
+    // JPQL (2026-09-11 test-suite audit).
+    @Test fun `face search never returns a trashed photo`() {
+        val personId = "person-${UUID.randomUUID()}"
+        photo.facePersons.add(PhotoFacePersonEmbed(faceIndex = 0, aiPersonId = personId))
+        photos.saveAndFlush(photo)
+        val page = PageRequest.of(0, 20)
+        assertEquals(1L, photos.findByEventAndPersonIds(event.id, PhotoStatus.LIVE, listOf(personId), page).totalElements)
+        manager.trash(owner.id, event.id, listOf(photo.id))
+        assertEquals(0L, photos.findByEventAndPersonIds(event.id, PhotoStatus.LIVE, listOf(personId), page).totalElements)
+    }
+
+    // PhotoDto.cleanUrl is handed out for exactly the ids this query returns,
+    // and the grant's expiry is enforced only by its `grantedUntil > CURRENT_TIMESTAMP`.
+    @Test fun `an expired or foreign download grant hands out no clean url`() {
+        val buyer = users.save(User(email = "buyer-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Buyer", role = Role.RUNNER))
+        val stranger = users.save(User(email = "stranger-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Stranger", role = Role.RUNNER))
+        val order = orders.saveAndFlush(Order(userId = buyer.id, eventId = event.id, recipientEmail = buyer.email, paymentMethodWire = "gcash", status = OrderStatus.FULFILLED, totalPhp = photo.pricePhp))
+        val grant = grants.saveAndFlush(DownloadGrant(id = DownloadGrantId(order.id, photo.id), grantedUntil = OffsetDateTime.now().plusDays(1)))
+        assertEquals(listOf(photo.id), grants.findOwnedPhotoIdsByUserAndPhotoIds(buyer.id, listOf(photo.id)))
+        assertTrue(grants.findOwnedPhotoIdsByUserAndPhotoIds(stranger.id, listOf(photo.id)).isEmpty())
+        grant.grantedUntil = OffsetDateTime.now().minusMinutes(1)
+        grants.saveAndFlush(grant)
+        assertTrue(grants.findOwnedPhotoIdsByUserAndPhotoIds(buyer.id, listOf(photo.id)).isEmpty())
+    }
 }

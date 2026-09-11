@@ -8,6 +8,7 @@ import com.quickpitik.dto.ai.FacesDetectResult
 import com.quickpitik.entity.SelfieQualityTestStatus
 import com.quickpitik.entity.UserSelfie
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserSelfieRepository
 import com.quickpitik.service.ai.AiApiClient
@@ -170,6 +171,22 @@ class SelfieServiceTest {
         val dto = service(aiEnabled = true).upload(userId, jpegBytes(), "image/jpeg", "selfie.jpg")
 
         assertEquals(SelfieQualityTestStatus.PASSED.wire, dto.qualityTestStatus)
+    }
+
+    // Cap=5 — "clients lie, so the count comes from the DB" (class docblock),
+    // yet nothing pinned the cap itself (2026-09-11 test-suite audit).
+    @Test
+    fun `a sixth selfie is refused before storage or ai-api`() {
+        Mockito.`when`(userSelfieRepository.countByUserId(userId)).thenReturn(5L)
+
+        val ex = assertFailsWith<ConflictException> {
+            service(aiEnabled = true).upload(userId, jpegBytes(), "image/jpeg", "selfie.jpg")
+        }
+
+        assertEquals(ErrorCodes.SELFIE_LIMIT_REACHED, ex.code)
+        Mockito.verify(userSelfieRepository, Mockito.never()).save(anyArg())
+        Mockito.verifyNoInteractions(storageService)
+        Mockito.verifyNoInteractions(aiApiClient)
     }
 
     private fun stubHappyPathPlumbing() {

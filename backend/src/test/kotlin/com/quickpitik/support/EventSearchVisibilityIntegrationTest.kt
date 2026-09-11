@@ -12,7 +12,9 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.data.domain.PageRequest
 import java.time.LocalDate
 import java.util.UUID
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -71,14 +73,42 @@ class EventSearchVisibilityIntegrationTest : PostgresIntegrationTest() {
         assertFalse(adminUnlisted in hits, "admin UNLISTED event must be excluded")
     }
 
-    private fun save(marker: String, createdBy: UUID?, visibility: EventVisibility): UUID =
+    // The other SQL-only V46 rule: a DRAFT — a pending or rejected photographer
+    // submission — has no public page even by direct link, while an UNLISTED
+    // live event does; that is what "link-only" means (2026-09-11 audit).
+    @Test
+    fun `findPublicBySlug hides a DRAFT submission and resolves an UNLISTED live event`() {
+        val marker = "slug-${UUID.randomUUID()}"
+        val owner = userRepository.save(
+            User(
+                email = "owner-${UUID.randomUUID()}@test.local",
+                passwordHash = "stub",
+                name = "Owner",
+                role = Role.PHOTOGRAPHER,
+            ),
+        ).id
+        val draft = save(marker, createdBy = owner, visibility = EventVisibility.PUBLIC, status = EventStatus.DRAFT)
+        val unlisted = save(marker, createdBy = owner, visibility = EventVisibility.UNLISTED)
+
+        assertNull(eventRepository.findPublicBySlug(slugOf(draft)), "a DRAFT submission must not resolve publicly")
+        assertEquals(unlisted, eventRepository.findPublicBySlug(slugOf(unlisted))?.id)
+    }
+
+    private fun slugOf(id: UUID): String = eventRepository.findById(id).orElseThrow().slug
+
+    private fun save(
+        marker: String,
+        createdBy: UUID?,
+        visibility: EventVisibility,
+        status: EventStatus = EventStatus.ACTIVE,
+    ): UUID =
         eventRepository.save(
             Event(
                 slug = "$marker-${UUID.randomUUID()}",
                 name = "$marker race",
                 date = LocalDate.of(2026, 6, 15),
                 location = "Cebu City",
-                status = EventStatus.ACTIVE,
+                status = status,
                 createdBy = createdBy,
                 visibility = visibility,
             ),
