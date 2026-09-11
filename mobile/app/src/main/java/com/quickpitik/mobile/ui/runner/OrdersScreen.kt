@@ -812,14 +812,14 @@ private fun formatReceiptDate(iso: String?): String {
     return dt.format(RECEIPT_DATE_FMT).uppercase()
 }
 
-private data class SpendStats(
+internal data class SpendStats(
     val total: Double,
     val orderCount: Int,
     val photoCount: Int,
     val firstPurchase: String?
 )
 
-private fun computeSpendStats(orders: List<OrderListItemDto>): SpendStats {
+internal fun computeSpendStats(orders: List<OrderListItemDto>): SpendStats {
     if (orders.isEmpty()) {
         return SpendStats(0.0, 0, 0, null)
     }

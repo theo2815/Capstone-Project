@@ -710,7 +710,7 @@ fun SelfieCard(
 // One de-duplicated race-log row: an event the runner saved, bought photos from,
 // or both. Photo counts + spend come from the purchased side; the saved-only side
 // contributes the bookmark + an Unsave affordance when the race is still upcoming.
-private data class RaceLogEntry(
+internal data class RaceLogEntry(
     val eventId: String,
     val eventName: String,
     val eventSlug: String?,
@@ -726,7 +726,7 @@ private data class RaceLogEntry(
 // saved ∪ purchased, keyed by eventId. Photos-bought and spend are summed across a
 // runner's orders for the same event; saved flags the bookmark. Sorted newest-first
 // by event date (nulls last). Mirrors the website's race-log derivation.
-private fun buildRaceLog(
+internal fun buildRaceLog(
     saved: List<SavedEventSummaryDto>,
     orders: List<OrderListItemDto>,
     eventCatalog: Map<String, EventDto> = emptyMap()

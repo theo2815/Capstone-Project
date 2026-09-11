@@ -146,7 +146,7 @@ private val SOCIAL_URL_PATTERN = mapOf(
     "website" to Regex("^https?://[^\\s/]+\\.[^\\s/]+", RegexOption.IGNORE_CASE),
 )
 
-private fun validateSocialUrl(platform: String, url: String): String? {
+internal fun validateSocialUrl(platform: String, url: String): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return "Add a URL or remove this row."
     if (trimmed.length > 2048) return "URL is at most 2048 characters."
@@ -168,7 +168,7 @@ private val PAYOUT_METHOD_LABEL = mapOf(
     "gotyme" to "GoTyme Bank",
 )
 
-private fun formatPayoutNumber(method: String, raw: String): String {
+internal fun formatPayoutNumber(method: String, raw: String): String {
     val digits = raw.filter { it.isDigit() }
     if (method == "gotyme") {
         val trimmed = digits.take(16)
@@ -182,7 +182,7 @@ private fun formatPayoutNumber(method: String, raw: String): String {
     }
 }
 
-private fun validatePayoutNumber(method: String, raw: String): String? {
+internal fun validatePayoutNumber(method: String, raw: String): String? {
     val d = raw.filter { it.isDigit() }
     if (method == "gcash" || method == "maya") {
         if (d.isEmpty()) return null

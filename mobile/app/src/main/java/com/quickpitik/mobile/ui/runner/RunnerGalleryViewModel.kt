@@ -300,7 +300,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         }
         // Only derived channel state is reset here; the socket itself is owned
         // by the cockpit lifecycle effect keyed on the active event id.
-        bibRequestJob?.cancel()
+        searchJob?.cancel()
         gallerySnapshotAt = null
         _newPhotoCount.value = 0
         // Pre-race-day events have no gallery yet — the website never loads
@@ -323,7 +323,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         _eventDetail.value = null
         // As in selectEvent: the lifecycle effect closes the socket when the
         // active event id changes. Here we only drop the derived state.
-        bibRequestJob?.cancel()
+        searchJob?.cancel()
         gallerySnapshotAt = null
         _newPhotoCount.value = 0
     }
@@ -331,10 +331,14 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     // Submit-driven (website parity: the bib form submits, it does not search
     // per keystroke), so there is no debounce — the skeleton must appear the
     // moment the runner taps Search.
-    private var bibRequestJob: Job? = null
+    //
+    // The one job behind _searchState: bib, Load more and face searches all
+    // run here, so a new search or an event switch cancels whatever was still
+    // in flight instead of letting its late response land on the new screen.
+    private var searchJob: Job? = null
 
     fun searchByBib(bib: String) {
-        bibRequestJob?.cancel()
+        searchJob?.cancel()
         runBibSearch(bib, showLoading = true)
     }
 
@@ -349,8 +353,8 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         activeBibQuery = trimmed
         isFaceSearchMode = false
         _isFiltered.value = trimmed.isNotEmpty()
-        bibRequestJob?.cancel()
-        bibRequestJob = viewModelScope.launch {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
             if (showLoading) _searchState.value = PhotosSearchState.Loading
             try {
                 val query = trimmed.ifEmpty { null }
@@ -386,7 +390,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     fun clearFilter() {
         _isFiltered.value = false
         // Explicit tap — no reason to sit out the keystroke debounce.
-        bibRequestJob?.cancel()
+        searchJob?.cancel()
         runBibSearch("", showLoading = true)
     }
 
@@ -399,7 +403,8 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         val current = _searchState.value as? PhotosSearchState.Success ?: return
         if (isFaceSearchMode || current.loadingMore) return
         if (current.photos.size >= current.total) return
-        viewModelScope.launch {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
             _searchState.value = current.copy(loadingMore = true)
             try {
                 val token = SessionManager.getInstance(getApplication()).getAccessToken()
@@ -422,6 +427,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     _searchState.value = current.copy(loadingMore = false)
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 // Keep what's on screen; the CTA simply becomes tappable again.
                 _searchState.value = current.copy(loadingMore = false)
             }
@@ -499,7 +505,8 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     fun searchBySelfieUri(uri: Uri) {
         _activeEvent.value ?: return
         isFaceSearchMode = true
-        viewModelScope.launch {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
             _searchState.value = PhotosSearchState.Loading
             var cacheFile: File? = null
             try {
@@ -612,12 +619,13 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         val event = _activeEvent.value ?: return
         _isFiltered.value = true
         isFaceSearchMode = true
+        searchJob?.cancel()
         val token = SessionManager.getInstance(getApplication()).getAccessToken()
         if (token == null) {
             _searchState.value = PhotosSearchState.Error("Authentication token not found. Please log in.")
             return
         }
-        viewModelScope.launch {
+        searchJob = viewModelScope.launch {
             _searchState.value = PhotosSearchState.Loading
             try {
                 val response = RetrofitClient.apiService.searchPhotosByFaceJson(
@@ -636,6 +644,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                         PhotosSearchState.Error(humanizeFaceSearchError(err?.code, err?.message))
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _searchState.value = PhotosSearchState.Error(faceSearchErrorFrom(e))
             }
         }
@@ -651,12 +660,13 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         // The CTA that lands here renders exactly when the cached library is
         // empty (still loading, or the fetch failed) — re-fetch before
         // concluding the runner has no primary selfie.
+        searchJob?.cancel()
         val token = SessionManager.getInstance(getApplication()).getAccessToken()
         if (token == null) {
             _searchState.value = PhotosSearchState.Error("Authentication token not found. Please log in.")
             return
         }
-        viewModelScope.launch {
+        searchJob = viewModelScope.launch {
             val primary = try {
                 val response = RetrofitClient.apiService.getSelfies("Bearer $token")
                 if (response.success && response.data != null) _selfies.value = response.data
