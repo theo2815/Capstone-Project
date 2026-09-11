@@ -125,9 +125,7 @@ class SessionManager private constructor(context: Context) {
 
         fun getInstance(context: Context): SessionManager {
             return INSTANCE ?: synchronized(this) {
-                val instance = SessionManager(context.applicationContext)
-                INSTANCE = instance
-                instance
+                INSTANCE ?: SessionManager(context.applicationContext).also { INSTANCE = it }
             }
         }
     }

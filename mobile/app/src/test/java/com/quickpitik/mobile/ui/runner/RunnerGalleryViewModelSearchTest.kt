@@ -10,6 +10,7 @@ import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
 import com.quickpitik.mobile.support.ok
+import com.quickpitik.mobile.support.signInAs
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
@@ -63,10 +64,7 @@ class RunnerGalleryViewModelSearchTest {
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
-        SessionManager.getInstance(application).apply {
-            clearSession()
-            saveSession("t", "RUNNER", "Juan", "juan@x.com")
-        }
+        signInAs("RUNNER")
         backend.server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val url = request.requestUrl!!

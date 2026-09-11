@@ -12,6 +12,7 @@ import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
 import com.quickpitik.mobile.support.ok
+import com.quickpitik.mobile.support.signInAs
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
@@ -25,7 +26,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows
-import org.robolectric.annotation.Config
 import java.io.ByteArrayInputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -41,7 +41,6 @@ import java.util.concurrent.CopyOnWriteArrayList
  * as PhotoManagementViewModelTest: the real ViewModel over a MockWebServer.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
 class PhotographerDashboardViewModelMoneyTest {
     @get:Rule val main = MainDispatcherRule()
     @get:Rule val backend = MockBackend()
@@ -53,10 +52,7 @@ class PhotographerDashboardViewModelMoneyTest {
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
-        SessionManager.getInstance(application).apply {
-            clearSession()
-            saveSession("t", "PHOTOGRAPHER", "Juan", "juan@x.com")
-        }
+        signInAs("PHOTOGRAPHER")
         backend.server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.path.orEmpty().substringBefore('?')

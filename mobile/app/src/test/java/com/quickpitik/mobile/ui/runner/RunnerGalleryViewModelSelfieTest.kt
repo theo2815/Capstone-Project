@@ -8,6 +8,7 @@ import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
 import com.quickpitik.mobile.support.ok
+import com.quickpitik.mobile.support.signInAs
 import okhttp3.mockwebserver.MockResponse
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -39,9 +40,7 @@ class RunnerGalleryViewModelSelfieTest {
     @Before
     fun setUp() {
         application = ApplicationProvider.getApplicationContext()
-        session = SessionManager.getInstance(application)
-        session.clearSession()
-        session.saveSession("t", "RUNNER", "Juan", "juan@x.com")
+        session = signInAs("RUNNER")
     }
 
     @After

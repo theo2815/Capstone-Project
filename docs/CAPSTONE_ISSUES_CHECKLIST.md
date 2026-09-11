@@ -7,8 +7,8 @@
 ## 📋 Quick Status Overview
 
 - **Total Tasks:** 31
-- **✅ Already Solved:** 22 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 25, 26, 27, 28, 29, 31, 32, 33)
-- **⏳ Pending / To Be Worked On:** 9 (Items 16, 17, 19, 21, 22, 23, 24, 30, 34)
+- **✅ Already Solved:** 23 (Items 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 20, 25, 26, 27, 28, 29, 31, 32, 33)
+- **⏳ Pending / To Be Worked On:** 8 (Items 16, 19, 21, 22, 23, 24, 30, 34)
 
 ---
 
@@ -50,11 +50,9 @@
     - `mobile/app/src/main/java/com/quickpitik/mobile/data/usb/CameraConnectionManager.kt`
   - **Action Plan:** Register the receiver with `ContextCompat.RECEIVER_EXPORTED` on API 34+ or use an explicit Intent/PendingIntent receiver targeted directly to the app package.
 
-- [ ] **17. Mobile — In-Memory Buffering & Out-Of-Memory (OOM) Risk in Wi-Fi FTP**
-  - **Issue:** `FtpReceiverServer.kt` reads incoming photo transfers completely into an in-memory `ByteArray`: `suspend (filename: String, bytes: ByteArray) -> Unit`. High-resolution DSLR/mirrorless RAW and JPEG images (25MB–50MB each) uploaded in rapid bursts over Wi-Fi can rapidly exhaust JVM heap memory and trigger an `OutOfMemoryError`.
-  - **Affected Files:**
-    - `mobile/app/src/main/java/com/quickpitik/mobile/data/ftp/FtpReceiverServer.kt`
-  - **Action Plan:** Stream incoming socket bytes directly to a temporary `File` via `OutputStream` (matching `UsbEventCaptureController.kt`) instead of buffering the entire image into RAM.
+- [x] **17. Mobile — In-Memory Buffering & Out-Of-Memory (OOM) Risk in Wi-Fi FTP**
+  - **Status:** **SOLVED BY REMOVAL** (2026-09-11)
+  - **Verification:** `FtpReceiverServer.kt` was deleted. It had no call sites since the 2026-05-27 Capture redesign, and USB live auto-upload replaced it. No code path buffers FTP transfers any more.
 
 - [x] **18. Mobile — Orphaned MediaStore Rows & 0-Byte Placeholders on Camera Dismissal**
   - **Status:** **ALREADY SOLVED**

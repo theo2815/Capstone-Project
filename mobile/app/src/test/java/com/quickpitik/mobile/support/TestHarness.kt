@@ -1,5 +1,7 @@
 package com.quickpitik.mobile.support
 
+import androidx.test.core.app.ApplicationProvider
+import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -58,6 +60,13 @@ class MockBackend : ExternalResource() {
 
 /** The backend's success envelope around [data] (a JSON literal). */
 fun ok(data: String): MockResponse = MockResponse().setBody("""{"success":true,"data":$data}""")
+
+/** Signs in a fresh session as [role], the starting state of most ViewModel tests. */
+fun signInAs(role: String): SessionManager =
+    SessionManager.getInstance(ApplicationProvider.getApplicationContext()).apply {
+        clearSession()
+        saveSession("t", role, "Juan", "juan@x.com")
+    }
 
 /** Blocks until the flow emits a value [accept]s; fails the test after [timeoutMs]. */
 fun <T> Flow<T>.awaitFirst(timeoutMs: Long = 5_000, accept: (T) -> Boolean): T =

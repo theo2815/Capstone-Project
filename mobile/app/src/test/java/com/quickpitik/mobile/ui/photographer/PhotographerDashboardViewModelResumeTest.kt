@@ -8,6 +8,7 @@ import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
+import com.quickpitik.mobile.support.signInAs
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -16,7 +17,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 
 /**
  * Resuming a shutter watch after process death: the persisted snapshot is
@@ -25,7 +25,6 @@ import org.robolectric.annotation.Config
  * into the wrong account or the wrong event.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
 class PhotographerDashboardViewModelResumeTest {
     @get:Rule val main = MainDispatcherRule()
     @get:Rule val backend = MockBackend()
@@ -36,10 +35,7 @@ class PhotographerDashboardViewModelResumeTest {
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
-        SessionManager.getInstance(application).apply {
-            clearSession()
-            saveSession("t", "PHOTOGRAPHER", "Juan", "juan@x.com")
-        }
+        signInAs("PHOTOGRAPHER")
         tether.edit().clear().commit()
     }
 

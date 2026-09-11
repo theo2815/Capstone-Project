@@ -50,6 +50,7 @@ An agent you delegate a mobile task to does **NOT** automatically inherit this f
 * **Build app:** `.\gradlew.bat assembleDebug` (from the `mobile/` directory)
 * **Clean cache:** `.\gradlew.bat clean`
 * **Check compile validity:** `.\gradlew.bat compileDebugKotlin`
+* **Run unit tests:** `.\gradlew.bat testDebugUnitTest` — JVM + Robolectric, no device; CI runs the same command (`.github/workflows/mobile-tests.yml`). Debug variant only: the MockWebServer seam `RetrofitClient.setBaseUrl` is a no-op in release builds.
 * **Release APK:** `.\gradlew.bat assembleRelease` — signed only when `mobile/keystore.properties` (gitignored; keys `storeFile`/`storePassword`/`keyAlias`/`keyPassword`) exists; the keystore's SHA-1 must be an Android OAuth client in Google Cloud for Google sign-in to work on that build.
 ## 📱 Mobile-to-PC Backend Network Bridging Guide (ADB & Emulator)
 

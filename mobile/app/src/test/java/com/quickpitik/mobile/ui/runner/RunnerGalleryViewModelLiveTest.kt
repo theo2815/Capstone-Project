@@ -9,6 +9,7 @@ import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
 import com.quickpitik.mobile.support.ok
+import com.quickpitik.mobile.support.signInAs
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -46,10 +47,7 @@ class RunnerGalleryViewModelLiveTest {
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
-        SessionManager.getInstance(application).apply {
-            clearSession()
-            saveSession("t", "RUNNER", "Juan", "juan@x.com")
-        }
+        signInAs("RUNNER")
         backend.server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.path.orEmpty()

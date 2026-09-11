@@ -11,12 +11,10 @@ import kotlinx.coroutines.isActive
  * One-shot enumeration of the JPEGs already on the camera's memory card — the
  * read half of the manual "Import from camera" flow.
  *
- * Unlike [UsbCardPollController] (which holds a session open and watches for
- * NEW shots), this opens a PTP session, asks the camera for everything on the
- * card right now, closes the session, and returns. The Capture tab calls this
- * after the photographer plugs the body in post-event — it gives them a list
- * they can select from and import in bulk. The poll controller stays in the
- * codebase for the future live-shoot path; the two are intentionally distinct.
+ * Opens a PTP session, asks the camera for everything on the card right now,
+ * closes the session, and returns. The Capture tab calls this after the
+ * photographer plugs the body in post-event — it gives them a list they can
+ * select from and import in bulk.
  *
  * The session is always closed in finally — leaving it open would freeze the
  * R6's physical shutter (documented Canon "PC connection" behaviour). The
