@@ -17,7 +17,7 @@ class UsbEventCaptureController(
     private val deviceProvider: () -> UsbDevice?,
     private val store: CameraTransferStore,
     private val awaitDevice: suspend (Long) -> Unit = { delay(it) },
-    private val openCamera: suspend (UsbDevice, Boolean) -> GenericPtpCamera = { device, warm ->
+    private val openCamera: suspend (UsbDevice, Boolean) -> LiveCamera = { device, warm ->
         CameraDrivers.open(manager, device, live = true, warmUp = warm)
     },
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
@@ -101,7 +101,7 @@ class UsbEventCaptureController(
                             } catch (e: CancellationException) { throw e }
                             catch (e: PtpException) {
                                 disabledEvents.add(camera.cameraKey)
-                                if (!camera.session.isUsable) throw e
+                                if (!camera.isUsable) throw e
                                 eventPolling = false
                                 onLog("Camera event data could not be read; continuing card reconciliation.")
                             }
@@ -192,7 +192,7 @@ class UsbEventCaptureController(
                                 if (store.dao.get(record.key)?.attempts == record.attempts)
                                     store.fail(record, e.message ?: "Camera transfer failed.")
                                 onLog("${record.filename}: ${e.message}; retained for retry.")
-                                if (!camera.session.isUsable) throw e
+                                if (!camera.isUsable) throw e
                             }
                             if (nowMs() - lastKeepAlive >= 30_000) { camera.keepAlive(); lastKeepAlive = nowMs() }
                         }
@@ -220,7 +220,7 @@ class UsbEventCaptureController(
     }
 
     private suspend fun watchTransient(
-        camera: GenericPtpCamera, owner: String, event: String, isOwnerActive: () -> Boolean,
+        camera: LiveCamera, owner: String, event: String, isOwnerActive: () -> Boolean,
         onLog: (String) -> Unit, onReady: () -> Unit, onPaused: (String?) -> Unit, onCapture: (String) -> Unit,
     ) {
         onLog("Reading camera + PC JPEG copies. Interrupted buffer transfers require card import.")

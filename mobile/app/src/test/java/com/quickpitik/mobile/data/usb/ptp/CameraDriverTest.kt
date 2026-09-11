@@ -134,6 +134,14 @@ class CameraDriverTest {
         assertEquals(listOf(42L), GenericPtpCamera(PtpSession(transport(Ptp.EV_OBJECT_ADDED)), info("Other", emptyList()), "camera").events())
     }
 
+    @Test fun `generic camera exposes session health through the live interface`() {
+        val transport = ScriptedPtp()
+        val camera: LiveCamera = GenericPtpCamera(PtpSession(transport), info("Nikon", emptyList()), "camera")
+        assertTrue(camera.isUsable)
+        camera.close()
+        assertFalse(camera.isUsable)
+    }
+
     @Test fun `object identity separates cameras folders and reused handles`() {
         val photo = PtpObjectInfo(0x3801, 100, "IMG_0001.JPG", 1, 10, "20260907T120000")
         assertNotEquals(photo.sourceKey("camera-a", 1), photo.sourceKey("camera-b", 1))

@@ -5,7 +5,6 @@ import android.hardware.usb.UsbManager
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import java.io.Closeable
 import java.io.OutputStream
 
 data class CameraCapabilities(
@@ -27,15 +26,16 @@ class CameraSetupException(message: String) : PtpException(message)
 open class GenericPtpCamera(
     val session: PtpSession,
     info: PtpDeviceInfo,
-    val cameraKey: String,
+    override val cameraKey: String,
     val quirks: CameraQuirks = CameraQuirks.forCamera(0, 0, info.model, info.operationsSupported),
-) : Closeable {
+) : LiveCamera {
     /** Re-read after vendor setup: the advertised operation set can change (libgphoto2: EOS M2). */
-    var info: PtpDeviceInfo = info
+    override var info: PtpDeviceInfo = info
         protected set
     /** Set when vendor setup was declined and the session carried on as standard PTP. */
-    var setupWarning: String? = null
-    open val capabilities: CameraCapabilities get() = CameraCapabilities(
+    override var setupWarning: String? = null
+    override val isUsable: Boolean get() = session.isUsable
+    override val capabilities: CameraCapabilities get() = CameraCapabilities(
         cardImport = listOf(Ptp.OP_GET_OBJECT_HANDLES, Ptp.OP_GET_OBJECT_INFO, Ptp.OP_GET_OBJECT)
             .all { it in info.operationsSupported },
         thumbnails = Ptp.OP_GET_THUMB in info.operationsSupported,
@@ -52,12 +52,12 @@ open class GenericPtpCamera(
     open val vendorRejectedMessage: String get() = "The camera rejected its USB setup. Check the camera USB mode and start again."
     /** Vendor codes that also mean a new object exists; the standard 0x4002 is always accepted. */
     protected open val objectAddedEvents: Set<Int> get() = emptySet()
-    open fun events(): List<Long> = session.interruptEvents()
+    override fun events(): List<Long> = session.interruptEvents()
         .filter { it.code == Ptp.EV_OBJECT_ADDED || it.code in objectAddedEvents }.mapNotNull { it.handle }
-    open fun nextCapture(): Pair<Long, PtpObjectInfo>? = null
-    open fun keepAlive() {}
+    override fun nextCapture(): Pair<Long, PtpObjectInfo>? = null
+    override fun keepAlive() {}
     open fun acknowledge(handle: Long) {}
-    open fun handles(): List<Long> {
+    override fun handles(): List<Long> {
         if (Ptp.OP_GET_STORAGE_IDS !in info.operationsSupported) return session.getObjectHandles(0xffffffffL)
         val storages = session.getStorageIds()
         if (storages.isEmpty()) return session.getObjectHandles(0xffffffffL)
@@ -77,8 +77,8 @@ open class GenericPtpCamera(
         if (!readable) throw requireNotNull(unavailable)
         return handles.toList()
     }
-    open fun objectInfo(handle: Long) = session.getObjectInfo(handle)
-    open fun readObject(handle: Long, sink: OutputStream, expectedSize: Long?) = session.getObjectTo(handle, sink, expectedSize)
+    override fun objectInfo(handle: Long) = session.getObjectInfo(handle)
+    override fun readObject(handle: Long, sink: OutputStream, expectedSize: Long?) = session.getObjectTo(handle, sink, expectedSize)
     protected fun refreshInfo() { info = session.getDeviceInfo() }
     override fun close() = session.close()
 }
