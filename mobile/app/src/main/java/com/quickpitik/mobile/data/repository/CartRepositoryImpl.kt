@@ -17,6 +17,8 @@ import com.quickpitik.mobile.data.remote.RefundRequest
 import com.quickpitik.mobile.data.remote.RefundResponse
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.RunnerDisputeDto
+import com.quickpitik.mobile.data.remote.apiCall
+import com.quickpitik.mobile.data.remote.toResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,13 +34,8 @@ class CartRepositoryImpl : CartRepository {
 
     override suspend fun fetchCart(token: String): Result<List<CartItemDto>> {
         return try {
-            val response = api.getCart("Bearer $token")
-            if (response.success && response.data != null) {
-                _cartItems.value = response.data
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Failed to fetch cart"))
-            }
+            api.getCart("Bearer $token").toResult("Failed to fetch cart")
+                .onSuccess { _cartItems.value = it }
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -72,21 +69,19 @@ class CartRepositoryImpl : CartRepository {
 
         if (token != null) {
             return try {
-                val response = api.addCartItem("Bearer $token", AddCartItemRequest(photoDto.id, eventId))
-                if (response.success && response.data != null) {
-                    // Update list with the server-returned item (price matching)
-                    val list = _cartItems.value.toMutableList()
-                    val idx = list.indexOfFirst { it.photoId == photoDto.id }
-                    if (idx != -1) {
-                        list[idx] = response.data
-                        _cartItems.value = list
+                api.addCartItem("Bearer $token", AddCartItemRequest(photoDto.id, eventId))
+                    .toResult("Server refused to add item")
+                    .onSuccess { served ->
+                        // Update list with the server-returned item (price matching)
+                        val list = _cartItems.value.toMutableList()
+                        val idx = list.indexOfFirst { it.photoId == photoDto.id }
+                        if (idx != -1) {
+                            list[idx] = served
+                            _cartItems.value = list
+                        }
                     }
-                    Result.success(response.data)
-                } else {
                     // Revert optimistic add
-                    _cartItems.value = _cartItems.value.filter { it.photoId != photoDto.id }
-                    Result.failure(Exception(response.error ?: "Server refused to add item"))
-                }
+                    .onFailure { _cartItems.value = _cartItems.value.filter { it.photoId != photoDto.id } }
             } catch (e: Exception) {
                 // Revert optimistic add
                 _cartItems.value = _cartItems.value.filter { it.photoId != photoDto.id }
@@ -104,14 +99,11 @@ class CartRepositoryImpl : CartRepository {
 
         if (token != null) {
             return try {
-                val response = api.removeCartItem("Bearer $token", photoId)
-                if (response.success && response.data != null) {
-                    Result.success(response.data.removed)
-                } else {
+                api.removeCartItem("Bearer $token", photoId)
+                    .toResult("Server refused to delete item")
+                    .map { it.removed }
                     // Revert optimistic delete
-                    _cartItems.value = originalList
-                    Result.failure(Exception(response.error ?: "Server refused to delete item"))
-                }
+                    .onFailure { _cartItems.value = originalList }
             } catch (e: Exception) {
                 // Revert optimistic delete
                 _cartItems.value = originalList
@@ -157,13 +149,8 @@ class CartRepositoryImpl : CartRepository {
             val mergeRequest = MergeCartRequest(
                 items = currentItems.map { MergeCartItem(it.photoId, it.eventId) }
             )
-            val response = api.mergeCart("Bearer $token", mergeRequest)
-            if (response.success && response.data != null) {
-                _cartItems.value = response.data
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Failed to merge cart"))
-            }
+            api.mergeCart("Bearer $token", mergeRequest).toResult("Failed to merge cart")
+                .onSuccess { _cartItems.value = it }
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -175,20 +162,13 @@ class CartRepositoryImpl : CartRepository {
         code: String?
     ): Result<CouponPreviewDto> {
         if (photoIds.isEmpty()) return Result.failure(Exception("Cart is empty"))
-        return try {
-            val response = api.previewCoupon(
+        // apiCall surfaces the backend envelope (COUPON_INVALID / EXPIRED /
+        // USAGE_LIMIT_REACHED / NOT_APPLICABLE) instead of a raw HTTP code.
+        return apiCall("Couldn't apply that coupon") {
+            api.previewCoupon(
                 token?.let { "Bearer $it" },
                 CouponPreviewRequest(photoIds = photoIds, code = code),
             )
-            if (response.success && response.data != null) {
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Couldn't apply that coupon"))
-            }
-        } catch (e: Exception) {
-            // parseError surfaces the backend envelope (COUPON_INVALID / EXPIRED /
-            // USAGE_LIMIT_REACHED / NOT_APPLICABLE) instead of a raw HTTP code.
-            Result.failure(Exception(RetrofitClient.parseError(e)))
         }
     }
 
@@ -223,39 +203,26 @@ class CartRepositoryImpl : CartRepository {
             couponCode = couponCode,
         )
 
-        return try {
-            val response = api.createOrder(formattedToken, idempotencyKey, request)
-            if (response.success && response.data != null) {
-                // Order minted — the key has served its purpose; the next
-                // checkout is a new order.
-                idempotency = null
-                // Match website: cart is cleared on PAID confirmation in
-                // /orders/return, NOT on order creation. Pre-clearing here
-                // strands the local cart empty if the user cancels PayMongo
-                // and bounces back to retry — and the website doesn't do it.
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Checkout failed"))
-            }
-        } catch (e: Exception) {
-            // parseError surfaces the backend envelope message — order-create
-            // is rate-limited (10/min/IP), so a 429 here must read as the
-            // backend's "slow down" copy, not "HTTP 429" (sibling pattern:
-            // submitRefund / withdrawDispute below).
-            Result.failure(Exception(RetrofitClient.parseError(e)))
-        }
+        // apiCall surfaces the backend envelope message — order-create is
+        // rate-limited (10/min/IP), so a 429 here must read as the backend's
+        // "slow down" copy, not "HTTP 429" (sibling pattern: submitRefund /
+        // withdrawDispute below).
+        //
+        // Nothing clears the cart here: the website clears it on PAID
+        // confirmation in /orders/return, and pre-clearing would strand the
+        // local cart empty if the user cancels PayMongo and bounces back.
+        return apiCall("Checkout failed") { api.createOrder(formattedToken, idempotencyKey, request) }
+            // Order minted — the key has served its purpose; the next
+            // checkout is a new order.
+            .onSuccess { idempotency = null }
     }
 
     override suspend fun getOrders(token: String): Result<List<OrderListItemDto>> {
         return try {
             // Backend MAX_LIMIT is 200 — take it all; there's no paging loop
             // here, so a smaller limit silently truncates the receipt list.
-            val response = api.getOrders("Bearer $token", limit = 200)
-            if (response.success && response.data != null) {
-                Result.success(response.data.items)
-            } else {
-                Result.failure(Exception(response.error ?: "Failed to load orders"))
-            }
+            api.getOrders("Bearer $token", limit = 200).toResult("Failed to load orders")
+                .map { it.items }
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -263,12 +230,7 @@ class CartRepositoryImpl : CartRepository {
 
     override suspend fun getOrderDetail(token: String, orderId: String): Result<OrderDetailDto> {
         return try {
-            val response = api.getOrderDetail("Bearer $token", orderId)
-            if (response.success && response.data != null) {
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Failed to load order detail"))
-            }
+            api.getOrderDetail("Bearer $token", orderId).toResult("Failed to load order detail")
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -276,12 +238,7 @@ class CartRepositoryImpl : CartRepository {
 
     override suspend fun getGuestOrderDetail(orderId: String, shareToken: String): Result<OrderDetailDto> {
         return try {
-            val response = api.getGuestOrderDetail(orderId, shareToken)
-            if (response.success && response.data != null) {
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Failed to load order detail"))
-            }
+            api.getGuestOrderDetail(orderId, shareToken).toResult("Failed to load order detail")
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -293,12 +250,8 @@ class CartRepositoryImpl : CartRepository {
         verify: Boolean,
     ): Result<OrderStatusDto> {
         return try {
-            val response = api.getOrderStatus("Bearer $token", orderId, if (verify) true else null)
-            if (response.success && response.data != null) {
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Failed to load order status"))
-            }
+            api.getOrderStatus("Bearer $token", orderId, if (verify) true else null)
+                .toResult("Failed to load order status")
         } catch (e: Exception) {
             // Raw exception preserved so pollOrderReturn can detect a 404 (fail fast).
             Result.failure(e)
@@ -311,12 +264,8 @@ class CartRepositoryImpl : CartRepository {
         verify: Boolean,
     ): Result<OrderStatusDto> {
         return try {
-            val response = api.getGuestOrderStatus(orderId, shareToken, if (verify) true else null)
-            if (response.success && response.data != null) {
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Failed to load order status"))
-            }
+            api.getGuestOrderStatus(orderId, shareToken, if (verify) true else null)
+                .toResult("Failed to load order status")
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -330,32 +279,15 @@ class CartRepositoryImpl : CartRepository {
         reason: String,
         note: String
     ): Result<RefundResponse> {
-        return try {
-            val response = api.submitRefund(
+        return apiCall("Failed to submit refund request") {
+            api.submitRefund(
                 "Bearer $token",
                 orderId,
                 RefundRequest(photoIds = photoIds, reason = reason, note = note)
             )
-            if (response.success && response.data != null) {
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Failed to submit refund request"))
-            }
-        } catch (e: Exception) {
-            Result.failure(Exception(RetrofitClient.parseError(e)))
         }
     }
 
-    override suspend fun withdrawDispute(token: String, disputeId: String): Result<RunnerDisputeDto> {
-        return try {
-            val response = api.withdrawDispute("Bearer $token", disputeId)
-            if (response.success && response.data != null) {
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Failed to cancel refund request"))
-            }
-        } catch (e: Exception) {
-            Result.failure(Exception(RetrofitClient.parseError(e)))
-        }
-    }
+    override suspend fun withdrawDispute(token: String, disputeId: String): Result<RunnerDisputeDto> =
+        apiCall("Failed to cancel refund request") { api.withdrawDispute("Bearer $token", disputeId) }
 }

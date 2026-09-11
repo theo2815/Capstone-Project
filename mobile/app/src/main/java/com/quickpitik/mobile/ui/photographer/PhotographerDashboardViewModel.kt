@@ -15,6 +15,7 @@ import com.quickpitik.mobile.data.MAX_UPLOAD_BYTES
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.TetherEvents
+import com.quickpitik.mobile.data.local.TetherWatchPrefs
 import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.local.UploadSpool
 import com.quickpitik.mobile.data.local.TetherStorageCleanup
@@ -241,9 +242,6 @@ sealed class CardBrowseState {
 
 // Newest rows the Capture tab observes for its strip (the screen shows ≤30).
 private const val RECENT_RECORDS_LIMIT = 200
-// Prefs key: event id of a live shutter watch, so a relaunch after process
-// death resumes it instead of waiting for a tap nobody knows is needed.
-private const val WATCH_ACTIVE_EVENT_KEY = "watch_active_event"
 
 class PhotographerDashboardViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application)
@@ -436,9 +434,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     val shutterWatchState: StateFlow<ShutterWatchState> = _shutterWatchState
 
     // Account-bound resume intent; individual pending objects live in Room.
-    private val tetherPrefs by lazy {
-        getApplication<Application>().getSharedPreferences("quickpitik_tether", Context.MODE_PRIVATE)
-    }
+    private val tetherPrefs by lazy { TetherWatchPrefs(getApplication<Application>()) }
 
     init {
         fetchEvents()
@@ -468,11 +464,11 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     /** Restore the event snapshot offline; a running service keeps its original destination. */
     private fun observeWatchResume() {
-        val eventId = tetherPrefs.getString(WATCH_ACTIVE_EVENT_KEY, null) ?: return
+        val eventId = tetherPrefs.activeEventId ?: return
         val owner = sessionManager.getUserEmail() ?: return
-        if (tetherPrefs.getString("watch_owner", null) != owner) return
+        if (tetherPrefs.owner != owner) return
         val saved = runCatching {
-            com.google.gson.Gson().fromJson(tetherPrefs.getString("watch_event_snapshot", null), PhotographerEventSummaryDto::class.java)
+            com.google.gson.Gson().fromJson(tetherPrefs.eventSnapshot, PhotographerEventSummaryDto::class.java)
         }.getOrNull()?.takeIf { it.id == eventId }
         if (saved != null) _activeEvent.value = saved
         viewModelScope.launch {
@@ -480,8 +476,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 (saved ?: (events as? EventsState.Success)?.events?.firstOrNull { it.id == eventId })
                     ?.takeIf { cam is CameraConnectionState.Connected }
             }.first { it != null } ?: return@launch
-            if (tetherPrefs.getString(WATCH_ACTIVE_EVENT_KEY, null) != eventId ||
-                tetherPrefs.getString("watch_owner", null) != sessionManager.getUserEmail()) return@launch
+            if (tetherPrefs.activeEventId != eventId ||
+                tetherPrefs.owner != sessionManager.getUserEmail()) return@launch
             _activeEvent.value = ready
             if (_shutterWatchState.value is ShutterWatchState.Idle) startShutterWatch()
         }
@@ -850,7 +846,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     fun selectEvent(event: PhotographerEventSummaryDto?) {
         if (event?.id != _activeEvent.value?.id &&
-            (coordinator.isWatching || tetherPrefs.contains(WATCH_ACTIVE_EVENT_KEY))) {
+            (coordinator.isWatching || tetherPrefs.hasActiveEvent)) {
             stopShutterWatch()
         }
         _activeEvent.value = event
@@ -1531,7 +1527,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
             _shutterWatchState.value = ShutterWatchState.Error("This event's upload window has closed.")
             return
         }
-        tetherPrefs.edit().putString("watch_event_snapshot", com.google.gson.Gson().toJson(event)).apply()
+        tetherPrefs.saveSnapshot(com.google.gson.Gson().toJson(event))
         coordinator.requestWatch(owner, event.id)
     }
 

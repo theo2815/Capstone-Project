@@ -19,6 +19,9 @@ import com.quickpitik.mobile.data.remote.ResetPasswordRequest
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.VerifyEmailRequest
 import com.quickpitik.mobile.data.remote.VerifyResetOtpRequest
+import com.quickpitik.mobile.data.remote.apiCall
+import com.quickpitik.mobile.data.remote.toResult
+import com.quickpitik.mobile.data.remote.uiMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -120,17 +123,20 @@ class AuthViewModel(
         viewModelScope.launch {
             _authState.value = AuthState.Loading
             try {
-                val envelope = RetrofitClient.apiService.login(LoginRequest(email, password))
-                if (envelope.success && envelope.data != null) {
-                    establishSession(envelope.data)
-                } else {
-                    _authState.value = AuthState.Error(envelope.error ?: "Login failed. Please check credentials.")
-                }
+                RetrofitClient.apiService.login(LoginRequest(email, password))
+                    .toResult("Login failed. Please check credentials.")
+                    .fold(
+                        onSuccess = { establishSession(it) },
+                        onFailure = { _authState.value = AuthState.Error(it.uiMessage) },
+                    )
             } catch (e: Exception) {
                 // RetrofitClient.parseError surfaces the backend envelope
                 // message (e.g. the ACCOUNT_LOCKED "try again in N minutes"
                 // copy) and maps transport failures to human copy — a login
                 // timeout must not read "java.net.SocketTimeoutException".
+                // establishSession stays inside this catch: its encrypted
+                // prefs write can fail, and that must read as an error rather
+                // than escape the coroutine.
                 _authState.value = AuthState.Error(RetrofitClient.parseError(e))
             }
         }
@@ -141,14 +147,12 @@ class AuthViewModel(
             _authState.value = AuthState.Loading
             try {
                 val role = if (isPhotographer) "PHOTOGRAPHER" else "RUNNER"
-                val envelope = RetrofitClient.apiService.register(
-                    RegisterRequest(name, email, password, role)
-                )
-                if (envelope.success && envelope.data != null) {
-                    establishSession(envelope.data)
-                } else {
-                    _authState.value = AuthState.Error(envelope.error ?: "Registration failed.")
-                }
+                RetrofitClient.apiService.register(RegisterRequest(name, email, password, role))
+                    .toResult("Registration failed.")
+                    .fold(
+                        onSuccess = { establishSession(it) },
+                        onFailure = { _authState.value = AuthState.Error(it.uiMessage) },
+                    )
             } catch (e: Exception) {
                 _authState.value = AuthState.Error(RetrofitClient.parseError(e))
             }
@@ -166,12 +170,12 @@ class AuthViewModel(
         viewModelScope.launch {
             _authState.value = AuthState.Loading
             try {
-                val envelope = RetrofitClient.apiService.googleLogin(GoogleLoginRequest(idToken))
-                if (envelope.success && envelope.data != null) {
-                    establishSession(envelope.data)
-                } else {
-                    _authState.value = AuthState.Error(envelope.error ?: "Google sign-in failed.")
-                }
+                RetrofitClient.apiService.googleLogin(GoogleLoginRequest(idToken))
+                    .toResult("Google sign-in failed.")
+                    .fold(
+                        onSuccess = { establishSession(it) },
+                        onFailure = { _authState.value = AuthState.Error(it.uiMessage) },
+                    )
             } catch (e: Exception) {
                 // parseHttpError drains the buffered errorBody, so parseError
                 // must not re-read it — the fallback below is safe only
@@ -205,15 +209,15 @@ class AuthViewModel(
             _authState.value = AuthState.Loading
             try {
                 val role = if (isPhotographer) "PHOTOGRAPHER" else "RUNNER"
-                val envelope = RetrofitClient.apiService.googleLogin(
-                    GoogleLoginRequest(idToken, role)
-                )
-                if (envelope.success && envelope.data != null) {
-                    pendingGoogleIdToken = null
-                    establishSession(envelope.data)
-                } else {
-                    _authState.value = AuthState.Error(envelope.error ?: "Google sign-in failed.")
-                }
+                RetrofitClient.apiService.googleLogin(GoogleLoginRequest(idToken, role))
+                    .toResult("Google sign-in failed.")
+                    .fold(
+                        onSuccess = {
+                            pendingGoogleIdToken = null
+                            establishSession(it)
+                        },
+                        onFailure = { _authState.value = AuthState.Error(it.uiMessage) },
+                    )
             } catch (e: Exception) {
                 val apiError = RetrofitClient.parseHttpError(e)
                 _authState.value = AuthState.Error(
@@ -275,22 +279,15 @@ class AuthViewModel(
     fun verifyResetOtp(email: String, code: String) {
         viewModelScope.launch {
             _passwordResetState.value = PasswordResetState.Loading
-            try {
-                val envelope = RetrofitClient.apiService.verifyResetOtp(
-                    VerifyResetOtpRequest(email.trim(), code)
-                )
-                if (envelope.success && envelope.data != null) {
-                    resetToken = envelope.data.resetToken
+            apiCall("That code didn't work. It may have expired — resend a new one.") {
+                RetrofitClient.apiService.verifyResetOtp(VerifyResetOtpRequest(email.trim(), code))
+            }.fold(
+                onSuccess = {
+                    resetToken = it.resetToken
                     _passwordResetState.value = PasswordResetState.Success
-                } else {
-                    _passwordResetState.value = PasswordResetState.Error(
-                        envelope.error
-                            ?: "That code didn't work. It may have expired — resend a new one."
-                    )
-                }
-            } catch (e: Exception) {
-                _passwordResetState.value = PasswordResetState.Error(RetrofitClient.parseError(e))
-            }
+                },
+                onFailure = { _passwordResetState.value = PasswordResetState.Error(it.uiMessage) },
+            )
         }
     }
 

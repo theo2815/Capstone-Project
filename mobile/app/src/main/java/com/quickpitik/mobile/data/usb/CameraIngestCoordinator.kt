@@ -7,6 +7,7 @@ import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.CameraTransferStore
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.TetherWatchPrefs
 import com.quickpitik.mobile.data.usb.ptp.UsbEventCaptureController
 import com.quickpitik.mobile.service.TetherIngestService
 import com.quickpitik.mobile.worker.PhotoUploadScheduler
@@ -32,7 +33,7 @@ class CameraIngestCoordinator private constructor(private val context: Context) 
     val cameraManager = CameraConnectionManager(context)
     val store = CameraTransferStore(context, AppDatabase.getDatabase(context))
     private val session = SessionManager.getInstance(context)
-    private val prefs = context.getSharedPreferences("quickpitik_tether", Context.MODE_PRIVATE)
+    private val prefs = TetherWatchPrefs(context)
     val watch = MutableStateFlow<ShutterWatchState>(ShutterWatchState.Idle)
     val cardBusy = MutableStateFlow(false)
     private var cardStart: CompletableDeferred<CoroutineScope>? = null
@@ -56,7 +57,7 @@ class CameraIngestCoordinator private constructor(private val context: Context) 
         generation++
         logs = emptyList()
         watch.value = ShutterWatchState.Starting
-        prefs.edit().putString("watch_active_event", event).putString("watch_owner", owner).apply()
+        prefs.save(owner = owner, eventId = event)
         val intent = Intent(context, TetherIngestService::class.java).setAction(TetherIngestService.ACTION_WATCH)
             .putExtra("owner", owner).putExtra("event", event).putExtra("generation", generation)
         try { ContextCompat.startForegroundService(context, intent) }
@@ -103,7 +104,7 @@ class CameraIngestCoordinator private constructor(private val context: Context) 
 
     fun stopWatch() {
         generation++
-        prefs.edit().remove("watch_active_event").remove("watch_owner").remove("watch_event_snapshot").apply()
+        prefs.clear()
         val previous = watchJob
         if (previous == null || previous.isCompleted) { watch.value = ShutterWatchState.Idle; return }
         watch.value = ShutterWatchState.Stopping

@@ -4,6 +4,7 @@ import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SaveEventRequest
 import com.quickpitik.mobile.data.remote.SavedEventSummaryDto
+import com.quickpitik.mobile.data.remote.apiCall
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,19 +15,9 @@ class SavedEventsRepositoryImpl : SavedEventsRepository {
     private val _saved = MutableStateFlow<List<SavedEventSummaryDto>>(emptyList())
     override val savedEvents: StateFlow<List<SavedEventSummaryDto>> = _saved.asStateFlow()
 
-    override suspend fun refresh(token: String): Result<List<SavedEventSummaryDto>> {
-        return try {
-            val response = api.getSavedEvents("Bearer $token")
-            if (response.success && response.data != null) {
-                _saved.value = response.data
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Failed to load saved events"))
-            }
-        } catch (e: Exception) {
-            Result.failure(Exception(RetrofitClient.parseError(e)))
-        }
-    }
+    override suspend fun refresh(token: String): Result<List<SavedEventSummaryDto>> =
+        apiCall("Failed to load saved events") { api.getSavedEvents("Bearer $token") }
+            .onSuccess { _saved.value = it }
 
     // Optimistically insert a summary derived from the event card we already have,
     // then reconcile with the server-returned row (which carries the canonical
@@ -47,51 +38,20 @@ class SavedEventsRepositoryImpl : SavedEventsRepository {
             )
             _saved.value = original + optimistic
         }
-        return try {
-            val response = api.saveEvent("Bearer $token", SaveEventRequest(event.id))
-            if (response.success && response.data != null) {
-                _saved.value = _saved.value.map { if (it.id == event.id) response.data else it }
-                Result.success(response.data)
-            } else {
-                _saved.value = original
-                Result.failure(Exception(response.error ?: "Failed to save event"))
-            }
-        } catch (e: Exception) {
-            _saved.value = original
-            Result.failure(Exception(RetrofitClient.parseError(e)))
-        }
+        return apiCall("Failed to save event") { api.saveEvent("Bearer $token", SaveEventRequest(event.id)) }
+            .onSuccess { row -> _saved.value = _saved.value.map { if (it.id == event.id) row else it } }
+            .onFailure { _saved.value = original }
     }
 
-    override suspend fun saveById(token: String, eventId: String): Result<SavedEventSummaryDto> {
-        return try {
-            val response = api.saveEvent("Bearer $token", SaveEventRequest(eventId))
-            if (response.success && response.data != null) {
-                if (_saved.value.none { it.id == eventId }) {
-                    _saved.value = _saved.value + response.data
-                }
-                Result.success(response.data)
-            } else {
-                Result.failure(Exception(response.error ?: "Failed to save event"))
-            }
-        } catch (e: Exception) {
-            Result.failure(Exception(RetrofitClient.parseError(e)))
-        }
-    }
+    override suspend fun saveById(token: String, eventId: String): Result<SavedEventSummaryDto> =
+        apiCall("Failed to save event") { api.saveEvent("Bearer $token", SaveEventRequest(eventId)) }
+            .onSuccess { row -> if (_saved.value.none { it.id == eventId }) _saved.value = _saved.value + row }
 
     override suspend fun unsave(token: String, eventId: String): Result<Boolean> {
         val original = _saved.value
         _saved.value = original.filter { it.id != eventId }
-        return try {
-            val response = api.unsaveEvent("Bearer $token", eventId)
-            if (response.success && response.data != null) {
-                Result.success(response.data.removed)
-            } else {
-                _saved.value = original
-                Result.failure(Exception(response.error ?: "Failed to remove saved event"))
-            }
-        } catch (e: Exception) {
-            _saved.value = original
-            Result.failure(Exception(RetrofitClient.parseError(e)))
-        }
+        return apiCall("Failed to remove saved event") { api.unsaveEvent("Bearer $token", eventId) }
+            .map { it.removed }
+            .onFailure { _saved.value = original }
     }
 }
