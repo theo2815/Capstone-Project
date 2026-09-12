@@ -43,7 +43,6 @@ import javax.imageio.ImageIO
  * canonical list so the FE can revert atomically on failure.
  */
 @Service
-@Transactional
 class SelfieService(
     private val userSelfieRepository: UserSelfieRepository,
     private val storageService: StorageService,
@@ -57,6 +56,16 @@ class SelfieService(
     fun list(userId: UUID): List<SelfieRefDto> =
         userSelfieRepository.findByUserIdOrderByUploadedAtDesc(userId).map { it.toDto() }
 
+    /**
+     * Deliberately NOT `@Transactional` (2026-09-11 audit P-3): the quality gate
+     * is an HTTP round-trip to ai-api and the store is a network PUT, and a
+     * class-level `@Transactional` held one of Hikari's 10 connections across
+     * both. The only write is the final `save`, which is transactional on its own.
+     *
+     * The cap below was never locked and stays a soft limit — concurrent uploads
+     * can still land a sixth selfie. The partial unique index, not the
+     * transaction, is what protects the single-primary invariant.
+     */
     fun upload(userId: UUID, file: ByteArray, contentType: String?, filename: String?): SelfieRefDto {
         if (file.isEmpty()) {
             throw ValidationException(
@@ -150,6 +159,7 @@ class SelfieService(
      * "zero primaries" window which is also the explicit terminal state when
      * the runner deletes their last selfie. No SELECT … FOR UPDATE needed.
      */
+    @Transactional
     fun delete(userId: UUID, selfieId: UUID): Boolean {
         val selfie = userSelfieRepository.findByIdAndUserId(selfieId, userId) ?: return false
         val wasPrimary = selfie.isPrimary
@@ -166,6 +176,7 @@ class SelfieService(
         return true
     }
 
+    @Transactional
     fun setPrimary(userId: UUID, selfieId: UUID): List<SelfieRefDto> {
         val target = userSelfieRepository.findByIdAndUserId(selfieId, userId)
             ?: throw NotFoundException(

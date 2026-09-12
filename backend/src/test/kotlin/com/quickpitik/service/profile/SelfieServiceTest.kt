@@ -18,12 +18,15 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.http.HttpStatus
+import org.springframework.transaction.annotation.Transactional
 import java.io.ByteArrayOutputStream
 import java.awt.image.BufferedImage
 import java.util.UUID
 import javax.imageio.ImageIO
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 // Two behaviours locked here:
@@ -188,6 +191,27 @@ class SelfieServiceTest {
         Mockito.verifyNoInteractions(storageService)
         Mockito.verifyNoInteractions(aiApiClient)
     }
+
+    // Transaction boundaries are invisible to a plain Mockito unit test (no
+    // proxy), so they are pinned by annotation the way AsyncConfigTest pins
+    // @Async. The old class-level @Transactional held a Hikari connection
+    // (pool = 10) across the ai-api quality gate and the storage PUT — the
+    // 2026-09-11 audit's P-3. `delete` and `setPrimary` write more than one row
+    // and must keep their own transaction.
+    @Test
+    fun `upload runs with no transaction, the multi-row writers keep one`() {
+        assertNull(
+            SelfieService::class.java.getAnnotation(Transactional::class.java),
+            "a class-level @Transactional puts the ai-api call and the storage PUT back inside a transaction",
+        )
+        assertNull(txOn("upload", UUID::class.java, ByteArray::class.java, String::class.java, String::class.java))
+        assertNotNull(txOn("delete", UUID::class.java, UUID::class.java))
+        assertNotNull(txOn("setPrimary", UUID::class.java, UUID::class.java))
+        assertNotNull(txOn("list", UUID::class.java))
+    }
+
+    private fun txOn(name: String, vararg params: Class<*>): Transactional? =
+        SelfieService::class.java.getDeclaredMethod(name, *params).getAnnotation(Transactional::class.java)
 
     private fun stubHappyPathPlumbing() {
         Mockito.`when`(userSelfieRepository.countByUserId(userId)).thenReturn(0L)
