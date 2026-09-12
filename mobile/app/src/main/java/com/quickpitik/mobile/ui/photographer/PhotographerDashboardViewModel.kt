@@ -14,6 +14,7 @@ import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.MAX_UPLOAD_BYTES
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.StatusCount
 import com.quickpitik.mobile.data.local.TetherEvents
 import com.quickpitik.mobile.data.local.TetherWatchPrefs
 import com.quickpitik.mobile.data.local.UploadRecord
@@ -909,38 +910,18 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     return@collectLatest
                 }
 
-                val byStatus = counts.associate { it.status to it.count }
-                val synced = byStatus["COMPLETED"] ?: 0
-                val queued = byStatus["QUEUED"] ?: 0
-                val uploading = byStatus["UPLOADING"] ?: 0
-                val failed = byStatus["FAILED"] ?: 0
-                val duplicate = byStatus["DUPLICATE"] ?: 0 // settled, like FAILED, so the bar still reaches 100%
-                val total = counts.sumOf { it.count }
-
-                // Progress is BATCH-relative. COMPLETED rows persist forever as
-                // the card-import dedupe ledger, so `synced/total` over all
-                // history meant a 500-photo race followed by one new queued
-                // photo showed 500/501 ≈ 99% instantly. Baseline = rows already
-                // settled when the current batch began (idle → active edge).
-                val active = queued + uploading > 0
-                if (active && !uploadBatchActive) uploadBatchBaseline = synced + failed + duplicate
-                uploadBatchActive = active
-                val batchTotal = total - uploadBatchBaseline
-                val batchDone = (synced + failed + duplicate) - uploadBatchBaseline
-                val progress = when {
-                    !active -> if (total > 0) 1f else 0f
-                    batchTotal > 0 -> batchDone.toFloat() / batchTotal.toFloat()
-                    else -> 0f
-                }
+                val stats = queueProgress(counts, uploadBatchBaseline, uploadBatchActive)
+                uploadBatchBaseline = stats.baseline
+                uploadBatchActive = stats.active
 
                 _queueStats.value = QueueStats(
-                    syncedCount = synced,
-                    queuedCount = queued,
-                    uploadingCount = uploading,
-                    failedCount = failed,
+                    syncedCount = stats.synced,
+                    queuedCount = stats.queued,
+                    uploadingCount = stats.uploading,
+                    failedCount = stats.failed,
                     duplicateCount = duplicates,
-                    totalCount = total,
-                    progress = progress,
+                    totalCount = stats.total,
+                    progress = stats.progress,
                     lastError = latestError?.takeIf { it.isNotBlank() }?.let(::friendlyUploadError),
                     recentRecords = recent, // already newest-first
                 )
@@ -2064,3 +2045,59 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     }
 }
 
+/**
+ * One tick of the upload queue's counters, plus the batch bookkeeping the next
+ * tick needs back. [baseline] and [active] are the caller's carried state.
+ */
+internal data class QueueProgress(
+    val synced: Int,
+    val queued: Int,
+    val uploading: Int,
+    val failed: Int,
+    val total: Int,
+    val progress: Float,
+    /** Rows already settled when the current batch began — feed this back as `previousBaseline`. */
+    val baseline: Int,
+    val active: Boolean,
+)
+
+/**
+ * Progress is BATCH-relative. COMPLETED rows persist forever as the card-import
+ * dedupe ledger, so `synced/total` over all history meant a 500-photo race
+ * followed by one new queued photo showed 500/501 ≈ 99% instantly. The baseline
+ * is the rows already settled when the current batch began (the idle → active
+ * edge); it only moves on that edge, so a batch's own completions fill the bar.
+ * DUPLICATE counts as settled, like FAILED, so the bar still reaches 100%.
+ */
+internal fun queueProgress(
+    counts: List<StatusCount>,
+    previousBaseline: Int,
+    wasActive: Boolean,
+): QueueProgress {
+    val byStatus = counts.associate { it.status to it.count }
+    val synced = byStatus["COMPLETED"] ?: 0
+    val queued = byStatus["QUEUED"] ?: 0
+    val uploading = byStatus["UPLOADING"] ?: 0
+    val failed = byStatus["FAILED"] ?: 0
+    val duplicate = byStatus["DUPLICATE"] ?: 0
+    val total = counts.sumOf { it.count }
+    val settled = synced + failed + duplicate
+
+    val active = queued + uploading > 0
+    val baseline = if (active && !wasActive) settled else previousBaseline
+    val batchTotal = total - baseline
+    return QueueProgress(
+        synced = synced,
+        queued = queued,
+        uploading = uploading,
+        failed = failed,
+        total = total,
+        progress = when {
+            !active -> if (total > 0) 1f else 0f
+            batchTotal > 0 -> (settled - baseline).toFloat() / batchTotal.toFloat()
+            else -> 0f
+        },
+        baseline = baseline,
+        active = active,
+    )
+}

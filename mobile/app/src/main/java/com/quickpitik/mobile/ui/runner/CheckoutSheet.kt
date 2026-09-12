@@ -134,7 +134,7 @@ fun CheckoutSheet(
     // field): a PENDING order must never be misread as settled.
     LaunchedEffect(checkoutState) {
         val order = (checkoutState as? CheckoutState.Success)?.order ?: return@LaunchedEffect
-        if (order.status.uppercase() in setOf("PAID", "FULFILLED")) {
+        if (isSettledOrderStatus(order.status)) {
             onCheckoutSuccess(order)
             cartViewModel.resetCheckoutState()
         }

@@ -58,6 +58,19 @@ private enum class StatusFilter(val label: String, val tone: StatusTone) {
 // these as two sections; on a phone one bucket shows at a time.
 private enum class OwnerTab(val label: String) { MINE("My events"), ADMIN("Admin events") }
 
+/**
+ * The one place the roster's search box filters: on the event name, trimmed and
+ * case-insensitive; a blank box shows everything. Web EventFilterBar parity —
+ * the date dropdown is the status chips here, so the name is all that is matched.
+ */
+internal fun filterEventsByName(
+    events: List<PhotographerEventSummaryDto>,
+    query: String,
+): List<PhotographerEventSummaryDto> {
+    val q = query.trim()
+    return if (q.isEmpty()) events else events.filter { it.name.contains(q, ignoreCase = true) }
+}
+
 private fun PhotographerEventSummaryDto.filterBucket(today: LocalDate = LocalDate.now()): StatusFilter =
     when (deriveEventState(date, today)) {
         EventState.LIVE -> StatusFilter.LIVE
@@ -213,11 +226,7 @@ fun PhotographerEventsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            val filteredAll = remember(scoped, nameQuery) {
-                val q = nameQuery.trim()
-                if (q.isEmpty()) scoped
-                else scoped.filter { it.name.contains(q, ignoreCase = true) }
-            }
+            val filteredAll = remember(scoped, nameQuery) { filterEventsByName(scoped, nameQuery) }
             val buckets = remember(filteredAll, today) { filteredAll.groupBy { it.filterBucket(today) } }
             val liveCount = buckets[StatusFilter.LIVE]?.size ?: 0
             val upcomingCount = buckets[StatusFilter.UPCOMING]?.size ?: 0

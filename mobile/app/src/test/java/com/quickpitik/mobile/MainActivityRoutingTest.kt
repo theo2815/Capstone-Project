@@ -50,6 +50,19 @@ class MainActivityRoutingTest {
         assertTrue("orders?orderId={orderId}" in RUNNER_NAV_ROUTES)
     }
 
+    @Test fun `the studio bar needs the studio graph entry, the runner bar never shows on the receipt`() {
+        assertEquals(BottomBar.Studio, bottomBarFor("studio/home", hasStudioEntry = true))
+        assertEquals(BottomBar.Studio, bottomBarFor("studio/settings", hasStudioEntry = true))
+        // Mid-teardown the graph entry is gone: no bar rather than a crash.
+        assertEquals(BottomBar.None, bottomBarFor("studio/home", hasStudioEntry = false))
+        assertEquals(BottomBar.Runner, bottomBarFor("events", hasStudioEntry = false))
+        assertEquals(BottomBar.Runner, bottomBarFor("orders?orderId={orderId}", hasStudioEntry = true))
+        // The modal receipt, login and a public profile carry no persistent nav.
+        for (bare in listOf(RECEIPT_ROUTE_PATTERN, "login", "photographer/{handle}", "verify", "orders", null)) {
+            assertEquals(bare.toString(), BottomBar.None, bottomBarFor(bare, hasStudioEntry = true))
+        }
+    }
+
     @Test fun `tab order ignores the query and slides only between peers of the same shell`() {
         assertEquals(2, tabIndexForRoute("orders?orderId={orderId}"))
         assertEquals(2, tabIndexForRoute("studio/events"))

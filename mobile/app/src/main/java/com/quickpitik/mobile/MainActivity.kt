@@ -162,6 +162,21 @@ private val STUDIO_TAB_ORDER = listOf(
     "studio/settings",
 )
 
+internal enum class BottomBar { None, Studio, Runner }
+
+/**
+ * Which floating nav a route carries. Studio tabs need the studio graph entry
+ * (the owner of the shared dashboard ViewModel) to exist; the runner set is
+ * exact route PATTERNS, never startsWith — "orders/return/{orderId}" is the
+ * modal PayMongo receipt and must stay bare (startsWith("orders") matched it
+ * once). Everything else — login, the receipt, a public profile — gets none.
+ */
+internal fun bottomBarFor(currentRoute: String?, hasStudioEntry: Boolean): BottomBar = when {
+    currentRoute in STUDIO_TAB_ROUTES && hasStudioEntry -> BottomBar.Studio
+    currentRoute in RUNNER_NAV_ROUTES -> BottomBar.Runner
+    else -> BottomBar.None
+}
+
 internal fun tabIndexForRoute(route: String?): Int {
     if (route == null) return -1
     val clean = route.substringBefore("?")
@@ -248,10 +263,6 @@ class MainActivity : ComponentActivity() {
 
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
-                // Exact route PATTERNS, not startsWith: "orders/return/{orderId}"
-                // is the modal PayMongo receipt and must NOT carry the
-                // persistent nav (startsWith("orders") used to match it).
-                val showRunnerBottomBar = currentRoute in RUNNER_NAV_ROUTES
 
                 // While any studio/* destination is on the stack this resolves
                 // the graph's back-stack entry — the owner of the ONE shared
@@ -350,9 +361,9 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     containerColor = Bone,
                     bottomBar = {
-                        when {
-                            currentRoute in STUDIO_TAB_ROUTES && studioEntry != null -> {
-                                val studioVm: PhotographerDashboardViewModel = viewModel(studioEntry)
+                        when (bottomBarFor(currentRoute, studioEntry != null)) {
+                            BottomBar.Studio -> studioEntry?.let { entry ->
+                                val studioVm: PhotographerDashboardViewModel = viewModel(entry)
                                 val verificationState by studioVm.verificationState.collectAsState()
                                 val showSettingsBadge = when (val s = verificationState) {
                                     is VerificationUiState.Success ->
@@ -365,7 +376,7 @@ class MainActivity : ComponentActivity() {
                                     onNavigate = studioNavigate,
                                 )
                             }
-                            showRunnerBottomBar -> RunnerFloatingBottomNav(
+                            BottomBar.Runner -> RunnerFloatingBottomNav(
                                 currentRoute = currentRoute,
                                 onNavigate = { route ->
                                     if (route == "events" && currentRoute == "gallery") {
@@ -387,6 +398,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             )
+                            BottomBar.None -> Unit
                         }
                     }
                 ) { innerPadding ->

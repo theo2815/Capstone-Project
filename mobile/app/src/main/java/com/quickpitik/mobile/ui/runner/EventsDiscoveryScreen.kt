@@ -38,7 +38,7 @@ import kotlinx.coroutines.launch
 
 // Date-filter choices: 3 primary lifecycle options (Live, Upcoming, Finished),
 // with Finished matching both recent and archived races.
-private enum class DateFilter(val label: String, val matches: (EventState) -> Boolean) {
+internal enum class DateFilter(val label: String, val matches: (EventState) -> Boolean) {
     ANY("All events", { true }),
     LIVE("Live", { it == EventState.LIVE }),
     UPCOMING("Upcoming", { it == EventState.UPCOMING }),
@@ -222,18 +222,8 @@ fun EventsDiscoveryScreen(
                     val withState = remember(events) { events.map { it to it.displayState(today) } }
                     val cities = remember(events) { events.map { extractCity(it.location) }.filter { it.isNotBlank() }.distinct().sorted() }
                     val liveCount = withState.count { it.second == EventState.LIVE }
-                    val trimmed = query.trim().lowercase()
-                    val filtersActive = cityFilter != "all" || dateFilter != DateFilter.ANY || trimmed.isNotEmpty()
-
-                    val filtered = withState.filter { (event, eventState) ->
-                        if (cityFilter != "all" && extractCity(event.location) != cityFilter) return@filter false
-                        if (!dateFilter.matches(eventState)) return@filter false
-                        if (trimmed.isNotEmpty()) {
-                            val hay = "${event.name} ${event.location} ${event.date}".lowercase()
-                            if (!hay.contains(trimmed)) return@filter false
-                        }
-                        true
-                    }
+                    val filtersActive = cityFilter != "all" || dateFilter != DateFilter.ANY || query.isNotBlank()
+                    val filtered = filterEvents(withState, cityFilter, dateFilter, query)
 
                     // Live-today banner — jump nothing, just a presence cue like the web.
                     if (liveCount > 0) {
@@ -668,6 +658,30 @@ private fun EmptyState(title: String, body: String) {
         Text(title, style = Typography.titleMedium, fontWeight = FontWeight.Bold, color = Ink)
         Spacer(Modifier.height(6.dp))
         Text(body, style = Typography.bodyMedium, color = SlateSoft, textAlign = TextAlign.Center)
+    }
+}
+
+/**
+ * The one place discovery narrows the race list: city (the tail of
+ * "Venue, City"), lifecycle, and a free-text query matched against name,
+ * location and date together. "all" / [DateFilter.ANY] / a blank query each
+ * mean "do not narrow on this".
+ */
+internal fun filterEvents(
+    events: List<Pair<EventDto, EventState>>,
+    city: String,
+    dateFilter: DateFilter,
+    query: String,
+): List<Pair<EventDto, EventState>> {
+    val needle = query.trim().lowercase()
+    return events.filter { (event, eventState) ->
+        if (city != "all" && extractCity(event.location) != city) return@filter false
+        if (!dateFilter.matches(eventState)) return@filter false
+        if (needle.isNotEmpty()) {
+            val hay = "${event.name} ${event.location} ${event.date}".lowercase()
+            if (!hay.contains(needle)) return@filter false
+        }
+        true
     }
 }
 

@@ -114,19 +114,7 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     // 409. Kept fresh by a fetchOrders() call when those sheets open. Narrower
     // than the server gate (no PENDING/guest), so the backend 409 stays the net.
     val ownedPhotoIds: StateFlow<Set<String>> = _ordersState
-        .map { state ->
-            if (state is OrdersState.Success) {
-                state.orders
-                    .filter { order ->
-                        val status = order.status?.uppercase()
-                        status != null && status in OWNED_ORDER_STATUSES
-                    }
-                    .flatMap { it.photoIds }
-                    .toSet()
-            } else {
-                emptySet()
-            }
-        }
+        .map { settledPhotoIds(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     private val _orderDetailState = MutableStateFlow<OrderDetailState>(OrderDetailState.Idle)
@@ -427,19 +415,20 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
 
                 val terminal = statusResult.fold(
                     onSuccess = { status ->
-                        when (status.status.uppercase()) {
-                            "PAID", "FULFILLED" -> {
+                        val reported = status.status.uppercase()
+                        when {
+                            isSettledOrderStatus(status.status) -> {
                                 repository.clearCart(token)
                                 hydrateReturnDetail(orderId, token, shareToken)
                                 true
                             }
-                            "EXPIRED" -> {
+                            reported == "EXPIRED" -> {
                                 _orderReturnState.value = OrderReturnState.Failed(
                                     "This payment session expired. Start checkout again if you still want the photos."
                                 )
                                 true
                             }
-                            "REFUNDED" -> {
+                            reported == "REFUNDED" -> {
                                 _orderReturnState.value = OrderReturnState.Failed(
                                     "This order was refunded. Check your email or open it from Orders."
                                 )
@@ -498,6 +487,30 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         const val POLL_INTERVAL_MS = 2_000L
         const val POLL_MAX_ATTEMPTS = 30 // 60s
-        val OWNED_ORDER_STATUSES = setOf("PAID", "FULFILLED")
     }
 }
+
+private val SETTLED_ORDER_STATUSES = setOf("PAID", "FULFILLED")
+
+/**
+ * The one place "this order is settled" is decided — the runner owns the photos,
+ * the cart may clear and the receipt may render. Read by the cart's owned-photo
+ * flags, the checkout sheet's no-redirect route to the receipt, and the receipt
+ * poll's terminal branch. The backend writes the status UPPERCASE; compared
+ * case-insensitively anyway. PENDING / EXPIRED / REFUNDED and an absent status
+ * are all not settled.
+ */
+internal fun isSettledOrderStatus(status: String?): Boolean =
+    status != null && status.uppercase() in SETTLED_ORDER_STATUSES
+
+/**
+ * Photo ids the runner already owns: every photo on a settled order. Anything
+ * but a loaded list (loading, error) means "we don't know yet" — no duplicate
+ * flags, and the backend's 409 stays the net.
+ */
+internal fun settledPhotoIds(state: OrdersState): Set<String> =
+    if (state is OrdersState.Success) {
+        state.orders.filter { isSettledOrderStatus(it.status) }.flatMap { it.photoIds }.toSet()
+    } else {
+        emptySet()
+    }
