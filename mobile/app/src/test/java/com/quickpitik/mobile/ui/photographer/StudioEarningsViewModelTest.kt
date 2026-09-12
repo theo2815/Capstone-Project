@@ -29,7 +29,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * must refresh the wallet so the balance the photographer is looking at is the
  * one the request just changed.
  *
- * Moved from PhotographerDashboardViewModelMoneyTest with the ViewModel split
+ * Moved from PhotographerDashboardViewModelTest with the ViewModel split
  * (plan 2 phase G).
  */
 @RunWith(RobolectricTestRunner::class)

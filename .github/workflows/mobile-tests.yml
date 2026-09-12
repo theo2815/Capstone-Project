@@ -21,10 +21,10 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
-      # The JVM suite: Robolectric + MockWebServer, no device. Same command the
-      # module docs record by hand; this is the first time anything runs it
-      # unattended. Release and instrumented variants are deliberately not built.
-      - run: ./gradlew testDebugUnitTest --console=plain --no-daemon
+      # The JVM suite (Robolectric + MockWebServer, no device) plus the release
+      # compile: a release-only break must not pass CI. Both were hand-run per
+      # phase; the instrumented variant is deliberately not built.
+      - run: ./gradlew testDebugUnitTest compileReleaseKotlin --console=plain --no-daemon
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

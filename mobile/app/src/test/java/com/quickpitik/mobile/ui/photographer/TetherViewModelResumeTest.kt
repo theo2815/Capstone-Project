@@ -4,11 +4,10 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
-import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
-import com.quickpitik.mobile.support.awaitRoomIdle
+import com.quickpitik.mobile.support.closeRoom
 import com.quickpitik.mobile.support.signInAs
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -51,8 +50,7 @@ class TetherViewModelResumeTest {
         viewModels.clear()
         // These tests finish within milliseconds of constructing the ViewModel,
         // so its startup Room queries are still on the executor.
-        awaitRoomIdle(application)
-        AppDatabase.getDatabase(application).close()
+        closeRoom(application)
         tether.edit().clear().commit()
         SessionManager.getInstance(application).clearSession()
     }

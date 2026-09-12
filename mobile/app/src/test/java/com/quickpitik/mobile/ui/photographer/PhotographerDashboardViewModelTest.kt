@@ -3,12 +3,10 @@ package com.quickpitik.mobile.ui.photographer
 import android.app.Application
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
-import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
-import com.quickpitik.mobile.support.awaitRoomIdle
 import com.quickpitik.mobile.support.ok
 import com.quickpitik.mobile.support.signInAs
 import okhttp3.mockwebserver.Dispatcher
@@ -37,7 +35,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * payout request to StudioEarningsViewModelTest.
  */
 @RunWith(RobolectricTestRunner::class)
-class PhotographerDashboardViewModelMoneyTest {
+class PhotographerDashboardViewModelTest {
     @get:Rule val main = MainDispatcherRule()
     @get:Rule val backend = MockBackend()
 
@@ -57,12 +55,15 @@ class PhotographerDashboardViewModelMoneyTest {
             }
         }
         route("GET /api/v1/me/photographer/verification") { ok(verification("approved")) }
+        // Every model() fires this from init. Without it two of the three tests
+        // 404 on their own cold start and pass only because they never read it.
+        route("GET $EVENTS") { ok("""{"items":[],"total":0,"offset":0,"limit":100}""") }
     }
 
     @After fun tearDown() {
+        // No Room teardown: this ViewModel has held no AppDatabase reference
+        // since the split (ce17a518), so there is nothing here to close.
         viewModels.clear()
-        awaitRoomIdle(application)
-        AppDatabase.getDatabase(application).close()
         SessionManager.getInstance(application).clearSession()
     }
 
@@ -79,7 +80,6 @@ class PhotographerDashboardViewModelMoneyTest {
     @Test fun `authoring an event reports the backend's words on a refusal and refreshes the list on a save`() {
         // The last two envelope sites phase E left in this file. A create and
         // an edit go to different endpoints; both fold through the same reader.
-        route("GET $EVENTS") { ok("""{"items":[],"total":0,"offset":0,"limit":100}""") }
         route("POST $EVENTS") {
             MockResponse().setBody(error("EVENT_DATE_PAST", "Pick a date that hasn't passed."))
         }

@@ -36,7 +36,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * brand colour, stop at the first refused step with the backend's wording, PUT
  * the watermark placement only when it changed).
  *
- * These cases came from PhotographerDashboardViewModelMoneyTest with the
+ * These cases came from PhotographerDashboardViewModelTest with the
  * ViewModel split (plan 2 phase G). The `init` here loads four routes, so the
  * stubs below are the whole cold start — no events, earnings, verification,
  * inbox socket, USB or Room salvo to satisfy first.

@@ -5,10 +5,9 @@ import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.google.gson.Gson
 import com.quickpitik.mobile.data.local.SessionManager
-import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.support.MainDispatcherRule
-import com.quickpitik.mobile.support.awaitRoomIdle
+import com.quickpitik.mobile.support.pointAppAt
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -48,14 +47,14 @@ class PhotoManagementViewModelTest {
             override fun dispatch(request: RecordedRequest) = respond(request)
         }
         server.start()
-        RetrofitClient.setBaseUrl(server.url("/").toString())
+        pointAppAt(server.url("/").toString())
     }
 
     @After
     fun tearDown() {
+        // No Room teardown: model() builds PhotographerDashboardViewModel, which
+        // has held no AppDatabase reference since the split (ce17a518).
         viewModels.clear()
-        awaitRoomIdle(application)
-        AppDatabase.getDatabase(application).close()
         server.shutdown()
         RetrofitClient.resetBaseUrl()
         session.clearSession()

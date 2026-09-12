@@ -40,16 +40,15 @@ class MainDispatcherRule(private val dispatcher: TestDispatcher = UnconfinedTest
 
 /**
  * A MockWebServer the app's real HTTP stack talks to for one test, through the
- * RetrofitClient.setBaseUrl seam (debug builds only, which is what
- * testDebugUnitTest runs). Reset in after() because Robolectric's sandbox is
- * per-class, not per-method: a leaked URL would poison the next method.
+ * [pointAppAt] seam. Reset in after() because that seam is a process-wide
+ * static: a leaked URL would poison the next method.
  */
 class MockBackend : ExternalResource() {
     val server = MockWebServer()
 
     override fun before() {
         server.start()
-        RetrofitClient.setBaseUrl(server.url("/").toString())
+        pointAppAt(server.url("/").toString())
     }
 
     override fun after() {
@@ -60,6 +59,19 @@ class MockBackend : ExternalResource() {
     /** Queues [responses] in order; returns the server so a test can takeRequest(). */
     fun enqueue(vararg responses: MockResponse): MockWebServer =
         server.also { s -> responses.forEach(s::enqueue) }
+}
+
+/**
+ * Points the app's HTTP stack at [url], failing closed. RetrofitClient.setBaseUrl
+ * returns false and changes nothing outside a debug build, so unchecked the suite
+ * would keep the compiled-in production origin and every test that thinks it is
+ * talking to a MockWebServer would dial the real backend instead. Every test that
+ * moves the app off its default origin goes through here.
+ */
+fun pointAppAt(url: String) {
+    check(RetrofitClient.setBaseUrl(url)) {
+        "The backend seam needs the debug variant (RetrofitClient.setBaseUrl is a no-op elsewhere): run testDebugUnitTest"
+    }
 }
 
 /** The backend's success envelope around [data] (a JSON literal). */
@@ -96,3 +108,29 @@ fun awaitRoomIdle(application: Application) {
 }
 
 private const val ROOM_IO_THREADS = 4
+
+/**
+ * Ends a ViewModel test's use of Room: drains the IO pool, closes the database
+ * and forgets the singleton. The forget is the part a bare close() misses -
+ * AppDatabase caches INSTANCE and never nulls it, and Robolectric shares one
+ * sandbox (and the app statics in it) across test classes with the same config,
+ * so the next class would inherit a closed database. Clear the ViewModels first.
+ */
+fun closeRoom(application: Application) {
+    awaitRoomIdle(application)
+    AppDatabase.getDatabase(application).close()
+    forgetRoomSingleton()
+}
+
+/**
+ * Nulls AppDatabase.INSTANCE. Reflection because the field is private and the
+ * alternative - a test-only reset hook - would be a production change made
+ * purely to serve a test. Kotlin lowers a companion-object backing field to a
+ * static on the enclosing class, hence the lookup here.
+ */
+fun forgetRoomSingleton() {
+    AppDatabase::class.java.getDeclaredField("INSTANCE").apply {
+        isAccessible = true
+        set(null, null)
+    }
+}

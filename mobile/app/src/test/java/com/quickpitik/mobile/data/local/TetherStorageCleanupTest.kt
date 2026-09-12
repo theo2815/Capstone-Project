@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.support.pointAppAt
 import kotlinx.coroutines.*
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -43,7 +44,7 @@ class TetherStorageCleanupTest {
                 else response()
         }
         server.start()
-        RetrofitClient.setBaseUrl(server.url("/").toString())
+        pointAppAt(server.url("/").toString())
         cleanup = TetherStorageCleanup(context, db)
     }
 
@@ -134,10 +135,10 @@ class TetherStorageCleanupTest {
 
     @Test fun `account or backend changing during verification keeps original bytes`() = runBlocking {
         for (change in listOf<() -> Unit>(
-            { signIn("another") }, { RetrofitClient.setBaseUrl("https://another.invalid/") },
+            { signIn("another") }, { pointAppAt("https://another.invalid/") },
         )) {
             signIn("owner")
-            RetrofitClient.setBaseUrl(server.url("/").toString())
+            pointAppAt(server.url("/").toString())
             val row = record()
             response = { change(); MockResponse().setBody(Buffer().write(original)) }
             assertTrue(runCatching { cleanup.remove(row) }.isFailure)
