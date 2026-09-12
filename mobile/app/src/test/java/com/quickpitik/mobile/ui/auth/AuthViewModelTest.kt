@@ -1,12 +1,16 @@
 package com.quickpitik.mobile.ui.auth
 
 import android.app.Application
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Parcel
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.ViewMode
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
@@ -266,6 +270,34 @@ class AuthViewModelTest {
         vm.confirmEmailChange("c-2")
         assertEquals(EmailLinkState.Error("That email was registered to another account before you confirmed."), vm.awaitLink("c-2"))
         assertEquals("access-2", session.getAccessToken())
+    }
+
+    @Test fun `a confirmed email change still reads as confirmed, credentials gone, when the rest of the local sign-out throws`() {
+        respond = { _, _ -> ok("""{"message":"Email updated. Sign in again with your new address."}""") }
+        // A phone whose tether prefs cannot be opened: clearSession() throws partway.
+        val broken = object : ContextWrapper(application) {
+            override fun getApplicationContext(): Context = this
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+                if (name == "quickpitik_tether") throw IllegalStateException("disk full") else super.getSharedPreferences(name, mode)
+        }
+        val failing = SessionManager::class.java.getDeclaredConstructor(Context::class.java)
+            .apply { isAccessible = true }.newInstance(broken)
+        failing.saveSession("access-1", "RUNNER", "Juan", "juan@x.com", refreshToken = "refresh-1")
+        // RetrofitClient builds its one HTTP client around whichever SessionManager exists
+        // at first use; build it against the real one now, so the swap cannot outlive this test.
+        RetrofitClient.apiService
+        val singleton = SessionManager::class.java.getDeclaredField("INSTANCE").apply { isAccessible = true }
+        singleton.set(null, failing)
+        try {
+            val vm = AuthViewModel(application)
+            vm.confirmEmailChange("c-1")
+            assertEquals(EmailLinkState.Success("Email updated. Sign in again with your new address."), vm.awaitLink("c-1"))
+            assertNull(failing.getAccessToken())
+            // The prefs store, where a phone with a keystore keeps the tokens, was wiped before the throw.
+            assertNull(failing.getUserEmail())
+        } finally {
+            singleton.set(null, session)
+        }
     }
 
     @Test fun `an answered link outlives process death, and one that died in flight is sent again`() {

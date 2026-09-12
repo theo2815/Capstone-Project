@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -59,8 +60,8 @@ fun VerifyEmailScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        when (val state = links[key] ?: EmailLinkState.Loading) {
-            EmailLinkState.Loading -> {
+        when (val state = links[key]) {
+            null -> {
                 CircularProgressIndicator(color = Ink)
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
@@ -111,6 +112,8 @@ fun VerifyEmailScreen(
                 }
             }
             is EmailLinkState.Error -> {
+                // Signed in, the exit goes back to the screen the link opened over.
+                val signedIn = remember { SessionManager.getInstance(context).getAccessToken() != null }
                 Icon(
                     imageVector = Icons.Default.Warning,
                     contentDescription = "Error",
@@ -140,7 +143,7 @@ fun VerifyEmailScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Bone),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("Return to Login", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (signedIn) "Go back" else "Return to Login", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

@@ -55,10 +55,15 @@ sealed class PasswordResetState {
 /**
  * Where one email link stands: the address-verification link or the
  * email-change confirmation. Serializable because answers live in
- * SavedStateHandle; Loading is never stored, it just means "no answer yet".
+ * SavedStateHandle; an absent key means no answer yet. (No Loading object:
+ * restored from saved state, a plain object is a second instance that no `==`
+ * branch matches.)
  */
 sealed class EmailLinkState : Serializable {
-    object Loading : EmailLinkState()
+    /**
+     * [message] is rendered by the confirm screen only; the verify screen keeps
+     * its own sentence, as the website's verify form does.
+     */
     data class Success(val message: String?) : EmailLinkState()
     data class Error(val message: String) : EmailLinkState()
 }
@@ -339,7 +344,17 @@ class AuthViewModel(
     fun confirmEmailChange(token: String) {
         redeemEmailLink(token, "Invalid or missing email confirmation token.", "Failed to confirm email change.") {
             RetrofitClient.apiService.confirmEmailChange(EmailChangeConfirmRequest(token))
-                .also { if (it.success) sessionManager.clearSession() }
+                // The backend has already moved the address and revoked every refresh token;
+                // a local wipe that throws must not relabel that as a failure.
+                .also {
+                    if (it.success) {
+                        try {
+                            sessionManager.clearSession()
+                        } catch (e: Exception) {
+                            android.util.Log.w("AuthViewModel", "Local sign-out failed after a confirmed email change", e)
+                        }
+                    }
+                }
         }
     }
 

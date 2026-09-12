@@ -22,13 +22,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.Slate
@@ -39,6 +42,7 @@ fun ConfirmEmailChangeScreen(
     token: String?,
     onNavigateToLogin: () -> Unit,
 ) {
+    val context = LocalContext.current
     // Same one-shot rule as VerifyEmailScreen. On success the ViewModel has
     // already cleared this phone's session, forcing a sign-in with the new email.
     val key = token.orEmpty()
@@ -53,8 +57,8 @@ fun ConfirmEmailChangeScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        when (val state = links[key] ?: EmailLinkState.Loading) {
-            EmailLinkState.Loading -> {
+        when (val state = links[key]) {
+            null -> {
                 CircularProgressIndicator(color = Ink)
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
@@ -98,6 +102,8 @@ fun ConfirmEmailChangeScreen(
                 }
             }
             is EmailLinkState.Error -> {
+                // Signed in, the exit goes back to the screen the link opened over.
+                val signedIn = remember { SessionManager.getInstance(context).getAccessToken() != null }
                 Icon(
                     imageVector = Icons.Default.Warning,
                     contentDescription = "Error",
@@ -127,7 +133,7 @@ fun ConfirmEmailChangeScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Bone),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("Return to Login", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (signedIn) "Go back" else "Return to Login", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

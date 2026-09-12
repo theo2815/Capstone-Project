@@ -594,25 +594,20 @@ class MainActivity : ComponentActivity() {
                                     // state; a later tap of the link is a new visit.
                                     viewModel = viewModel(backStackEntry),
                                     token = token,
-                                    // popUpTo(0): the deep link can arrive with
-                                    // any stack underneath (login OR a live
-                                    // runner/studio graph) — popping to a named
-                                    // route would silently no-op when it isn't
-                                    // on the stack and leave dead screens behind.
+                                    // Both exits go through leaveEmailLink. The
+                                    // deep link can arrive with any stack
+                                    // underneath (login OR a live runner/studio
+                                    // graph): signed in, they go back to it;
+                                    // signed out, popUpTo(0) clears to login —
+                                    // popping to a named route would silently
+                                    // no-op when it isn't on the stack.
                                     onNavigateToLogin = {
-                                        navController.navigate("login") {
-                                            popUpTo(0) { inclusive = true }
-                                            launchSingleTop = true
-                                        }
+                                        navController.leaveEmailLink(backStackEntry, signedIn = sessionManager.getAccessToken() != null)
                                     },
-                                    onNavigateToDashboard = { isPhotographer ->
+                                    // Only called signed in (the screen checks).
+                                    onNavigateToDashboard = {
                                         sessionNotice = null
-                                        val target = if (isPhotographer) "studio" else "runner"
-                                        if (!isPhotographer) cartViewModel.fetchCart()
-                                        navController.navigate(target) {
-                                            popUpTo(0) { inclusive = true }
-                                            launchSingleTop = true
-                                        }
+                                        navController.leaveEmailLink(backStackEntry, signedIn = true)
                                     }
                                 )
                             }
@@ -630,15 +625,15 @@ class MainActivity : ComponentActivity() {
                                         // session — finish the logout the same
                                         // way forcedLogout does: cart + the
                                         // in-memory runner-view flag, which
-                                        // survives the prefs wipe.
-                                        if (sessionManager.getAccessToken() == null) {
+                                        // survives the prefs wipe. Still signed
+                                        // in means the link was refused (or the
+                                        // local wipe itself failed): go back.
+                                        val signedIn = sessionManager.getAccessToken() != null
+                                        if (!signedIn) {
                                             cartViewModel.clearCart()
                                             ViewMode.reset(sessionManager)
                                         }
-                                        navController.navigate("login") {
-                                            popUpTo(0) { inclusive = true }
-                                            launchSingleTop = true
-                                        }
+                                        navController.leaveEmailLink(backStackEntry, signedIn)
                                     }
                                 )
                             }
@@ -1267,6 +1262,26 @@ private fun runnerGraphEntry(
     navController: NavHostController,
     entry: NavBackStackEntry,
 ): NavBackStackEntry = remember(entry) { navController.getBackStackEntry("runner") }
+
+/**
+ * Leaves an email-link screen. Signed in, the link opened over a live runner or
+ * studio graph: go back to it, as system Back would, since popUpTo(0) would take
+ * the studio graph down with it (GUARD RULE). An email route is never a start
+ * destination, so there is always something to go back to. Signed out, nothing
+ * underneath is worth keeping: clear to login. Only while [screen] is still on
+ * top, or a second tap during the exit animation pops what the first returned to.
+ */
+internal fun NavController.leaveEmailLink(screen: NavBackStackEntry, signedIn: Boolean) {
+    if (currentBackStackEntry?.id != screen.id) return
+    if (signedIn) {
+        popBackStack()
+    } else {
+        navigate("login") {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+}
 
 // ─── Floating-pill bottom nav for Runner ──────────────────────────────────────
 // Mirrors the Quiet Studio photographer floating pill nav format:

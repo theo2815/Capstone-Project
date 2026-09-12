@@ -2,6 +2,14 @@ package com.quickpitik.mobile
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.runComposeUiTest
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.navigation
+import androidx.navigation.compose.rememberNavController
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -14,8 +22,9 @@ import org.robolectric.RobolectricTestRunner
 /**
  * The Activity's routing decisions, now pure: where a cold start lands, where
  * the role guard bounces a wrong-role visitor, which links the app accepts and
- * what each one means, and the receipt route with its id sanitising. Robolectric
- * only for android.net.Uri.
+ * what each one means, and the receipt route with its id sanitising; plus the
+ * email-link exit, the one side effect here, run against a real NavHost.
+ * Robolectric for android.net.Uri and that NavHost.
  */
 @RunWith(RobolectricTestRunner::class)
 class MainActivityRoutingTest {
@@ -101,5 +110,46 @@ class MainActivityRoutingTest {
         assertEquals(DeepLinkTarget.Orders, deepLinkTarget(Uri.parse("quickpitik://orders")))
         assertEquals(DeepLinkTarget.Cart, deepLinkTarget(cart))
         assertNull(deepLinkTarget(Uri.parse("quickpitik://studio")))
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun `an email link's exit keeps a live studio when signed in, clears to login when signed out, and ignores a second tap`() {
+        runComposeUiTest {
+            lateinit var nav: NavHostController
+            setContent {
+                nav = rememberNavController()
+                NavHost(nav, startDestination = "studio") {
+                    composable("login") {}
+                    navigation(startDestination = "studio/home", route = "studio") { composable("studio/home") {} }
+                    composable("verify-email?token={token}") {}
+                }
+            }
+            fun openLink(): NavBackStackEntry = runOnIdle {
+                nav.navigate("verify-email?token=t") { launchSingleTop = true }
+                nav.currentBackStackEntry!!
+            }
+            // The studio graph entry owns the tether's ViewModel.
+            fun studioAlive() = runCatching { nav.getBackStackEntry("studio") }.isSuccess
+
+            // Signed in: back to the studio. The second call is a double tap
+            // landing while the screen animates out.
+            val link = openLink()
+            runOnIdle {
+                nav.leaveEmailLink(link, signedIn = true)
+                nav.leaveEmailLink(link, signedIn = true)
+            }
+            runOnIdle {
+                assertEquals("studio/home", nav.currentDestination?.route)
+                assertTrue(studioAlive())
+            }
+
+            // Signed out: nothing underneath is kept.
+            val signedOut = openLink()
+            runOnIdle { nav.leaveEmailLink(signedOut, signedIn = false) }
+            runOnIdle {
+                assertEquals("login", nav.currentDestination?.route)
+                assertFalse(studioAlive())
+            }
+        }
     }
 }

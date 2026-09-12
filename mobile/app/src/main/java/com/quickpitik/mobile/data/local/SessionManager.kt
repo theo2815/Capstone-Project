@@ -221,12 +221,14 @@ class SessionManager private constructor(context: Context) {
         accessTokens.clear()
         memoryAccessToken = null
         memoryRefreshToken = null
+        // Before the two calls below, which reach outside this class: if either
+        // throws, the credentials must already be off the disk.
+        prefs.edit().clear().apply()
         TetherWatchPrefs(appContext).clear()
         // A credential store reaching into service/ is the wrong shape, but a
         // signed-out phone must not keep ingesting to the old account and this
         // is the one call that stops it. A SessionEvents-driven stop would put
         // the responsibility back in the tether layer; not worth the churn yet.
         appContext.stopService(android.content.Intent(appContext, com.quickpitik.mobile.service.TetherIngestService::class.java))
-        prefs.edit().clear().apply()
     }
 }
