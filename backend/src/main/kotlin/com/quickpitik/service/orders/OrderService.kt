@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.common.toCentavos
 import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.PublicProperties
@@ -422,7 +423,7 @@ class OrderService(
                             PaymongoPaymentIntentRequestAttributes(
                                 amount = reservation.orders.fold(BigDecimal.ZERO) { sum, order ->
                                     sum + order.totalPhp
-                                }.multiply(BigDecimal(100)).longValueExact(),
+                                }.toCentavos(),
                                 description = buildSessionDescription(
                                     reservation.items.size,
                                     reservation.events.values.map { it.name },
@@ -779,7 +780,7 @@ class OrderService(
         val bib = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber?.let { "BIB $it" } ?: "Untagged"
         PaymongoLineItem(
             name = "Race photo - $bib".take(120),
-            amount = item.pricePhpAtPurchase.subtract(item.discountPhp).multiply(BigDecimal(100)).toLong(),
+            amount = item.pricePhpAtPurchase.subtract(item.discountPhp).toCentavos(),
             description = events[photo.eventId]?.name?.take(120),
         )
     }

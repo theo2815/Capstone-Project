@@ -1,6 +1,7 @@
 package com.quickpitik.service.orders
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.common.toCentavos
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.orders.PaymongoRefundRequest
 import com.quickpitik.dto.orders.PaymongoRefundRequestAttributes
@@ -195,7 +196,7 @@ class PaymongoRefundService(
                     request = PaymongoRefundRequest(
                         PaymongoRefundRequestEnvelope(
                             PaymongoRefundRequestAttributes(
-                                amount = prepared.amount.movePointRight(2).longValueExact(),
+                                amount = prepared.amount.toCentavos(),
                                 paymentId = paymentId,
                                 notes = "QuickPitik dispute ${prepared.disputeId}".take(255),
                             ),
