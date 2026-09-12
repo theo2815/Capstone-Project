@@ -39,4 +39,20 @@ class AsyncConfig {
         setAwaitTerminationSeconds(30)
         initialize()
     }
+
+    // Email (Resend) gets its own pool for the same reason, one failure mode
+    // further out: a Resend outage costs 3 attempts with sleeps per send, so on
+    // the shared pool a race-finish burst of receipts could occupy every
+    // indexing thread until it cleared (2026-09-11 architecture audit, P-4).
+    // Smaller than the image pools — mail volume is per order, not per photo.
+    @Bean(name = ["emailSending"])
+    fun emailSendingExecutor(): TaskExecutor = ThreadPoolTaskExecutor().apply {
+        corePoolSize = 2
+        maxPoolSize = 4
+        queueCapacity = 1000
+        setThreadNamePrefix("email-")
+        setWaitForTasksToCompleteOnShutdown(true)
+        setAwaitTerminationSeconds(30)
+        initialize()
+    }
 }

@@ -20,7 +20,7 @@ class PayoutAccountChangedEmailListener(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    @Async("imageProcessing")
+    @Async("emailSending")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     fun onPayoutAccountChanged(event: PayoutAccountChangedEvent) {
         val user = userRepository.findById(event.userId).orElse(null)
